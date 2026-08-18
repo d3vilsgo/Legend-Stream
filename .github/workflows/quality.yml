@@ -21,7 +21,9 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
+      - name: Show lockfile changes
+        run: git diff -- pnpm-lock.yaml || true
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
-      - name: Typecheck API server
-        run: pnpm --filter @workspace/api-server typecheck
+      - name: Typecheck API server and references
+        run: pnpm exec tsc -b artifacts/api-server/tsconfig.json --pretty false
