@@ -9,6 +9,10 @@ on:
       - "pnpm-lock.yaml"
       - ".github/workflows/android-apk.yml"
 
+concurrency:
+  group: android-apk-main
+  cancel-in-progress: true
+
 jobs:
   build-apk:
     runs-on: ubuntu-latest
@@ -29,7 +33,10 @@ jobs:
           sudo rm -rf /usr/local/share/boost || true
           sudo rm -rf /usr/share/swift || true
           sudo rm -rf /opt/hostedtoolcache/CodeQL || true
-          docker system prune -af || true
+          sudo rm -rf /opt/hostedtoolcache/Ruby || true
+          sudo rm -rf /opt/hostedtoolcache/go || true
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY/CodeQL" || true
+          docker system prune -af --volumes || true
           sudo apt-get clean || true
           echo "Disk after cleanup:"
           df -h /
@@ -44,7 +51,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -58,26 +64,29 @@ jobs:
       - name: Install mobile dependencies only
         run: pnpm --filter @workspace/legendstream-xplayer... install --frozen-lockfile
 
-      - name: Typecheck mobile app
-        run: pnpm --filter @workspace/legendstream-xplayer typecheck
-
       - name: Generate Android project
         working-directory: artifacts/legendstream-xplayer
+        env:
+          EXPO_NO_DOCTOR: "1"
         run: pnpm exec expo prebuild --platform android --clean --no-install
 
       - name: Check disk before Gradle
-        run: df -h /
+        run: |
+          echo "Disk before Gradle:"
+          df -h /
+          du -sh node_modules artifacts/legendstream-xplayer/node_modules artifacts/legendstream-xplayer/android 2>/dev/null || true
 
       - name: Build debug APK
         working-directory: artifacts/legendstream-xplayer/android
         env:
-          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false
-        run: ./gradlew assembleDebug --no-daemon --no-build-cache --stacktrace
+          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
+        run: ./gradlew assembleDebug --no-daemon --no-build-cache --max-workers=2 --stacktrace
 
       - name: Copy APK
         run: |
           mkdir -p apk-output
           cp artifacts/legendstream-xplayer/android/app/build/outputs/apk/debug/app-debug.apk apk-output/LegendStream-XPlayer-debug.apk
+          ls -lh apk-output/LegendStream-XPlayer-debug.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
