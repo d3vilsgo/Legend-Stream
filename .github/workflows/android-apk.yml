@@ -1,0 +1,67 @@
+name: Android APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "artifacts/legendstream-xplayer/**"
+      - "pnpm-lock.yaml"
+      - ".github/workflows/android-apk.yml"
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck mobile app
+        run: pnpm --filter @workspace/legendstream-xplayer typecheck
+
+      - name: Generate Android project
+        working-directory: artifacts/legendstream-xplayer
+        run: pnpm exec expo prebuild --platform android --clean --no-install
+
+      - name: Build debug APK
+        working-directory: artifacts/legendstream-xplayer/android
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Copy APK
+        run: |
+          mkdir -p apk-output
+          cp artifacts/legendstream-xplayer/android/app/build/outputs/apk/debug/app-debug.apk apk-output/LegendStream-XPlayer-debug.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LegendStream-XPlayer-Android-Debug
+          path: apk-output/LegendStream-XPlayer-debug.apk
+          if-no-files-found: error
+          retention-days: 14
