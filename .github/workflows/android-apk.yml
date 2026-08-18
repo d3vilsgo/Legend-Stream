@@ -18,6 +18,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          echo "Disk before cleanup:"
+          df -h /
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc || true
+          sudo rm -rf /usr/local/.ghcup || true
+          sudo rm -rf /usr/local/share/boost || true
+          sudo rm -rf /usr/share/swift || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          docker system prune -af || true
+          sudo apt-get clean || true
+          echo "Disk after cleanup:"
+          df -h /
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -39,8 +55,8 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+      - name: Install mobile dependencies only
+        run: pnpm --filter @workspace/legendstream-xplayer... install --frozen-lockfile
 
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
@@ -49,9 +65,14 @@ jobs:
         working-directory: artifacts/legendstream-xplayer
         run: pnpm exec expo prebuild --platform android --clean --no-install
 
+      - name: Check disk before Gradle
+        run: df -h /
+
       - name: Build debug APK
         working-directory: artifacts/legendstream-xplayer/android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        env:
+          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false
+        run: ./gradlew assembleDebug --no-daemon --no-build-cache --stacktrace
 
       - name: Copy APK
         run: |
