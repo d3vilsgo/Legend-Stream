@@ -44,7 +44,9 @@ function normalizeBaseUrl(value: string) {
   }
 
   const path = parsed.pathname.replace(/\/+$/, "");
-  if (/\/(player_api|panel_api|server\/load)\.php$/i.test(path)) {
+  if (
+    /\/(?:player_api|panel_api|get|xmltv|server\/load)\.php$/i.test(path)
+  ) {
     parsed.pathname = path.slice(0, path.lastIndexOf("/")) || "/";
   } else {
     parsed.pathname = path;
@@ -75,14 +77,24 @@ function readCredentials(body: XtreamRequest) {
   };
 }
 
-async function providerJson(url: URL, credentials: { username: string; password: string }) {
+const providerHeaders = {
+  Accept: "application/json,text/plain,*/*",
+  "User-Agent": "Mozilla/5.0 (Linux; Android 13; TV) AppleWebKit/537.36 Chrome/120 Safari/537.36",
+  Connection: "keep-alive",
+};
+
+async function providerJson(
+  url: URL,
+  credentials: { username: string; password: string },
+) {
   url.searchParams.set("username", credentials.username);
   url.searchParams.set("password", credentials.password);
   let response: Response;
   try {
     response = await fetch(url, {
-      headers: { Accept: "application/json,text/plain,*/*" },
-      signal: AbortSignal.timeout(15_000),
+      headers: providerHeaders,
+      redirect: "follow",
+      signal: AbortSignal.timeout(20_000),
     });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
@@ -93,7 +105,7 @@ async function providerJson(url: URL, credentials: { username: string; password:
       );
     }
     throw new UpstreamError(
-      "The Xtream server could not be reached. Check the URL, port, and network.",
+      "The Xtream server could not be reached. Check the URL, port, DNS, and network.",
       502,
       "PROVIDER_UNREACHABLE",
     );
@@ -105,7 +117,7 @@ async function providerJson(url: URL, credentials: { username: string; password:
     data = JSON.parse(text);
   } catch {
     throw new UpstreamError(
-      "The Xtream server returned an invalid response.",
+      "The Xtream server returned an invalid response instead of JSON.",
       502,
       "INVALID_PROVIDER_RESPONSE",
     );
@@ -130,11 +142,29 @@ router.post("/xtream", async (req, res) => {
     const userInfo = auth?.user_info;
     const authValue = userInfo?.auth;
     const status = String(userInfo?.status ?? "").toLowerCase();
-    if (authValue === 0 || authValue === "0" || authValue === false || status === "disabled") {
+
+    if (
+      authValue === 0 ||
+      authValue === "0" ||
+      authValue === false ||
+      status === "disabled" ||
+      status === "banned" ||
+      status === "expired"
+    ) {
       throw new UpstreamError(
-        "Xtream rejected these credentials. Check the username and password.",
+        "Xtream rejected these credentials or the subscription is inactive.",
         401,
         "INVALID_CREDENTIALS",
+      );
+    }
+
+    // A successful Xtream login normally includes user_info. Reject HTML/error
+    // objects that happen to parse as JSON before asking for channel lists.
+    if (!userInfo || (authValue === undefined && !userInfo.username)) {
+      throw new UpstreamError(
+        "The server responded, but it did not return a valid Xtream account payload.",
+        502,
+        "INVALID_PROVIDER_RESPONSE",
       );
     }
 
@@ -159,7 +189,12 @@ router.post("/xtream", async (req, res) => {
       // Some providers omit live categories. The stream list remains usable.
     }
 
-    res.json({ auth, streams, categories });
+    res.json({
+      auth,
+      streams,
+      categories,
+      baseUrl: credentials.baseUrl,
+    });
   } catch (error) {
     const status = error instanceof UpstreamError ? error.status : 500;
     const code = error instanceof UpstreamError ? error.code : "PROXY_ERROR";
