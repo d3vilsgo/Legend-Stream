@@ -25,6 +25,38 @@ export type XtreamVodItem = {
   youtube_trailer?: string;
 };
 
+export type XtreamVodInfo = {
+  info?: {
+    name?: string;
+    movie_image?: string;
+    backdrop_path?: string[];
+    tmdb_id?: string | number;
+    plot?: string;
+    description?: string;
+    cast?: string;
+    director?: string;
+    genre?: string;
+    releaseDate?: string;
+    release_date?: string;
+    duration?: string;
+    duration_secs?: number | string;
+    rating?: string | number;
+    country?: string;
+    age?: string;
+    youtube_trailer?: string;
+    kinopoisk_url?: string;
+  } & Record<string, unknown>;
+  movie_data?: {
+    stream_id?: string | number;
+    name?: string;
+    added?: string;
+    category_id?: string | number;
+    container_extension?: string;
+    custom_sid?: string;
+    direct_source?: string;
+  } & Record<string, unknown>;
+};
+
 export type XtreamSeriesItem = {
   series_id: number | string;
   name: string;
@@ -167,6 +199,16 @@ export async function getVodStreams(
     category_id: categoryId,
   });
   return Array.isArray(data) ? (data as XtreamVodItem[]) : [];
+}
+
+export async function getVodInfo(
+  credentials: XtreamCredentials,
+  vodId: string | number,
+) {
+  const data = await requestXtream(credentials, "get_vod_info", {
+    vod_id: vodId,
+  });
+  return (data ?? {}) as XtreamVodInfo;
 }
 
 export async function getSeriesCategories(credentials: XtreamCredentials) {
