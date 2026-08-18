@@ -8,6 +8,11 @@ type XtreamRequest = {
   password?: unknown;
 };
 
+type XtreamActionRequest = XtreamRequest & {
+  action?: unknown;
+  params?: unknown;
+};
+
 class UpstreamError extends Error {
   status: number;
   code: string;
@@ -44,9 +49,7 @@ function normalizeBaseUrl(value: string) {
   }
 
   const path = parsed.pathname.replace(/\/+$/, "");
-  if (
-    /\/(?:player_api|panel_api|get|xmltv|server\/load)\.php$/i.test(path)
-  ) {
+  if (/\/(?:player_api|panel_api|get|xmltv|server\/load)\.php$/i.test(path)) {
     parsed.pathname = path.slice(0, path.lastIndexOf("/")) || "/";
   } else {
     parsed.pathname = path;
@@ -134,6 +137,45 @@ async function providerJson(
   return data as any;
 }
 
+const allowedActions = new Set([
+  "get_vod_categories",
+  "get_vod_streams",
+  "get_series_categories",
+  "get_series",
+  "get_series_info",
+]);
+
+router.post("/xtream/action", async (req, res) => {
+  try {
+    const body = req.body as XtreamActionRequest;
+    const credentials = readCredentials(body);
+    if (typeof body.action !== "string" || !allowedActions.has(body.action)) {
+      throw new UpstreamError("Unsupported Xtream action.", 400, "INVALID_ACTION");
+    }
+
+    const url = new URL("player_api.php", `${credentials.baseUrl}/`);
+    url.searchParams.set("action", body.action);
+    if (body.params && typeof body.params === "object" && !Array.isArray(body.params)) {
+      for (const [key, raw] of Object.entries(body.params as Record<string, unknown>)) {
+        if (!/^[a-z_]+$/i.test(key)) continue;
+        if (typeof raw === "string" || typeof raw === "number") {
+          url.searchParams.set(key, String(raw));
+        }
+      }
+    }
+
+    const data = await providerJson(url, credentials);
+    res.json(data);
+  } catch (error) {
+    const status = error instanceof UpstreamError ? error.status : 500;
+    const code = error instanceof UpstreamError ? error.code : "PROXY_ERROR";
+    const message = error instanceof UpstreamError
+      ? error.message
+      : "The provider proxy could not complete the request.";
+    res.status(status).json({ error: { code, message } });
+  }
+});
+
 router.post("/xtream", async (req, res) => {
   try {
     const credentials = readCredentials(req.body as XtreamRequest);
@@ -158,8 +200,6 @@ router.post("/xtream", async (req, res) => {
       );
     }
 
-    // A successful Xtream login normally includes user_info. Reject HTML/error
-    // objects that happen to parse as JSON before asking for channel lists.
     if (!userInfo || (authValue === undefined && !userInfo.username)) {
       throw new UpstreamError(
         "The server responded, but it did not return a valid Xtream account payload.",
@@ -189,19 +229,13 @@ router.post("/xtream", async (req, res) => {
       // Some providers omit live categories. The stream list remains usable.
     }
 
-    res.json({
-      auth,
-      streams,
-      categories,
-      baseUrl: credentials.baseUrl,
-    });
+    res.json({ auth, streams, categories, baseUrl: credentials.baseUrl });
   } catch (error) {
     const status = error instanceof UpstreamError ? error.status : 500;
     const code = error instanceof UpstreamError ? error.code : "PROXY_ERROR";
-    const message =
-      error instanceof UpstreamError
-        ? error.message
-        : "The provider proxy could not complete the request.";
+    const message = error instanceof UpstreamError
+      ? error.message
+      : "The provider proxy could not complete the request.";
     res.status(status).json({ error: { code, message } });
   }
 });
