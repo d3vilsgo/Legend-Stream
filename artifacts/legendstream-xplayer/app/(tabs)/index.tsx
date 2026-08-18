@@ -1111,11 +1111,14 @@ function ChannelRow({
   onToggleFavorite: () => void;
 }) {
   const colors = useColors();
+  const [focused, setFocused] = useState(false);
   return (
     <View style={[styles.channelRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
       <Pressable
         onPress={onPress}
-        style={({ focused }) => [styles.channelMain, focused && { borderColor: colors.primary, backgroundColor: colors.muted }]}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        style={[styles.channelMain, focused && { borderColor: colors.primary, backgroundColor: colors.muted }]}
         accessibilityRole="button"
         accessibilityLabel={`Play ${channel.name}`}
       >
@@ -1149,10 +1152,13 @@ function ChannelTile({
   compact?: boolean;
 }) {
   const colors = useColors();
+  const [focused, setFocused] = useState(false);
   return (
     <Pressable
       onPress={onPress}
-      style={({ focused }) => [
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      style={[
         styles.channelTile,
         compact && styles.channelTileCompact,
         { backgroundColor: colors.card, borderColor: focused ? colors.primary : colors.border },
@@ -1293,10 +1299,13 @@ function TypeChoice({
   onPress: () => void;
 }) {
   const colors = useColors();
+  const [focused, setFocused] = useState(false);
   return (
     <Pressable
       onPress={onPress}
-      style={({ focused }) => [
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      style={[
         styles.typeChoice,
         {
           borderColor: focused || selected ? colors.primary : colors.border,

@@ -1,0 +1,1 @@
+- [Xtream web transport](xtream-web-transport.md) — browser preview uses the same-origin API proxy; native Android keeps direct provider access.
