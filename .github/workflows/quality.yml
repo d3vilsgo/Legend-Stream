@@ -6,11 +6,16 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: write
+
 jobs:
   typecheck:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -21,8 +26,16 @@ jobs:
           cache: pnpm
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
-      - name: Show lockfile changes
-        run: git diff -- pnpm-lock.yaml || true
+      - name: Persist lockfile update
+        if: github.event_name == 'pull_request'
+        run: |
+          if ! git diff --quiet -- pnpm-lock.yaml; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add pnpm-lock.yaml
+            git commit -m "chore: update pnpm lockfile"
+            git push origin HEAD:${{ github.head_ref }}
+          fi
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references
