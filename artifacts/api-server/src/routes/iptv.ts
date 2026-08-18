@@ -140,6 +140,7 @@ async function providerJson(
 const allowedActions = new Set([
   "get_vod_categories",
   "get_vod_streams",
+  "get_vod_info",
   "get_series_categories",
   "get_series",
   "get_series_info",
