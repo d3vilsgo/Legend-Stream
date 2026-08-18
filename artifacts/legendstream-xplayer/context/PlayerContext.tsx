@@ -111,9 +111,16 @@ const readState = async (): Promise<PlayerState> => {
       playlistUrl: item.playlistUrl || item.url,
     })) as ProviderConfig[];
     return {
-      ...emptyState,
-      ...saved,
+      // Channels and EPG are runtime data. Never rehydrate or persist them
+      // through AsyncStorage; providers are refreshed when requested.
       providers,
+      channels: [],
+      epg: [],
+      favorites: Array.isArray(saved.favorites)
+        ? saved.favorites.slice(0, 500)
+        : [],
+      history: Array.isArray(saved.history) ? saved.history.slice(0, 12) : [],
+      activeProviderId: saved.activeProviderId,
       provider:
         saved.provider ??
         providers.find((item) => item.id === saved.activeProviderId) ??
@@ -142,7 +149,27 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const persist = async (next: PlayerState) => {
     setState(next);
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    const persisted = {
+      providers: next.providers,
+      provider: next.provider,
+      activeProviderId: next.activeProviderId,
+      favorites: next.favorites.slice(0, 500),
+      history: next.history.slice(0, 12),
+    };
+    const serialized = JSON.stringify(persisted);
+    try {
+      await AsyncStorage.setItem(STORAGE_KEY, serialized);
+    } catch {
+      // A previous app version may have filled web localStorage with channel
+      // data. Replace that oversized snapshot with the compact one. Storage
+      // failures must never prevent the in-memory login or playback flow.
+      try {
+        await AsyncStorage.removeItem(STORAGE_KEY);
+        await AsyncStorage.setItem(STORAGE_KEY, serialized);
+      } catch {
+        // Persistence is best-effort; the current session remains usable.
+      }
+    }
   };
 
   const connectProvider = async (

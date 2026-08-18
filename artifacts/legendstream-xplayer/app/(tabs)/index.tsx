@@ -112,6 +112,7 @@ export default function HomeScreen() {
           activeView={view}
           provider={provider}
           providers={providers}
+          compact={width < 800}
           onNavigate={setView}
           onProviderChange={(id) => void setActiveProvider(id)}
         />
@@ -144,6 +145,7 @@ export default function HomeScreen() {
               epgCount={epg.length}
               favoriteCount={favorites.length}
               historyChannels={historyChannels}
+              compact={width < 800}
               isLoading={isLoading}
               onOpenLive={() => setView("live")}
               onOpenChannel={openChannel}
@@ -472,16 +474,92 @@ function Header({
   activeView,
   provider,
   providers,
+  compact,
   onNavigate,
   onProviderChange,
 }: {
   activeView: ViewName;
   provider: ProviderConfig;
   providers: ProviderConfig[];
+  compact: boolean;
   onNavigate: (view: ViewName) => void;
   onProviderChange: (id: string) => void;
 }) {
   const colors = useColors();
+  const navigation = (
+    <>
+      {navItems.map((item) => (
+        <FocusButton
+          key={item.key}
+          label={item.label}
+          icon={item.icon}
+          variant={activeView === item.key ? "secondary" : "ghost"}
+          onPress={() => onNavigate(item.key)}
+          style={styles.navButton}
+        />
+      ))}
+      <FocusButton
+        label="Settings"
+        icon="settings"
+        variant={activeView === "settings" ? "secondary" : "ghost"}
+        onPress={() => onNavigate("settings")}
+        style={styles.navButton}
+      />
+    </>
+  );
+  const providerChip = (
+    <View style={[styles.connectedChip, { backgroundColor: colors.muted }]}>
+      <View style={[styles.statusDot, { backgroundColor: colors.primary }]} />
+      <Text
+        style={[styles.connectedText, { color: colors.mutedForeground }]}
+        numberOfLines={1}
+      >
+        {providers.length > 1 ? `${providers.length} sources` : provider.name}
+      </Text>
+      {providers.length > 1 ? (
+        <Pressable
+          onPress={() =>
+            onProviderChange(
+              providers[
+                (providers.findIndex((item) => item.id === provider.id) + 1) %
+                  providers.length
+              ].id,
+            )
+          }
+          accessibilityLabel="Switch provider"
+        >
+          <Feather name="chevron-down" size={15} color={colors.mutedForeground} />
+        </Pressable>
+      ) : null}
+    </View>
+  );
+  if (compact) {
+    return (
+      <View style={[styles.header, styles.headerCompact]}>
+        <View style={styles.headerTopCompact}>
+          <Pressable
+            onPress={() => onNavigate("home")}
+            style={styles.headerBrand}
+            accessibilityRole="button"
+            accessibilityLabel="Go to home"
+          >
+            <Image source={require("../../assets/images/icon.png")} style={styles.headerIcon} />
+            <Text style={[styles.headerWordmark, { color: colors.foreground }]}>
+              LEGEND<Text style={{ color: colors.primary }}>STREAM</Text>
+            </Text>
+          </Pressable>
+          {providerChip}
+        </View>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.navCompact}
+        >
+          {navigation}
+        </ScrollView>
+      </View>
+    );
+  }
   return (
     <View style={styles.header}>
       <Pressable
@@ -495,46 +573,8 @@ function Header({
           LEGEND<Text style={{ color: colors.primary }}>STREAM</Text>
         </Text>
       </Pressable>
-      <View style={styles.nav}>
-        {navItems.map((item) => (
-          <FocusButton
-            key={item.key}
-            label={item.label}
-            icon={item.icon}
-            variant={activeView === item.key ? "secondary" : "ghost"}
-            onPress={() => onNavigate(item.key)}
-            style={styles.navButton}
-          />
-        ))}
-        <FocusButton
-          label="Settings"
-          icon="settings"
-          variant={activeView === "settings" ? "secondary" : "ghost"}
-          onPress={() => onNavigate("settings")}
-          style={styles.navButton}
-        />
-      </View>
-      <View style={[styles.connectedChip, { backgroundColor: colors.muted }]}>
-        <View style={[styles.statusDot, { backgroundColor: colors.primary }]} />
-        <Text
-          style={[styles.connectedText, { color: colors.mutedForeground }]}
-          numberOfLines={1}
-        >
-          {providers.length > 1 ? `${providers.length} sources` : provider.name}
-        </Text>
-        {providers.length > 1 ? (
-          <Pressable
-            onPress={() =>
-              onProviderChange(
-                providers[(providers.findIndex((item) => item.id === provider.id) + 1) % providers.length].id,
-              )
-            }
-            accessibilityLabel="Switch provider"
-          >
-            <Feather name="chevron-down" size={15} color={colors.mutedForeground} />
-          </Pressable>
-        ) : null}
-      </View>
+      <View style={styles.nav}>{navigation}</View>
+      {providerChip}
     </View>
   );
 }
@@ -545,6 +585,7 @@ function HomeView({
   epgCount,
   favoriteCount,
   historyChannels,
+  compact,
   isLoading,
   onOpenLive,
   onOpenChannel,
@@ -556,6 +597,7 @@ function HomeView({
   epgCount: number;
   favoriteCount: number;
   historyChannels: Channel[];
+  compact: boolean;
   isLoading: boolean;
   onOpenLive: () => void;
   onOpenChannel: (channel: Channel) => void;
@@ -565,7 +607,7 @@ function HomeView({
   const colors = useColors();
   return (
     <View>
-      <View style={styles.heroRow}>
+      <View style={[styles.heroRow, compact && styles.heroRowCompact]}>
         <View style={styles.heroCopy}>
           <Text style={[styles.kicker, { color: colors.primary }]}>
             WELCOME BACK / {provider.name.toUpperCase()}
@@ -603,6 +645,7 @@ function HomeView({
         <View
           style={[
             styles.signalCard,
+            compact && styles.signalCardCompact,
             { backgroundColor: colors.card, borderColor: colors.border },
           ]}
         >
@@ -627,7 +670,7 @@ function HomeView({
           </Text>
         </View>
       </View>
-      <View style={styles.statsRow}>
+      <View style={[styles.statsRow, compact && styles.statsRowCompact]}>
         <Stat label="Live channels" value={channels.length.toLocaleString()} icon="radio" />
         <Stat label="Guide programs" value={epgCount.toLocaleString()} icon="calendar" />
         <Stat label="Favorites" value={favoriteCount.toLocaleString()} icon="star" />
@@ -703,6 +746,8 @@ function LiveView({
   onRefreshEpg: () => void;
 }) {
   const colors = useColors();
+  const { width } = useWindowDimensions();
+  const compact = width < 800;
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const categories = useMemo(
@@ -802,8 +847,10 @@ function LiveView({
           data={filteredChannels}
           keyExtractor={(item) => item.id}
           scrollEnabled={false}
-          numColumns={Platform.OS === "web" ? 3 : 1}
-          columnWrapperStyle={Platform.OS === "web" ? styles.columnWrapper : undefined}
+          numColumns={Platform.OS === "web" && !compact ? 3 : 1}
+          columnWrapperStyle={
+            Platform.OS === "web" && !compact ? styles.columnWrapper : undefined
+          }
           renderItem={({ item }) => (
             <ChannelRow
               channel={item}
@@ -1351,10 +1398,13 @@ const styles = StyleSheet.create({
   shell: { flex: 1, paddingHorizontal: 22 },
   content: { paddingTop: 28, paddingBottom: 36 },
   header: { minHeight: 58, flexDirection: "row", alignItems: "center", gap: 20 },
+  headerCompact: { minHeight: 0, alignItems: "stretch", gap: 10 },
+  headerTopCompact: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 10 },
   headerBrand: { flexDirection: "row", alignItems: "center", gap: 10, minWidth: 185 },
   headerIcon: { width: 35, height: 35, borderRadius: 10 },
   headerWordmark: { fontFamily: "Inter_700Bold", fontSize: 14, letterSpacing: 1.4 },
   nav: { flex: 1, flexDirection: "row", justifyContent: "center", gap: 4 },
+  navCompact: { gap: 4, paddingRight: 8 },
   navButton: { minHeight: 43, paddingHorizontal: 12, borderColor: "transparent" },
   connectedChip: { maxWidth: 180, borderRadius: 18, paddingHorizontal: 12, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 7 },
   statusDot: { width: 7, height: 7, borderRadius: 7 },
@@ -1362,18 +1412,21 @@ const styles = StyleSheet.create({
   errorBanner: { borderWidth: 1, borderRadius: 12, padding: 11, flexDirection: "row", alignItems: "center", gap: 9, marginTop: 12 },
   errorBannerText: { fontFamily: "Inter_500Medium", fontSize: 12, lineHeight: 17, flex: 1 },
   heroRow: { flexDirection: "row", justifyContent: "space-between", gap: 28, marginTop: 26, marginBottom: 32 },
+  heroRowCompact: { flexDirection: "column", gap: 20, marginTop: 20, marginBottom: 26 },
   heroCopy: { flex: 1, maxWidth: 660, paddingTop: 20 },
   kicker: { fontFamily: "Inter_700Bold", fontSize: 11, letterSpacing: 2.1 },
   pageTitle: { fontFamily: "Inter_700Bold", fontSize: 43, lineHeight: 49, letterSpacing: -1.3, marginTop: 11 },
   pageBody: { fontFamily: "Inter_400Regular", fontSize: 16, lineHeight: 25, maxWidth: 590, marginTop: 14 },
   heroActions: { flexDirection: "row", flexWrap: "wrap", gap: 10, marginTop: 28 },
   signalCard: { width: 250, minHeight: 235, borderRadius: 18, borderWidth: 1, padding: 22, justifyContent: "center" },
+  signalCardCompact: { width: "100%", minHeight: 175, padding: 18 },
   signalIcon: { width: 54, height: 54, alignItems: "center", justifyContent: "center", borderRadius: 16, marginBottom: 18 },
   signalTitle: { fontFamily: "Inter_700Bold", fontSize: 12, letterSpacing: 1.5 },
   signalBody: { fontFamily: "Inter_400Regular", fontSize: 13, lineHeight: 19, marginTop: 8 },
   signalRule: { height: 1, width: "100%", marginVertical: 18 },
   signalMeta: { fontFamily: "Inter_600SemiBold", fontSize: 10, letterSpacing: 1.2 },
   statsRow: { flexDirection: "row", gap: 12, marginBottom: 44 },
+  statsRowCompact: { gap: 8, marginBottom: 32 },
   stat: { flex: 1, minHeight: 108, borderWidth: 1, borderRadius: 15, padding: 16 },
   statValue: { fontFamily: "Inter_700Bold", fontSize: 27, marginTop: 11 },
   statLabel: { fontFamily: "Inter_500Medium", fontSize: 11, marginTop: 3 },
