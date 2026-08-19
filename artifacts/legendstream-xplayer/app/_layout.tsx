@@ -15,6 +15,21 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { PlayerProvider } from "@/context/PlayerContext";
 
+// React Native/Hermes versions used by some Android builds expose AbortController
+// but not the newer AbortSignal.timeout() static helper. IPTV networking uses that
+// helper for request timeouts, so provide a small native-safe polyfill before any
+// provider request can run.
+const abortSignalCtor = globalThis.AbortSignal as typeof AbortSignal & {
+  timeout?: (milliseconds: number) => AbortSignal;
+};
+if (abortSignalCtor && typeof abortSignalCtor.timeout !== "function") {
+  abortSignalCtor.timeout = (milliseconds: number) => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), milliseconds);
+    return controller.signal;
+  };
+}
+
 // Keep the native splash visible briefly while startup assets are prepared,
 // but never allow a font-loading problem to strand the app on the splash screen.
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
