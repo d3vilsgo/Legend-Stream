@@ -17,7 +17,6 @@
       "supportsTablet": false
     },
     "android": {
-      "usesCleartextTraffic": true,
       "package": "com.legendstream.xplayer"
     },
     "web": {
@@ -28,6 +27,14 @@
         "expo-router",
         {
           "origin": "https://replit.com/"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
         }
       ],
       [
