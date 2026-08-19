@@ -77,10 +77,44 @@ jobs:
           du -sh node_modules artifacts/legendstream-xplayer/node_modules artifacts/legendstream-xplayer/android 2>/dev/null || true
 
       - name: Build standalone release APK
+        id: release_build
+        continue-on-error: true
         working-directory: artifacts/legendstream-xplayer/android
         env:
           GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
-        run: ./gradlew assembleRelease --no-daemon --no-build-cache --max-workers=2 --stacktrace
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease \
+            --no-daemon \
+            --no-build-cache \
+            --max-workers=2 \
+            --console=plain \
+            --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/release-build.log"
+
+      - name: Show release build diagnostics
+        if: steps.release_build.outcome == 'failure'
+        shell: bash
+        run: |
+          echo "================ IMPORTANT ERROR LINES ================"
+          grep -Ein -C 4 "error|exception|failed|failure|unable|cannot|could not|syntax|module not found|no space|keystore|signing|bundle" release-build.log | tail -n 240 || true
+          echo "================ LAST 240 LOG LINES ===================="
+          tail -n 240 release-build.log || true
+          echo "================ DISK AFTER FAILURE ====================="
+          df -h / || true
+
+      - name: Upload release build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LegendStream-XPlayer-Release-Build-Log
+          path: release-build.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Stop on release build failure
+        if: steps.release_build.outcome == 'failure'
+        run: exit 1
 
       - name: Copy release APK
         run: |
