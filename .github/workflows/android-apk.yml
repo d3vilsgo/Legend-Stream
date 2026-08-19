@@ -62,12 +62,13 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install mobile dependencies only
-        run: pnpm --filter @workspace/legendstream-xplayer... install --frozen-lockfile
+        run: pnpm --filter @workspace/legendstream-xplayer... install --no-frozen-lockfile
 
       - name: Generate Android project
         working-directory: artifacts/legendstream-xplayer
         env:
           EXPO_NO_DOCTOR: "1"
+          NODE_ENV: production
         run: pnpm exec expo prebuild --platform android --clean --no-install
 
       - name: Check disk before Gradle
@@ -81,6 +82,7 @@ jobs:
         continue-on-error: true
         working-directory: artifacts/legendstream-xplayer/android
         env:
+          NODE_ENV: production
           GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
         shell: bash
         run: |
