@@ -16,7 +16,7 @@ concurrency:
 jobs:
   build-apk:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
 
     steps:
       - name: Checkout
@@ -76,22 +76,27 @@ jobs:
           df -h /
           du -sh node_modules artifacts/legendstream-xplayer/node_modules artifacts/legendstream-xplayer/android 2>/dev/null || true
 
-      - name: Build debug APK
+      - name: Build standalone release APK
         working-directory: artifacts/legendstream-xplayer/android
         env:
           GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
-        run: ./gradlew assembleDebug --no-daemon --no-build-cache --max-workers=2 --stacktrace
+        run: ./gradlew assembleRelease --no-daemon --no-build-cache --max-workers=2 --stacktrace
 
-      - name: Copy APK
+      - name: Copy release APK
         run: |
           mkdir -p apk-output
-          cp artifacts/legendstream-xplayer/android/app/build/outputs/apk/debug/app-debug.apk apk-output/LegendStream-XPlayer-debug.apk
-          ls -lh apk-output/LegendStream-XPlayer-debug.apk
+          APK_PATH=$(find artifacts/legendstream-xplayer/android/app/build/outputs/apk/release -maxdepth 1 -type f -name "*.apk" | head -n 1)
+          if [ -z "$APK_PATH" ]; then
+            echo "Release APK not found"
+            exit 1
+          fi
+          cp "$APK_PATH" apk-output/LegendStream-XPlayer-release.apk
+          ls -lh apk-output/LegendStream-XPlayer-release.apk
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LegendStream-XPlayer-Android-Debug
-          path: apk-output/LegendStream-XPlayer-debug.apk
+          name: LegendStream-XPlayer-Android-Release
+          path: apk-output/LegendStream-XPlayer-release.apk
           if-no-files-found: error
           retention-days: 14
