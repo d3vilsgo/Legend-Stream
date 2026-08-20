@@ -62,40 +62,69 @@ jobs:
         uses: android-actions/setup-android@v3
 
       - name: Install mobile dependencies only
-        run: pnpm --filter @workspace/legendstream-xplayer... install --no-frozen-lockfile
-
-      - name: Verify VLC dependency
+        id: deps
+        continue-on-error: true
         shell: bash
         run: |
-          cd artifacts/legendstream-xplayer
-          node -e "const p=require('./node_modules/react-native-vlc-media-player/package.json'); console.log('VLC package version:', p.version)"
-          node -e "console.log('VLC package path:', require.resolve('react-native-vlc-media-player/package.json'))"
+          set -o pipefail
+          pnpm --filter @workspace/legendstream-xplayer... install --no-frozen-lockfile 2>&1 | tee "$GITHUB_WORKSPACE/dependency-install.log"
 
-      - name: Patch VLC module for Android 7+
+      - name: Verify and patch VLC for Android 7+
+        id: vlc_patch
+        if: steps.deps.outcome == 'success'
+        continue-on-error: true
         shell: bash
         run: |
-          VLC_PKG="$(cd artifacts/legendstream-xplayer && node -p "require.resolve('react-native-vlc-media-player/package.json')")"
-          VLC_DIR="$(dirname "$VLC_PKG")"
-          VLC_GRADLE="$VLC_DIR/android/build.gradle"
-          echo "Resolved VLC package: $VLC_DIR"
-          echo "Gradle file: $VLC_GRADLE"
-          test -f "$VLC_GRADLE"
-          echo "Before patch:"
-          grep -nE 'compileSdkVersion|minSdkVersion|libvlc-all' "$VLC_GRADLE" || true
-          sed -Ei 's/minSdkVersion[[:space:]]+26/minSdkVersion 24/g' "$VLC_GRADLE"
-          echo "After patch:"
-          grep -nE 'compileSdkVersion|minSdkVersion|libvlc-all' "$VLC_GRADLE" || true
-          if grep -Eq 'minSdkVersion[[:space:]]+26' "$VLC_GRADLE"; then
-            echo "VLC minSdk patch did not apply"
-            exit 1
-          fi
+          set -o pipefail
+          {
+            VLC_PKG="$(cd artifacts/legendstream-xplayer && node -p "require.resolve('react-native-vlc-media-player/package.json')")"
+            VLC_DIR="$(dirname "$VLC_PKG")"
+            VLC_GRADLE="$VLC_DIR/android/build.gradle"
+            echo "Resolved VLC package: $VLC_DIR"
+            node -e "const p=require('$VLC_PKG'); console.log('VLC version:', p.version)"
+            echo "Gradle file: $VLC_GRADLE"
+            test -f "$VLC_GRADLE"
+            echo "Before patch:"
+            grep -nE 'compileSdkVersion|minSdkVersion|libvlc-all' "$VLC_GRADLE" || true
+            sed -Ei 's/minSdkVersion[[:space:]]+26/minSdkVersion 24/g' "$VLC_GRADLE"
+            echo "After patch:"
+            grep -nE 'compileSdkVersion|minSdkVersion|libvlc-all' "$VLC_GRADLE" || true
+            if grep -Eq 'minSdkVersion[[:space:]]+26' "$VLC_GRADLE"; then
+              echo "VLC minSdk patch did not apply"
+              exit 1
+            fi
+          } 2>&1 | tee "$GITHUB_WORKSPACE/vlc-patch.log"
 
       - name: Generate Android project
+        id: prebuild
+        if: steps.deps.outcome == 'success' && steps.vlc_patch.outcome == 'success'
+        continue-on-error: true
         working-directory: artifacts/legendstream-xplayer
         env:
           EXPO_NO_DOCTOR: "1"
           NODE_ENV: production
-        run: pnpm exec expo prebuild --platform android --clean --no-install
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm exec expo prebuild --platform android --clean --no-install 2>&1 | tee "$GITHUB_WORKSPACE/expo-prebuild.log"
+
+      - name: Upload prepare diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LegendStream-XPlayer-Prepare-Diagnostics
+          path: |
+            dependency-install.log
+            vlc-patch.log
+            expo-prebuild.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Stop on prepare failure
+        if: steps.deps.outcome == 'failure' || steps.vlc_patch.outcome == 'failure' || steps.prebuild.outcome == 'failure'
+        run: |
+          echo "Preparation failed. Download LegendStream-XPlayer-Prepare-Diagnostics for the exact error."
+          exit 1
 
       - name: Check disk before Gradle
         run: |
