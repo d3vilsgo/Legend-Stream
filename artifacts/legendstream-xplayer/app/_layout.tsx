@@ -15,6 +15,7 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { PlayerProvider } from "@/context/PlayerContext";
 import { I18nProvider } from "@/context/I18nContext";
+import { MediaLibraryProvider } from "@/context/MediaLibraryContext";
 
 const abortSignalCtor = globalThis.AbortSignal as typeof AbortSignal & {
   timeout?: (milliseconds: number) => AbortSignal;
@@ -68,7 +69,9 @@ export default function RootLayout() {
             <KeyboardProvider>
               <I18nProvider>
                 <PlayerProvider>
-                  <RootLayoutNav />
+                  <MediaLibraryProvider>
+                    <RootLayoutNav />
+                  </MediaLibraryProvider>
                 </PlayerProvider>
               </I18nProvider>
             </KeyboardProvider>
