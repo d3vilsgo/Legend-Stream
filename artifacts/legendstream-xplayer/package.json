@@ -58,7 +58,6 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
-    "expo-video": "~3.0.16",
     "react-native-vlc-media-player": "1.0.98"
   }
 }
