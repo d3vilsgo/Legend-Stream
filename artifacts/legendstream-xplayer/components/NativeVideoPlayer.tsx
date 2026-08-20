@@ -16,7 +16,7 @@ import { useI18n } from "@/context/I18nContext";
 import { useMediaLibrary } from "@/context/MediaLibraryContext";
 import { usePlayer } from "@/context/PlayerContext";
 import { downloadMedia } from "@/lib/downloads";
-import { getEpisodePlaybackQueue } from "@/lib/xtreamCatalog";
+import { getEpisodePlaybackQueue, getVodPlaybackQueue } from "@/lib/xtreamCatalog";
 
 type FitMode = "contain" | "cover" | "fill";
 type DownloadState = "idle" | "downloading" | "done" | "error";
@@ -177,6 +177,7 @@ export function NativeVideoPlayer({
   }, [channels, currentLive, provider]);
 
   const episodeQueue = useMemo(() => mediaKind === "episode" ? getEpisodePlaybackQueue(currentSource) : undefined, [currentSource, mediaKind]);
+  const vodQueue = useMemo(() => mediaKind === "movie" ? getVodPlaybackQueue(currentSource) : undefined, [currentSource, mediaKind]);
 
   const selectableItems = useMemo<SelectableItem[]>(() => {
     if (mediaKind === "live") {
@@ -196,8 +197,20 @@ export function NativeVideoPlayer({
         source: item.url,
       }));
     }
+    if (mediaKind === "movie" && vodQueue) {
+      const current = vodQueue.items[vodQueue.index];
+      const sameCategory = current?.categoryId
+        ? vodQueue.items.filter((item) => item.categoryId === current.categoryId)
+        : vodQueue.items;
+      return sameCategory.slice(0, 500).map((item) => ({
+        id: item.id,
+        title: item.title,
+        subtitle: item.genre || t("movies"),
+        source: item.url,
+      }));
+    }
     return [];
-  }, [episodeQueue, liveQueue, mediaKind, t]);
+  }, [episodeQueue, liveQueue, mediaKind, t, vodQueue]);
 
   const currentIndex = useMemo(() => selectableItems.findIndex((item) => item.source === currentSource), [currentSource, selectableItems]);
 
