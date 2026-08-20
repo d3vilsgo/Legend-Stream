@@ -1,1 +1,1 @@
-export { UnifiedVideoPlayer as NativeVideoPlayer } from "@/components/UnifiedVideoPlayer";
+export { CompatibilityVideoPlayer as NativeVideoPlayer } from "@/components/CompatibilityVideoPlayer";
