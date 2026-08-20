@@ -64,6 +64,18 @@ jobs:
       - name: Install mobile dependencies only
         run: pnpm --filter @workspace/legendstream-xplayer... install --no-frozen-lockfile
 
+      - name: Patch VLC module for Android 7+
+        shell: bash
+        run: |
+          VLC_GRADLE="$(realpath artifacts/legendstream-xplayer/node_modules/react-native-vlc-media-player/android/build.gradle)"
+          if [ ! -f "$VLC_GRADLE" ]; then
+            echo "VLC Android build.gradle not found"
+            exit 1
+          fi
+          echo "Patching $VLC_GRADLE"
+          sed -Ei 's/minSdkVersion[[:space:]]+26/minSdkVersion 24/' "$VLC_GRADLE"
+          grep -nE 'compileSdkVersion|minSdkVersion|libvlc-all' "$VLC_GRADLE"
+
       - name: Generate Android project
         working-directory: artifacts/legendstream-xplayer
         env:
@@ -99,9 +111,9 @@ jobs:
         shell: bash
         run: |
           echo "================ IMPORTANT ERROR LINES ================"
-          grep -Ein -C 4 "error|exception|failed|failure|unable|cannot|could not|syntax|module not found|no space|keystore|signing|bundle" release-build.log | tail -n 240 || true
-          echo "================ LAST 240 LOG LINES ===================="
-          tail -n 240 release-build.log || true
+          grep -Ein -C 4 "error|exception|failed|failure|unable|cannot|could not|syntax|module not found|no space|keystore|signing|bundle|manifest|minSdk" release-build.log | tail -n 280 || true
+          echo "================ LAST 280 LOG LINES ===================="
+          tail -n 280 release-build.log || true
           echo "================ DISK AFTER FAILURE ====================="
           df -h / || true
 
