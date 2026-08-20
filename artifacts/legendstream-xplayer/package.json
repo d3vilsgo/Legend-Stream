@@ -62,6 +62,6 @@
   },
   "dependencies": {
     "expo-video": "~3.0.16",
-    "react-native-vlc-media-player": "1.0.102"
+    "react-native-vlc-media-player": "1.0.98"
   }
 }
