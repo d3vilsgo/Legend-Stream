@@ -1,10 +1,8 @@
 import { Feather } from "@expo/vector-icons";
 import { useEvent } from "expo";
-import * as ScreenOrientation from "expo-screen-orientation";
-import React, { useCallback, useEffect, useMemo } from "react";
+import React, { useCallback, useMemo } from "react";
 import {
   BackHandler,
-  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -27,8 +25,6 @@ export function NativeVideoPlayer({
   const colors = useColors();
 
   const effectiveSource = useMemo(() => {
-    // Xtream live streams are normally MPEG-TS. Some panels report m3u8 even
-    // though the HLS endpoint is rejected while the TS endpoint works.
     const uri = /\/live\//i.test(source) && /\.m3u8(?:$|\?)/i.test(source)
       ? source.replace(/\.m3u8(?=$|\?)/i, ".ts")
       : source;
@@ -53,42 +49,17 @@ export function NativeVideoPlayer({
     status: player.status,
   });
 
-  const exitPlayer = useCallback(async () => {
-    if (Platform.OS === "android" && autoFullscreen) {
-      // Restore portrait before returning to the catalogue. Doing this before
-      // changing the React view prevents the catalogue briefly appearing in
-      // landscape during player dismissal.
-      try {
-        await ScreenOrientation.lockAsync(
-          ScreenOrientation.OrientationLock.PORTRAIT_UP,
-        );
-      } catch {
-        // Orientation restoration is best-effort.
-      }
-    }
+  const exitPlayer = useCallback(() => {
     onFullscreenExit?.();
-  }, [autoFullscreen, onFullscreenExit]);
+  }, [onFullscreenExit]);
 
-  useEffect(() => {
-    if (Platform.OS !== "android" || !autoFullscreen) return;
-
-    // This component is already mounted as a dedicated full-screen player
-    // screen. Lock that screen to landscape instead of opening expo-video's
-    // second fullscreen layer, which caused landscape -> portrait -> landscape
-    // flicker on some Android devices.
-    void ScreenOrientation.lockAsync(
-      ScreenOrientation.OrientationLock.LANDSCAPE,
-    ).catch(() => undefined);
-
+  React.useEffect(() => {
     const back = BackHandler.addEventListener("hardwareBackPress", () => {
-      void exitPlayer();
+      exitPlayer();
       return true;
     });
-
-    return () => {
-      back.remove();
-    };
-  }, [autoFullscreen, exitPlayer]);
+    return () => back.remove();
+  }, [exitPlayer]);
 
   return (
     <View style={styles.root}>
@@ -96,9 +67,6 @@ export function NativeVideoPlayer({
         player={player}
         style={styles.video}
         nativeControls
-        // The surrounding player route is already true full-screen. Disable
-        // the nested native fullscreen modal so Android performs only one
-        // orientation transition.
         fullscreenOptions={{ enable: !autoFullscreen }}
         allowsPictureInPicture
         contentFit="contain"
@@ -108,7 +76,7 @@ export function NativeVideoPlayer({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Back"
-          onPress={() => void exitPlayer()}
+          onPress={exitPlayer}
           style={styles.backButton}
         >
           <Feather name="arrow-left" size={24} color="#fff" />
