@@ -20,8 +20,8 @@ export function ContinueWatchingView({ onOpen }: { onOpen: (item: MediaProgress)
 
   return <View>
     <View style={s.header}>
-      <Text style={[s.title, { color: colors.foreground }]}>{t("continueWatching")}</Text>
-      {entries.length ? <Pressable onPress={() => void clearProgress()} style={s.clear}><Text style={{ color: colors.mutedForeground }}>{t("clearAll")}</Text></Pressable> : null}
+      <Text style={[s.title, { color: colors.foreground }]}>{t("recentlyWatched")}</Text>
+      {entries.length ? <Pressable accessibilityLabel={t("remove")} onPress={() => void clearProgress()} style={s.clear}><Feather name="trash-2" size={19} color={colors.mutedForeground} /></Pressable> : null}
     </View>
     {!entries.length ? <Text style={{ color: colors.mutedForeground }}>{t("nothingYet")}</Text> : null}
     <View style={{ gap: 9 }}>
