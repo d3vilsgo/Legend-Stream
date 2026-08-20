@@ -36,9 +36,13 @@ export function usePlayerOrientation(autoLandscape = true) {
         initialOrientation.current = await ScreenOrientation.getOrientationAsync();
         if (autoLandscape) {
           await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
+          // A few older Android 7/8 devices report the new window size late.
+          // Keep the black gate long enough to avoid ever constructing VLC in
+          // the stale portrait dimensions, but do not leave the user stuck if a
+          // vendor ROM delays/blocks the dimension event entirely.
           fallback = setTimeout(() => {
             if (mounted.current) setReady(true);
-          }, 900);
+          }, 1800);
         } else if (mounted.current) {
           setReady(true);
         }
