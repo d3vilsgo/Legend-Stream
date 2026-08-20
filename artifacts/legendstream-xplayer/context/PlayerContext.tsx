@@ -1,19 +1,11 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, {
-  createContext,
-  ReactNode,
-  useContext,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import React, { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
 import {
   Channel,
   EpgProgram,
   loadEpg,
   loadProvider,
   Provider,
-  ProviderForm,
   ProviderType,
 } from "@/lib/iptv";
 
@@ -47,27 +39,33 @@ interface PlayerState {
   activeProviderId?: string;
 }
 
+interface ProviderInput extends Omit<
+  ProviderConfig,
+  "id" | "connectedAt" | "createdAt" | "url" | "channelCount"
+> {
+  url?: string;
+  epgUrl?: string;
+  mac?: string;
+}
+
 interface PlayerContextValue extends PlayerState {
   isHydrating: boolean;
   isSaving: boolean;
   isLoading: boolean;
   error: string | null;
-  connectProvider: (
-    config: Omit<
-      ProviderConfig,
-      "id" | "connectedAt" | "createdAt" | "url" | "channelCount"
-    > & { url?: string; epgUrl?: string; mac?: string },
-  ) => Promise<boolean>;
+  connectProvider: (config: ProviderInput) => Promise<boolean>;
   removeProvider: (providerId?: string) => Promise<void>;
+  disconnectProvider: () => Promise<void>;
   refreshProvider: (providerId?: string) => Promise<void>;
   refreshEpg: (providerId?: string) => Promise<void>;
-  setActiveProvider: (providerId: string) => Promise<void>;
+  setActiveProvider: (providerId: string) => Promise<boolean>;
   toggleFavorite: (channelId: string) => Promise<void>;
   recordWatched: (channelId: string) => Promise<void>;
   clearError: () => void;
 }
 
-const STORAGE_KEY = "@legendstream/player-state-v2";
+const STORAGE_KEY = "@legendstream/player-state-v3";
+const LOGGED_OUT = "__logged_out__";
 const PlayerContext = createContext<PlayerContextValue | null>(null);
 
 const emptyState: PlayerState = {
@@ -100,6 +98,14 @@ const fromProvider = (provider: ProviderConfig): Provider => ({
   loadError: provider.loadError,
 });
 
+const normalizeUrl = (value: string) => value.trim().replace(/\/+$/, "").toLowerCase();
+
+const sameAccount = (a: ProviderConfig, b: Provider) =>
+  a.type === b.type &&
+  normalizeUrl(a.url || a.playlistUrl) === normalizeUrl(b.url) &&
+  (a.username || "") === (b.username || "") &&
+  (a.mac || "").toLowerCase() === (b.mac || "").toLowerCase();
+
 const readState = async (): Promise<PlayerState> => {
   const raw = await AsyncStorage.getItem(STORAGE_KEY);
   if (!raw) return emptyState;
@@ -110,22 +116,22 @@ const readState = async (): Promise<PlayerState> => {
       url: item.url || item.playlistUrl,
       playlistUrl: item.playlistUrl || item.url,
     })) as ProviderConfig[];
+    const activeProviderId = saved.activeProviderId;
+    const provider =
+      activeProviderId === LOGGED_OUT
+        ? null
+        : providers.find((item) => item.id === activeProviderId) ??
+          (saved.provider
+            ? providers.find((item) => item.id === saved.provider?.id) ?? null
+            : providers[0] ?? null);
     return {
-      // Channels and EPG are runtime data. Never rehydrate or persist them
-      // through AsyncStorage; providers are refreshed when requested.
       providers,
+      provider,
       channels: [],
       epg: [],
-      favorites: Array.isArray(saved.favorites)
-        ? saved.favorites.slice(0, 500)
-        : [],
-      history: Array.isArray(saved.history) ? saved.history.slice(0, 12) : [],
-      activeProviderId: saved.activeProviderId,
-      provider:
-        saved.provider ??
-        providers.find((item) => item.id === saved.activeProviderId) ??
-        providers[0] ??
-        null,
+      favorites: Array.isArray(saved.favorites) ? saved.favorites.slice(0, 500) : [],
+      history: Array.isArray(saved.history) ? saved.history.slice(0, 50) : [],
+      activeProviderId: activeProviderId ?? provider?.id,
     };
   } catch {
     return emptyState;
@@ -154,33 +160,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       provider: next.provider,
       activeProviderId: next.activeProviderId,
       favorites: next.favorites.slice(0, 500),
-      history: next.history.slice(0, 12),
+      history: next.history.slice(0, 50),
     };
-    const serialized = JSON.stringify(persisted);
     try {
-      await AsyncStorage.setItem(STORAGE_KEY, serialized);
+      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
     } catch {
-      // A previous app version may have filled web localStorage with channel
-      // data. Replace that oversized snapshot with the compact one. Storage
-      // failures must never prevent the in-memory login or playback flow.
-      try {
-        await AsyncStorage.removeItem(STORAGE_KEY);
-        await AsyncStorage.setItem(STORAGE_KEY, serialized);
-      } catch {
-        // Persistence is best-effort; the current session remains usable.
-      }
+      // Storage is best-effort; keep the in-memory session usable.
     }
   };
 
-  const connectProvider = async (
-    config: Omit<
-      ProviderConfig,
-      "id" | "connectedAt" | "createdAt" | "url" | "channelCount"
-    > & { url?: string; epgUrl?: string; mac?: string },
-  ) => {
+  const connectProvider = async (config: ProviderInput) => {
     setIsLoading(true);
     setError(null);
-    const provider: Provider = {
+    const candidate: Provider = {
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       name: config.name.trim() || "My provider",
       type: config.type,
@@ -193,28 +185,33 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
 
     try {
-      const loaded = await loadProvider(provider);
+      const duplicate = state.providers.find((item) => sameAccount(item, candidate));
+      const providerToLoad = duplicate
+        ? { ...candidate, id: duplicate.id, createdAt: duplicate.createdAt }
+        : candidate;
+      const loaded = await loadProvider(providerToLoad);
       const savedProvider = toProvider({
-        ...provider,
+        ...providerToLoad,
         lastLoadedAt: Date.now(),
         channelCount: loaded.channels.length,
-        epgUrl: provider.epgUrl || loaded.epgUrl,
+        epgUrl: providerToLoad.epgUrl || loaded.epgUrl,
       });
-      const next: PlayerState = {
+      const providers = duplicate
+        ? state.providers.map((item) => (item.id === duplicate.id ? savedProvider : item))
+        : [...state.providers, savedProvider];
+      await persist({
         ...state,
-        providers: [...state.providers, savedProvider],
+        providers,
         provider: savedProvider,
         activeProviderId: savedProvider.id,
-        channels: [...state.channels, ...loaded.channels],
-      };
-      await persist(next);
+        channels: [
+          ...state.channels.filter((channel) => channel.providerId !== savedProvider.id),
+          ...loaded.channels,
+        ],
+      });
       return true;
     } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "The provider could not be loaded.",
-      );
+      setError(caught instanceof Error ? caught.message : "The provider could not be loaded.");
       return false;
     } finally {
       setIsLoading(false);
@@ -229,7 +226,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       const loaded = await loadProvider(fromProvider(existing));
-      const updated = {
+      const updated: ProviderConfig = {
         ...existing,
         lastLoadedAt: Date.now(),
         channelCount: loaded.channels.length,
@@ -239,19 +236,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       await persist({
         ...state,
         provider: state.provider?.id === providerId ? updated : state.provider,
-        providers: state.providers.map((item) =>
-          item.id === providerId ? updated : item,
-        ),
+        providers: state.providers.map((item) => (item.id === providerId ? updated : item)),
         channels: [
           ...state.channels.filter((channel) => channel.providerId !== providerId),
           ...loaded.channels,
         ],
       });
     } catch (caught) {
-      const message =
-        caught instanceof Error
-          ? caught.message
-          : "The provider could not be refreshed.";
+      const message = caught instanceof Error ? caught.message : "The provider could not be refreshed.";
       setError(message);
       await persist({
         ...state,
@@ -264,33 +256,65 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const setActiveProvider = async (providerId: string) => {
+    const existing = state.providers.find((item) => item.id === providerId);
+    if (!existing) return false;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const alreadyLoaded = state.channels.some((channel) => channel.providerId === providerId);
+      if (alreadyLoaded) {
+        await persist({ ...state, provider: existing, activeProviderId: providerId });
+        return true;
+      }
+      const loaded = await loadProvider(fromProvider(existing));
+      const updated: ProviderConfig = {
+        ...existing,
+        lastLoadedAt: Date.now(),
+        channelCount: loaded.channels.length,
+        epgUrl: existing.epgUrl || loaded.epgUrl,
+        loadError: undefined,
+      };
+      await persist({
+        ...state,
+        provider: updated,
+        activeProviderId: providerId,
+        providers: state.providers.map((item) => (item.id === providerId ? updated : item)),
+        channels: [
+          ...state.channels.filter((channel) => channel.providerId !== providerId),
+          ...loaded.channels,
+        ],
+      });
+      return true;
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "The saved provider could not be opened.");
+      return false;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const disconnectProvider = async () => {
+    await persist({ ...state, provider: null, activeProviderId: LOGGED_OUT });
+  };
+
   const removeProvider = async (providerId = state.provider?.id) => {
     if (!providerId) return;
     const providers = state.providers.filter((item) => item.id !== providerId);
-    const channels = state.channels.filter(
-      (channel) => channel.providerId !== providerId,
-    );
-    const favorites = state.favorites.filter((id) =>
-      channels.some((channel) => channel.id === id),
-    );
-    const nextProvider = providers[0] ?? null;
+    const channels = state.channels.filter((channel) => channel.providerId !== providerId);
+    const favorites = state.favorites.filter((id) => channels.some((channel) => channel.id === id));
+    const history = state.history.filter((id) => channels.some((channel) => channel.id === id));
+    const nextProvider = state.provider?.id === providerId ? providers[0] ?? null : state.provider;
     await persist({
       ...state,
       providers,
       provider: nextProvider,
-      activeProviderId: nextProvider?.id,
+      activeProviderId: nextProvider?.id ?? (providers.length ? providers[0].id : LOGGED_OUT),
       channels,
       favorites,
-      epg: state.epg.filter((program) =>
-        channels.some((channel) => channel.id === program.channelId),
-      ),
+      history,
+      epg: state.epg.filter((program) => channels.some((channel) => channel.id === program.channelId)),
     });
-  };
-
-  const setActiveProvider = async (providerId: string) => {
-    const provider = state.providers.find((item) => item.id === providerId);
-    if (!provider) return;
-    await persist({ ...state, provider, activeProviderId: providerId });
   };
 
   const refreshEpg = async (providerId = state.provider?.id) => {
@@ -300,26 +324,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     setError(null);
     try {
-      const providerChannels = state.channels.filter(
-        (channel) => channel.providerId === providerId,
-      );
+      const providerChannels = state.channels.filter((channel) => channel.providerId === providerId);
       const programs = await loadEpg(fromProvider(provider), providerChannels);
       await persist({
         ...state,
         epg: [
           ...state.epg.filter(
-            (program) =>
-              !providerChannels.some(
-                (channel) => channel.id === program.channelId,
-              ),
+            (program) => !providerChannels.some((channel) => channel.id === program.channelId),
           ),
           ...programs,
         ],
       });
     } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "The EPG could not be loaded.",
-      );
+      setError(caught instanceof Error ? caught.message : "The EPG could not be loaded.");
     } finally {
       setIsLoading(false);
     }
@@ -335,10 +352,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const recordWatched = async (channelId: string) =>
     persist({
       ...state,
-      history: [channelId, ...state.history.filter((id) => id !== channelId)].slice(
-        0,
-        12,
-      ),
+      history: [channelId, ...state.history.filter((id) => id !== channelId)].slice(0, 50),
     });
 
   const value = useMemo<PlayerContextValue>(
@@ -350,6 +364,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       error,
       connectProvider,
       removeProvider,
+      disconnectProvider,
       refreshProvider,
       refreshEpg,
       setActiveProvider,
@@ -360,9 +375,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [state, isHydrating, isLoading, error],
   );
 
-  return (
-    <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>
-  );
+  return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>;
 }
 
 export function usePlayer() {
