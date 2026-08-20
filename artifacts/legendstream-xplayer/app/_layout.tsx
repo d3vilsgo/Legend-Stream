@@ -14,11 +14,8 @@ import {
 import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { PlayerProvider } from "@/context/PlayerContext";
+import { I18nProvider } from "@/context/I18nContext";
 
-// React Native/Hermes versions used by some Android builds expose AbortController
-// but not the newer AbortSignal.timeout() static helper. IPTV networking uses that
-// helper for request timeouts, so provide a small native-safe polyfill before any
-// provider request can run.
 const abortSignalCtor = globalThis.AbortSignal as typeof AbortSignal & {
   timeout?: (milliseconds: number) => AbortSignal;
 };
@@ -30,8 +27,6 @@ if (abortSignalCtor && typeof abortSignalCtor.timeout !== "function") {
   };
 }
 
-// Keep the native splash visible briefly while startup assets are prepared,
-// but never allow a font-loading problem to strand the app on the splash screen.
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 const queryClient = new QueryClient();
@@ -54,45 +49,28 @@ export default function RootLayout() {
 
   useEffect(() => {
     let cancelled = false;
-
     const hideSplash = async () => {
-      try {
-        await SplashScreen.hideAsync();
-      } catch {
-        // The splash may already have been hidden by the native lifecycle.
-      }
+      try { await SplashScreen.hideAsync(); } catch { /* already hidden */ }
     };
-
     if (fontsLoaded || fontError) {
       void hideSplash();
-      return () => {
-        cancelled = true;
-      };
+      return () => { cancelled = true; };
     }
-
-    // Safety valve for real devices: startup must remain usable even if
-    // a bundled font loader never settles on a particular Android build.
-    const timer = setTimeout(() => {
-      if (!cancelled) void hideSplash();
-    }, 2000);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
+    const timer = setTimeout(() => { if (!cancelled) void hideSplash(); }, 2000);
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [fontsLoaded, fontError]);
 
-  // Do not block the React tree on font loading. React Native will render with
-  // its fallback font until Inter is ready, avoiding an infinite native splash.
   return (
     <SafeAreaProvider>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
           <GestureHandlerRootView style={{ flex: 1 }}>
             <KeyboardProvider>
-              <PlayerProvider>
-                <RootLayoutNav />
-              </PlayerProvider>
+              <I18nProvider>
+                <PlayerProvider>
+                  <RootLayoutNav />
+                </PlayerProvider>
+              </I18nProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>
         </QueryClientProvider>
