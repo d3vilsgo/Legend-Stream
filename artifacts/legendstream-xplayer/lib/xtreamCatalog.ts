@@ -107,6 +107,21 @@ type XtreamCredentials = {
   password: string;
 };
 
+export type EpisodePlaybackItem = {
+  id: string;
+  title: string;
+  url: string;
+  season: string;
+  episodeNumber?: number;
+};
+
+export type EpisodePlaybackQueue = {
+  items: EpisodePlaybackItem[];
+  index: number;
+};
+
+const episodeQueueByUrl = new Map<string, EpisodePlaybackQueue>();
+
 const encodeCredentials = (credentials: XtreamCredentials) => ({
   baseUrl: normalizeXtreamBaseUrl(credentials.baseUrl),
   username: credentials.username.trim(),
@@ -226,14 +241,38 @@ export async function getSeries(
   return Array.isArray(data) ? (data as XtreamSeriesItem[]) : [];
 }
 
+function registerEpisodeQueue(credentials: XtreamCredentials, info: XtreamSeriesInfo) {
+  const items: EpisodePlaybackItem[] = [];
+  Object.entries(info.episodes ?? {}).forEach(([season, episodes]) => {
+    episodes.forEach((episode) => {
+      items.push({
+        id: String(episode.id),
+        title: episode.title || `S${season} · E${episode.episode_num ?? items.length + 1}`,
+        season,
+        episodeNumber: episode.episode_num,
+        url: buildEpisodeStreamUrl(credentials, episode),
+      });
+    });
+  });
+  items.forEach((item, index) => {
+    episodeQueueByUrl.set(item.url, { items, index });
+  });
+}
+
+export function getEpisodePlaybackQueue(source: string): EpisodePlaybackQueue | undefined {
+  return episodeQueueByUrl.get(source);
+}
+
 export async function getSeriesInfo(
   credentials: XtreamCredentials,
   seriesId: string | number,
 ) {
-  const data = await requestXtream(credentials, "get_series_info", {
+  const data = (await requestXtream(credentials, "get_series_info", {
     series_id: seriesId,
-  });
-  return (data ?? {}) as XtreamSeriesInfo;
+  })) as XtreamSeriesInfo;
+  const info = (data ?? {}) as XtreamSeriesInfo;
+  registerEpisodeQueue(credentials, info);
+  return info;
 }
 
 export function buildVodStreamUrl(
