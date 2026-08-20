@@ -87,12 +87,14 @@ export function usePlayerOrientation(autoLandscape = true) {
     }
   }, []);
 
+  const beginExit = useCallback(() => setExiting(true), []);
+
   return {
     ready,
     exiting,
     landscapeLayout,
     rotate,
-    beginExit: () => setExiting(true),
+    beginExit,
     restore,
   };
 }
