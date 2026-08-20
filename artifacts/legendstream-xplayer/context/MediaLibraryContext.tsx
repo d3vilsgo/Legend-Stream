@@ -1,5 +1,14 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
-import React, { createContext, ReactNode, useContext, useEffect, useMemo, useState } from "react";
+import React, {
+  createContext,
+  ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 export type MediaKind = "movie" | "episode";
 export type MediaProgress = {
@@ -28,6 +37,7 @@ const makeId = (source: string) => `media-${Math.abs([...source].reduce((n, c) =
 
 export function MediaLibraryProvider({ children }: { children: ReactNode }) {
   const [entries, setEntries] = useState<MediaProgress[]>([]);
+  const entriesRef = useRef<MediaProgress[]>([]);
   const [loaded, setLoaded] = useState(false);
 
   useEffect(() => {
@@ -35,37 +45,71 @@ export function MediaLibraryProvider({ children }: { children: ReactNode }) {
       .then((raw) => {
         if (!raw) return;
         const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) setEntries(parsed.slice(0, 100));
+        if (Array.isArray(parsed)) {
+          const next = parsed.slice(0, 100) as MediaProgress[];
+          entriesRef.current = next;
+          setEntries(next);
+        }
       })
       .catch(() => undefined)
       .finally(() => setLoaded(true));
   }, []);
 
-  const persist = async (next: MediaProgress[]) => {
-    setEntries(next);
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(next.slice(0, 100))).catch(() => undefined);
-  };
+  const persist = useCallback(async (next: MediaProgress[]) => {
+    const trimmed = next.slice(0, 100);
+    entriesRef.current = trimmed;
+    setEntries(trimmed);
+    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed)).catch(() => undefined);
+  }, []);
 
-  const saveProgress = async (entry: Omit<MediaProgress, "id" | "updatedAt">) => {
+  const getProgress = useCallback(
+    (source: string) => entriesRef.current.find((item) => item.source === source),
+    [],
+  );
+
+  const saveProgress = useCallback(async (entry: Omit<MediaProgress, "id" | "updatedAt">) => {
     if (!Number.isFinite(entry.position) || entry.position < 0) return;
-    const nextEntry: MediaProgress = { ...entry, id: makeId(entry.source), updatedAt: Date.now() };
-    const next = [nextEntry, ...entries.filter((item) => item.source !== entry.source)]
+
+    const current = entriesRef.current;
+    const previous = current.find((item) => item.source === entry.source);
+    const now = Date.now();
+
+    // Avoid redundant AsyncStorage writes if two lifecycle events arrive together.
+    if (
+      previous &&
+      Math.abs(previous.position - entry.position) < 1.5 &&
+      Math.abs(previous.duration - entry.duration) < 1.5 &&
+      now - previous.updatedAt < 8_000
+    ) {
+      return;
+    }
+
+    const nextEntry: MediaProgress = {
+      ...entry,
+      id: makeId(entry.source),
+      updatedAt: now,
+    };
+    const next = [nextEntry, ...current.filter((item) => item.source !== entry.source)]
       .filter((item) => item.duration <= 0 || item.position < Math.max(0, item.duration - 30))
       .slice(0, 100);
     await persist(next);
-  };
+  }, [persist]);
 
-  const removeProgress = async (source: string) => persist(entries.filter((item) => item.source !== source));
-  const clearProgress = async () => persist([]);
+  const removeProgress = useCallback(
+    async (source: string) => persist(entriesRef.current.filter((item) => item.source !== source)),
+    [persist],
+  );
+
+  const clearProgress = useCallback(async () => persist([]), [persist]);
 
   const value = useMemo<MediaLibraryValue>(() => ({
     entries,
     loaded,
-    getProgress: (source) => entries.find((item) => item.source === source),
+    getProgress,
     saveProgress,
     removeProgress,
     clearProgress,
-  }), [entries, loaded]);
+  }), [clearProgress, entries, getProgress, loaded, removeProgress, saveProgress]);
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
