@@ -65,6 +65,7 @@ export function UnifiedVideoPlayer({
   const [seekWidth, setSeekWidth] = useState(1);
   const [trackVersion, setTrackVersion] = useState(0);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const mountedSource = useRef(currentSource);
 
   const mediaKind = useMemo<"live" | "movie" | "episode" | "download">(() => {
     if (/^file:/i.test(currentSource)) return "download";
@@ -132,6 +133,8 @@ export function UnifiedVideoPlayer({
   }, [player]);
 
   useEffect(() => {
+    if (mountedSource.current === currentSource) return;
+    mountedSource.current = currentSource;
     const anyPlayer = player as any;
     const load = async () => {
       try {
@@ -353,6 +356,7 @@ export function UnifiedVideoPlayer({
               onPress={(e) => seekTo(e.nativeEvent.locationX)}
               style={styles.seekTrack}
             >
+              <View style={styles.seekBase} />
               <View style={[styles.seekFill, { width: `${progress * 100}%` }]} />
               <View style={[styles.seekThumb, { left: `${progress * 100}%` }]} />
             </Pressable>
@@ -424,8 +428,8 @@ const styles = StyleSheet.create({
   seekLabel: { position: "absolute", color: "#fff", fontSize: 11, fontWeight: "800" },
   bottomBar: { position: "absolute", left: 14, right: 14, bottom: 8, paddingTop: 8 },
   seekTrack: { height: 22, justifyContent: "center" },
+  seekBase: { position: "absolute", left: 0, right: 0, height: 3, backgroundColor: "rgba(255,255,255,0.34)" },
   seekFill: { position: "absolute", left: 0, height: 3, backgroundColor: "#fff" },
-  seekTrack: { height: 22, justifyContent: "center", backgroundColor: "transparent", borderTopWidth: 0 },
   seekThumb: { position: "absolute", marginLeft: -6, width: 12, height: 12, borderRadius: 6, backgroundColor: "#fff" },
   timeRow: { flexDirection: "row", gap: 7, alignItems: "center", minHeight: 24 },
   timeText: { color: "#fff", fontSize: 13, fontWeight: "700" },
