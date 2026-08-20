@@ -1,5 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { useEvent } from "expo";
+import * as ScreenOrientation from "expo-screen-orientation";
 import React, { useCallback, useMemo, useState } from "react";
 import {
   BackHandler,
@@ -33,6 +34,7 @@ export function NativeVideoPlayer({
   const { t } = useI18n();
   const [fit, setFit] = useState<FitMode>("contain");
   const [downloadState, setDownloadState] = useState<DownloadState>("idle");
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   const effectiveSource = useMemo(() => {
     const uri = /\/live\//i.test(source) && /\.m3u8(?:$|\?)/i.test(source)
@@ -75,18 +77,35 @@ export function NativeVideoPlayer({
     setFit((current) => current === "contain" ? "cover" : current === "cover" ? "fill" : "contain");
   };
 
-  const fitLabel = fit === "contain" ? t("fit") : fit === "cover" ? t("crop") : t("stretch");
+  const rotateScreen = async () => {
+    try {
+      const orientation = await ScreenOrientation.getOrientationAsync();
+      const landscape =
+        orientation === ScreenOrientation.Orientation.LANDSCAPE_LEFT ||
+        orientation === ScreenOrientation.Orientation.LANDSCAPE_RIGHT;
+      await ScreenOrientation.lockAsync(
+        landscape
+          ? ScreenOrientation.OrientationLock.PORTRAIT_UP
+          : ScreenOrientation.OrientationLock.LANDSCAPE_RIGHT,
+      );
+    } catch {
+      // Manual orientation is best-effort on vendor-customized Android builds.
+    }
+  };
 
   const startDownload = async () => {
     if (!allowDownload || downloadState === "downloading") return;
     setDownloadState("downloading");
+    setDownloadError(null);
     try {
       const uri = typeof effectiveSource === "object" ? effectiveSource.uri : source;
       if (!uri) throw new Error("Missing media URL");
       await downloadMedia(uri, title);
       setDownloadState("done");
     } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "DOWNLOAD_FAILED";
       console.warn("LegendStream download failed", caught);
+      setDownloadError(message);
       setDownloadState("error");
     }
   };
@@ -104,12 +123,12 @@ export function NativeVideoPlayer({
 
       {onFullscreenExit ? (
         <Pressable accessibilityRole="button" accessibilityLabel={t("back")} onPress={exitPlayer} style={styles.backButton}>
-          <Feather name="arrow-left" size={24} color="#fff" />
+          <Feather name="arrow-left" size={26} color="#fff" />
         </Pressable>
       ) : null}
 
-      {/* Native player already exposes CC/subtitle and audio menus. Keep only
-          LegendStream-specific actions beside those controls. */}
+      {/* Native controls already provide CC/subtitle and the media settings gear.
+          Keep only actions that the native Android player does not expose. */}
       <View style={styles.utilityControls}>
         {allowDownload ? (
           <Pressable
@@ -121,7 +140,7 @@ export function NativeVideoPlayer({
           >
             <Feather
               name={downloadState === "done" ? "check-circle" : downloadState === "error" ? "alert-circle" : "download"}
-              size={22}
+              size={23}
               color="#fff"
             />
           </Pressable>
@@ -129,11 +148,20 @@ export function NativeVideoPlayer({
 
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`${t("screen")} · ${fitLabel}`}
+          accessibilityLabel={t("screen")}
           onPress={cycleFit}
           style={styles.utilityButton}
         >
-          <Feather name={fit === "contain" ? "maximize-2" : fit === "cover" ? "crop" : "maximize"} size={22} color="#fff" />
+          <Feather name={fit === "contain" ? "maximize-2" : fit === "cover" ? "crop" : "maximize"} size={23} color="#fff" />
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Rotate screen"
+          onPress={() => void rotateScreen()}
+          style={styles.utilityButton}
+        >
+          <Feather name="rotate-cw" size={23} color="#fff" />
         </Pressable>
       </View>
 
@@ -142,7 +170,7 @@ export function NativeVideoPlayer({
       ) : downloadState === "done" ? (
         <View pointerEvents="none" style={styles.downloadBadge}><Text style={styles.downloadBadgeText}>{t("downloaded")}</Text></View>
       ) : downloadState === "error" ? (
-        <View pointerEvents="none" style={styles.downloadBadge}><Text style={styles.downloadBadgeText}>{t("downloadFailed")}</Text></View>
+        <View pointerEvents="none" style={styles.downloadBadge}><Text numberOfLines={2} style={styles.downloadBadgeText}>{t("downloadFailed")}{downloadError ? ` · ${downloadError}` : ""}</Text></View>
       ) : null}
 
       {status === "loading" ? (
@@ -166,9 +194,9 @@ const styles = StyleSheet.create({
   root: { width: "100%", height: "100%", backgroundColor: "#05070d" },
   video: { width: "100%", height: "100%", backgroundColor: "#05070d" },
   backButton: { position: "absolute", top: 18, left: 18, width: 46, height: 46, borderRadius: 23, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.58)" },
-  utilityControls: { position: "absolute", right: 142, bottom: 18, flexDirection: "row", gap: 10 },
-  utilityButton: { width: 44, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.60)" },
-  downloadBadge: { position: "absolute", right: 18, top: 18, backgroundColor: "rgba(0,0,0,0.68)", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
+  utilityControls: { position: "absolute", right: 142, bottom: 18, flexDirection: "row", gap: 8 },
+  utilityButton: { width: 42, height: 42, borderRadius: 21, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.54)" },
+  downloadBadge: { position: "absolute", right: 18, top: 18, maxWidth: 420, backgroundColor: "rgba(0,0,0,0.72)", borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
   downloadBadgeText: { color: "#fff", fontSize: 12, fontWeight: "700" },
   overlay: { ...StyleSheet.absoluteFillObject, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(5,7,13,0.30)" },
   statusText: { fontSize: 14, fontWeight: "600" },
