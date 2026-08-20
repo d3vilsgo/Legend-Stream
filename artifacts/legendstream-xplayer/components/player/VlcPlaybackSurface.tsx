@@ -86,10 +86,20 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
 });
 
 /**
- * Keeps high-frequency UI state (time text, progress bar, chrome visibility)
- * from reconciling the native VLC view unless an actual playback prop changes.
+ * Only playback-affecting props are compared. Callback identities may change as
+ * the React chrome updates, but those updates must never reconstruct/reconcile
+ * the native VLC surface. A source/codec/track/fit/pause change still updates it.
  */
-export const VlcPlaybackSurface = memo(VlcPlaybackSurfaceImpl);
+export const VlcPlaybackSurface = memo(
+  VlcPlaybackSurfaceImpl,
+  (previous, next) =>
+    previous.uri === next.uri &&
+    previous.paused === next.paused &&
+    previous.fit === next.fit &&
+    previous.codecMode === next.codecMode &&
+    previous.audioTrack === next.audioTrack &&
+    previous.textTrack === next.textTrack,
+);
 
 const styles = StyleSheet.create({
   surface: {
