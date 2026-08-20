@@ -1,7 +1,15 @@
+import { Feather } from "@expo/vector-icons";
 import { useEvent } from "expo";
 import * as ScreenOrientation from "expo-screen-orientation";
-import React, { useEffect, useMemo, useRef } from "react";
-import { Platform, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useEffect, useMemo } from "react";
+import {
+  BackHandler,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+} from "react-native";
 import { VideoView, useVideoPlayer, type VideoSource } from "expo-video";
 import { useColors } from "@/hooks/useColors";
 
@@ -17,11 +25,10 @@ export function NativeVideoPlayer({
   onFullscreenExit?: () => void;
 }) {
   const colors = useColors();
-  const videoRef = useRef<VideoView>(null);
 
   const effectiveSource = useMemo(() => {
     // Xtream live streams are normally MPEG-TS. Some panels report m3u8 even
-    // though the HLS endpoint is rejected (403) while the TS endpoint works.
+    // though the HLS endpoint is rejected while the TS endpoint works.
     const uri = /\/live\//i.test(source) && /\.m3u8(?:$|\?)/i.test(source)
       ? source.replace(/\.m3u8(?=$|\?)/i, ".ts")
       : source;
@@ -41,46 +48,72 @@ export function NativeVideoPlayer({
     instance.staysActiveInBackground = false;
     instance.play();
   });
+
   const { status, error } = useEvent(player, "statusChange", {
     status: player.status,
   });
 
-  useEffect(() => {
-    if (Platform.OS !== "android") return;
-    void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-    return () => {
-      void ScreenOrientation.unlockAsync();
-    };
-  }, []);
+  const exitPlayer = useCallback(async () => {
+    if (Platform.OS === "android" && autoFullscreen) {
+      // Restore portrait before returning to the catalogue. Doing this before
+      // changing the React view prevents the catalogue briefly appearing in
+      // landscape during player dismissal.
+      try {
+        await ScreenOrientation.lockAsync(
+          ScreenOrientation.OrientationLock.PORTRAIT_UP,
+        );
+      } catch {
+        // Orientation restoration is best-effort.
+      }
+    }
+    onFullscreenExit?.();
+  }, [autoFullscreen, onFullscreenExit]);
 
   useEffect(() => {
-    if (!autoFullscreen) return;
-    const timer = setTimeout(() => {
-      void videoRef.current?.enterFullscreen().catch(() => undefined);
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [autoFullscreen]);
+    if (Platform.OS !== "android" || !autoFullscreen) return;
+
+    // This component is already mounted as a dedicated full-screen player
+    // screen. Lock that screen to landscape instead of opening expo-video's
+    // second fullscreen layer, which caused landscape -> portrait -> landscape
+    // flicker on some Android devices.
+    void ScreenOrientation.lockAsync(
+      ScreenOrientation.OrientationLock.LANDSCAPE,
+    ).catch(() => undefined);
+
+    const back = BackHandler.addEventListener("hardwareBackPress", () => {
+      void exitPlayer();
+      return true;
+    });
+
+    return () => {
+      back.remove();
+    };
+  }, [autoFullscreen, exitPlayer]);
 
   return (
     <View style={styles.root}>
       <VideoView
-        ref={videoRef}
         player={player}
         style={styles.video}
         nativeControls
-        fullscreenOptions={{ enable: true }}
+        // The surrounding player route is already true full-screen. Disable
+        // the nested native fullscreen modal so Android performs only one
+        // orientation transition.
+        fullscreenOptions={{ enable: !autoFullscreen }}
         allowsPictureInPicture
         contentFit="contain"
-        onFullscreenEnter={() => {
-          if (Platform.OS === "android") {
-            void ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-          }
-        }}
-        onFullscreenExit={() => {
-          if (Platform.OS === "android") void ScreenOrientation.unlockAsync();
-          onFullscreenExit?.();
-        }}
       />
+
+      {onFullscreenExit ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Back"
+          onPress={() => void exitPlayer()}
+          style={styles.backButton}
+        >
+          <Feather name="arrow-left" size={24} color="#fff" />
+        </Pressable>
+      ) : null}
 
       {status === "loading" ? (
         <View pointerEvents="none" style={styles.overlay}>
@@ -106,6 +139,17 @@ export function NativeVideoPlayer({
 const styles = StyleSheet.create({
   root: { width: "100%", height: "100%", backgroundColor: "#05070d" },
   video: { width: "100%", height: "100%", backgroundColor: "#05070d" },
+  backButton: {
+    position: "absolute",
+    top: 18,
+    left: 18,
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "rgba(0,0,0,0.52)",
+  },
   overlay: {
     ...StyleSheet.absoluteFillObject,
     alignItems: "center",
