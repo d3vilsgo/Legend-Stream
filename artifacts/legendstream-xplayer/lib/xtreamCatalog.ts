@@ -120,7 +120,21 @@ export type EpisodePlaybackQueue = {
   index: number;
 };
 
+export type VodPlaybackItem = {
+  id: string;
+  title: string;
+  url: string;
+  categoryId?: string;
+  genre?: string;
+};
+
+export type VodPlaybackQueue = {
+  items: VodPlaybackItem[];
+  index: number;
+};
+
 const episodeQueueByUrl = new Map<string, EpisodePlaybackQueue>();
+const vodQueueByUrl = new Map<string, VodPlaybackQueue>();
 
 const encodeCredentials = (credentials: XtreamCredentials) => ({
   baseUrl: normalizeXtreamBaseUrl(credentials.baseUrl),
@@ -206,6 +220,23 @@ export async function getVodCategories(credentials: XtreamCredentials) {
   return Array.isArray(data) ? (data as XtreamCategory[]) : [];
 }
 
+function registerVodQueue(credentials: XtreamCredentials, rows: XtreamVodItem[]) {
+  const items: VodPlaybackItem[] = rows.map((item) => ({
+    id: String(item.stream_id),
+    title: item.name,
+    categoryId: item.category_id === undefined ? undefined : String(item.category_id),
+    genre: item.genre,
+    url: buildVodStreamUrl(credentials, item),
+  }));
+  items.forEach((item, index) => {
+    vodQueueByUrl.set(item.url, { items, index });
+  });
+}
+
+export function getVodPlaybackQueue(source: string): VodPlaybackQueue | undefined {
+  return vodQueueByUrl.get(source);
+}
+
 export async function getVodStreams(
   credentials: XtreamCredentials,
   categoryId?: string | number,
@@ -213,7 +244,9 @@ export async function getVodStreams(
   const data = await requestXtream(credentials, "get_vod_streams", {
     category_id: categoryId,
   });
-  return Array.isArray(data) ? (data as XtreamVodItem[]) : [];
+  const rows = Array.isArray(data) ? (data as XtreamVodItem[]) : [];
+  registerVodQueue(credentials, rows);
+  return rows;
 }
 
 export async function getVodInfo(
