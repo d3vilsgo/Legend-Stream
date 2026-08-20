@@ -65,6 +65,7 @@ interface PlayerContextValue extends PlayerState {
 }
 
 const STORAGE_KEY = "@legendstream/player-state-v3";
+const LEGACY_STORAGE_KEY = "@legendstream/player-state-v2";
 const LOGGED_OUT = "__logged_out__";
 const PlayerContext = createContext<PlayerContextValue | null>(null);
 
@@ -107,7 +108,13 @@ const sameAccount = (a: ProviderConfig, b: Provider) =>
   (a.mac || "").toLowerCase() === (b.mac || "").toLowerCase();
 
 const readState = async (): Promise<PlayerState> => {
-  const raw = await AsyncStorage.getItem(STORAGE_KEY);
+  let raw = await AsyncStorage.getItem(STORAGE_KEY);
+  if (!raw) {
+    raw = await AsyncStorage.getItem(LEGACY_STORAGE_KEY);
+    if (raw) {
+      try { await AsyncStorage.setItem(STORAGE_KEY, raw); } catch { /* best-effort migration */ }
+    }
+  }
   if (!raw) return emptyState;
   try {
     const saved = JSON.parse(raw) as Partial<PlayerState>;
