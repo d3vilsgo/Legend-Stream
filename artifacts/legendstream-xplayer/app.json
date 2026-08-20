@@ -48,12 +48,6 @@
           "initialOrientation": "DEFAULT"
         }
       ],
-      [
-        "expo-video",
-        {
-          "supportsPictureInPicture": true
-        }
-      ],
       "expo-font",
       "expo-web-browser"
     ],
