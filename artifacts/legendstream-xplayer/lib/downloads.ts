@@ -33,6 +33,46 @@ export type DownloadedMedia = {
   createdAt: number;
 };
 
+export type ActiveDownload = {
+  id: string;
+  title: string;
+  subtitle?: string;
+  kind: "movie" | "episode";
+  sourceUrl: string;
+  progress: number;
+  bytesWritten: number;
+  bytesExpected: number;
+  status: "downloading" | "retrying" | "failed";
+  error?: string;
+  startedAt: number;
+};
+
+type ActiveListener = (items: ActiveDownload[]) => void;
+const activeDownloads = new Map<string, ActiveDownload>();
+const activeListeners = new Set<ActiveListener>();
+
+const emitActive = () => {
+  const items = Array.from(activeDownloads.values()).sort((a, b) => b.startedAt - a.startedAt);
+  activeListeners.forEach((listener) => listener(items));
+};
+
+export function getActiveDownloads(): ActiveDownload[] {
+  return Array.from(activeDownloads.values()).sort((a, b) => b.startedAt - a.startedAt);
+}
+
+export function subscribeActiveDownloads(listener: ActiveListener) {
+  activeListeners.add(listener);
+  listener(getActiveDownloads());
+  return () => activeListeners.delete(listener);
+}
+
+const setActive = (id: string, patch: Partial<ActiveDownload>) => {
+  const current = activeDownloads.get(id);
+  if (!current) return;
+  activeDownloads.set(id, { ...current, ...patch });
+  emitActive();
+};
+
 const headersToTry: Record<string, string>[] = [
   { Accept: "*/*", "User-Agent": "ExoPlayer/LegendStream-XPlayer" },
   { Accept: "*/*", "User-Agent": "VLC/3.0.21 LibVLC/3.0.21" },
@@ -84,7 +124,12 @@ export async function clearDownloads(): Promise<void> {
 export async function downloadMedia(
   url: string,
   title: string,
-  meta: { subtitle?: string; kind?: "movie" | "episode"; providerId?: string } = {},
+  meta: {
+    subtitle?: string;
+    kind?: "movie" | "episode";
+    providerId?: string;
+    onProgress?: (progress: number, bytesWritten: number, bytesExpected: number) => void;
+  } = {},
 ): Promise<DownloadedMedia> {
   if (/\.m3u8(?:$|\?)/i.test(url)) throw new Error("HLS_PLAYLIST_DOWNLOAD_UNSUPPORTED");
   if (!FileSystem.documentDirectory) throw new Error("DOWNLOAD_DIRECTORY_UNAVAILABLE");
@@ -96,14 +141,43 @@ export async function downloadMedia(
   const name = `${sanitize(title)}.${extension}`;
   const unique = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   const destination = `${directory}${unique}-${sanitize(title)}.${extension}`;
+  const kind = meta.kind ?? "movie";
+
+  activeDownloads.set(unique, {
+    id: unique,
+    title,
+    subtitle: meta.subtitle,
+    kind,
+    sourceUrl: url,
+    progress: 0,
+    bytesWritten: 0,
+    bytesExpected: 0,
+    status: "downloading",
+    startedAt: Date.now(),
+  });
+  emitActive();
 
   let lastStatus: number | null = null;
   let lastError: unknown = null;
 
-  for (const headers of headersToTry) {
+  for (let attempt = 0; attempt < headersToTry.length; attempt += 1) {
+    const headers = headersToTry[attempt];
     try {
+      if (attempt > 0) setActive(unique, { status: "retrying", progress: 0, bytesWritten: 0, bytesExpected: 0 });
       await FileSystem.deleteAsync(destination, { idempotent: true }).catch(() => undefined);
-      const result = await FileSystem.createDownloadResumable(url, destination, { headers }).downloadAsync();
+      const resumable = FileSystem.createDownloadResumable(
+        url,
+        destination,
+        { headers },
+        (data) => {
+          const expected = Number(data.totalBytesExpectedToWrite || 0);
+          const written = Number(data.totalBytesWritten || 0);
+          const progress = expected > 0 ? Math.max(0, Math.min(1, written / expected)) : 0;
+          setActive(unique, { status: "downloading", progress, bytesWritten: written, bytesExpected: expected });
+          meta.onProgress?.(progress, written, expected);
+        },
+      );
+      const result = await resumable.downloadAsync();
       if (!result) throw new Error("DOWNLOAD_NO_RESPONSE");
       lastStatus = result.status;
       if (result.status < 200 || result.status >= 300) continue;
@@ -117,14 +191,17 @@ export async function downloadMedia(
         name,
         title,
         subtitle: meta.subtitle,
-        kind: meta.kind ?? "movie",
+        kind,
         providerId: meta.providerId,
         sourceUrl: url,
         size: info.size,
         createdAt: Date.now(),
       };
       const current = await readIndex();
-      await writeIndex([item, ...current]);
+      await writeIndex([item, ...current.filter((existing) => existing.sourceUrl !== url)]);
+      activeDownloads.delete(unique);
+      emitActive();
+      meta.onProgress?.(1, info.size, info.size);
       return item;
     } catch (error) {
       lastError = error;
@@ -132,7 +209,15 @@ export async function downloadMedia(
   }
 
   await FileSystem.deleteAsync(destination, { idempotent: true }).catch(() => undefined);
-  if (lastStatus) throw new Error(`DOWNLOAD_HTTP_${lastStatus}`);
-  if (lastError instanceof Error) throw lastError;
-  throw new Error("DOWNLOAD_FAILED");
+  const message = lastStatus
+    ? `DOWNLOAD_HTTP_${lastStatus}`
+    : lastError instanceof Error
+      ? lastError.message
+      : "DOWNLOAD_FAILED";
+  setActive(unique, { status: "failed", error: message });
+  setTimeout(() => {
+    activeDownloads.delete(unique);
+    emitActive();
+  }, 15_000);
+  throw new Error(message);
 }
