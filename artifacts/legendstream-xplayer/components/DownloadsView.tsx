@@ -34,7 +34,7 @@ export function DownloadsView({ onOpen }: { onOpen: (item: DownloadedMedia) => v
   return <View>
     <View style={s.header}>
       <View>
-        <Text style={[s.title, { color: colors.foreground }]}>{t("downloads")}</Text>
+        <Text style={[s.title, { color: colors.foreground }]}>{t("download")}</Text>
         <Text style={{ color: colors.mutedForeground }}>{loading ? t("loading") : `${items.length} ${t("downloaded").toLowerCase()}`}</Text>
       </View>
       <Pressable onPress={() => void reload()} style={[s.iconButton, { borderColor: colors.border, backgroundColor: colors.card }]}>
@@ -44,7 +44,7 @@ export function DownloadsView({ onOpen }: { onOpen: (item: DownloadedMedia) => v
 
     {!loading && !items.length ? <View style={s.empty}>
       <Feather name="download-cloud" size={42} color={colors.mutedForeground} />
-      <Text style={{ color: colors.mutedForeground, textAlign: "center" }}>{t("noDownloads")}</Text>
+      <Text style={{ color: colors.mutedForeground, textAlign: "center" }}>{t("nothingYet")}</Text>
     </View> : null}
 
     <View style={{ gap: 9 }}>
