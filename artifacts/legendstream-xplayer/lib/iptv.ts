@@ -88,8 +88,8 @@ export function parseM3U(
     .map((line) => line.trim())
     .filter(Boolean);
   const channels: Channel[] = [];
-  let pending: { attributes: Record<string, string>; name: string } | null =
-    null;
+  let pending: { attributes: Record<string, string>; name: string; group?: string } | null = null;
+  let nextGroup: string | undefined;
   let epgUrl: string | undefined;
 
   for (const line of lines) {
@@ -100,17 +100,30 @@ export function parseM3U(
     }
     if (line.startsWith("#EXTINF")) {
       const comma = line.indexOf(",");
-      const label =
-        comma >= 0 ? line.slice(comma + 1).trim() : "Untitled channel";
+      const label = comma >= 0 ? line.slice(comma + 1).trim() : "Untitled channel";
       pending = {
         attributes: parseAttributes(line),
         name: decodeEntities(label) || "Untitled channel",
+        group: nextGroup,
       };
+      nextGroup = undefined;
+      continue;
+    }
+    if (/^#EXTGRP:/i.test(line)) {
+      const group = decodeEntities(line.slice(line.indexOf(":") + 1).trim());
+      if (pending) pending.group = group || pending.group;
+      else nextGroup = group || nextGroup;
       continue;
     }
     if (line.startsWith("#") || !pending) continue;
 
-    const category = pending.attributes["group-title"] || "Uncategorized";
+    const category =
+      pending.attributes["group-title"] ||
+      pending.attributes["group"] ||
+      pending.attributes["category"] ||
+      pending.attributes["tvg-group"] ||
+      pending.group ||
+      "Uncategorized";
     const streamId = pending.attributes["tvg-id"] || pending.name;
     channels.push({
       id: makeId(providerId, channels.length, streamId),
@@ -282,16 +295,8 @@ async function loadXtream(provider: Provider): Promise<ProviderLoadResult> {
   const baseUrl = cleanBaseUrl(provider.url);
   const payload =
     Platform.OS === "web"
-      ? await loadXtreamInBrowser(
-          baseUrl,
-          provider.username,
-          provider.password,
-        )
-      : await loadXtreamDirect(
-          baseUrl,
-          provider.username,
-          provider.password,
-        );
+      ? await loadXtreamInBrowser(baseUrl, provider.username, provider.password)
+      : await loadXtreamDirect(baseUrl, provider.username, provider.password);
   const auth = payload.auth;
   if (
     auth?.user_info?.auth === 0 ||
@@ -325,12 +330,9 @@ async function loadXtream(provider: Provider): Promise<ProviderLoadResult> {
       id: makeId(provider.id, index, streamId),
       providerId: provider.id,
       name: stream.name || `Channel ${index + 1}`,
-      streamUrl: `${baseUrl}/live/${encodeURIComponent(
-        provider.username!,
-      )}/${encodeURIComponent(provider.password!)}/${streamId}.${extension}`,
+      streamUrl: `${baseUrl}/live/${encodeURIComponent(provider.username!)}/${encodeURIComponent(provider.password!)}/${streamId}.${extension}`,
       logoUrl: stream.stream_icon || undefined,
-      category:
-        categoryMap.get(String(stream.category_id)) || "Live TV",
+      category: categoryMap.get(String(stream.category_id)) || "Live TV",
       tvgId: stream.epg_channel_id || undefined,
       streamType: "xtream",
     };
@@ -366,8 +368,7 @@ async function loadXtreamDirect(
 
 const stalkerJson = async (response: Response) => {
   const text = await response.text();
-  if (!response.ok)
-    throw new Error(`Stalker Portal returned ${response.status}.`);
+  if (!response.ok) throw new Error(`Stalker Portal returned ${response.status}.`);
   try {
     const parsed = JSON.parse(text);
     return parsed?.js ?? parsed;
@@ -381,54 +382,28 @@ async function loadStalker(provider: Provider): Promise<ProviderLoadResult> {
   const mac = provider.mac?.trim() || "00:1A:79:00:00:01";
   const headers = {
     Accept: "*/*",
-    "User-Agent":
-      "Mozilla/5.0 (Linux; Android 12; SmartTV) AppleWebKit/537.36",
+    "User-Agent": "Mozilla/5.0 (Linux; Android 12; SmartTV) AppleWebKit/537.36",
     "X-User-Agent": "Model: MAG250; Link: WiFi",
     Cookie: `mac=${mac}; stb_lang=en; timezone=Europe%2FIstanbul`,
   };
   const handshake = await stalkerJson(
-    await fetch(
-      `${baseUrl}/portal.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml`,
-      { headers },
-    ),
+    await fetch(`${baseUrl}/portal.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml`, { headers }),
   );
   const token = handshake?.token || handshake?.js?.token;
   if (!token) {
-    throw new Error(
-      "Stalker Portal handshake failed. Check the portal URL and MAC address.",
-    );
+    throw new Error("Stalker Portal handshake failed. Check the portal URL and MAC address.");
   }
 
-  const authenticatedHeaders = {
-    ...headers,
-    Authorization: `Bearer ${token}`,
-  };
+  const authenticatedHeaders = { ...headers, Authorization: `Bearer ${token}` };
   const result = await stalkerJson(
-    await fetch(
-      `${baseUrl}/portal.php?type=itv&action=get_ordered_list&p=1&JsHttpRequest=1-xml`,
-      { headers: authenticatedHeaders },
-    ),
+    await fetch(`${baseUrl}/portal.php?type=itv&action=get_ordered_list&p=1&JsHttpRequest=1-xml`, { headers: authenticatedHeaders }),
   );
-  const rows = Array.isArray(result?.data)
-    ? result.data
-    : Array.isArray(result)
-      ? result
-      : [];
+  const rows = Array.isArray(result?.data) ? result.data : Array.isArray(result) ? result : [];
   const channels = rows.map((row: any, index: number): Channel => {
-    const rawCommand = String(row.cmd ?? row.url ?? "")
-      .replace(/^ffmpeg\s+/i, "")
-      .trim();
-    const streamUrl =
-      rawCommand ||
-      `${baseUrl}/play/live.php?mac=${encodeURIComponent(
-        mac,
-      )}&stream=${encodeURIComponent(String(row.id ?? index))}&extension=ts`;
+    const rawCommand = String(row.cmd ?? row.url ?? "").replace(/^ffmpeg\s+/i, "").trim();
+    const streamUrl = rawCommand || `${baseUrl}/play/live.php?mac=${encodeURIComponent(mac)}&stream=${encodeURIComponent(String(row.id ?? index))}&extension=ts`;
     return {
-      id: makeId(
-        provider.id,
-        index,
-        String(row.id ?? row.name ?? index),
-      ),
+      id: makeId(provider.id, index, String(row.id ?? row.name ?? index)),
       providerId: provider.id,
       name: row.name || `Channel ${index + 1}`,
       streamUrl,
@@ -438,47 +413,28 @@ async function loadStalker(provider: Provider): Promise<ProviderLoadResult> {
       streamType: "stalker",
     };
   });
-  if (!channels.length)
-    throw new Error("The Stalker Portal returned no live channels.");
+  if (!channels.length) throw new Error("The Stalker Portal returned no live channels.");
   return { channels, epgUrl: provider.epgUrl };
 }
 
-export async function loadProvider(
-  provider: Provider,
-): Promise<ProviderLoadResult> {
+export async function loadProvider(provider: Provider): Promise<ProviderLoadResult> {
   if (provider.type === "m3u") return loadM3U(provider);
   if (provider.type === "xtream") return loadXtream(provider);
   return loadStalker(provider);
 }
 
 const parseXmlDate = (value: string) => {
-  const match = value.match(
-    /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/,
-  );
+  const match = value.match(/^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})/);
   if (!match) return NaN;
-  return Date.UTC(
-    Number(match[1]),
-    Number(match[2]) - 1,
-    Number(match[3]),
-    Number(match[4]),
-    Number(match[5]),
-    Number(match[6]),
-  );
+  return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6]));
 };
 
-const stripTags = (value: string) =>
-  decodeEntities(value.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
+const stripTags = (value: string) => decodeEntities(value.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
 
-export function parseXmltv(
-  content: string,
-  channels: Channel[],
-): EpgProgram[] {
-  const channelIds = new Map(
-    channels.map((channel) => [channel.tvgId || channel.name, channel.id]),
-  );
+export function parseXmltv(content: string, channels: Channel[]): EpgProgram[] {
+  const channelIds = new Map(channels.map((channel) => [channel.tvgId || channel.name, channel.id]));
   const programs: EpgProgram[] = [];
-  const programmePattern =
-    /<programme\b([^>]*)>([\s\S]*?)<\/programme>/gi;
+  const programmePattern = /<programme\b([^>]*)>([\s\S]*?)<\/programme>/gi;
   let match: RegExpExecArray | null;
   while ((match = programmePattern.exec(content))) {
     const attributes = parseAttributes(match[1]);
@@ -486,80 +442,45 @@ export function parseXmltv(
     const channelId = channelIds.get(attributes.channel || "");
     const start = parseXmlDate(attributes.start || "");
     const end = parseXmlDate(attributes.stop || "");
-    if (!channelId || !Number.isFinite(start) || !Number.isFinite(end))
-      continue;
+    if (!channelId || !Number.isFinite(start) || !Number.isFinite(end)) continue;
 
-    const title = stripTags(
-      body.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ||
-        "Untitled program",
-    );
-    const description = stripTags(
-      body.match(/<desc[^>]*>([\s\S]*?)<\/desc>/i)?.[1] || "",
-    );
-    programs.push({
-      id: `${channelId}:${start}:${title}`,
-      channelId,
-      title,
-      description: description || undefined,
-      start,
-      end,
-    });
+    const title = stripTags(body.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "Untitled program");
+    const description = stripTags(body.match(/<desc[^>]*>([\s\S]*?)<\/desc>/i)?.[1] || "");
+    programs.push({ id: `${channelId}:${start}:${title}`, channelId, title, description: description || undefined, start, end });
   }
   return programs.sort((a, b) => a.start - b.start);
 }
 
-export async function loadEpg(
-  provider: Provider,
-  channels: Channel[],
-): Promise<EpgProgram[]> {
+export async function loadEpg(provider: Provider, channels: Channel[]): Promise<EpgProgram[]> {
   if (provider.epgUrl) {
-    const response = await fetch(provider.epgUrl, {
-      headers: { Accept: "application/xml,text/xml,*/*" },
-    });
+    const response = await fetch(provider.epgUrl, { headers: { Accept: "application/xml,text/xml,*/*" } });
     if (!response.ok) throw new Error(`EPG request failed with ${response.status}.`);
     return parseXmltv(await response.text(), channels);
   }
 
   if (provider.type === "xtream" && provider.username && provider.password) {
     const baseUrl = cleanBaseUrl(provider.url);
-    const query = `username=${encodeURIComponent(
-      provider.username,
-    )}&password=${encodeURIComponent(provider.password)}`;
-    const targetChannels = channels
-      .filter((channel) => channel.streamType === "xtream")
-      .slice(0, 60);
+    const query = `username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}`;
+    const targetChannels = channels.filter((channel) => channel.streamType === "xtream").slice(0, 60);
     const results = await Promise.all(
       targetChannels.map(async (channel) => {
         const streamId = channel.id.split(":").pop();
         if (!streamId) return [] as EpgProgram[];
         try {
-          const response = await fetch(
-            `${baseUrl}/player_api.php?${query}&action=get_short_epg&stream_id=${encodeURIComponent(
-              streamId,
-            )}&limit=8`,
-          );
+          const response = await fetch(`${baseUrl}/player_api.php?${query}&action=get_short_epg&stream_id=${encodeURIComponent(streamId)}&limit=8`);
           if (!response.ok) return [] as EpgProgram[];
           const data = await asJson(response);
-          const rows = Array.isArray(data?.epg_listings)
-            ? data.epg_listings
-            : [];
+          const rows = Array.isArray(data?.epg_listings) ? data.epg_listings : [];
           return rows
             .map((row: any, index: number) => ({
               id: `${channel.id}:${row.id ?? index}`,
               channelId: channel.id,
-              title: row.title
-                ? decodeEntities(atobSafe(row.title))
-                : "Program",
-              description: row.description
-                ? decodeEntities(atobSafe(row.description))
-                : undefined,
+              title: row.title ? decodeEntities(atobSafe(row.title)) : "Program",
+              description: row.description ? decodeEntities(atobSafe(row.description)) : undefined,
               start: Number(row.start_timestamp) * 1000,
               end: Number(row.stop_timestamp) * 1000,
             }))
-            .filter(
-              (row: EpgProgram) =>
-                Number.isFinite(row.start) && Number.isFinite(row.end),
-            );
+            .filter((row: EpgProgram) => Number.isFinite(row.start) && Number.isFinite(row.end));
         } catch {
           return [] as EpgProgram[];
         }
