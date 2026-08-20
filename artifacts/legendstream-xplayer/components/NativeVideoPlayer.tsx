@@ -1,7 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { useEvent } from "expo";
 import * as ScreenOrientation from "expo-screen-orientation";
-import React, { useCallback, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BackHandler,
   Pressable,
@@ -12,6 +12,7 @@ import {
 import { VideoView, useVideoPlayer, type VideoSource } from "expo-video";
 import { useColors } from "@/hooks/useColors";
 import { useI18n } from "@/context/I18nContext";
+import { useMediaLibrary } from "@/context/MediaLibraryContext";
 import { downloadMedia } from "@/lib/downloads";
 
 type FitMode = "contain" | "cover" | "fill";
@@ -32,9 +33,16 @@ export function NativeVideoPlayer({
 }) {
   const colors = useColors();
   const { t } = useI18n();
+  const { getProgress, saveProgress } = useMediaLibrary();
   const [fit, setFit] = useState<FitMode>("contain");
   const [downloadState, setDownloadState] = useState<DownloadState>("idle");
   const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const mediaKind = useMemo<"live" | "movie" | "episode">(() => {
+    if (/\/movie\//i.test(source)) return "movie";
+    if (/\/series\//i.test(source)) return "episode";
+    return "live";
+  }, [source]);
 
   const effectiveSource = useMemo(() => {
     const uri = /\/live\//i.test(source) && /\.m3u8(?:$|\?)/i.test(source)
@@ -52,8 +60,13 @@ export function NativeVideoPlayer({
     return value;
   }, [source]);
 
+  const resume = mediaKind === "live" ? undefined : getProgress(source);
+
   const player = useVideoPlayer(effectiveSource, (instance) => {
     instance.staysActiveInBackground = false;
+    if (resume && resume.position > 5) {
+      try { (instance as any).currentTime = resume.position; } catch { /* best effort */ }
+    }
     instance.play();
   });
 
@@ -61,17 +74,41 @@ export function NativeVideoPlayer({
     status: player.status,
   });
 
-  const exitPlayer = useCallback(() => {
-    onFullscreenExit?.();
-  }, [onFullscreenExit]);
+  const persistProgress = useCallback(async () => {
+    if (mediaKind === "live") return;
+    const position = Number((player as any).currentTime ?? 0);
+    const duration = Number((player as any).duration ?? 0);
+    if (!Number.isFinite(position) || position < 1) return;
+    await saveProgress({
+      kind: mediaKind,
+      title,
+      source,
+      position,
+      duration: Number.isFinite(duration) ? duration : 0,
+    });
+  }, [mediaKind, player, saveProgress, source, title]);
 
-  React.useEffect(() => {
+  const exitPlayer = useCallback(() => {
+    void persistProgress();
+    onFullscreenExit?.();
+  }, [onFullscreenExit, persistProgress]);
+
+  useEffect(() => {
     const back = BackHandler.addEventListener("hardwareBackPress", () => {
       exitPlayer();
       return true;
     });
     return () => back.remove();
   }, [exitPlayer]);
+
+  useEffect(() => {
+    if (mediaKind === "live") return;
+    const timer = setInterval(() => { void persistProgress(); }, 5000);
+    return () => {
+      clearInterval(timer);
+      void persistProgress();
+    };
+  }, [mediaKind, persistProgress]);
 
   const cycleFit = () => {
     setFit((current) => current === "contain" ? "cover" : current === "cover" ? "fill" : "contain");
@@ -100,7 +137,9 @@ export function NativeVideoPlayer({
     try {
       const uri = typeof effectiveSource === "object" ? effectiveSource.uri : source;
       if (!uri) throw new Error("Missing media URL");
-      await downloadMedia(uri, title);
+      await downloadMedia(uri, title, {
+        kind: mediaKind === "episode" ? "episode" : "movie",
+      });
       setDownloadState("done");
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "DOWNLOAD_FAILED";
@@ -127,8 +166,6 @@ export function NativeVideoPlayer({
         </Pressable>
       ) : null}
 
-      {/* Native controls already provide CC/subtitle and the media settings gear.
-          Keep only actions that the native Android player does not expose. */}
       <View style={styles.utilityControls}>
         {allowDownload ? (
           <Pressable
@@ -146,21 +183,11 @@ export function NativeVideoPlayer({
           </Pressable>
         ) : null}
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={t("screen")}
-          onPress={cycleFit}
-          style={styles.utilityButton}
-        >
+        <Pressable accessibilityRole="button" accessibilityLabel={t("screen")} onPress={cycleFit} style={styles.utilityButton}>
           <Feather name={fit === "contain" ? "maximize-2" : fit === "cover" ? "crop" : "maximize"} size={23} color="#fff" />
         </Pressable>
 
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Rotate screen"
-          onPress={() => void rotateScreen()}
-          style={styles.utilityButton}
-        >
+        <Pressable accessibilityRole="button" accessibilityLabel="Rotate screen" onPress={() => void rotateScreen()} style={styles.utilityButton}>
           <Feather name="rotate-cw" size={23} color="#fff" />
         </Pressable>
       </View>
@@ -180,7 +207,7 @@ export function NativeVideoPlayer({
       ) : null}
 
       {status === "error" ? (
-        <View style={[styles.errorPanel, { backgroundColor: colors.card }]}> 
+        <View style={[styles.errorPanel, { backgroundColor: colors.card }]}>
           <Text style={[styles.errorTitle, { color: colors.foreground }]}>{t("playbackFailed")}</Text>
           <Text style={[styles.errorText, { color: colors.mutedForeground }]}>{error?.message || t("playbackFailed")}</Text>
           <Text numberOfLines={2} style={[styles.urlText, { color: colors.primary }]}>{typeof effectiveSource === "object" ? effectiveSource.uri : source}</Text>
