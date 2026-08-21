@@ -5,9 +5,11 @@ import { VLCPlayer } from "react-native-vlc-media-player";
 export type PlayerFitMode = "contain" | "cover" | "fill";
 export type PlayerCodecMode = "auto" | "hardware" | "software";
 export type PlayerTrack = { id: number; name: string };
+export type PlayerVideoSize = { width: number; height: number };
 
 export type VlcLoadEvent = {
   duration?: number;
+  videoSize?: PlayerVideoSize;
   audioTracks?: PlayerTrack[];
   textTracks?: PlayerTrack[];
 };
@@ -32,6 +34,10 @@ type Props = {
   onError: () => void;
 };
 
+/**
+ * Verified 1.4.0 native VLC mount path.
+ * Keep this component deliberately boring while the phase-2 crash is bisected.
+ */
 const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurface(
   {
     uri,
@@ -85,10 +91,6 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   );
 });
 
-/**
- * Keeps high-frequency UI state (time text, progress bar, chrome visibility)
- * from reconciling the native VLC view unless an actual playback prop changes.
- */
 export const VlcPlaybackSurface = memo(VlcPlaybackSurfaceImpl);
 
 const styles = StyleSheet.create({
