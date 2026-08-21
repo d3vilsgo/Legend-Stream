@@ -3,7 +3,7 @@
 
 Diagnostic baseline: preserve upstream VLC runtime behavior exactly and only
 lower the library minSdk from API 26 to API 24 so Android 7+ remains supported.
-No lifecycle, decoder, option-loop, scaling, or playback code is modified here.
+No lifecycle, decoder, option-loop, or playback code is modified here.
 """
 
 from __future__ import annotations
@@ -25,7 +25,6 @@ def main() -> None:
 
     package_dir = Path(sys.argv[1]).resolve()
     gradle = package_dir / "android" / "build.gradle"
-
     if not gradle.is_file():
         fail(f"VLC Gradle file not found: {gradle}")
 
