@@ -35,9 +35,8 @@ type Props = {
 };
 
 /**
- * Verified 1.4.7 native VLC mount path.
- * Keep the native surface layout immutable: attempts to resize/reframe the
- * VLC-backed view at runtime caused device-level crashes in 1.4.8/1.4.9.
+ * Verified 1.4.0 native VLC mount path.
+ * Keep this component deliberately boring while the phase-2 crash is bisected.
  */
 const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurface(
   {
