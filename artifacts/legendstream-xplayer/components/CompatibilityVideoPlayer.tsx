@@ -8,8 +8,10 @@ import { getEpisodePlaybackQueue, getVodPlaybackQueue } from "@/lib/xtreamCatalo
 import { usePlayerOrientation } from "@/hooks/usePlayerOrientation";
 import {
   enterPictureInPicture,
+  getMediaVolume,
   isInPipMode,
   isPipSupported,
+  setMediaVolume,
 } from "@/modules/legendstream-pip";
 import {
   PlayerChrome,
@@ -130,6 +132,7 @@ export function CompatibilityVideoPlayer({
       })
       .catch(() => undefined);
     setPipSupported(isPipSupported());
+    setVolume(getMediaVolume());
   }, []);
 
   const effectiveUri = useMemo(
@@ -178,6 +181,7 @@ export function CompatibilityVideoPlayer({
       setInfoVisible(false);
       return;
     }
+    setVolume(getMediaVolume());
     revealControls();
     revealMediaInfo();
   }, [clearControlsTimer, clearInfoTimer, controlsVisible, panel, revealControls, revealMediaInfo]);
@@ -208,6 +212,7 @@ export function CompatibilityVideoPlayer({
   useEffect(() => {
     const subscription = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
+      setVolume(getMediaVolume());
       if (pipActive && !isInPipMode()) {
         setPipActive(false);
         revealControls();
@@ -398,6 +403,12 @@ export function CompatibilityVideoPlayer({
     revealMediaInfo();
   }, [persistProgress, revealControls, revealMediaInfo]);
 
+  const changeMediaVolume = useCallback((value: number) => {
+    const safe = Math.max(0, Math.min(1, value));
+    setVolume(safe);
+    void setMediaVolume(safe);
+  }, []);
+
   const startDownload = useCallback(async () => {
     if (!allowDownload || downloadState === "downloading") return;
     setDownloadState("downloading");
@@ -514,7 +525,6 @@ export function CompatibilityVideoPlayer({
         paused={paused}
         fit={fit}
         codecMode={codecMode}
-        volume={volume}
         audioTrack={audioTrack}
         textTrack={textTrack}
         onLoad={handleLoad}
@@ -575,7 +585,7 @@ export function CompatibilityVideoPlayer({
           onDownload={() => void startDownload()}
           onCycleFit={cycleFit}
           onRotate={() => void orientation.rotate()}
-          onVolumeChange={setVolume}
+          onVolumeChange={changeMediaVolume}
           onEnterPip={() => void enterPip()}
         />
       ) : null}
