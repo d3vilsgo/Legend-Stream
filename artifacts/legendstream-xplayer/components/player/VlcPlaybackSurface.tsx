@@ -24,7 +24,6 @@ type Props = {
   paused: boolean;
   fit: PlayerFitMode;
   codecMode: PlayerCodecMode;
-  volume: number;
   audioTrack?: number;
   textTrack?: number;
   onLoad: (event: VlcLoadEvent) => void;
@@ -50,7 +49,6 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     paused,
     fit,
     codecMode,
-    volume,
     audioTrack,
     textTrack,
     onLoad,
@@ -135,7 +133,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
         autoAspectRatio={fit !== "fill"}
         videoAspectRatio={forcedAspectRatio as any}
         resizeMode="fill"
-        volume={Math.round(Math.max(0, Math.min(1, volume)) * 100)}
+        volume={100}
         audioTrack={audioTrack}
         textTrack={textTrack}
         onLoad={handleLoad as any}
@@ -149,10 +147,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   );
 });
 
-/**
- * Only playback-affecting props are compared. UI chrome updates must not
- * reconcile the native VLC surface.
- */
+/** UI chrome updates must not reconcile the native VLC surface. */
 export const VlcPlaybackSurface = memo(
   VlcPlaybackSurfaceImpl,
   (previous, next) =>
@@ -160,7 +155,6 @@ export const VlcPlaybackSurface = memo(
     previous.paused === next.paused &&
     previous.fit === next.fit &&
     previous.codecMode === next.codecMode &&
-    previous.volume === next.volume &&
     previous.audioTrack === next.audioTrack &&
     previous.textTrack === next.textTrack,
 );
