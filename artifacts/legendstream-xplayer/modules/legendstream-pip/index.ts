@@ -1,15 +1,45 @@
-// Phase-2 isolation build: keep PiP completely outside the runtime until
-// crash-free scaling is verified on device. These no-op exports preserve the
-// player contract without resolving or autolinking a native module.
+import { requireOptionalNativeModule } from "expo";
+import { Platform } from "react-native";
 
-export const isPipSupported = () => false;
-export const isInPipMode = () => false;
-export const getMediaVolume = () => 1;
+type LegendStreamPipNativeModule = {
+  isSupported: () => boolean;
+  isInPictureInPictureMode: () => boolean;
+  getMediaVolume: () => number;
+  setMediaVolume: (value: number) => Promise<boolean>;
+  enter: (width: number, height: number) => Promise<boolean>;
+};
 
-export async function setMediaVolume(_value: number) {
-  return false;
+const nativeModule = requireOptionalNativeModule("LegendStreamPip") as LegendStreamPipNativeModule | null;
+
+export const isPipSupported = () =>
+  Platform.OS === "android" && Boolean(nativeModule?.isSupported?.());
+
+export const isInPipMode = () =>
+  Platform.OS === "android" && Boolean(nativeModule?.isInPictureInPictureMode?.());
+
+export const getMediaVolume = () => {
+  if (Platform.OS !== "android" || !nativeModule) return 1;
+  try {
+    return Math.max(0, Math.min(1, Number(nativeModule.getMediaVolume?.() ?? 1)));
+  } catch {
+    return 1;
+  }
+};
+
+export async function setMediaVolume(value: number) {
+  if (Platform.OS !== "android" || !nativeModule) return false;
+  try {
+    return Boolean(await nativeModule.setMediaVolume(Math.max(0, Math.min(1, value))));
+  } catch {
+    return false;
+  }
 }
 
-export async function enterPictureInPicture(_width = 16, _height = 9) {
-  return false;
+export async function enterPictureInPicture(width = 16, height = 9) {
+  if (Platform.OS !== "android" || !nativeModule) return false;
+  try {
+    return Boolean(await nativeModule.enter(Math.max(1, Math.round(width)), Math.max(1, Math.round(height))));
+  } catch {
+    return false;
+  }
 }
