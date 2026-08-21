@@ -3,7 +3,8 @@ name: Android APK
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - "artifacts/legendstream-xplayer/**"
       - "pnpm-lock.yaml"
@@ -35,7 +36,6 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/CodeQL || true
           sudo rm -rf /opt/hostedtoolcache/Ruby || true
           sudo rm -rf /opt/hostedtoolcache/go || true
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY/CodeQL" || true
           docker system prune -af --volumes || true
           sudo apt-get clean || true
           echo "Disk after cleanup:"
@@ -61,98 +61,21 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install mobile dependencies only
-        id: deps
-        continue-on-error: true
+      - name: Install mobile dependencies
         shell: bash
         run: |
           set -o pipefail
           pnpm --filter @workspace/legendstream-xplayer... install --no-frozen-lockfile 2>&1 | tee "$GITHUB_WORKSPACE/dependency-install.log"
 
-      - name: Verify and patch VLC for Android 7+ and PiP
-        id: vlc_patch
-        if: steps.deps.outcome == 'success'
-        continue-on-error: true
+      - name: Patch VLC for Android 7 and PiP
         shell: bash
         run: |
           set -o pipefail
-          {
-            VLC_PKG="$(cd artifacts/legendstream-xplayer && node -p "require.resolve('react-native-vlc-media-player/package.json')")"
-            VLC_DIR="$(dirname "$VLC_PKG")"
-            VLC_GRADLE="$VLC_DIR/android/build.gradle"
-            VLC_VIEW="$VLC_DIR/android/src/main/java/com/yuanzhou/vlc/vlcplayer/ReactVlcPlayerView.java"
-            export VLC_DIR VLC_GRADLE VLC_VIEW
-
-            echo "Resolved VLC package: $VLC_DIR"
-            node -e "const p=require('$VLC_PKG'); console.log('VLC version:', p.version)"
-            test -f "$VLC_GRADLE"
-            test -f "$VLC_VIEW"
-
-            echo "Before Gradle patch:"
-            grep -nE 'compileSdkVersion|minSdkVersion|libvlc-all' "$VLC_GRADLE" || true
-            sed -Ei 's/minSdkVersion[[:space:]]+26/minSdkVersion 24/g' "$VLC_GRADLE"
-
-            python3 - <<'PY'
-          import os
-          import re
-          from pathlib import Path
-
-          view_path = Path(os.environ["VLC_VIEW"])
-          text = view_path.read_text(encoding="utf-8")
-
-          # react-native-vlc-media-player 1.0.98 drops the final init/media option
-          # in builds that still contain the legacy size()-1 loops.
-          text = text.replace(
-              "for (int i = 0; i < options.size() - 1; i++)",
-              "for (int i = 0; i < options.size(); i++)",
-          )
-
-          # Some 1.0.98 package layouts contain LifecycleEventListener/onHostPause,
-          # while others don't. PiP needs the guard only when that lifecycle
-          # callback exists. Absence of onHostPause must never block the APK build.
-          host_pause = re.search(r"public\s+void\s+onHostPause\s*\(\s*\)\s*\{", text)
-          if host_pause:
-              print("VLC onHostPause() detected")
-              if "isInPictureInPictureMode()" not in text:
-                  guard = """public void onHostPause() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
-                && themedReactContext.getCurrentActivity() != null
-                && themedReactContext.getCurrentActivity().isInPictureInPictureMode()) {
-            return;
-        }"""
-                  text = text[:host_pause.start()] + guard + text[host_pause.end():]
-                  print("Applied VLC PiP lifecycle guard")
-              else:
-                  print("VLC PiP lifecycle guard already present")
-          else:
-              print("VLC package has no onHostPause(); no lifecycle PiP guard is required")
-
-          view_path.write_text(text, encoding="utf-8")
-          PY
-
-            echo "After Gradle patch:"
-            grep -nE 'compileSdkVersion|minSdkVersion|libvlc-all' "$VLC_GRADLE" || true
-            echo "VLC option/PiP verification:"
-            grep -nE 'options\.size\(\)|onHostPause|isInPictureInPictureMode' "$VLC_VIEW" | head -n 30 || true
-
-            if grep -Eq 'minSdkVersion[[:space:]]+26' "$VLC_GRADLE"; then
-              echo "VLC minSdk patch did not apply"
-              exit 1
-            fi
-            if grep -q 'options.size() - 1' "$VLC_VIEW"; then
-              echo "VLC option loop patch did not apply"
-              exit 1
-            fi
-            if grep -Eq 'onHostPause[[:space:]]*\(' "$VLC_VIEW" && ! grep -q 'isInPictureInPictureMode()' "$VLC_VIEW"; then
-              echo "VLC has onHostPause() but the PiP lifecycle guard is missing"
-              exit 1
-            fi
-          } 2>&1 | tee "$GITHUB_WORKSPACE/vlc-patch.log"
+          VLC_DIR="$(cd artifacts/legendstream-xplayer && node -p "require('path').dirname(require.resolve('react-native-vlc-media-player/package.json'))")"
+          echo "Resolved VLC directory: $VLC_DIR"
+          python3 artifacts/legendstream-xplayer/scripts/patch-vlc-android.py "$VLC_DIR" 2>&1 | tee "$GITHUB_WORKSPACE/vlc-patch.log"
 
       - name: Generate Android project
-        id: prebuild
-        if: steps.deps.outcome == 'success' && steps.vlc_patch.outcome == 'success'
-        continue-on-error: true
         working-directory: artifacts/legendstream-xplayer
         env:
           EXPO_NO_DOCTOR: "1"
@@ -161,19 +84,6 @@ jobs:
         run: |
           set -o pipefail
           pnpm exec expo prebuild --platform android --clean --no-install 2>&1 | tee "$GITHUB_WORKSPACE/expo-prebuild.log"
-
-      - name: Show prepare diagnostics
-        if: always() && (steps.deps.outcome == 'failure' || steps.vlc_patch.outcome == 'failure' || steps.prebuild.outcome == 'failure')
-        shell: bash
-        run: |
-          echo "================ DEPENDENCY INSTALL ===================="
-          tail -n 160 dependency-install.log 2>/dev/null || true
-          echo "================ VLC PATCH ============================="
-          cat vlc-patch.log 2>/dev/null || true
-          echo "================ EXPO PREBUILD ========================="
-          tail -n 220 expo-prebuild.log 2>/dev/null || true
-          echo "========================================================"
-          echo "::error title=Android preparation failed::Check the diagnostic block directly above; the exact failing stage is now printed in the job log."
 
       - name: Upload prepare diagnostics
         if: always()
@@ -187,12 +97,6 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Stop on prepare failure
-        if: steps.deps.outcome == 'failure' || steps.vlc_patch.outcome == 'failure' || steps.prebuild.outcome == 'failure'
-        run: |
-          echo "Preparation failed. Exact diagnostics were printed above and also uploaded as an artifact."
-          exit 1
-
       - name: Check disk before Gradle
         run: |
           echo "Disk before Gradle:"
@@ -200,8 +104,6 @@ jobs:
           du -sh node_modules artifacts/legendstream-xplayer/node_modules artifacts/legendstream-xplayer/android 2>/dev/null || true
 
       - name: Build standalone release APK
-        id: release_build
-        continue-on-error: true
         working-directory: artifacts/legendstream-xplayer/android
         env:
           NODE_ENV: production
@@ -216,17 +118,21 @@ jobs:
             --console=plain \
             --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/release-build.log"
 
-      - name: Show release build diagnostics
-        if: steps.release_build.outcome == 'failure'
+      - name: Show release diagnostics on failure
+        if: failure()
         shell: bash
         run: |
           echo "================ IMPORTANT ERROR LINES ================"
-          grep -Ein -C 4 "error|exception|failed|failure|unable|cannot|could not|syntax|module not found|no space|keystore|signing|bundle|manifest|minSdk|vlc|libvlc|duplicate|merge|kotlin|java" release-build.log | tail -n 420 || true
+          grep -Ein -C 4 "error|exception|failed|failure|unable|cannot|could not|syntax|module not found|no space|keystore|signing|bundle|manifest|minSdk|vlc|libvlc|duplicate|merge|kotlin|java" release-build.log 2>/dev/null | tail -n 420 || true
           echo "================ LAST 420 LOG LINES ===================="
-          tail -n 420 release-build.log || true
-          echo "================ DISK AFTER FAILURE ====================="
-          df -h / || true
-          echo "::error title=Android release build failed::The exact Gradle/Metro error is printed in the diagnostic block above."
+          tail -n 420 release-build.log 2>/dev/null || true
+          echo "================ PREBUILD LOG ==========================="
+          tail -n 220 expo-prebuild.log 2>/dev/null || true
+          echo "================ VLC PATCH LOG =========================="
+          cat vlc-patch.log 2>/dev/null || true
+          echo "================ DEPENDENCY LOG ========================="
+          tail -n 160 dependency-install.log 2>/dev/null || true
+          echo "========================================================="
 
       - name: Upload release build log
         if: always()
@@ -237,14 +143,11 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Stop on release build failure
-        if: steps.release_build.outcome == 'failure'
-        run: exit 1
-
       - name: Copy release APK
+        shell: bash
         run: |
           mkdir -p apk-output
-          APK_PATH=$(find artifacts/legendstream-xplayer/android/app/build/outputs/apk/release -maxdepth 1 -type f -name "*.apk" | head -n 1)
+          APK_PATH="$(find artifacts/legendstream-xplayer/android/app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
           if [ -z "$APK_PATH" ]; then
             echo "Release APK not found"
             exit 1
