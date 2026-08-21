@@ -8,6 +8,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+import { getMediaVolume } from "@/modules/legendstream-pip";
 
 type GestureMode = "brightness" | "volume" | null;
 
@@ -15,7 +16,6 @@ type Props = {
   volume: number;
   enabled?: boolean;
   onTap: () => void;
-  readVolume?: () => number;
   onVolumeChange: (value: number) => void;
   onVolumeCommit?: (value: number) => void;
 };
@@ -34,7 +34,6 @@ export function PlayerGestureLayer({
   volume,
   enabled = true,
   onTap,
-  readVolume,
   onVolumeChange,
   onVolumeCommit,
 }: Props) {
@@ -44,6 +43,7 @@ export function PlayerGestureLayer({
 
   const modeRef = useRef<GestureMode>(null);
   const originalBrightness = useRef<number | null>(null);
+  const usedSystemBrightness = useRef(false);
   const brightness = useRef(0.5);
   const volumeRef = useRef(clamp01(volume));
   const gestureStartValue = useRef(0);
@@ -70,14 +70,23 @@ export function PlayerGestureLayer({
         brightness.current = safe;
       })
       .catch(() => undefined);
+    Brightness.isUsingSystemBrightnessAsync()
+      .then((usingSystem) => {
+        if (!cancelled) usedSystemBrightness.current = Boolean(usingSystem);
+      })
+      .catch(() => undefined);
 
     return () => {
       cancelled = true;
       if (brightnessTimer.current) clearTimeout(brightnessTimer.current);
       if (volumeTimer.current) clearTimeout(volumeTimer.current);
       if (hudTimer.current) clearTimeout(hudTimer.current);
-      const original = originalBrightness.current;
-      if (original !== null) void Brightness.setBrightnessAsync(original).catch(() => undefined);
+      if (usedSystemBrightness.current) {
+        void Brightness.restoreSystemBrightnessAsync().catch(() => undefined);
+      } else {
+        const original = originalBrightness.current;
+        if (original !== null) void Brightness.setBrightnessAsync(original).catch(() => undefined);
+      }
     };
   }, []);
 
@@ -154,7 +163,7 @@ export function PlayerGestureLayer({
       if (x <= width * SIDE_ZONE_RATIO) {
         gestureStartValue.current = brightness.current;
       } else if (x >= width * (1 - SIDE_ZONE_RATIO)) {
-        const latest = clamp01(readVolume?.() ?? volumeRef.current);
+        const latest = clamp01(getMediaVolume());
         volumeRef.current = latest;
         gestureStartValue.current = latest;
       }
@@ -194,7 +203,7 @@ export function PlayerGestureLayer({
       gestureChanged.current = false;
     },
     onPanResponderTerminationRequest: () => true,
-  }), [enabled, height, onTap, onVolumeChange, onVolumeCommit, readVolume, width]);
+  }), [enabled, height, onTap, onVolumeChange, onVolumeCommit, width]);
 
   return (
     <View style={styles.layer} {...panResponder.panHandlers}>
