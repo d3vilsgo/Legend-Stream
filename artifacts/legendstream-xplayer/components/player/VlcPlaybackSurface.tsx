@@ -1,5 +1,5 @@
-import React, { forwardRef, memo, useMemo } from "react";
-import { StyleSheet, View } from "react-native";
+import React, { forwardRef, memo, useCallback, useMemo, useState } from "react";
+import { StyleSheet, useWindowDimensions, View } from "react-native";
 import { VLCPlayer } from "react-native-vlc-media-player";
 
 export type PlayerFitMode = "contain" | "cover" | "fill";
@@ -34,9 +34,29 @@ type Props = {
   onError: () => void;
 };
 
+const validVideoSize = (value?: PlayerVideoSize) =>
+  Boolean(
+    value &&
+    Number.isFinite(value.width) &&
+    Number.isFinite(value.height) &&
+    value.width > 0 &&
+    value.height > 0,
+  );
+
 /**
- * Verified 1.4.0 native VLC mount path.
- * Keep this component deliberately boring while the phase-2 crash is bisected.
+ * Phase-2 scaling isolation build.
+ *
+ * The verified 1.4.10 baseline must stay untouched on player open. Therefore:
+ * - CONTAIN is byte-for-byte equivalent at the native VLC level: full-screen
+ *   TextureView + autoAspectRatio=true.
+ * - COVER never changes the TextureView layout. It only applies a compositor
+ *   transform after VLC has reported the actual video size.
+ * - FILL uses the library's documented native React props
+ *   autoAspectRatio/videoAspectRatio. No imperative native calls are made.
+ *
+ * We deliberately do not resize/reposition the native TextureView and do not
+ * call changeVideoAspectRatio() from an effect. Those were the two experimental
+ * paths associated with the previous player-open crashes.
  */
 const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurface(
   {
@@ -55,6 +75,9 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   },
   ref,
 ) {
+  const window = useWindowDimensions();
+  const [videoSize, setVideoSize] = useState<PlayerVideoSize | undefined>(undefined);
+
   const initOptions = useMemo(() => {
     const base = [
       "--network-caching=1200",
@@ -67,20 +90,53 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     return base;
   }, [codecMode]);
 
+  const coverScale = useMemo(() => {
+    if (fit !== "cover" || !validVideoSize(videoSize) || window.width <= 0 || window.height <= 0) {
+      return 1;
+    }
+    const viewAspect = window.width / window.height;
+    const mediaAspect = videoSize!.width / videoSize!.height;
+    if (!Number.isFinite(viewAspect) || !Number.isFinite(mediaAspect) || viewAspect <= 0 || mediaAspect <= 0) {
+      return 1;
+    }
+    return Math.max(mediaAspect / viewAspect, viewAspect / mediaAspect);
+  }, [fit, videoSize, window.height, window.width]);
+
+  const fillAspectRatio = useMemo(() => {
+    if (window.width <= 0 || window.height <= 0) return undefined;
+    return `${Math.max(1, Math.round(window.width))}:${Math.max(1, Math.round(window.height))}`;
+  }, [window.height, window.width]);
+
+  const handleLoad = useCallback((event: VlcLoadEvent) => {
+    if (validVideoSize(event?.videoSize)) {
+      setVideoSize({
+        width: Number(event.videoSize!.width),
+        height: Number(event.videoSize!.height),
+      });
+    }
+    onLoad(event);
+  }, [onLoad]);
+
   return (
     <View style={styles.surface} pointerEvents="none">
       <VLCPlayer
         key={`${uri}:${codecMode}`}
         ref={ref}
-        style={styles.video}
+        style={[
+          styles.video,
+          fit === "cover" && coverScale > 1
+            ? { transform: [{ scale: coverScale }] }
+            : null,
+        ]}
         source={{ uri, initType: 2, initOptions }}
         paused={paused}
         autoplay
-        autoAspectRatio
+        autoAspectRatio={fit !== "fill"}
+        videoAspectRatio={fit === "fill" ? fillAspectRatio : undefined}
         resizeMode={fit}
         audioTrack={audioTrack}
         textTrack={textTrack}
-        onLoad={onLoad as any}
+        onLoad={handleLoad as any}
         onProgress={onProgress as any}
         onPlaying={onPlaying}
         onPaused={onPaused}
@@ -96,6 +152,7 @@ export const VlcPlaybackSurface = memo(VlcPlaybackSurfaceImpl);
 const styles = StyleSheet.create({
   surface: {
     ...StyleSheet.absoluteFillObject,
+    overflow: "hidden",
     backgroundColor: "#000",
   },
   video: {
