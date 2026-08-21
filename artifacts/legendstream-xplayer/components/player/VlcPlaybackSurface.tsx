@@ -35,12 +35,13 @@ type Props = {
 };
 
 /**
- * Crash-safe VLC bootstrap.
+ * Native VLC surface kept deliberately conservative during mount.
  *
- * Keep the initial native view configuration identical to the last verified
- * working 1.4.0 path. Advanced scaling is deliberately kept out of the native
- * mount path so an invalid aspect-ratio/TextureView transition cannot kill the
- * Android process while the Activity is rotating into landscape.
+ * react-native-vlc-media-player 1.0.98 intentionally iterates initOptions to
+ * size()-1. We preserve that upstream behavior and append a harmless duplicate
+ * tail option so all intended options are still consumed without patching the
+ * native loop. Hardware/software decoder selection uses the library's native
+ * hwDecoderEnabled/hwDecoderForced source fields instead of LibVLC CLI flags.
  */
 const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurface(
   {
@@ -61,24 +62,42 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
 ) {
   const [videoSize, setVideoSize] = useState<PlayerVideoSize>({ width: 16, height: 9 });
 
-  const initOptions = useMemo(() => {
-    const base = [
+  const source = useMemo(() => {
+    const initOptions = [
       "--network-caching=1200",
       "--file-caching=1000",
       "--http-reconnect",
-      "--no-drop-late-frames",
+      // Upstream 1.0.98 drops the final entry; duplicate the previous safe
+      // option instead of relying on a patched native options loop.
+      "--http-reconnect",
     ];
-    if (codecMode === "hardware") return [...base, "--avcodec-hw=any"];
-    if (codecMode === "software") return [...base, "--avcodec-hw=none"];
-    return base;
-  }, [codecMode]);
+
+    const value: Record<string, unknown> = {
+      uri,
+      initType: 2,
+      initOptions,
+    };
+
+    if (codecMode === "hardware") {
+      value.hwDecoderEnabled = 1;
+      value.hwDecoderForced = 1;
+    } else if (codecMode === "software") {
+      value.hwDecoderEnabled = 0;
+      value.hwDecoderForced = 0;
+    }
+
+    return value as any;
+  }, [codecMode, uri]);
 
   const handleLoad = useCallback((event: VlcLoadEvent) => {
     const size = event?.videoSize;
     if (size && Number(size.width) > 0 && Number(size.height) > 0) {
-      setVideoSize({ width: Number(size.width), height: Number(size.height) });
+      const normalized = { width: Number(size.width), height: Number(size.height) };
+      setVideoSize(normalized);
+      onLoad({ ...event, videoSize: normalized });
+      return;
     }
-    onLoad({ ...event, videoSize: size ?? videoSize });
+    onLoad({ ...event, videoSize });
   }, [onLoad, videoSize]);
 
   return (
@@ -87,7 +106,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
         key={`${uri}:${codecMode}`}
         ref={ref}
         style={styles.video}
-        source={{ uri, initType: 2, initOptions }}
+        source={source}
         paused={paused}
         autoplay
         autoAspectRatio
