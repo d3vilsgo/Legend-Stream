@@ -94,31 +94,38 @@ jobs:
 
             python3 - <<'PY'
           import os
+          import re
           from pathlib import Path
 
           view_path = Path(os.environ["VLC_VIEW"])
           text = view_path.read_text(encoding="utf-8")
 
-          # Upstream 1.0.98 skips the final VLC init/media option because both loops
-          # end at size()-1. This silently drops the last cache/decoder option.
-          old_loop = "for (int i = 0; i < options.size() - 1; i++)"
-          new_loop = "for (int i = 0; i < options.size(); i++)"
-          text = text.replace(old_loop, new_loop)
+          # react-native-vlc-media-player 1.0.98 drops the final init/media option
+          # in builds that still contain the legacy size()-1 loops.
+          text = text.replace(
+              "for (int i = 0; i < options.size() - 1; i++)",
+              "for (int i = 0; i < options.size(); i++)",
+          )
 
-          # React Native calls onHostPause while Android enters PiP. Patch the
-          # method declaration itself instead of matching surrounding whitespace,
-          # so this remains stable across harmless upstream formatting changes.
-          if "isInPictureInPictureMode()" not in text:
-              marker = "public void onHostPause() {"
-              if marker not in text:
-                  raise SystemExit("Could not locate VLC onHostPause() declaration for PiP patch")
-              guard = """public void onHostPause() {
+          # Some 1.0.98 package layouts contain LifecycleEventListener/onHostPause,
+          # while others don't. PiP needs the guard only when that lifecycle
+          # callback exists. Absence of onHostPause must never block the APK build.
+          host_pause = re.search(r"public\s+void\s+onHostPause\s*\(\s*\)\s*\{", text)
+          if host_pause:
+              print("VLC onHostPause() detected")
+              if "isInPictureInPictureMode()" not in text:
+                  guard = """public void onHostPause() {
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
                 && themedReactContext.getCurrentActivity() != null
                 && themedReactContext.getCurrentActivity().isInPictureInPictureMode()) {
             return;
         }"""
-              text = text.replace(marker, guard, 1)
+                  text = text[:host_pause.start()] + guard + text[host_pause.end():]
+                  print("Applied VLC PiP lifecycle guard")
+              else:
+                  print("VLC PiP lifecycle guard already present")
+          else:
+              print("VLC package has no onHostPause(); no lifecycle PiP guard is required")
 
           view_path.write_text(text, encoding="utf-8")
           PY
@@ -136,8 +143,8 @@ jobs:
               echo "VLC option loop patch did not apply"
               exit 1
             fi
-            if ! grep -q 'isInPictureInPictureMode()' "$VLC_VIEW"; then
-              echo "VLC PiP lifecycle patch did not apply"
+            if grep -Eq 'onHostPause[[:space:]]*\(' "$VLC_VIEW" && ! grep -q 'isInPictureInPictureMode()' "$VLC_VIEW"; then
+              echo "VLC has onHostPause() but the PiP lifecycle guard is missing"
               exit 1
             fi
           } 2>&1 | tee "$GITHUB_WORKSPACE/vlc-patch.log"
@@ -155,6 +162,19 @@ jobs:
           set -o pipefail
           pnpm exec expo prebuild --platform android --clean --no-install 2>&1 | tee "$GITHUB_WORKSPACE/expo-prebuild.log"
 
+      - name: Show prepare diagnostics
+        if: always() && (steps.deps.outcome == 'failure' || steps.vlc_patch.outcome == 'failure' || steps.prebuild.outcome == 'failure')
+        shell: bash
+        run: |
+          echo "================ DEPENDENCY INSTALL ===================="
+          tail -n 160 dependency-install.log 2>/dev/null || true
+          echo "================ VLC PATCH ============================="
+          cat vlc-patch.log 2>/dev/null || true
+          echo "================ EXPO PREBUILD ========================="
+          tail -n 220 expo-prebuild.log 2>/dev/null || true
+          echo "========================================================"
+          echo "::error title=Android preparation failed::Check the diagnostic block directly above; the exact failing stage is now printed in the job log."
+
       - name: Upload prepare diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -170,7 +190,7 @@ jobs:
       - name: Stop on prepare failure
         if: steps.deps.outcome == 'failure' || steps.vlc_patch.outcome == 'failure' || steps.prebuild.outcome == 'failure'
         run: |
-          echo "Preparation failed. Download LegendStream-XPlayer-Prepare-Diagnostics for the exact error."
+          echo "Preparation failed. Exact diagnostics were printed above and also uploaded as an artifact."
           exit 1
 
       - name: Check disk before Gradle
@@ -201,11 +221,12 @@ jobs:
         shell: bash
         run: |
           echo "================ IMPORTANT ERROR LINES ================"
-          grep -Ein -C 4 "error|exception|failed|failure|unable|cannot|could not|syntax|module not found|no space|keystore|signing|bundle|manifest|minSdk|vlc|libvlc|duplicate|merge" release-build.log | tail -n 360 || true
-          echo "================ LAST 360 LOG LINES ===================="
-          tail -n 360 release-build.log || true
+          grep -Ein -C 4 "error|exception|failed|failure|unable|cannot|could not|syntax|module not found|no space|keystore|signing|bundle|manifest|minSdk|vlc|libvlc|duplicate|merge|kotlin|java" release-build.log | tail -n 420 || true
+          echo "================ LAST 420 LOG LINES ===================="
+          tail -n 420 release-build.log || true
           echo "================ DISK AFTER FAILURE ====================="
           df -h / || true
+          echo "::error title=Android release build failed::The exact Gradle/Metro error is printed in the diagnostic block above."
 
       - name: Upload release build log
         if: always()
