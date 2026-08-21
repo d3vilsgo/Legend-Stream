@@ -1,5 +1,5 @@
-import { Platform } from "react-native";
 import { requireOptionalNativeModule } from "expo";
+import { Platform } from "react-native";
 
 type LegendStreamPipNativeModule = {
   isSupported: () => boolean;
@@ -7,7 +7,7 @@ type LegendStreamPipNativeModule = {
   enter: (width: number, height: number) => Promise<boolean>;
 };
 
-const nativeModule = requireOptionalNativeModule<LegendStreamPipNativeModule>("LegendStreamPip");
+const nativeModule = requireOptionalNativeModule("LegendStreamPip") as LegendStreamPipNativeModule | null;
 
 export const isPipSupported = () =>
   Platform.OS === "android" && Boolean(nativeModule?.isSupported?.());
