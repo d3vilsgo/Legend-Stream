@@ -80,8 +80,13 @@ const formatTime = (seconds: number) => {
 export const playerCodecLabel = (mode: PlayerCodecMode) =>
   mode === "hardware" ? "HW" : mode === "software" ? "SW" : "AUTO";
 
-const fitLabel = (mode: PlayerFitMode) =>
-  mode === "contain" ? "FIT" : mode === "cover" ? "CROP" : "FILL";
+const fitLabel = (mode: PlayerFitMode) => {
+  if (mode === "full") return "FULL";
+  if (mode === "original") return "ORIG";
+  if (mode === "16:9") return "16:9";
+  if (mode === "4:3") return "4:3";
+  return "FIT";
+};
 
 export const PlayerChrome = memo(function PlayerChrome(props: Props) {
   const { width, height } = useWindowDimensions();
