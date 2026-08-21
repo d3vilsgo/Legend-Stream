@@ -25,15 +25,9 @@ const SIDE_ZONE_RATIO = 0.38;
 const NATIVE_UPDATE_INTERVAL_MS = 45;
 
 /**
- * Full-screen gesture catcher that sits behind the visible player controls.
- *
- * Left vertical swipe  -> activity brightness
- * Right vertical swipe -> VLC player volume
- * Tap                  -> show/hide player chrome
- *
- * The middle strip intentionally does not own a vertical gesture so future
- * horizontal-seek/double-tap gestures can be added without competing with
- * brightness or volume.
+ * Full-screen gesture catcher behind the visible player controls.
+ * Left vertical swipe changes activity brightness; right vertical swipe changes
+ * VLC's player-local volume. A simple tap toggles the normal player chrome.
  */
 export function PlayerGestureLayer({
   volume,
@@ -46,14 +40,18 @@ export function PlayerGestureLayer({
   const [mode, setMode] = useState<GestureMode>(null);
   const [hudValue, setHudValue] = useState(0);
 
+  const modeRef = useRef<GestureMode>(null);
   const originalBrightness = useRef<number | null>(null);
   const brightness = useRef(0.5);
   const volumeRef = useRef(clamp01(volume));
   const gestureStartValue = useRef(0);
   const gestureChanged = useRef(false);
-  const lastNativeUpdate = useRef(0);
+  const lastBrightnessUpdate = useRef(0);
+  const lastVolumeUpdate = useRef(0);
   const pendingBrightness = useRef<number | null>(null);
+  const pendingVolume = useRef<number | null>(null);
   const brightnessTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const volumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hudTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -74,6 +72,7 @@ export function PlayerGestureLayer({
     return () => {
       cancelled = true;
       if (brightnessTimer.current) clearTimeout(brightnessTimer.current);
+      if (volumeTimer.current) clearTimeout(volumeTimer.current);
       if (hudTimer.current) clearTimeout(hudTimer.current);
       const original = originalBrightness.current;
       if (original !== null) void Brightness.setBrightnessAsync(original).catch(() => undefined);
@@ -81,10 +80,14 @@ export function PlayerGestureLayer({
   }, []);
 
   const showHud = (nextMode: Exclude<GestureMode, null>, value: number) => {
+    modeRef.current = nextMode;
     setMode(nextMode);
     setHudValue(clamp01(value));
     if (hudTimer.current) clearTimeout(hudTimer.current);
-    hudTimer.current = setTimeout(() => setMode(null), 900);
+    hudTimer.current = setTimeout(() => {
+      modeRef.current = null;
+      setMode(null);
+    }, 900);
   };
 
   const applyBrightness = (value: number) => {
@@ -93,9 +96,9 @@ export function PlayerGestureLayer({
     showHud("brightness", safe);
 
     const now = Date.now();
-    const elapsed = now - lastNativeUpdate.current;
+    const elapsed = now - lastBrightnessUpdate.current;
     if (elapsed >= NATIVE_UPDATE_INTERVAL_MS) {
-      lastNativeUpdate.current = now;
+      lastBrightnessUpdate.current = now;
       void Brightness.setBrightnessAsync(safe).catch(() => undefined);
       return;
     }
@@ -107,7 +110,7 @@ export function PlayerGestureLayer({
         const pending = pendingBrightness.current;
         pendingBrightness.current = null;
         if (pending === null) return;
-        lastNativeUpdate.current = Date.now();
+        lastBrightnessUpdate.current = Date.now();
         void Brightness.setBrightnessAsync(pending).catch(() => undefined);
       }, Math.max(8, NATIVE_UPDATE_INTERVAL_MS - elapsed));
     }
@@ -117,7 +120,26 @@ export function PlayerGestureLayer({
     const safe = clamp01(value);
     volumeRef.current = safe;
     showHud("volume", safe);
-    onVolumeChange(safe);
+
+    const now = Date.now();
+    const elapsed = now - lastVolumeUpdate.current;
+    if (elapsed >= NATIVE_UPDATE_INTERVAL_MS) {
+      lastVolumeUpdate.current = now;
+      onVolumeChange(safe);
+      return;
+    }
+
+    pendingVolume.current = safe;
+    if (!volumeTimer.current) {
+      volumeTimer.current = setTimeout(() => {
+        volumeTimer.current = null;
+        const pending = pendingVolume.current;
+        pendingVolume.current = null;
+        if (pending === null) return;
+        lastVolumeUpdate.current = Date.now();
+        onVolumeChange(pending);
+      }, Math.max(8, NATIVE_UPDATE_INTERVAL_MS - elapsed));
+    }
   };
 
   const panResponder = useMemo(() => PanResponder.create({
@@ -125,6 +147,7 @@ export function PlayerGestureLayer({
     onMoveShouldSetPanResponder: () => enabled,
     onPanResponderGrant: (event) => {
       gestureChanged.current = false;
+      modeRef.current = null;
       const x = event.nativeEvent.locationX;
       if (x <= width * SIDE_ZONE_RATIO) {
         gestureStartValue.current = brightness.current;
@@ -153,17 +176,21 @@ export function PlayerGestureLayer({
     onPanResponderRelease: () => {
       if (!gestureChanged.current) {
         onTap();
-      } else if (mode === "volume") {
+      } else if (modeRef.current === "volume") {
+        onVolumeChange(volumeRef.current);
         onVolumeCommit?.(volumeRef.current);
       }
       gestureChanged.current = false;
     },
     onPanResponderTerminate: () => {
-      if (mode === "volume") onVolumeCommit?.(volumeRef.current);
+      if (modeRef.current === "volume") {
+        onVolumeChange(volumeRef.current);
+        onVolumeCommit?.(volumeRef.current);
+      }
       gestureChanged.current = false;
     },
     onPanResponderTerminationRequest: () => true,
-  }), [enabled, height, mode, onTap, onVolumeCommit, width]);
+  }), [enabled, height, onTap, onVolumeChange, onVolumeCommit, width]);
 
   return (
     <View style={styles.layer} {...panResponder.panHandlers}>
