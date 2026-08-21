@@ -106,7 +106,7 @@ export function CompatibilityVideoPlayer({
   const [currentSubtitle, setCurrentSubtitle] = useState(subtitle);
   const [currentKind, setCurrentKind] = useState<PlayerMediaKind>(initialKind);
   const [paused, setPaused] = useState(false);
-  const [fit, setFit] = useState<PlayerFitMode>("contain");
+  const [fit, setFit] = useState<PlayerFitMode>("fit");
   const [codecMode, setCodecMode] = useState<PlayerCodecMode>("auto");
   const [volume, setVolume] = useState(1);
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -387,7 +387,11 @@ export function CompatibilityVideoPlayer({
   }, [currentKind, revealControls]);
 
   const cycleFit = useCallback(() => {
-    setFit((value) => value === "contain" ? "cover" : value === "cover" ? "fill" : "contain");
+    const modes: PlayerFitMode[] = ["fit", "full", "original", "16:9", "4:3"];
+    setFit((value) => {
+      const index = modes.indexOf(value);
+      return modes[(index + 1 + modes.length) % modes.length] ?? "fit";
+    });
     revealControls();
     revealMediaInfo();
   }, [revealControls, revealMediaInfo]);
