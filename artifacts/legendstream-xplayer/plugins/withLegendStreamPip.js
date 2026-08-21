@@ -1,5 +1,11 @@
 const { withAndroidManifest } = require("expo/config-plugins");
 
+/**
+ * Minimal PiP manifest plugin.
+ * Keep orientation/configChanges ownership with Expo and
+ * expo-screen-orientation; PiP only declares the two Activity capabilities it
+ * actually needs.
+ */
 module.exports = function withLegendStreamPip(config) {
   return withAndroidManifest(config, (configWithManifest) => {
     const manifest = configWithManifest.modResults.manifest;
@@ -10,7 +16,9 @@ module.exports = function withLegendStreamPip(config) {
       const filters = activity["intent-filter"] || [];
       return filters.some((filter) => {
         const actions = filter.action || [];
-        return actions.some((action) => action?.$?.["android:name"] === "android.intent.action.MAIN");
+        return actions.some(
+          (action) => action?.$?.["android:name"] === "android.intent.action.MAIN",
+        );
       });
     }) || application.activity[0];
 
@@ -18,19 +26,6 @@ module.exports = function withLegendStreamPip(config) {
 
     mainActivity.$["android:supportsPictureInPicture"] = "true";
     mainActivity.$["android:resizeableActivity"] = "true";
-
-    const current = String(mainActivity.$["android:configChanges"] || "");
-    const required = [
-      "keyboard",
-      "keyboardHidden",
-      "orientation",
-      "screenSize",
-      "screenLayout",
-      "smallestScreenSize",
-      "uiMode",
-    ];
-    const merged = Array.from(new Set([...current.split("|").filter(Boolean), ...required]));
-    mainActivity.$["android:configChanges"] = merged.join("|");
 
     return configWithManifest;
   });
