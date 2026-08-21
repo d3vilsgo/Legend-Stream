@@ -1,5 +1,5 @@
 import React, { forwardRef, memo, useCallback, useMemo, useState } from "react";
-import { LayoutChangeEvent, StyleSheet, View, ViewStyle } from "react-native";
+import { StyleSheet, View } from "react-native";
 import { VLCPlayer } from "react-native-vlc-media-player";
 
 export type PlayerFitMode = "contain" | "cover" | "fill";
@@ -34,14 +34,13 @@ type Props = {
   onError: () => void;
 };
 
-type Size = { width: number; height: number };
-const validSize = (size?: Partial<Size> | null): size is Size =>
-  Boolean(size && Number(size.width) > 0 && Number(size.height) > 0);
-
 /**
- * Android's VLC TextureView does not reliably honor React Native resizeMode.
- * Instead of delegating fit/cover to the library, this component sizes the
- * native TextureView itself from the real viewport and decoded video size.
+ * Crash-safe VLC bootstrap.
+ *
+ * Keep the initial native view configuration identical to the last verified
+ * working 1.4.0 path. Advanced scaling is deliberately kept out of the native
+ * mount path so an invalid aspect-ratio/TextureView transition cannot kill the
+ * Android process while the Activity is rotating into landscape.
  */
 const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurface(
   {
@@ -60,80 +59,39 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   },
   ref,
 ) {
-  const [viewport, setViewport] = useState<Size>({ width: 0, height: 0 });
-  const [videoSize, setVideoSize] = useState<Size>({ width: 16, height: 9 });
+  const [videoSize, setVideoSize] = useState<PlayerVideoSize>({ width: 16, height: 9 });
 
-  const source = useMemo(() => {
-    const initOptions = [
+  const initOptions = useMemo(() => {
+    const base = [
       "--network-caching=1200",
       "--file-caching=1000",
       "--http-reconnect",
       "--no-drop-late-frames",
     ];
-    const base: Record<string, unknown> = { uri, initType: 2, initOptions };
-    if (codecMode === "hardware") {
-      base.hwDecoderEnabled = 1;
-      base.hwDecoderForced = 1;
-    } else if (codecMode === "software") {
-      base.hwDecoderEnabled = 0;
-      base.hwDecoderForced = 0;
-    }
-    return base as any;
-  }, [codecMode, uri]);
-
-  const frameStyle = useMemo<ViewStyle>(() => {
-    if (!validSize(viewport) || !validSize(videoSize) || fit === "fill") {
-      return { width: "100%", height: "100%" };
-    }
-
-    const scaleX = viewport.width / videoSize.width;
-    const scaleY = viewport.height / videoSize.height;
-    const scale = fit === "cover" ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
-    return {
-      width: Math.max(1, Math.round(videoSize.width * scale)),
-      height: Math.max(1, Math.round(videoSize.height * scale)),
-    };
-  }, [fit, videoSize, viewport]);
-
-  const forcedAspectRatio = useMemo(() => {
-    if (fit !== "fill" || !validSize(viewport)) return undefined;
-    return `${Math.max(1, Math.round(viewport.width))}:${Math.max(1, Math.round(viewport.height))}`;
-  }, [fit, viewport]);
-
-  const handleLayout = useCallback((event: LayoutChangeEvent) => {
-    const { width, height } = event.nativeEvent.layout;
-    if (width <= 0 || height <= 0) return;
-    setViewport((current) =>
-      Math.abs(current.width - width) < 1 && Math.abs(current.height - height) < 1
-        ? current
-        : { width, height },
-    );
-  }, []);
+    if (codecMode === "hardware") return [...base, "--avcodec-hw=any"];
+    if (codecMode === "software") return [...base, "--avcodec-hw=none"];
+    return base;
+  }, [codecMode]);
 
   const handleLoad = useCallback((event: VlcLoadEvent) => {
-    if (validSize(event?.videoSize)) {
-      setVideoSize((current) =>
-        current.width === event.videoSize!.width && current.height === event.videoSize!.height
-          ? current
-          : { width: event.videoSize!.width, height: event.videoSize!.height },
-      );
+    const size = event?.videoSize;
+    if (size && Number(size.width) > 0 && Number(size.height) > 0) {
+      setVideoSize({ width: Number(size.width), height: Number(size.height) });
     }
-    onLoad(event);
-  }, [onLoad]);
+    onLoad({ ...event, videoSize: size ?? videoSize });
+  }, [onLoad, videoSize]);
 
   return (
-    <View style={styles.surface} pointerEvents="none" onLayout={handleLayout}>
+    <View style={styles.surface} pointerEvents="none">
       <VLCPlayer
         key={`${uri}:${codecMode}`}
         ref={ref}
-        style={[styles.video, frameStyle]}
-        source={source}
+        style={styles.video}
+        source={{ uri, initType: 2, initOptions }}
         paused={paused}
         autoplay
-        autoAspectRatio={fit !== "fill"}
-        videoAspectRatio={forcedAspectRatio as any}
-        resizeMode="fill"
-        volume={100}
+        autoAspectRatio
+        resizeMode={fit}
         audioTrack={audioTrack}
         textTrack={textTrack}
         onLoad={handleLoad as any}
@@ -147,7 +105,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   );
 });
 
-/** UI chrome updates must not reconcile the native VLC surface. */
+/** UI-only state must never rebuild the native VLC surface. */
 export const VlcPlaybackSurface = memo(
   VlcPlaybackSurfaceImpl,
   (previous, next) =>
@@ -163,11 +121,9 @@ const styles = StyleSheet.create({
   surface: {
     ...StyleSheet.absoluteFillObject,
     backgroundColor: "#000",
-    overflow: "hidden",
-    alignItems: "center",
-    justifyContent: "center",
   },
   video: {
+    ...StyleSheet.absoluteFillObject,
     backgroundColor: "#000",
   },
 });
