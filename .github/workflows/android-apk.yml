@@ -100,20 +100,25 @@ jobs:
           text = view_path.read_text(encoding="utf-8")
 
           # Upstream 1.0.98 skips the final VLC init/media option because both loops
-          # end at size()-1. This can silently drop a cache/decoder option.
-          text = text.replace(
-              "for (int i = 0; i < options.size() - 1; i++)",
-              "for (int i = 0; i < options.size(); i++)",
-          )
+          # end at size()-1. This silently drops the last cache/decoder option.
+          old_loop = "for (int i = 0; i < options.size() - 1; i++)"
+          new_loop = "for (int i = 0; i < options.size(); i++)"
+          text = text.replace(old_loop, new_loop)
 
-          # React Native calls onHostPause while Android is entering PiP. Upstream
-          # unconditionally pauses libVLC there, which freezes the PiP frame.
+          # React Native calls onHostPause while Android enters PiP. Patch the
+          # method declaration itself instead of matching surrounding whitespace,
+          # so this remains stable across harmless upstream formatting changes.
           if "isInPictureInPictureMode()" not in text:
-              needle = """    @Override\n    public void onHostPause() {\n        if (!isPaused && mMediaPlayer != null && !isReleased) {"""
-              replacement = """    @Override\n    public void onHostPause() {\n        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O\n                && themedReactContext.getCurrentActivity() != null\n                && themedReactContext.getCurrentActivity().isInPictureInPictureMode()) {\n            return;\n        }\n        if (!isPaused && mMediaPlayer != null && !isReleased) {"""
-              if needle not in text:
-                  raise SystemExit("Could not locate VLC onHostPause() for PiP patch")
-              text = text.replace(needle, replacement, 1)
+              marker = "public void onHostPause() {"
+              if marker not in text:
+                  raise SystemExit("Could not locate VLC onHostPause() declaration for PiP patch")
+              guard = """public void onHostPause() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
+                && themedReactContext.getCurrentActivity() != null
+                && themedReactContext.getCurrentActivity().isInPictureInPictureMode()) {
+            return;
+        }"""
+              text = text.replace(marker, guard, 1)
 
           view_path.write_text(text, encoding="utf-8")
           PY
@@ -121,7 +126,7 @@ jobs:
             echo "After Gradle patch:"
             grep -nE 'compileSdkVersion|minSdkVersion|libvlc-all' "$VLC_GRADLE" || true
             echo "VLC option/PiP verification:"
-            grep -nE 'options\.size\(\)|isInPictureInPictureMode' "$VLC_VIEW" | head -n 20 || true
+            grep -nE 'options\.size\(\)|onHostPause|isInPictureInPictureMode' "$VLC_VIEW" | head -n 30 || true
 
             if grep -Eq 'minSdkVersion[[:space:]]+26' "$VLC_GRADLE"; then
               echo "VLC minSdk patch did not apply"
