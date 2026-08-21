@@ -9,36 +9,52 @@ type LegendStreamPipNativeModule = {
   enter: (width: number, height: number) => Promise<boolean>;
 };
 
-const nativeModule = requireOptionalNativeModule("LegendStreamPip") as LegendStreamPipNativeModule | null;
+let cachedModule: LegendStreamPipNativeModule | null | undefined;
 
-export const isPipSupported = () =>
-  Platform.OS === "android" && Boolean(nativeModule?.isSupported?.());
-
-export const isInPipMode = () =>
-  Platform.OS === "android" && Boolean(nativeModule?.isInPictureInPictureMode?.());
-
-export const getMediaVolume = () => {
-  if (Platform.OS !== "android" || !nativeModule) return 1;
-  try {
-    return Math.max(0, Math.min(1, Number(nativeModule.getMediaVolume?.() ?? 1)));
-  } catch {
-    return 1;
-  }
+const getNativeModule = () => {
+  if (cachedModule !== undefined) return cachedModule;
+  cachedModule = requireOptionalNativeModule("LegendStreamPip") as LegendStreamPipNativeModule | null;
+  return cachedModule;
 };
 
-export async function setMediaVolume(value: number) {
-  if (Platform.OS !== "android" || !nativeModule) return false;
+/**
+ * PiP isolation build:
+ * - Do not resolve the native module while the player is opening.
+ * - Android API level alone controls whether the PiP button is shown.
+ * - Resolve the native bridge only when PiP is actually used.
+ *
+ * Volume bridging stays dormant in this build so PiP is the only native feature
+ * being reintroduced on top of the stable scaling baseline.
+ */
+export const isPipSupported = () =>
+  Platform.OS === "android" && Number(Platform.Version) >= 26;
+
+export const isInPipMode = () => {
+  if (Platform.OS !== "android" || Number(Platform.Version) < 26) return false;
   try {
-    return Boolean(await nativeModule.setMediaVolume(Math.max(0, Math.min(1, value))));
+    return Boolean(getNativeModule()?.isInPictureInPictureMode?.());
   } catch {
     return false;
   }
+};
+
+export const getMediaVolume = () => 1;
+
+export async function setMediaVolume(_value: number) {
+  return false;
 }
 
 export async function enterPictureInPicture(width = 16, height = 9) {
-  if (Platform.OS !== "android" || !nativeModule) return false;
+  if (Platform.OS !== "android" || Number(Platform.Version) < 26) return false;
   try {
-    return Boolean(await nativeModule.enter(Math.max(1, Math.round(width)), Math.max(1, Math.round(height))));
+    const nativeModule = getNativeModule();
+    if (!nativeModule?.isSupported?.()) return false;
+    return Boolean(
+      await nativeModule.enter(
+        Math.max(1, Math.round(width)),
+        Math.max(1, Math.round(height)),
+      ),
+    );
   } catch {
     return false;
   }
