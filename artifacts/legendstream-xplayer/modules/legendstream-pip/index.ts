@@ -7,33 +7,41 @@ type LegendStreamPipNativeModule = {
   enter: (width: number, height: number) => Promise<boolean>;
 };
 
-const nativeModule = requireOptionalNativeModule("LegendStreamPip") as LegendStreamPipNativeModule | null;
+let nativeModule: LegendStreamPipNativeModule | null | undefined;
+
+const getNativeModule = () => {
+  if (nativeModule !== undefined) return nativeModule;
+  try {
+    nativeModule = requireOptionalNativeModule("LegendStreamPip") as LegendStreamPipNativeModule | null;
+  } catch {
+    nativeModule = null;
+  }
+  return nativeModule;
+};
 
 /**
- * Phase-2 isolation rule:
- * keep the PiP bridge independent from brightness/media-volume gesture work.
- * 1.4.7 proved the VLC baseline is stable, so re-introduce one native feature
- * family at a time. Volume functions intentionally remain JS no-ops until PiP
- * and scaling have passed device testing.
+ * Keep PiP completely out of the player-open hot path.
+ *
+ * The 1.4.7 baseline proved playback is stable. We therefore report platform
+ * capability without resolving the custom native module. The bridge is loaded
+ * for the first time only when the user actually presses PiP. This makes the
+ * same APK an isolation test: player open validates scaling; PiP tap validates
+ * the native bridge/lifecycle path independently.
  */
-export const isPipSupported = () => {
-  if (Platform.OS !== "android" || !nativeModule) return false;
-  try {
-    return Boolean(nativeModule.isSupported?.());
-  } catch {
-    return false;
-  }
-};
+export const isPipSupported = () =>
+  Platform.OS === "android" && Number(Platform.Version) >= 26;
 
 export const isInPipMode = () => {
-  if (Platform.OS !== "android" || !nativeModule) return false;
+  if (Platform.OS !== "android" || Number(Platform.Version) < 26) return false;
+  const module = getNativeModule();
   try {
-    return Boolean(nativeModule.isInPictureInPictureMode?.());
+    return Boolean(module?.isInPictureInPictureMode?.());
   } catch {
     return false;
   }
 };
 
+// Media-volume gestures remain intentionally isolated from the PiP bridge.
 export const getMediaVolume = () => 1;
 
 export async function setMediaVolume(_value: number) {
@@ -41,9 +49,12 @@ export async function setMediaVolume(_value: number) {
 }
 
 export async function enterPictureInPicture(width = 16, height = 9) {
-  if (Platform.OS !== "android" || !nativeModule) return false;
+  if (Platform.OS !== "android" || Number(Platform.Version) < 26) return false;
+  const module = getNativeModule();
+  if (!module) return false;
   try {
-    return Boolean(await nativeModule.enter(Math.max(1, Math.round(width)), Math.max(1, Math.round(height))));
+    if (module.isSupported && !module.isSupported()) return false;
+    return Boolean(await module.enter(Math.max(1, Math.round(width)), Math.max(1, Math.round(height))));
   } catch {
     return false;
   }
