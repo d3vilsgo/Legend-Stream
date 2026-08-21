@@ -69,7 +69,7 @@ jobs:
           set -o pipefail
           pnpm --filter @workspace/legendstream-xplayer... install --no-frozen-lockfile 2>&1 | tee "$GITHUB_WORKSPACE/dependency-install.log"
 
-      - name: Verify and patch VLC for Android 7+
+      - name: Verify and patch VLC for Android 7+ and PiP
         id: vlc_patch
         if: steps.deps.outcome == 'success'
         continue-on-error: true
@@ -80,17 +80,59 @@ jobs:
             VLC_PKG="$(cd artifacts/legendstream-xplayer && node -p "require.resolve('react-native-vlc-media-player/package.json')")"
             VLC_DIR="$(dirname "$VLC_PKG")"
             VLC_GRADLE="$VLC_DIR/android/build.gradle"
+            VLC_VIEW="$VLC_DIR/android/src/main/java/com/yuanzhou/vlc/vlcplayer/ReactVlcPlayerView.java"
+            export VLC_DIR VLC_GRADLE VLC_VIEW
+
             echo "Resolved VLC package: $VLC_DIR"
             node -e "const p=require('$VLC_PKG'); console.log('VLC version:', p.version)"
-            echo "Gradle file: $VLC_GRADLE"
             test -f "$VLC_GRADLE"
-            echo "Before patch:"
+            test -f "$VLC_VIEW"
+
+            echo "Before Gradle patch:"
             grep -nE 'compileSdkVersion|minSdkVersion|libvlc-all' "$VLC_GRADLE" || true
             sed -Ei 's/minSdkVersion[[:space:]]+26/minSdkVersion 24/g' "$VLC_GRADLE"
-            echo "After patch:"
+
+            python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          view_path = Path(os.environ["VLC_VIEW"])
+          text = view_path.read_text(encoding="utf-8")
+
+          # Upstream 1.0.98 skips the final VLC init/media option because both loops
+          # end at size()-1. This can silently drop a cache/decoder option.
+          text = text.replace(
+              "for (int i = 0; i < options.size() - 1; i++)",
+              "for (int i = 0; i < options.size(); i++)",
+          )
+
+          # React Native calls onHostPause while Android is entering PiP. Upstream
+          # unconditionally pauses libVLC there, which freezes the PiP frame.
+          if "isInPictureInPictureMode()" not in text:
+              needle = """    @Override\n    public void onHostPause() {\n        if (!isPaused && mMediaPlayer != null && !isReleased) {"""
+              replacement = """    @Override\n    public void onHostPause() {\n        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O\n                && themedReactContext.getCurrentActivity() != null\n                && themedReactContext.getCurrentActivity().isInPictureInPictureMode()) {\n            return;\n        }\n        if (!isPaused && mMediaPlayer != null && !isReleased) {"""
+              if needle not in text:
+                  raise SystemExit("Could not locate VLC onHostPause() for PiP patch")
+              text = text.replace(needle, replacement, 1)
+
+          view_path.write_text(text, encoding="utf-8")
+          PY
+
+            echo "After Gradle patch:"
             grep -nE 'compileSdkVersion|minSdkVersion|libvlc-all' "$VLC_GRADLE" || true
+            echo "VLC option/PiP verification:"
+            grep -nE 'options\.size\(\)|isInPictureInPictureMode' "$VLC_VIEW" | head -n 20 || true
+
             if grep -Eq 'minSdkVersion[[:space:]]+26' "$VLC_GRADLE"; then
               echo "VLC minSdk patch did not apply"
+              exit 1
+            fi
+            if grep -q 'options.size() - 1' "$VLC_VIEW"; then
+              echo "VLC option loop patch did not apply"
+              exit 1
+            fi
+            if ! grep -q 'isInPictureInPictureMode()' "$VLC_VIEW"; then
+              echo "VLC PiP lifecycle patch did not apply"
               exit 1
             fi
           } 2>&1 | tee "$GITHUB_WORKSPACE/vlc-patch.log"
