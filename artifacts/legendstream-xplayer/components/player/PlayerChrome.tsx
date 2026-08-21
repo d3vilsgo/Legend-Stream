@@ -9,7 +9,8 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
-import type { PlayerCodecMode, PlayerTrack } from "./VlcPlaybackSurface";
+import { PlayerGestureLayer } from "./PlayerGestureLayer";
+import type { PlayerCodecMode, PlayerFitMode, PlayerTrack } from "./VlcPlaybackSurface";
 
 export type PlayerPanel = "content" | "subtitles" | "audio" | "codec" | null;
 export type PlayerSelectableItem = {
@@ -27,6 +28,8 @@ type Props = {
   meta?: string;
   mediaKind: PlayerMediaKind;
   codecMode: PlayerCodecMode;
+  fitMode: PlayerFitMode;
+  volume: number;
   controlsVisible: boolean;
   infoVisible: boolean;
   panel: PlayerPanel;
@@ -43,6 +46,7 @@ type Props = {
   textTracks: PlayerTrack[];
   errorText?: string | null;
   canExit: boolean;
+  pipSupported: boolean;
   onBackgroundPress: () => void;
   onExit: () => void;
   onTogglePause: () => void;
@@ -57,6 +61,9 @@ type Props = {
   onDownload: () => void;
   onCycleFit: () => void;
   onRotate: () => void;
+  onVolumeChange: (value: number) => void;
+  onVolumeCommit?: (value: number) => void;
+  onEnterPip: () => void;
 };
 
 const formatTime = (seconds: number) => {
@@ -72,6 +79,9 @@ const formatTime = (seconds: number) => {
 
 export const playerCodecLabel = (mode: PlayerCodecMode) =>
   mode === "hardware" ? "HW" : mode === "software" ? "SW" : "AUTO";
+
+const fitLabel = (mode: PlayerFitMode) =>
+  mode === "contain" ? "FIT" : mode === "cover" ? "CROP" : "FILL";
 
 export const PlayerChrome = memo(function PlayerChrome(props: Props) {
   const { width, height } = useWindowDimensions();
@@ -92,11 +102,12 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
 
   return (
     <View style={styles.overlay} pointerEvents="box-none">
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Oynatıcı kontrollerini göster veya gizle"
-        style={styles.tapCatcher}
-        onPress={props.onBackgroundPress}
+      <PlayerGestureLayer
+        enabled={!props.panel}
+        volume={props.volume}
+        onTap={props.onBackgroundPress}
+        onVolumeChange={props.onVolumeChange}
+        onVolumeCommit={props.onVolumeCommit}
       />
 
       {props.errorText ? (
@@ -113,8 +124,9 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
             <Text numberOfLines={1} style={styles.mediaTitle}>{props.title}</Text>
             {props.meta ? <Text numberOfLines={1} style={styles.mediaMeta}>{props.meta}</Text> : null}
           </View>
-          <View style={styles.codecBadge}>
-            <Text style={styles.codecBadgeText}>{playerCodecLabel(props.codecMode)}</Text>
+          <View style={styles.infoBadges}>
+            <View style={styles.fitBadge}><Text style={styles.fitBadgeText}>{fitLabel(props.fitMode)}</Text></View>
+            <View style={styles.codecBadge}><Text style={styles.codecBadgeText}>{playerCodecLabel(props.codecMode)}</Text></View>
           </View>
         </View>
       ) : null}
@@ -186,8 +198,16 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
                         : "download"}
                   />
                 ) : null}
-                <ControlButton onPress={props.onCycleFit} icon="maximize-2" />
+                <Pressable onPress={props.onCycleFit} style={styles.fitControl} hitSlop={6}>
+                  <Feather name="maximize-2" size={20} color="#fff" />
+                  <Text style={styles.fitMini}>{fitLabel(props.fitMode)}</Text>
+                </Pressable>
                 <ControlButton onPress={props.onRotate} icon="rotate-cw" />
+                {props.pipSupported ? (
+                  <Pressable onPress={props.onEnterPip} style={styles.pipControl} hitSlop={6}>
+                    <Text style={styles.pipText}>PiP</Text>
+                  </Pressable>
+                ) : null}
                 <Pressable onPress={() => props.onTogglePanel("subtitles")} style={styles.icon} hitSlop={6}>
                   <Text style={styles.cc}>CC</Text>
                 </Pressable>
@@ -326,13 +346,15 @@ function ControlButton({ onPress, icon, disabled = false, size = "normal", badge
 
 const styles = StyleSheet.create({
   overlay: { ...StyleSheet.absoluteFillObject, zIndex: 20 },
-  tapCatcher: { ...StyleSheet.absoluteFillObject, zIndex: 1 },
   back: { position: "absolute", zIndex: 6, top: 18, left: 18, width: 52, height: 52, borderRadius: 26, backgroundColor: "rgba(4,8,14,.78)", borderWidth: 1, borderColor: "rgba(255,255,255,.12)", alignItems: "center", justifyContent: "center" },
   mediaHud: { position: "absolute", zIndex: 5, top: 18, left: 84, right: 18, minHeight: 56, borderRadius: 17, backgroundColor: "rgba(4,8,14,.76)", borderWidth: 1, borderColor: "rgba(255,255,255,.12)", paddingHorizontal: 14, paddingVertical: 9, flexDirection: "row", alignItems: "center", gap: 10 },
   mediaCopy: { flex: 1, minWidth: 0 },
   liveDot: { width: 8, height: 8, borderRadius: 4, backgroundColor: "#22d3ee" },
   mediaTitle: { color: "#fff", fontSize: 16, fontWeight: "900" },
   mediaMeta: { color: "#aab4c3", fontSize: 12, marginTop: 2 },
+  infoBadges: { flexDirection: "row", alignItems: "center", gap: 6 },
+  fitBadge: { paddingHorizontal: 7, paddingVertical: 4, borderRadius: 9, backgroundColor: "rgba(255,255,255,.08)", borderWidth: 1, borderColor: "rgba(255,255,255,.15)" },
+  fitBadgeText: { color: "#dbeafe", fontSize: 9, fontWeight: "900" },
   codecBadge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 9, backgroundColor: "rgba(34,211,238,.16)", borderWidth: 1, borderColor: "rgba(34,211,238,.35)" },
   codecBadgeText: { color: "#67e8f9", fontSize: 10, fontWeight: "900" },
   center: { position: "absolute", zIndex: 6, left: 0, right: 0, top: "40%", flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 34 },
@@ -346,7 +368,11 @@ const styles = StyleSheet.create({
   seekFill: { height: 5, backgroundColor: "#22d3ee" },
   barShell: { borderRadius: 18, backgroundColor: "rgba(4,8,14,.82)", borderWidth: 1, borderColor: "rgba(255,255,255,.11)", overflow: "hidden" },
   bar: { flexDirection: "row", alignItems: "center", justifyContent: "space-around", paddingVertical: 7, paddingHorizontal: 5 },
-  icon: { minWidth: 42, height: 42, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  icon: { minWidth: 40, height: 42, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  fitControl: { minWidth: 42, height: 42, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  fitMini: { color: "#cbd5e1", fontSize: 7, fontWeight: "900", marginTop: -1 },
+  pipControl: { minWidth: 42, height: 42, borderRadius: 12, alignItems: "center", justifyContent: "center" },
+  pipText: { color: "#fff", fontSize: 11, fontWeight: "900", borderWidth: 1.5, borderColor: "#fff", borderRadius: 3, paddingHorizontal: 3, paddingVertical: 1 },
   codecIcon: { minWidth: 42, height: 42, borderRadius: 12, alignItems: "center", justifyContent: "center", paddingHorizontal: 4 },
   codecMini: { color: "#67e8f9", fontSize: 8, fontWeight: "900", marginTop: -2 },
   cc: { color: "#fff", fontWeight: "900", fontSize: 15, borderWidth: 2, borderColor: "#fff", borderRadius: 4, paddingHorizontal: 3, lineHeight: 18 },
