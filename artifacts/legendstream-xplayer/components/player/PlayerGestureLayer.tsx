@@ -15,6 +15,7 @@ type Props = {
   volume: number;
   enabled?: boolean;
   onTap: () => void;
+  readVolume?: () => number;
   onVolumeChange: (value: number) => void;
   onVolumeCommit?: (value: number) => void;
 };
@@ -27,12 +28,13 @@ const NATIVE_UPDATE_INTERVAL_MS = 45;
 /**
  * Full-screen gesture catcher behind the visible player controls.
  * Left vertical swipe changes activity brightness; right vertical swipe changes
- * VLC's player-local volume. A simple tap toggles the normal player chrome.
+ * Android's media-stream volume. A simple tap toggles the normal player chrome.
  */
 export function PlayerGestureLayer({
   volume,
   enabled = true,
   onTap,
+  readVolume,
   onVolumeChange,
   onVolumeCommit,
 }: Props) {
@@ -152,7 +154,9 @@ export function PlayerGestureLayer({
       if (x <= width * SIDE_ZONE_RATIO) {
         gestureStartValue.current = brightness.current;
       } else if (x >= width * (1 - SIDE_ZONE_RATIO)) {
-        gestureStartValue.current = volumeRef.current;
+        const latest = clamp01(readVolume?.() ?? volumeRef.current);
+        volumeRef.current = latest;
+        gestureStartValue.current = latest;
       }
     },
     onPanResponderMove: (event, gesture) => {
@@ -190,7 +194,7 @@ export function PlayerGestureLayer({
       gestureChanged.current = false;
     },
     onPanResponderTerminationRequest: () => true,
-  }), [enabled, height, onTap, onVolumeChange, onVolumeCommit, width]);
+  }), [enabled, height, onTap, onVolumeChange, onVolumeCommit, readVolume, width]);
 
   return (
     <View style={styles.layer} {...panResponder.panHandlers}>
