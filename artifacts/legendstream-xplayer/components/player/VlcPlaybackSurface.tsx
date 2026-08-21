@@ -44,19 +44,17 @@ const validVideoSize = (value?: PlayerVideoSize) =>
   );
 
 /**
- * Phase-2 scaling isolation build.
+ * Scaling isolation v2.
  *
- * The verified 1.4.10 baseline must stay untouched on player open. Therefore:
- * - CONTAIN is byte-for-byte equivalent at the native VLC level: full-screen
- *   TextureView + autoAspectRatio=true.
- * - COVER never changes the TextureView layout. It only applies a compositor
- *   transform after VLC has reported the actual video size.
- * - FILL uses the library's documented native React props
- *   autoAspectRatio/videoAspectRatio. No imperative native calls are made.
+ * Keep the native VLC surface contract identical to the stable 1.4.10 build:
+ * full-screen TextureView + autoAspectRatio=true. FIT/CROP/FILL are applied only
+ * as compositor transforms after VLC reports the actual video size.
  *
- * We deliberately do not resize/reposition the native TextureView and do not
- * call changeVideoAspectRatio() from an effect. Those were the two experimental
- * paths associated with the previous player-open crashes.
+ * This avoids the react-native-vlc-media-player prop-order problem where
+ * autoAspectRatio and videoAspectRatio can be delivered in either order. The
+ * native implementation ignores setAspectRatio while autoAspectRatio is true,
+ * so the previous FILL mode could intermittently do nothing and could remain
+ * stuck when switching modes.
  */
 const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurface(
   {
@@ -90,22 +88,42 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     return base;
   }, [codecMode]);
 
-  const coverScale = useMemo(() => {
-    if (fit !== "cover" || !validVideoSize(videoSize) || window.width <= 0 || window.height <= 0) {
-      return 1;
+  const displayTransform = useMemo(() => {
+    if (
+      fit === "contain" ||
+      !validVideoSize(videoSize) ||
+      window.width <= 0 ||
+      window.height <= 0
+    ) {
+      return null;
     }
+
     const viewAspect = window.width / window.height;
     const mediaAspect = videoSize!.width / videoSize!.height;
-    if (!Number.isFinite(viewAspect) || !Number.isFinite(mediaAspect) || viewAspect <= 0 || mediaAspect <= 0) {
-      return 1;
+    if (
+      !Number.isFinite(viewAspect) ||
+      !Number.isFinite(mediaAspect) ||
+      viewAspect <= 0 ||
+      mediaAspect <= 0
+    ) {
+      return null;
     }
-    return Math.max(mediaAspect / viewAspect, viewAspect / mediaAspect);
-  }, [fit, videoSize, window.height, window.width]);
 
-  const fillAspectRatio = useMemo(() => {
-    if (window.width <= 0 || window.height <= 0) return undefined;
-    return `${Math.max(1, Math.round(window.width))}:${Math.max(1, Math.round(window.height))}`;
-  }, [window.height, window.width]);
+    if (fit === "cover") {
+      const scale = viewAspect >= mediaAspect
+        ? viewAspect / mediaAspect
+        : mediaAspect / viewAspect;
+      return { transform: [{ scale }] };
+    }
+
+    // FILL intentionally distorts only the axis that contains the letterbox.
+    // Because the full-screen TextureView is clipped by its parent, the black
+    // letterbox area is pushed outside the viewport while the picture stretches
+    // to the exact screen bounds.
+    return viewAspect >= mediaAspect
+      ? { transform: [{ scaleX: viewAspect / mediaAspect }] }
+      : { transform: [{ scaleY: mediaAspect / viewAspect }] };
+  }, [fit, videoSize, window.height, window.width]);
 
   const handleLoad = useCallback((event: VlcLoadEvent) => {
     if (validVideoSize(event?.videoSize)) {
@@ -122,17 +140,11 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
       <VLCPlayer
         key={`${uri}:${codecMode}`}
         ref={ref}
-        style={[
-          styles.video,
-          fit === "cover" && coverScale > 1
-            ? { transform: [{ scale: coverScale }] }
-            : null,
-        ]}
+        style={[styles.video, displayTransform]}
         source={{ uri, initType: 2, initOptions }}
         paused={paused}
         autoplay
-        autoAspectRatio={fit !== "fill"}
-        videoAspectRatio={fit === "fill" ? fillAspectRatio : undefined}
+        autoAspectRatio
         resizeMode={fit}
         audioTrack={audioTrack}
         textTrack={textTrack}
