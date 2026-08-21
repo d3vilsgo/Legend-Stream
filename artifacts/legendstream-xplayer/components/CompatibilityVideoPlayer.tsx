@@ -1,11 +1,16 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { BackHandler, StyleSheet, Text, View } from "react-native";
+import { AppState, BackHandler, StyleSheet, Text, View } from "react-native";
 import { useMediaLibrary } from "@/context/MediaLibraryContext";
 import { usePlayer } from "@/context/PlayerContext";
 import { downloadMedia } from "@/lib/downloads";
 import { getEpisodePlaybackQueue, getVodPlaybackQueue } from "@/lib/xtreamCatalog";
 import { usePlayerOrientation } from "@/hooks/usePlayerOrientation";
+import {
+  enterPictureInPicture,
+  isInPipMode,
+  isPipSupported,
+} from "@/modules/legendstream-pip";
 import {
   PlayerChrome,
   PlayerDownloadState,
@@ -17,6 +22,7 @@ import {
   PlayerCodecMode,
   PlayerFitMode,
   PlayerTrack,
+  PlayerVideoSize,
   VlcLoadEvent,
   VlcPlaybackSurface,
   VlcProgressEvent,
@@ -33,12 +39,18 @@ const inferMediaKind = (source: string): PlayerMediaKind => {
   return "live";
 };
 
-/** VLC Android commonly reports duration in milliseconds while currentTime is seconds. */
-const normalizeDuration = (raw: unknown, currentTime = 0) => {
+/** VLC Android reports MediaPlayer.getLength()/getTime() in milliseconds. */
+const normalizeDuration = (raw: unknown) => {
   const value = Number(raw || 0);
   if (!Number.isFinite(value) || value <= 0) return 0;
-  if (value > 86_400 || (currentTime > 0 && value > currentTime * 100)) return value / 1000;
-  return value;
+  return value > 86_400 ? value / 1000 : value;
+};
+
+const normalizeCurrentTime = (raw: unknown, rawDuration: unknown) => {
+  const value = Number(raw || 0);
+  if (!Number.isFinite(value) || value < 0) return 0;
+  const durationValue = Number(rawDuration || 0);
+  return durationValue > 86_400 ? value / 1000 : value;
 };
 
 type PlaybackSnapshot = {
@@ -94,11 +106,13 @@ export function CompatibilityVideoPlayer({
   const [paused, setPaused] = useState(false);
   const [fit, setFit] = useState<PlayerFitMode>("contain");
   const [codecMode, setCodecMode] = useState<PlayerCodecMode>("auto");
+  const [volume, setVolume] = useState(1);
   const [controlsVisible, setControlsVisible] = useState(true);
   const [infoVisible, setInfoVisible] = useState(true);
   const [panel, setPanel] = useState<PlayerPanel>(null);
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [videoSize, setVideoSize] = useState<PlayerVideoSize>({ width: 16, height: 9 });
   const [audioTracks, setAudioTracks] = useState<PlayerTrack[]>([]);
   const [textTracks, setTextTracks] = useState<PlayerTrack[]>([]);
   const [audioTrack, setAudioTrack] = useState<number | undefined>(undefined);
@@ -106,6 +120,8 @@ export function CompatibilityVideoPlayer({
   const [downloadState, setDownloadState] = useState<PlayerDownloadState>("idle");
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [pipSupported, setPipSupported] = useState(false);
+  const [pipActive, setPipActive] = useState(false);
 
   useEffect(() => {
     AsyncStorage.getItem(CODEC_MODE_KEY)
@@ -113,6 +129,7 @@ export function CompatibilityVideoPlayer({
         if (saved === "auto" || saved === "hardware" || saved === "software") setCodecMode(saved);
       })
       .catch(() => undefined);
+    setPipSupported(isPipSupported());
   }, []);
 
   const effectiveUri = useMemo(
@@ -139,9 +156,7 @@ export function CompatibilityVideoPlayer({
   const revealControls = useCallback((keep = false) => {
     setControlsVisible(true);
     clearControlsTimer();
-    if (!keep) {
-      controlsTimer.current = setTimeout(() => setControlsVisible(false), 3200);
-    }
+    if (!keep) controlsTimer.current = setTimeout(() => setControlsVisible(false), 3200);
   }, [clearControlsTimer]);
 
   const revealMediaInfo = useCallback(() => {
@@ -189,6 +204,18 @@ export function CompatibilityVideoPlayer({
       clearInfoTimer();
     };
   }, [clearControlsTimer, clearInfoTimer, currentSource, currentTitle, revealMediaInfo]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", (state) => {
+      if (state !== "active") return;
+      if (pipActive && !isInPipMode()) {
+        setPipActive(false);
+        revealControls();
+        revealMediaInfo();
+      }
+    });
+    return () => subscription.remove();
+  }, [pipActive, revealControls, revealMediaInfo]);
 
   const persistProgress = useCallback(async () => {
     const snapshot = playbackRef.current;
@@ -344,12 +371,11 @@ export function CompatibilityVideoPlayer({
 
   const seekBy = useCallback((seconds: number) => {
     if (currentKind === "live" || playbackRef.current.duration <= 0) return;
-    const next = Math.max(
-      0,
-      Math.min(playbackRef.current.duration, playbackRef.current.position + seconds),
-    );
-    const ratio = next / playbackRef.current.duration;
-    vlcRef.current?.seek?.(ratio);
+    const next = Math.max(0, Math.min(
+      playbackRef.current.duration,
+      playbackRef.current.position + seconds,
+    ));
+    vlcRef.current?.seek?.(next / playbackRef.current.duration);
     playbackRef.current.position = next;
     setPosition(next);
     revealControls();
@@ -358,7 +384,8 @@ export function CompatibilityVideoPlayer({
   const cycleFit = useCallback(() => {
     setFit((value) => value === "contain" ? "cover" : value === "cover" ? "fill" : "contain");
     revealControls();
-  }, [revealControls]);
+    revealMediaInfo();
+  }, [revealControls, revealMediaInfo]);
 
   const changeCodecMode = useCallback(async (mode: PlayerCodecMode) => {
     await persistProgress();
@@ -401,6 +428,9 @@ export function CompatibilityVideoPlayer({
       playbackRef.current.duration = normalizedDuration;
       setDuration(normalizedDuration);
     }
+    if (event?.videoSize && event.videoSize.width > 0 && event.videoSize.height > 0) {
+      setVideoSize(event.videoSize);
+    }
     setAudioTracks(Array.isArray(event?.audioTracks) ? event.audioTracks : []);
     setTextTracks(Array.isArray(event?.textTracks) ? event.textTracks : []);
 
@@ -422,15 +452,15 @@ export function CompatibilityVideoPlayer({
   }, [getProgress]);
 
   const handleProgress = useCallback((event: VlcProgressEvent) => {
-    const currentTime = Number(event?.currentTime || 0);
-    const normalizedDuration = normalizeDuration(event?.duration, currentTime);
-    if (Number.isFinite(currentTime) && currentTime >= 0) playbackRef.current.position = currentTime;
+    const currentTime = normalizeCurrentTime(event?.currentTime, event?.duration);
+    const normalizedDuration = normalizeDuration(event?.duration);
+    playbackRef.current.position = currentTime;
     if (normalizedDuration > 0) playbackRef.current.duration = normalizedDuration;
 
     const now = Date.now();
     if (now - lastUiProgressAt.current < UI_PROGRESS_INTERVAL_MS) return;
     lastUiProgressAt.current = now;
-    if (Number.isFinite(currentTime) && currentTime >= 0) setPosition(currentTime);
+    setPosition(currentTime);
     if (normalizedDuration > 0) setDuration(normalizedDuration);
   }, []);
 
@@ -450,6 +480,22 @@ export function CompatibilityVideoPlayer({
     }
   }, [currentIndex, currentKind, moveRelative, selectableItems.length]);
 
+  const enterPip = useCallback(async () => {
+    if (!pipSupported) return;
+    setPanel(null);
+    clearControlsTimer();
+    clearInfoTimer();
+    setControlsVisible(false);
+    setInfoVisible(false);
+    const entered = await enterPictureInPicture(videoSize.width, videoSize.height);
+    if (entered) {
+      setPipActive(true);
+      return;
+    }
+    revealControls();
+    revealMediaInfo();
+  }, [clearControlsTimer, clearInfoTimer, pipSupported, revealControls, revealMediaInfo, videoSize]);
+
   if (!orientation.ready || orientation.exiting) {
     return (
       <View style={styles.root}>
@@ -468,6 +514,7 @@ export function CompatibilityVideoPlayer({
         paused={paused}
         fit={fit}
         codecMode={codecMode}
+        volume={volume}
         audioTrack={audioTrack}
         textTrack={textTrack}
         onLoad={handleLoad}
@@ -478,53 +525,60 @@ export function CompatibilityVideoPlayer({
         onError={handleError}
       />
 
-      <PlayerChrome
-        title={currentTitle}
-        meta={currentMeta}
-        mediaKind={currentKind}
-        codecMode={codecMode}
-        controlsVisible={controlsVisible}
-        infoVisible={infoVisible}
-        panel={panel}
-        paused={paused}
-        position={position}
-        duration={duration}
-        selectableItems={selectableItems}
-        currentIndex={currentIndex}
-        canNavigate={canNavigate}
-        allowDownload={allowDownload}
-        downloadState={downloadState}
-        downloadProgress={downloadProgress}
-        audioTracks={audioTracks}
-        textTracks={textTracks}
-        errorText={errorText}
-        canExit={Boolean(onFullscreenExit)}
-        onBackgroundPress={onBackgroundPress}
-        onExit={() => void exitPlayer()}
-        onTogglePause={() => {
-          setPaused((value) => !value);
-          revealControls();
-        }}
-        onSeekBy={seekBy}
-        onSeekRatio={seekToRatio}
-        onMoveRelative={moveRelative}
-        onTogglePanel={togglePanel}
-        onSwitchTo={(item) => void switchTo(item)}
-        onSelectSubtitle={(id) => {
-          setTextTrack(id);
-          setPanel(null);
-          revealControls();
-        }}
-        onSelectAudio={(id) => {
-          setAudioTrack(id);
-          setPanel(null);
-          revealControls();
-        }}
-        onChangeCodec={(mode) => void changeCodecMode(mode)}
-        onDownload={() => void startDownload()}
-        onCycleFit={cycleFit}
-        onRotate={() => void orientation.rotate()}
-      />
+      {!pipActive ? (
+        <PlayerChrome
+          title={currentTitle}
+          meta={currentMeta}
+          mediaKind={currentKind}
+          codecMode={codecMode}
+          fitMode={fit}
+          volume={volume}
+          controlsVisible={controlsVisible}
+          infoVisible={infoVisible}
+          panel={panel}
+          paused={paused}
+          position={position}
+          duration={duration}
+          selectableItems={selectableItems}
+          currentIndex={currentIndex}
+          canNavigate={canNavigate}
+          allowDownload={allowDownload}
+          downloadState={downloadState}
+          downloadProgress={downloadProgress}
+          audioTracks={audioTracks}
+          textTracks={textTracks}
+          errorText={errorText}
+          canExit={Boolean(onFullscreenExit)}
+          pipSupported={pipSupported}
+          onBackgroundPress={onBackgroundPress}
+          onExit={() => void exitPlayer()}
+          onTogglePause={() => {
+            setPaused((value) => !value);
+            revealControls();
+          }}
+          onSeekBy={seekBy}
+          onSeekRatio={seekToRatio}
+          onMoveRelative={moveRelative}
+          onTogglePanel={togglePanel}
+          onSwitchTo={(item) => void switchTo(item)}
+          onSelectSubtitle={(id) => {
+            setTextTrack(id);
+            setPanel(null);
+            revealControls();
+          }}
+          onSelectAudio={(id) => {
+            setAudioTrack(id);
+            setPanel(null);
+            revealControls();
+          }}
+          onChangeCodec={(mode) => void changeCodecMode(mode)}
+          onDownload={() => void startDownload()}
+          onCycleFit={cycleFit}
+          onRotate={() => void orientation.rotate()}
+          onVolumeChange={setVolume}
+          onEnterPip={() => void enterPip()}
+        />
+      ) : null}
     </View>
   );
 }
