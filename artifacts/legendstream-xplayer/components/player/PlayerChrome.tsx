@@ -1,6 +1,10 @@
 import { Feather } from "@expo/vector-icons";
-import React, { useEffect } from "react";
+import React, { useEffect, useSyncExternalStore } from "react";
 import { StyleSheet, Text, View } from "react-native";
+import {
+  getPlayerRuntimeInfoSnapshot,
+  subscribePlayerRuntimeInfo,
+} from "@/lib/playerRuntimeInfo";
 import {
   PlayerChrome as PlayerChromeV2,
   playerCodecLabel,
@@ -20,16 +24,29 @@ type Props = React.ComponentProps<typeof PlayerChromeV2> & {
   resolution?: string;
 };
 
+const formatFps = (fps?: number) => {
+  if (!Number.isFinite(fps) || !fps || fps <= 0) return undefined;
+  const rounded = Math.round(fps);
+  const value = Math.abs(fps - rounded) < 0.02
+    ? String(rounded)
+    : fps.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+  return `${value} FPS`;
+};
+
 /**
- * Presentation wrapper for the new chrome.
+ * Presentation wrapper for the player chrome.
  *
  * Each player instance starts in the proven ORIG display mode by advancing the
- * existing FIT -> FULL -> ORIG cycle once. The callback identity is stable for
- * the lifetime of CompatibilityVideoPlayer, so PiP unmount/remount does not
- * reset a user's later display-mode choice.
+ * existing FIT -> FULL -> ORIG cycle once. Runtime resolution/FPS is display
+ * metadata only and never participates in scaling or decoder decisions.
  */
 export function PlayerChrome(props: Props) {
   const { resolution, ...chromeProps } = props;
+  const runtime = useSyncExternalStore(
+    subscribePlayerRuntimeInfo,
+    getPlayerRuntimeInfoSnapshot,
+    getPlayerRuntimeInfoSnapshot,
+  );
 
   useEffect(() => {
     const cycle = props.onCycleFit as unknown as Function;
@@ -41,13 +58,17 @@ export function PlayerChrome(props: Props) {
     }
   }, [props.fitMode, props.onCycleFit]);
 
+  const resolutionText = runtime.resolution || resolution;
+  const fpsText = formatFps(runtime.fps);
+  const technicalText = [resolutionText, fpsText].filter(Boolean).join(" · ");
+
   return (
     <>
       <PlayerChromeV2 {...chromeProps} />
-      {resolution && chromeProps.infoVisible ? (
+      {technicalText && chromeProps.infoVisible ? (
         <View style={styles.resolutionBadge} pointerEvents="none">
           <Feather name="monitor" size={12} color="#67e8f9" />
-          <Text style={styles.resolutionText}>{resolution}</Text>
+          <Text style={styles.resolutionText}>{technicalText}</Text>
         </View>
       ) : null}
     </>
