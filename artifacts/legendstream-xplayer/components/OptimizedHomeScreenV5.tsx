@@ -17,6 +17,7 @@ import { FocusButton } from "@/components/FocusButton";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
 import { DownloadsView } from "@/components/DownloadsView";
 import { ContinueWatchingView } from "@/components/ContinueWatchingView";
+import { ProviderSubscriptionChip } from "@/components/ProviderSubscriptionChip";
 import { Channel, ProviderConfig, ProviderType, usePlayer } from "@/context/PlayerContext";
 import { MediaProgress } from "@/context/MediaLibraryContext";
 import { useI18n } from "@/context/I18nContext";
@@ -221,10 +222,7 @@ export default function OptimizedHomeScreenV5() {
     <View style={[s.header, { borderColor: colors.border }]}>
       <View style={s.headerTop}>
         <Text style={[s.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text>
-        <Pressable onPress={() => setView("settings")} style={[s.chip, { borderColor: colors.border, backgroundColor: colors.card }]}>
-          <View style={[s.dot, { backgroundColor: colors.primary }]} />
-          <Text numberOfLines={1} style={{ color: colors.mutedForeground }}>{provider.name}</Text>
-        </Pressable>
+        <ProviderSubscriptionChip provider={provider} />
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.nav}>
         {nav.map((item) => <FocusButton key={item.key} label={item.label} icon={item.icon} variant={view === item.key ? "secondary" : "ghost"} onPress={() => navigate(item.key)} />)}
