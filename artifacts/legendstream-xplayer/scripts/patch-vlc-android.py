@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Targeted react-native-vlc-media-player patch for LegendStream Android builds.
 
-Keep upstream VLC playback behavior intact except for two compatibility fixes:
-1. lower the library minSdk from API 26 to API 24 (Android 7+ support), and
-2. keep playback running when Android pauses the host Activity to enter PiP.
+Keep upstream VLC playback behavior intact except for three compatibility fixes:
+1. lower the library minSdk from API 26 to API 24 (Android 7+ support),
+2. keep playback running while Android is actually in PiP, and
+3. pause playback when the PiP window is dismissed to the launcher/background.
 
 No decoder, option-loop, scaling, or media bootstrap code is modified here.
 """
@@ -56,31 +57,106 @@ def main() -> None:
 
     java_text = player_view.read_text(encoding="utf-8")
     guard_marker = "LegendStream PiP lifecycle guard"
+    dismiss_marker = "LegendStream PiP dismiss monitor"
 
     if guard_marker not in java_text:
-        host_pause = re.search(
-            r"public\s+void\s+onHostPause\s*\(\s*\)\s*\{",
-            java_text,
+        fields_marker = "    private final AudioManager audioManager;\n"
+        if fields_marker not in java_text:
+            fail("Could not locate VLC AudioManager field for PiP monitor state")
+        java_text = java_text.replace(
+            fields_marker,
+            fields_marker
+            + "\n"
+            + "    // LegendStream PiP dismiss monitor state.\n"
+            + "    private boolean legendStreamHostResumed = true;\n"
+            + "    private Runnable legendStreamPipExitMonitor = null;\n",
+            1,
         )
-        if not host_pause:
+
+        resume_marker = "    @Override\n    public void onHostResume() {\n"
+        if resume_marker not in java_text:
+            fail("Could not locate VLC onHostResume() for the PiP lifecycle patch")
+
+        resume_replacement = """    // LegendStream PiP dismiss monitor: while PiP is visible we keep VLC
+    // playing. If the PiP window is closed to the launcher/background, Android
+    // can leave the Activity paused without calling onHostPause() again. Poll
+    // the PiP flag briefly and pause VLC only when PiP has ended and the host
+    // has not resumed.
+    private void startLegendStreamPipExitMonitor() {
+        if (legendStreamPipExitMonitor != null) {
+            mProgressUpdateHandler.removeCallbacks(legendStreamPipExitMonitor);
+        }
+        legendStreamPipExitMonitor = new Runnable() {
+            @Override
+            public void run() {
+                final android.app.Activity activity = themedReactContext.getCurrentActivity();
+                final boolean inPip = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
+                        && activity != null
+                        && activity.isInPictureInPictureMode();
+
+                if (inPip) {
+                    mProgressUpdateHandler.postDelayed(this, 250);
+                    return;
+                }
+
+                legendStreamPipExitMonitor = null;
+                if (!legendStreamHostResumed && !isPaused && mMediaPlayer != null && !isReleased) {
+                    isPaused = true;
+                    isHostPaused = true;
+                    mMediaPlayer.pause();
+                    WritableMap map = Arguments.createMap();
+                    map.putString("type", "Paused");
+                    eventEmitter.onVideoStateChange(map);
+                }
+            }
+        };
+        mProgressUpdateHandler.postDelayed(legendStreamPipExitMonitor, 250);
+    }
+
+    @Override
+    public void onHostResume() {
+        legendStreamHostResumed = true;
+        if (legendStreamPipExitMonitor != null) {
+            mProgressUpdateHandler.removeCallbacks(legendStreamPipExitMonitor);
+            legendStreamPipExitMonitor = null;
+        }
+"""
+        java_text = java_text.replace(resume_marker, resume_replacement, 1)
+
+        pause_marker = "    @Override\n    public void onHostPause() {\n"
+        if pause_marker not in java_text:
             fail("Could not locate VLC onHostPause() for the PiP lifecycle patch")
 
-        guard = """
+        pause_replacement = """    @Override
+    public void onHostPause() {
+        legendStreamHostResumed = false;
         // LegendStream PiP lifecycle guard: entering PiP pauses the Activity,
         // but must not pause the media player itself.
         final android.app.Activity legendStreamActivity = themedReactContext.getCurrentActivity();
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
                 && legendStreamActivity != null
                 && legendStreamActivity.isInPictureInPictureMode()) {
+            startLegendStreamPipExitMonitor();
             return;
         }
 """
-        insert_at = host_pause.end()
-        java_text = java_text[:insert_at] + guard + java_text[insert_at:]
+        java_text = java_text.replace(pause_marker, pause_replacement, 1)
+
+        release_marker = "    private void releasePlayer() {\n"
+        if release_marker not in java_text:
+            fail("Could not locate VLC releasePlayer() for PiP monitor cleanup")
+        release_replacement = """    private void releasePlayer() {
+        if (legendStreamPipExitMonitor != null) {
+            mProgressUpdateHandler.removeCallbacks(legendStreamPipExitMonitor);
+            legendStreamPipExitMonitor = null;
+        }
+"""
+        java_text = java_text.replace(release_marker, release_replacement, 1)
+
         player_view.write_text(java_text, encoding="utf-8")
-        print("Applied VLC PiP lifecycle guard")
+        print("Applied VLC PiP lifecycle guard and dismiss monitor")
     else:
-        print("VLC PiP lifecycle guard already present")
+        print("VLC PiP lifecycle patch already present")
 
     gradle_verify = gradle.read_text(encoding="utf-8")
     java_verify = player_view.read_text(encoding="utf-8")
@@ -89,8 +165,12 @@ def main() -> None:
         fail("VLC minSdk 26 is still present after patch")
     if guard_marker not in java_verify:
         fail("VLC PiP lifecycle guard is missing after patch")
+    if dismiss_marker not in java_verify:
+        fail("VLC PiP dismiss monitor is missing after patch")
     if "isInPictureInPictureMode()" not in java_verify:
         fail("VLC PiP lifecycle check is missing after patch")
+    if "startLegendStreamPipExitMonitor()" not in java_verify:
+        fail("VLC PiP dismiss monitor hook is missing after patch")
 
     print("VLC Android compatibility patch verification passed")
 
