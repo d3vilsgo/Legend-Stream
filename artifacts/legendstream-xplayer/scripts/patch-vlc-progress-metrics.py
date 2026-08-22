@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Expose VLC coded resolution/FPS on the existing progress event.
+"""Expose VLC resolution/FPS on the existing progress event.
 
-LegendStream already subscribes to VLCPlayer.onProgress. The React wrapper maps
-that callback to Android's EVENT_PROGRESS every 250 ms, making it a more reliable
-runtime metadata route for live MPEG-TS/HLS streams than one-shot load/layout
-callbacks. This patch only appends metadata to the existing progress payload.
-It does not change playback, scaling, decoder, PiP, or TextureView behavior.
+The VLC view already knows the rendered video's visible width/height through
+onNewVideoLayout. Those fields are more reliable for live MPEG-TS/HLS streams
+than querying the current track alone, and they avoid reporting the phone's
+viewport as the stream resolution.
+
+This patch only enriches the existing progress event. It does not modify
+playback, scaling, decoder, PiP, or TextureView layout behavior.
 """
 
 from __future__ import annotations
@@ -51,9 +53,9 @@ def main() -> None:
     if helper_anchor not in java_text:
         fail("Could not locate VLC progress runnable helper anchor")
 
-    helper = r'''    // LegendStream progress runtime metrics: append the coded video track
-    // size and frame rate to the progress event that already reaches JS every
-    // 250 ms. Reflection keeps this compatible with minor LibVLC API changes.
+    helper = r'''    // LegendStream progress runtime metrics: prefer VLC's visible video
+    // dimensions captured by onNewVideoLayout. Fall back to current video-track
+    // metadata and use the track for FPS when available.
     private Number legendStreamReadTrackNumber(Object track, String fieldName) {
         if (track == null) {
             return null;
@@ -75,27 +77,36 @@ def main() -> None:
         if (map == null || mMediaPlayer == null) {
             return;
         }
+
+        int width = mVideoVisibleWidth > 0 ? mVideoVisibleWidth : mVideoWidth;
+        int height = mVideoVisibleHeight > 0 ? mVideoVisibleHeight : mVideoHeight;
+
+        Object track = null;
         try {
-            Object track = mMediaPlayer.getClass()
+            track = mMediaPlayer.getClass()
                     .getMethod("getCurrentVideoTrack")
                     .invoke(mMediaPlayer);
-            if (track == null) {
-                return;
-            }
+        } catch (Throwable ignored) {
+            // Layout dimensions can still provide the resolution.
+        }
 
+        if ((width <= 0 || height <= 0) && track != null) {
             Number widthValue = legendStreamReadTrackNumber(track, "width");
             Number heightValue = legendStreamReadTrackNumber(track, "height");
-            final int width = widthValue == null ? 0 : widthValue.intValue();
-            final int height = heightValue == null ? 0 : heightValue.intValue();
-            if (width > 0 && height > 0) {
-                WritableMap videoSize = Arguments.createMap();
-                videoSize.putInt("width", width);
-                videoSize.putInt("height", height);
-                map.putMap("videoSize", videoSize);
-                map.putInt("videoWidth", width);
-                map.putInt("videoHeight", height);
-            }
+            width = widthValue == null ? 0 : widthValue.intValue();
+            height = heightValue == null ? 0 : heightValue.intValue();
+        }
 
+        if (width > 0 && height > 0) {
+            WritableMap videoSize = Arguments.createMap();
+            videoSize.putInt("width", width);
+            videoSize.putInt("height", height);
+            map.putMap("videoSize", videoSize);
+            map.putInt("videoWidth", width);
+            map.putInt("videoHeight", height);
+        }
+
+        if (track != null) {
             Number numerator = legendStreamReadTrackNumber(track, "frameRateNum");
             Number denominator = legendStreamReadTrackNumber(track, "frameRateDen");
             if (numerator != null && denominator != null && denominator.doubleValue() > 0d) {
@@ -105,8 +116,6 @@ def main() -> None:
                     map.putDouble("fps", fps);
                 }
             }
-        } catch (Throwable ignored) {
-            // Metadata is optional; playback must never fail because metrics are unavailable.
         }
     }
 
@@ -134,12 +143,12 @@ def main() -> None:
         fail("VLC progress runtime metrics marker missing after patch")
     if "legendStreamAppendProgressMetrics(map);" not in verify:
         fail("VLC progress runtime metrics hook missing after patch")
-    if 'legendStreamReadTrackNumber(track, "width")' not in verify:
-        fail("VLC coded-width metric reader missing after patch")
+    if "mVideoVisibleWidth" not in verify or "mVideoVisibleHeight" not in verify:
+        fail("VLC visible-size metric fallback missing after patch")
     if 'legendStreamReadTrackNumber(track, "frameRateNum")' not in verify:
         fail("VLC frame-rate metric reader missing after patch")
 
-    print("Applied VLC progress resolution/FPS metrics bridge")
+    print("Applied VLC visible-resolution/FPS progress bridge")
 
 
 if __name__ == "__main__":
