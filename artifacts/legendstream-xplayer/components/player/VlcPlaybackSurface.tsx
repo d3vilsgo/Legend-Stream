@@ -1,6 +1,7 @@
 import React, { forwardRef, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { StyleSheet, useWindowDimensions, View } from "react-native";
 import { VLCPlayer } from "react-native-vlc-media-player";
+import { logPlayerDiagnostic } from "@/lib/playerDiagnostics";
 
 export type PlayerFitMode = "fit" | "full" | "original" | "16:9" | "4:3";
 export type PlayerCodecMode = "auto" | "hardware" | "software";
@@ -44,16 +45,12 @@ const validVideoSize = (value?: PlayerVideoSize) =>
   );
 
 /**
- * Display-mode implementation built on the stable 1.4.10 VLC mount path.
+ * Display-mode implementation built on the stable VLC mount path.
  *
- * Important: the native player is still created exactly like the known-good
- * baseline (full-screen TextureView + autoAspectRatio). We do not resize the
- * TextureView and we do not touch VLC aspect ratio while the player is opening.
- *
- * Only after playback is running AND the user selects a non-default display
- * mode do we switch VLC from automatic aspect ratio to an explicit ratio. This
- * avoids the React-prop ordering race that made the earlier FIT/CROP/FILL builds
- * ineffective and, in some builds, unstable.
+ * Scaling/PiP behavior is intentionally unchanged. The only additional native
+ * signal listened to here is VLC's existing onNewVideoLayout event, and only
+ * until a real media resolution has been learned. This lets live streams expose
+ * their coded resolution without touching TextureView sizing or aspect logic.
  */
 const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurface(
   {
@@ -76,6 +73,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   const playerRef = useRef<any>(null);
   const applyGeneration = useRef(0);
   const displayModeActivated = useRef(false);
+  const lastLoadEvent = useRef<VlcLoadEvent | undefined>(undefined);
   const [playbackReady, setPlaybackReady] = useState(false);
   const [videoSize, setVideoSize] = useState<PlayerVideoSize | undefined>(undefined);
 
@@ -102,8 +100,13 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
 
   useEffect(() => {
     applyGeneration.current += 1;
+    lastLoadEvent.current = undefined;
     setPlaybackReady(false);
     setVideoSize(undefined);
+    void logPlayerDiagnostic("vlc_mount", { codec: codecMode, fit });
+    return () => {
+      void logPlayerDiagnostic("vlc_unmount", { codec: codecMode });
+    };
   }, [codecMode, uri]);
 
   const explicitAspectRatio = useMemo(() => {
@@ -122,9 +125,6 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   useEffect(() => {
     if (!playbackReady || !playerRef.current) return;
 
-    // Keep the initial FIT path byte-for-byte equivalent to the stable baseline.
-    // Native aspect-ratio control is activated only after the user chooses a
-    // display mode. Once activated, returning to FIT means aspectRatio=null.
     if (fit === "fit" && !displayModeActivated.current) return;
     if (fit !== "fit") displayModeActivated.current = true;
 
@@ -150,19 +150,69 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [explicitAspectRatio, fit, playbackReady]);
 
   const handleLoad = useCallback((event: VlcLoadEvent) => {
+    lastLoadEvent.current = event;
     if (validVideoSize(event?.videoSize)) {
-      setVideoSize({
+      const size = {
         width: Number(event.videoSize!.width),
         height: Number(event.videoSize!.height),
+      };
+      setVideoSize(size);
+      void logPlayerDiagnostic("vlc_load", {
+        width: Math.round(size.width),
+        height: Math.round(size.height),
+        duration: Number(event?.duration || 0),
       });
+    } else {
+      void logPlayerDiagnostic("vlc_load", { duration: Number(event?.duration || 0), resolution: "pending" });
     }
     onLoad(event);
   }, [onLoad]);
 
+  const handleNativeStateChange = useCallback((event: any) => {
+    const payload = event?.nativeEvent ?? event;
+    if (!payload || payload.type !== "onNewVideoLayout") return;
+
+    const width = Number(payload.mVideoWidth);
+    const height = Number(payload.mVideoHeight);
+    if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+
+    const size = { width: Math.round(width), height: Math.round(height) };
+    setVideoSize(size);
+    void logPlayerDiagnostic("vlc_video_layout", { width: size.width, height: size.height });
+
+    const mergedLoad: VlcLoadEvent = {
+      ...(lastLoadEvent.current ?? {}),
+      videoSize: size,
+    };
+    lastLoadEvent.current = mergedLoad;
+    onLoad(mergedLoad);
+  }, [onLoad]);
+
   const handlePlaying = useCallback(() => {
     setPlaybackReady(true);
+    void logPlayerDiagnostic("vlc_playing", { codec: codecMode, fit });
     onPlaying();
-  }, [onPlaying]);
+  }, [codecMode, fit, onPlaying]);
+
+  const handlePaused = useCallback(() => {
+    void logPlayerDiagnostic("vlc_paused");
+    onPaused();
+  }, [onPaused]);
+
+  const handleEnd = useCallback(() => {
+    void logPlayerDiagnostic("vlc_end");
+    onEnd();
+  }, [onEnd]);
+
+  const handleError = useCallback(() => {
+    void logPlayerDiagnostic("vlc_error", { codec: codecMode, fit });
+    onError();
+  }, [codecMode, fit, onError]);
+
+  const nativeStateProps = useMemo(
+    () => validVideoSize(videoSize) ? {} : { onVideoStateChange: handleNativeStateChange },
+    [handleNativeStateChange, videoSize],
+  );
 
   return (
     <View style={styles.surface} pointerEvents="none">
@@ -180,9 +230,10 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
         onLoad={handleLoad as any}
         onProgress={onProgress as any}
         onPlaying={handlePlaying}
-        onPaused={onPaused}
-        onEnd={onEnd}
-        onError={onError}
+        onPaused={handlePaused}
+        onEnd={handleEnd}
+        onError={handleError}
+        {...(nativeStateProps as any)}
       />
     </View>
   );

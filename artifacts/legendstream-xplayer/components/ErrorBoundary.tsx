@@ -1,5 +1,6 @@
 import React, { Component, ComponentType, PropsWithChildren } from 'react';
 import { ErrorFallback, ErrorFallbackProps } from '@/components/ErrorFallback';
+import { logPlayerDiagnostic } from '@/lib/playerDiagnostics';
 
 export type ErrorBoundaryProps = PropsWithChildren<{
   FallbackComponent?: ComponentType<ErrorFallbackProps>;
@@ -29,6 +30,10 @@ export class ErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, info: { componentStack: string }): void {
+    void logPlayerDiagnostic('react_error_boundary', {
+      message: error.message,
+      componentStack: info.componentStack.slice(0, 240),
+    });
     if (typeof this.props.onError === 'function') {
       this.props.onError(error, info.componentStack);
     }
