@@ -67,13 +67,14 @@ jobs:
           set -o pipefail
           pnpm --filter @workspace/legendstream-xplayer... install --no-frozen-lockfile 2>&1 | tee "$GITHUB_WORKSPACE/dependency-install.log"
 
-      - name: Patch VLC for Android 7 and PiP
+      - name: Patch VLC for Android compatibility and runtime metrics
         shell: bash
         run: |
           set -o pipefail
           VLC_DIR="$(cd artifacts/legendstream-xplayer && node -p "require('path').dirname(require.resolve('react-native-vlc-media-player/package.json'))")"
           echo "Resolved VLC directory: $VLC_DIR"
           python3 artifacts/legendstream-xplayer/scripts/patch-vlc-android.py "$VLC_DIR" 2>&1 | tee "$GITHUB_WORKSPACE/vlc-patch.log"
+          python3 artifacts/legendstream-xplayer/scripts/patch-vlc-progress-metrics.py "$VLC_DIR" 2>&1 | tee -a "$GITHUB_WORKSPACE/vlc-patch.log"
 
       - name: Generate Android project
         working-directory: artifacts/legendstream-xplayer
