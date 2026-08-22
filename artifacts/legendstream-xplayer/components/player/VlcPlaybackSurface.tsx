@@ -82,6 +82,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   const playerRef = useRef<any>(null);
   const applyGeneration = useRef(0);
   const displayModeActivated = useRef(false);
+  const lastLoadEvent = useRef<VlcLoadEvent | undefined>(undefined);
   const [playbackReady, setPlaybackReady] = useState(false);
   const [videoSize, setVideoSize] = useState<PlayerVideoSize | undefined>(undefined);
 
@@ -108,6 +109,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
 
   useEffect(() => {
     applyGeneration.current += 1;
+    lastLoadEvent.current = undefined;
     setPlaybackReady(false);
     setVideoSize(undefined);
     resetPlayerRuntimeInfo();
@@ -159,15 +161,29 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [explicitAspectRatio, fit, playbackReady]);
 
   const handleLoad = useCallback((event: VlcLoadEvent) => {
-    const fps = validFrameRate(event?.frameRate);
+    // Native live metadata updates may contain only videoSize/frameRate. Merge
+    // them with the last complete load payload so audio/subtitle track data is
+    // never erased by a later metadata-only event.
+    const previous = lastLoadEvent.current;
+    const mergedEvent: VlcLoadEvent = {
+      ...(previous ?? {}),
+      ...event,
+      videoSize: event?.videoSize ?? previous?.videoSize,
+      frameRate: event?.frameRate ?? previous?.frameRate,
+      audioTracks: event?.audioTracks ?? previous?.audioTracks,
+      textTracks: event?.textTracks ?? previous?.textTracks,
+    };
+    lastLoadEvent.current = mergedEvent;
+
+    const fps = validFrameRate(mergedEvent.frameRate);
     const diagnostics: Record<string, string | number> = {
-      duration: Number(event?.duration || 0),
+      duration: Number(mergedEvent.duration || 0),
     };
 
-    if (validVideoSize(event?.videoSize)) {
+    if (validVideoSize(mergedEvent.videoSize)) {
       const size = {
-        width: Number(event.videoSize!.width),
-        height: Number(event.videoSize!.height),
+        width: Number(mergedEvent.videoSize!.width),
+        height: Number(mergedEvent.videoSize!.height),
       };
       setVideoSize(size);
       const width = Math.round(size.width);
@@ -185,7 +201,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     }
 
     void logPlayerDiagnostic("vlc_load", diagnostics);
-    onLoad(event);
+    onLoad(mergedEvent);
   }, [onLoad]);
 
   const handlePlaying = useCallback(() => {
