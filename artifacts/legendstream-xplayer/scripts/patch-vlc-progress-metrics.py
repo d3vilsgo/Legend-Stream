@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
-"""Expose VLC resolution/FPS on the existing progress event.
+"""Expose coded VLC resolution/FPS on the existing progress event.
 
-The VLC view already knows the rendered video's visible width/height through
-onNewVideoLayout. Those fields are more reliable for live MPEG-TS/HLS streams
-than querying the current track alone, and they avoid reporting the phone's
-viewport as the stream resolution.
+The previous live-metrics bridge could fall back to onNewVideoLayout dimensions.
+On some phones those dimensions describe the output surface (for example
+1220x2712) rather than the broadcast stream, which also broke ORIG aspect mode.
 
-This patch only enriches the existing progress event. It does not modify
-playback, scaling, decoder, PiP, or TextureView layout behavior.
+LibVLC 3.6.3 exposes the selected video elementary stream directly through
+MediaPlayer.getSelectedTrack(IMedia.Track.Type.Video). This patch reads that
+track on the already-existing progress tick and appends width/height/FPS to the
+same JS event. No playback, decoder, PiP, TextureView or scaling code is changed.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 
-MARKER = "LegendStream progress runtime metrics"
+MARKER = "LegendStream selected-track progress metrics"
 
 
 def fail(message: str) -> NoReturn:
@@ -46,76 +47,59 @@ def main() -> None:
 
     java_text = player_view.read_text(encoding="utf-8")
     if MARKER in java_text:
-        print("VLC progress runtime metrics patch already present")
+        print("VLC selected-track runtime metrics patch already present")
         return
+
+    import_anchor = "import org.videolan.libvlc.interfaces.IVLCVout;\n"
+    if import_anchor not in java_text:
+        fail("Could not locate VLC IVLCVout import")
+    if "import org.videolan.libvlc.interfaces.IMedia;" not in java_text:
+        java_text = java_text.replace(
+            import_anchor,
+            import_anchor + "import org.videolan.libvlc.interfaces.IMedia;\n",
+            1,
+        )
 
     helper_anchor = "    private void setProgressUpdateRunnable() {\n"
     if helper_anchor not in java_text:
         fail("Could not locate VLC progress runnable helper anchor")
 
-    helper = r'''    // LegendStream progress runtime metrics: prefer VLC's visible video
-    // dimensions captured by onNewVideoLayout. Fall back to current video-track
-    // metadata and use the track for FPS when available.
-    private Number legendStreamReadTrackNumber(Object track, String fieldName) {
-        if (track == null) {
-            return null;
-        }
-        try {
-            return (Number) track.getClass().getField(fieldName).get(track);
-        } catch (Throwable ignored) {
-            try {
-                java.lang.reflect.Field field = track.getClass().getDeclaredField(fieldName);
-                field.setAccessible(true);
-                return (Number) field.get(track);
-            } catch (Throwable ignoredAgain) {
-                return null;
-            }
-        }
-    }
-
+    helper = r'''    // LegendStream selected-track progress metrics.
+    // Query the actual selected video elementary stream. Never use TextureView
+    // or output-layout dimensions as source resolution.
     private void legendStreamAppendProgressMetrics(WritableMap map) {
-        if (map == null || mMediaPlayer == null) {
+        if (map == null || mMediaPlayer == null || isReleased) {
             return;
         }
-
-        int width = mVideoVisibleWidth > 0 ? mVideoVisibleWidth : mVideoWidth;
-        int height = mVideoVisibleHeight > 0 ? mVideoVisibleHeight : mVideoHeight;
-
-        Object track = null;
         try {
-            track = mMediaPlayer.getClass()
-                    .getMethod("getCurrentVideoTrack")
-                    .invoke(mMediaPlayer);
-        } catch (Throwable ignored) {
-            // Layout dimensions can still provide the resolution.
-        }
+            final IMedia.Track selected = mMediaPlayer.getSelectedTrack(IMedia.Track.Type.Video);
+            if (!(selected instanceof IMedia.VideoTrack)) {
+                return;
+            }
 
-        if ((width <= 0 || height <= 0) && track != null) {
-            Number widthValue = legendStreamReadTrackNumber(track, "width");
-            Number heightValue = legendStreamReadTrackNumber(track, "height");
-            width = widthValue == null ? 0 : widthValue.intValue();
-            height = heightValue == null ? 0 : heightValue.intValue();
-        }
+            final IMedia.VideoTrack videoTrack = (IMedia.VideoTrack) selected;
+            final int width = videoTrack.width;
+            final int height = videoTrack.height;
+            if (width > 0 && height > 0) {
+                WritableMap videoSize = Arguments.createMap();
+                videoSize.putInt("width", width);
+                videoSize.putInt("height", height);
+                map.putMap("videoSize", videoSize);
+                map.putInt("videoWidth", width);
+                map.putInt("videoHeight", height);
+            }
 
-        if (width > 0 && height > 0) {
-            WritableMap videoSize = Arguments.createMap();
-            videoSize.putInt("width", width);
-            videoSize.putInt("height", height);
-            map.putMap("videoSize", videoSize);
-            map.putInt("videoWidth", width);
-            map.putInt("videoHeight", height);
-        }
-
-        if (track != null) {
-            Number numerator = legendStreamReadTrackNumber(track, "frameRateNum");
-            Number denominator = legendStreamReadTrackNumber(track, "frameRateDen");
-            if (numerator != null && denominator != null && denominator.doubleValue() > 0d) {
-                final double fps = numerator.doubleValue() / denominator.doubleValue();
+            final int numerator = videoTrack.frameRateNum;
+            final int denominator = videoTrack.frameRateDen;
+            if (numerator > 0 && denominator > 0) {
+                final double fps = ((double) numerator) / ((double) denominator);
                 if (!Double.isNaN(fps) && !Double.isInfinite(fps) && fps > 0d) {
                     map.putDouble("frameRate", fps);
                     map.putDouble("fps", fps);
                 }
             }
+        } catch (Throwable ignored) {
+            // Runtime metadata is optional and must never affect playback.
         }
     }
 
@@ -140,15 +124,15 @@ def main() -> None:
     player_view.write_text(java_text, encoding="utf-8")
     verify = player_view.read_text(encoding="utf-8")
     if MARKER not in verify:
-        fail("VLC progress runtime metrics marker missing after patch")
+        fail("VLC selected-track metrics marker missing after patch")
+    if "getSelectedTrack(IMedia.Track.Type.Video)" not in verify:
+        fail("VLC selected video-track lookup missing after patch")
+    if "videoTrack.frameRateNum" not in verify or "videoTrack.frameRateDen" not in verify:
+        fail("VLC frame-rate fields missing after patch")
     if "legendStreamAppendProgressMetrics(map);" not in verify:
-        fail("VLC progress runtime metrics hook missing after patch")
-    if "mVideoVisibleWidth" not in verify or "mVideoVisibleHeight" not in verify:
-        fail("VLC visible-size metric fallback missing after patch")
-    if 'legendStreamReadTrackNumber(track, "frameRateNum")' not in verify:
-        fail("VLC frame-rate metric reader missing after patch")
+        fail("VLC progress metrics hook missing after patch")
 
-    print("Applied VLC visible-resolution/FPS progress bridge")
+    print("Applied VLC selected-track resolution/FPS progress bridge")
 
 
 if __name__ == "__main__":
