@@ -12,18 +12,20 @@ const isPortraitOrientation = (orientation: ScreenOrientation.Orientation) =>
   orientation === ScreenOrientation.Orientation.PORTRAIT_DOWN;
 
 /**
- * Owns player orientation and fullscreen-system-UI lifecycle.
+ * Fullscreen/system-UI owner for the player.
  *
- * Some Android/HyperOS builds can make the status bar visible again after a
- * transient system-UI interaction. While the player is active we re-assert the
- * hidden state at a low frequency. VLC surface, scaling and PiP are untouched.
+ * The player now follows the device orientation instead of forcing landscape on
+ * entry. useWindowDimensions() drives the responsive chrome, so rotating the
+ * phone reshapes the player immediately. The rotate button remains as an
+ * explicit one-shot orientation lock when the user wants to force the opposite
+ * orientation.
  */
-export function usePlayerOrientation(autoLandscape = true) {
+export function usePlayerOrientation(followDevice = true) {
   const { width, height } = useWindowDimensions();
   const initialOrientation = useRef<ScreenOrientation.Orientation | null>(null);
   const mounted = useRef(true);
   const exitingRef = useRef(false);
-  const [ready, setReady] = useState(!autoLandscape);
+  const [ready, setReady] = useState(false);
   const [exiting, setExiting] = useState(false);
 
   const landscapeLayout = width >= height;
@@ -36,10 +38,9 @@ export function usePlayerOrientation(autoLandscape = true) {
   useEffect(() => {
     mounted.current = true;
     exitingRef.current = false;
-    let fallback: ReturnType<typeof setTimeout> | null = null;
 
     hideStatusBar();
-    void logPlayerDiagnostic("player_fullscreen_enter", { autoLandscape });
+    void logPlayerDiagnostic("player_fullscreen_enter", { followDevice });
 
     const appState = AppState.addEventListener("change", (state) => {
       void logPlayerDiagnostic("player_app_state", { state });
@@ -53,15 +54,12 @@ export function usePlayerOrientation(autoLandscape = true) {
     const prepare = async () => {
       try {
         initialOrientation.current = await ScreenOrientation.getOrientationAsync();
-        if (autoLandscape) {
-          await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-          fallback = setTimeout(() => {
-            if (mounted.current) setReady(true);
-          }, 1800);
-        } else if (mounted.current) {
-          setReady(true);
+        if (followDevice) {
+          await ScreenOrientation.unlockAsync();
         }
       } catch {
+        // Fullscreen playback can continue even if the OEM rejects a lock change.
+      } finally {
         if (mounted.current) setReady(true);
       }
     };
@@ -71,17 +69,13 @@ export function usePlayerOrientation(autoLandscape = true) {
       mounted.current = false;
       appState.remove();
       clearInterval(statusGuard);
-      if (fallback) clearTimeout(fallback);
       try { StatusBar.setHidden(false, "fade"); } catch { /* best effort */ }
     };
-  }, [autoLandscape, hideStatusBar]);
+  }, [followDevice, hideStatusBar]);
 
   useEffect(() => {
-    if (autoLandscape && landscapeLayout) {
-      setReady(true);
-      hideStatusBar();
-    }
-  }, [autoLandscape, hideStatusBar, landscapeLayout]);
+    if (ready) hideStatusBar();
+  }, [height, hideStatusBar, ready, width]);
 
   const rotate = useCallback(async () => {
     try {
