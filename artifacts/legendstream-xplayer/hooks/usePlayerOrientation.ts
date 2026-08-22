@@ -7,20 +7,16 @@ const isLandscapeOrientation = (orientation: ScreenOrientation.Orientation) =>
   orientation === ScreenOrientation.Orientation.LANDSCAPE_LEFT ||
   orientation === ScreenOrientation.Orientation.LANDSCAPE_RIGHT;
 
-const isPortraitOrientation = (orientation: ScreenOrientation.Orientation) =>
-  orientation === ScreenOrientation.Orientation.PORTRAIT_UP ||
-  orientation === ScreenOrientation.Orientation.PORTRAIT_DOWN;
-
 /**
  * Player system-UI/orientation lifecycle.
  *
- * Opening the player no longer forces landscape. The player chrome follows the
- * current device layout automatically; the rotate action remains an explicit
- * user override when needed.
+ * The normal player path follows the device orientation. Entering the player
+ * clears any stale app orientation lock, so rotating the phone/tablet reshapes
+ * both video chrome and controls automatically. The rotate button remains an
+ * explicit override for users who want to force the opposite orientation.
  */
 export function usePlayerOrientation(_autoLandscape = true) {
   const { width, height } = useWindowDimensions();
-  const initialOrientation = useRef<ScreenOrientation.Orientation | null>(null);
   const mounted = useRef(true);
   const exitingRef = useRef(false);
   const [ready, setReady] = useState(true);
@@ -50,9 +46,10 @@ export function usePlayerOrientation(_autoLandscape = true) {
 
     const prepare = async () => {
       try {
-        initialOrientation.current = await ScreenOrientation.getOrientationAsync();
+        // Release any lock left by an earlier manual rotate/player session.
+        await ScreenOrientation.unlockAsync();
       } catch {
-        // Window dimensions remain the layout source of truth.
+        // Current window dimensions still drive the responsive chrome.
       } finally {
         if (mounted.current) setReady(true);
       }
@@ -94,18 +91,12 @@ export function usePlayerOrientation(_autoLandscape = true) {
   }, [hideStatusBar]);
 
   const restore = useCallback(async () => {
-    const original = initialOrientation.current;
     try { StatusBar.setHidden(false, "fade"); } catch { /* best effort */ }
     try {
-      if (original && isPortraitOrientation(original)) {
-        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
-      } else if (original && isLandscapeOrientation(original)) {
-        await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
-      } else {
-        await ScreenOrientation.unlockAsync();
-      }
+      // Do not leave a player-specific orientation lock on the rest of the app.
+      await ScreenOrientation.unlockAsync();
     } catch {
-      try { await ScreenOrientation.unlockAsync(); } catch { /* best effort */ }
+      // Best effort only.
     }
     void logPlayerDiagnostic("player_fullscreen_restore");
   }, []);
