@@ -1,28 +1,50 @@
 #!/usr/bin/env python3
 """Expose coded VLC resolution/FPS on the existing progress event.
 
-The previous live-metrics bridge could fall back to onNewVideoLayout dimensions.
-On some phones those dimensions describe the output surface (for example
-1220x2712) rather than the broadcast stream, which also broke ORIG aspect mode.
-
-LibVLC 3.6.3 exposes the selected video elementary stream directly through
-MediaPlayer.getSelectedTrack(IMedia.Track.Type.Video). This patch reads that
-track on the already-existing progress tick and appends width/height/FPS to the
-same JS event. No playback, decoder, PiP, TextureView or scaling code is changed.
+This patch intentionally avoids compile-time calls into optional LibVLC track APIs.
+react-native-vlc-media-player@1.0.98 currently depends on
+org.videolan.android:libvlc-all:3.6.3, but selected-track helper signatures vary
+across LibVLC lines. Reflection keeps runtime metrics best-effort and ensures a
+missing/changed API can never break the Android release build.
 """
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import NoReturn
 
 MARKER = "LegendStream selected-track progress metrics"
+HELPER_NAME = "legendStreamAppendProgressMetrics"
 
 
 def fail(message: str) -> NoReturn:
     print(f"ERROR: {message}", file=sys.stderr)
     raise SystemExit(1)
+
+
+def verify(java_text: str) -> None:
+    if MARKER not in java_text:
+        fail("VLC selected-track metrics marker missing after patch")
+    if f"{HELPER_NAME}(map);" not in java_text:
+        fail("VLC progress metrics hook missing after patch")
+    if "legendStreamPlayerReleased" not in java_text:
+        fail("VLC release-state guard required by metrics bridge is missing")
+    if "Class.forName(\"org.videolan.libvlc.interfaces.IMedia$Track$Type\")" not in java_text:
+        fail("VLC reflective selected-track lookup missing after patch")
+    if "getCurrentVideoTrack" not in java_text:
+        fail("VLC reflective current-video-track fallback missing after patch")
+    if "frameRateNum" not in java_text or "frameRateDen" not in java_text:
+        fail("VLC reflective frame-rate lookup missing after patch")
+
+    # These were the two compile-breaking references in the previous bridge.
+    if re.search(r"\bisReleased\b", java_text):
+        fail("Unsafe undefined isReleased reference remains in ReactVlcPlayerView.java")
+    if re.search(r"mMediaPlayer\.getSelectedTrack\s*\(", java_text):
+        fail("Compile-time getSelectedTrack call remains in ReactVlcPlayerView.java")
+
+    print("Validated VLC progress patch marker and compile-safe reflective API bridge")
 
 
 def main() -> None:
@@ -42,44 +64,87 @@ def main() -> None:
         / "vlcplayer"
         / "ReactVlcPlayerView.java"
     )
+    gradle = package_dir / "android" / "build.gradle"
+
     if not player_view.is_file():
         fail(f"VLC player view not found: {player_view}")
+    if not gradle.is_file():
+        fail(f"VLC Gradle file not found: {gradle}")
+
+    gradle_text = gradle.read_text(encoding="utf-8")
+    libvlc_match = re.search(
+        r"org\.videolan\.android:libvlc-all:([^'\"\s]+)",
+        gradle_text,
+    )
+    if not libvlc_match:
+        fail("Could not verify react-native-vlc-media-player LibVLC dependency")
+    print(f"Verified LibVLC dependency: org.videolan.android:libvlc-all:{libvlc_match.group(1)}")
 
     java_text = player_view.read_text(encoding="utf-8")
+
+    # Idempotent fast-path. If an already-patched file contains the old unsafe
+    # bridge, do not accept it; fail loudly so a stale node_modules patch cannot
+    # sneak into release builds.
     if MARKER in java_text:
+        verify(java_text)
         print("VLC selected-track runtime metrics patch already present")
         return
-
-    import_anchor = "import org.videolan.libvlc.interfaces.IVLCVout;\n"
-    if import_anchor not in java_text:
-        fail("Could not locate VLC IVLCVout import")
-    if "import org.videolan.libvlc.interfaces.IMedia;" not in java_text:
-        java_text = java_text.replace(
-            import_anchor,
-            import_anchor + "import org.videolan.libvlc.interfaces.IMedia;\n",
-            1,
-        )
 
     helper_anchor = "    private void setProgressUpdateRunnable() {\n"
     if helper_anchor not in java_text:
         fail("Could not locate VLC progress runnable helper anchor")
 
     helper = r'''    // LegendStream selected-track progress metrics.
-    // Query the actual selected video elementary stream. Never use TextureView
-    // or output-layout dimensions as source resolution.
+    // Query coded resolution/FPS without compiling against an optional LibVLC
+    // selected-track API. Missing methods/fields simply disable the metadata.
+    private Object legendStreamGetSelectedVideoTrackReflectively() {
+        if (legendStreamPlayerReleased || mMediaPlayer == null) {
+            return null;
+        }
+        try {
+            final Class<?> trackTypeClass = Class.forName("org.videolan.libvlc.interfaces.IMedia$Track$Type");
+            @SuppressWarnings({"rawtypes", "unchecked"})
+            final Object videoType = Enum.valueOf((Class<? extends Enum>) trackTypeClass.asSubclass(Enum.class), "Video");
+            return mMediaPlayer.getClass()
+                    .getMethod("getSelectedTrack", trackTypeClass)
+                    .invoke(mMediaPlayer, videoType);
+        } catch (Throwable ignored) {
+            try {
+                return mMediaPlayer.getClass()
+                        .getMethod("getCurrentVideoTrack")
+                        .invoke(mMediaPlayer);
+            } catch (Throwable ignoredFallback) {
+                return null;
+            }
+        }
+    }
+
+    private Number legendStreamReadTrackNumber(Object track, String fieldName) {
+        if (track == null) {
+            return null;
+        }
+        try {
+            Object value = track.getClass().getField(fieldName).get(track);
+            return value instanceof Number ? (Number) value : null;
+        } catch (Throwable ignored) {
+            return null;
+        }
+    }
+
     private void legendStreamAppendProgressMetrics(WritableMap map) {
-        if (map == null || mMediaPlayer == null || isReleased) {
+        if (map == null || legendStreamPlayerReleased || mMediaPlayer == null) {
             return;
         }
         try {
-            final IMedia.Track selected = mMediaPlayer.getSelectedTrack(IMedia.Track.Type.Video);
-            if (!(selected instanceof IMedia.VideoTrack)) {
+            final Object videoTrack = legendStreamGetSelectedVideoTrackReflectively();
+            if (videoTrack == null) {
                 return;
             }
 
-            final IMedia.VideoTrack videoTrack = (IMedia.VideoTrack) selected;
-            final int width = videoTrack.width;
-            final int height = videoTrack.height;
+            final Number widthValue = legendStreamReadTrackNumber(videoTrack, "width");
+            final Number heightValue = legendStreamReadTrackNumber(videoTrack, "height");
+            final int width = widthValue != null ? widthValue.intValue() : 0;
+            final int height = heightValue != null ? heightValue.intValue() : 0;
             if (width > 0 && height > 0) {
                 WritableMap videoSize = Arguments.createMap();
                 videoSize.putInt("width", width);
@@ -89,10 +154,12 @@ def main() -> None:
                 map.putInt("videoHeight", height);
             }
 
-            final int numerator = videoTrack.frameRateNum;
-            final int denominator = videoTrack.frameRateDen;
-            if (numerator > 0 && denominator > 0) {
-                final double fps = ((double) numerator) / ((double) denominator);
+            final Number numeratorValue = legendStreamReadTrackNumber(videoTrack, "frameRateNum");
+            final Number denominatorValue = legendStreamReadTrackNumber(videoTrack, "frameRateDen");
+            final double numerator = numeratorValue != null ? numeratorValue.doubleValue() : 0d;
+            final double denominator = denominatorValue != null ? denominatorValue.doubleValue() : 0d;
+            if (numerator > 0d && denominator > 0d) {
+                final double fps = numerator / denominator;
                 if (!Double.isNaN(fps) && !Double.isInfinite(fps) && fps > 0d) {
                     map.putDouble("frameRate", fps);
                     map.putDouble("fps", fps);
@@ -122,16 +189,7 @@ def main() -> None:
     )
 
     player_view.write_text(java_text, encoding="utf-8")
-    verify = player_view.read_text(encoding="utf-8")
-    if MARKER not in verify:
-        fail("VLC selected-track metrics marker missing after patch")
-    if "getSelectedTrack(IMedia.Track.Type.Video)" not in verify:
-        fail("VLC selected video-track lookup missing after patch")
-    if "videoTrack.frameRateNum" not in verify or "videoTrack.frameRateDen" not in verify:
-        fail("VLC frame-rate fields missing after patch")
-    if "legendStreamAppendProgressMetrics(map);" not in verify:
-        fail("VLC progress metrics hook missing after patch")
-
+    verify(player_view.read_text(encoding="utf-8"))
     print("Applied VLC selected-track resolution/FPS progress bridge")
 
 
