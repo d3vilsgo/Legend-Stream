@@ -6,6 +6,7 @@ type LegendStreamPipNativeModule = {
   isInPictureInPictureMode: () => boolean;
   getMediaVolume: () => number;
   setMediaVolume: (value: number) => Promise<boolean>;
+  setKeepScreenOn: (enabled: boolean) => Promise<boolean>;
   enter: (width: number, height: number) => Promise<boolean>;
 };
 
@@ -17,15 +18,6 @@ const getNativeModule = () => {
   return cachedModule;
 };
 
-/**
- * PiP isolation build:
- * - Do not resolve the native module while the player is opening.
- * - Android API level alone controls whether the PiP button is shown.
- * - Resolve the native bridge only when PiP is actually used.
- *
- * Volume bridging stays dormant in this build so PiP is the only native feature
- * being reintroduced on top of the stable scaling baseline.
- */
 export const isPipSupported = () =>
   Platform.OS === "android" && Number(Platform.Version) >= 26;
 
@@ -38,10 +30,36 @@ export const isInPipMode = () => {
   }
 };
 
-export const getMediaVolume = () => 1;
+export const getMediaVolume = () => {
+  if (Platform.OS !== "android") return 1;
+  try {
+    const value = Number(getNativeModule()?.getMediaVolume?.() ?? 1);
+    return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 1;
+  } catch {
+    return 1;
+  }
+};
 
-export async function setMediaVolume(_value: number) {
-  return false;
+export async function setMediaVolume(value: number) {
+  if (Platform.OS !== "android") return false;
+  try {
+    const nativeModule = getNativeModule();
+    if (!nativeModule?.setMediaVolume) return false;
+    return Boolean(await nativeModule.setMediaVolume(Math.max(0, Math.min(1, Number(value) || 0))));
+  } catch {
+    return false;
+  }
+}
+
+export async function setPlayerKeepScreenOn(enabled: boolean) {
+  if (Platform.OS !== "android") return false;
+  try {
+    const nativeModule = getNativeModule();
+    if (!nativeModule?.setKeepScreenOn) return false;
+    return Boolean(await nativeModule.setKeepScreenOn(Boolean(enabled)));
+  } catch {
+    return false;
+  }
 }
 
 export async function enterPictureInPicture(width = 16, height = 9) {
