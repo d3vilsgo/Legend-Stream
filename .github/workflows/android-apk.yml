@@ -143,7 +143,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Copy release APK
+      - name: Package beta APK
+        id: package_apk
         shell: bash
         run: |
           mkdir -p apk-output
@@ -152,13 +153,19 @@ jobs:
             echo "Release APK not found"
             exit 1
           fi
-          cp "$APK_PATH" apk-output/LegendStream-XPlayer-release.apk
-          ls -lh apk-output/LegendStream-XPlayer-release.apk
 
-      - name: Upload APK artifact
+          APP_VERSION="$(node -p "require('./artifacts/legendstream-xplayer/app.json').expo.version")"
+          APK_NAME="LegendStream-XPlayer-v${APP_VERSION}-beta.apk"
+
+          cp "$APK_PATH" "apk-output/$APK_NAME"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
+          ls -lh "apk-output/$APK_NAME"
+
+      - name: Upload beta APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LegendStream-XPlayer-Android-Release
-          path: apk-output/LegendStream-XPlayer-release.apk
+          name: LegendStream-XPlayer-v${{ steps.package_apk.outputs.app_version }}-beta
+          path: apk-output/${{ steps.package_apk.outputs.apk_name }}
           if-no-files-found: error
           retention-days: 14
