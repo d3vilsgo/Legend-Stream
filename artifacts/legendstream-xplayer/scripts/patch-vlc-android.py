@@ -202,52 +202,66 @@ def main() -> None:
 """
         java_text = java_text.replace(release_fn_marker, release_replacement, 1)
 
-        create_marker = "        mMediaPlayer = new MediaPlayer(libvlc);\n"
-        if create_marker not in java_text:
+        create_pattern = re.compile(
+            r"(?m)^([ \t]*)mMediaPlayer\s*=\s*new MediaPlayer\(libvlc\);\s*$"
+        )
+        create_match = create_pattern.search(java_text)
+        if not create_match:
             fail("Could not locate VLC MediaPlayer construction for release-state guard")
-        java_text = java_text.replace(
-            create_marker,
-            create_marker + "        legendStreamPlayerReleased = false;\n",
-            1,
+        create_indent = create_match.group(1)
+        java_text = create_pattern.sub(
+            f"{create_indent}mMediaPlayer = new MediaPlayer(libvlc);\n"
+            f"{create_indent}legendStreamPlayerReleased = false;",
+            java_text,
+            count=1,
         )
 
-        java_text = java_text.replace(
-            "mMediaPlayer.pause();",
-            "legendStreamPauseSafely();",
-        )
+        java_text = java_text.replace("mMediaPlayer.pause();", "legendStreamPauseSafely();")
+        java_text = java_text.replace("mMediaPlayer.play();", "legendStreamPlaySafely();")
         helper_anchor = "    // LegendStream PiP dismiss monitor:"
-        pause_helper = """    private void legendStreamPauseSafely() {
+        lifecycle_helpers = """    private void legendStreamPauseSafely() {
         if (legendStreamPlayerReleased || mMediaPlayer == null) {
             return;
         }
         try {
             mMediaPlayer.pause();
         } catch (IllegalStateException ignored) {
-            // A release can win the race between the lifecycle guard and pause.
+            legendStreamPlayerReleased = true;
+        }
+    }
+
+    private void legendStreamPlaySafely() {
+        if (legendStreamPlayerReleased || mMediaPlayer == null) {
+            return;
+        }
+        try {
+            mMediaPlayer.play();
+        } catch (IllegalStateException ignored) {
             legendStreamPlayerReleased = true;
         }
     }
 
 """
         if helper_anchor not in java_text:
-            fail("Could not locate PiP monitor anchor for safe-pause helper")
-        java_text = java_text.replace(helper_anchor, pause_helper + helper_anchor, 1)
+            fail("Could not locate PiP monitor anchor for lifecycle helpers")
+        java_text = java_text.replace(helper_anchor, lifecycle_helpers + helper_anchor, 1)
 
         java_text = java_text.replace(
             "if (mMediaPlayer != null && !isPaused) {",
             "if (mMediaPlayer != null && !isPaused && !legendStreamPlayerReleased) {",
         )
 
-        print("Applied VLC PiP lifecycle, release-state and safe-pause guards")
+        print("Applied VLC PiP lifecycle, release-state and safe lifecycle guards")
     else:
         print("VLC PiP lifecycle patch already present")
 
     if metadata_marker not in java_text:
-        layout_listener_marker = (
-            "    private IVLCVout.OnNewVideoLayoutListener onNewVideoLayoutListener = "
-            "new IVLCVout.OnNewVideoLayoutListener() {\n"
+        layout_listener_pattern = re.compile(
+            r"(?m)^([ \t]*)private\s+IVLCVout\.OnNewVideoLayoutListener\s+"
+            r"onNewVideoLayoutListener\s*=\s*new\s+IVLCVout\.OnNewVideoLayoutListener\(\)\s*\{\s*$"
         )
-        if layout_listener_marker not in java_text:
+        layout_listener_match = layout_listener_pattern.search(java_text)
+        if not layout_listener_match:
             fail("Could not locate VLC onNewVideoLayout listener for live metadata")
 
         metadata_helpers = """    // LegendStream live video metadata bridge: emit coded resolution and FPS
@@ -293,29 +307,38 @@ def main() -> None:
     }
 
 """
-        java_text = java_text.replace(
-            layout_listener_marker,
-            metadata_helpers + layout_listener_marker,
-            1,
+        java_text = layout_listener_pattern.sub(
+            metadata_helpers + layout_listener_match.group(0),
+            java_text,
+            count=1,
         )
 
-        layout_emit_marker = (
-            '            map.putString("type", "onNewVideoLayout");\n'
-            "            eventEmitter.onVideoStateChange(map);\n"
+        layout_emit_pattern = re.compile(
+            r'(?m)^([ \t]*)map\.putString\(\s*"type"\s*,\s*"onNewVideoLayout"\s*\);\s*\n'
+            r'[ \t]*eventEmitter\.onVideoStateChange\(map\);\s*$'
         )
-        if layout_emit_marker not in java_text:
+        layout_emit_match = layout_emit_pattern.search(java_text)
+        if not layout_emit_match:
             fail("Could not locate VLC onNewVideoLayout event emission")
-        layout_emit_replacement = layout_emit_marker + """            legendStreamEmitVideoInfo(width, height);
-            // FPS can become available just after the first layout callback on
-            // MPEG-TS/HLS streams, so refresh metadata without touching playback.
-            mProgressUpdateHandler.postDelayed(new Runnable() {
-                @Override
-                public void run() {
-                    legendStreamEmitVideoInfo(width, height);
-                }
-            }, 700);
+        emit_indent = layout_emit_match.group(1)
+        layout_emit_replacement = layout_emit_match.group(0) + f"""
+{emit_indent}final int legendStreamWidth = mVideoWidth;
+{emit_indent}final int legendStreamHeight = mVideoHeight;
+{emit_indent}legendStreamEmitVideoInfo(legendStreamWidth, legendStreamHeight);
+{emit_indent}// FPS can become available just after the first layout callback on
+{emit_indent}// MPEG-TS/HLS streams, so refresh metadata without touching playback.
+{emit_indent}mProgressUpdateHandler.postDelayed(new Runnable() {{
+{emit_indent}    @Override
+{emit_indent}    public void run() {{
+{emit_indent}        legendStreamEmitVideoInfo(legendStreamWidth, legendStreamHeight);
+{emit_indent}    }}
+{emit_indent}}}, 700);
 """
-        java_text = java_text.replace(layout_emit_marker, layout_emit_replacement, 1)
+        java_text = layout_emit_pattern.sub(
+            lambda _match: layout_emit_replacement,
+            java_text,
+            count=1,
+        )
         print("Applied live resolution/FPS metadata bridge")
     else:
         print("Live resolution/FPS metadata bridge already present")
@@ -339,9 +362,9 @@ def main() -> None:
         fail("VLC live metadata bridge is missing after patch")
     if "legendStreamPlayerReleased = false;" not in java_verify:
         fail("VLC release-state reset is missing after MediaPlayer construction")
-    if "legendStreamPauseSafely()" not in java_verify:
-        fail("VLC safe-pause helper is missing after patch")
-    if "legendStreamEmitVideoInfo(width, height)" not in java_verify:
+    if "legendStreamPauseSafely()" not in java_verify or "legendStreamPlaySafely()" not in java_verify:
+        fail("VLC safe lifecycle helpers are missing after patch")
+    if "legendStreamEmitVideoInfo(legendStreamWidth, legendStreamHeight)" not in java_verify:
         fail("VLC live metadata emission hook is missing after patch")
     if "frameRateNum" not in java_verify or "frameRateDen" not in java_verify:
         fail("VLC FPS reflection bridge is missing after patch")
