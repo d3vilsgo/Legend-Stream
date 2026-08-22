@@ -1,1 +1,1 @@
-export { default } from "@/components/OptimizedHomeScreenV5";
+export { default } from "@/components/OptimizedHomeScreenV6";
