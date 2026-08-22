@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""Expose reliable VLC visible resolution/FPS on the existing progress event.
+"""Expose reliable VLC stream resolution/FPS on the existing progress event.
 
-LegendStream already subscribes to VLCPlayer.onProgress. The React wrapper maps
-that callback to Android EVENT_PROGRESS roughly every 250 ms, making it the most
-reliable runtime metadata route for live MPEG-TS/HLS streams.
+LegendStream already receives VLC progress events about every 250 ms. This patch
+adds optional stream metadata to that existing payload without touching playback,
+scaling, decoder selection, PiP, or TextureView layout.
 
-Resolution is taken from IVLCVout's visible video size first. This is important
-because decoders can expose a coded H.264 frame such as 1920x1088 while the real
-visible picture is 1920x1080. If VLC has not published a layout yet we fall back
-to the current video track dimensions. FPS remains optional and comes from the
-current LibVLC video track when available.
-
-This patch only appends metadata to an event that already exists. It does not
-change playback, scaling, decoder selection, PiP, or TextureView layout.
+Some Android/VLC combinations report the TextureView/window dimensions through
+onNewVideoLayout. Those are NOT the source-video resolution. We therefore reject
+layout values that match the device screen (including swapped orientation), use
+real video-track dimensions when available, and only use non-screen-like layout
+dimensions as a fallback. If no trustworthy resolution exists, no resolution is
+emitted rather than showing a false phone-screen value.
 """
 
 from __future__ import annotations
@@ -21,8 +19,7 @@ import sys
 from pathlib import Path
 from typing import NoReturn
 
-MARKER = "LegendStream progress runtime metrics v2"
-OLD_MARKER = "LegendStream progress runtime metrics"
+MARKER = "LegendStream progress runtime metrics v3"
 
 
 def fail(message: str) -> NoReturn:
@@ -52,30 +49,16 @@ def main() -> None:
 
     java_text = player_view.read_text(encoding="utf-8")
     if MARKER in java_text:
-        print("VLC progress runtime metrics v2 patch already present")
+        print("VLC progress runtime metrics v3 patch already present")
         return
-
-    # The build starts from a fresh npm install, but supporting replacement of
-    # the first LegendStream version makes the patch deterministic/idempotent.
-    if OLD_MARKER in java_text:
-        helper_start = java_text.find("    // LegendStream progress runtime metrics:")
-        helper_end = java_text.find("    private void setProgressUpdateRunnable() {", helper_start)
-        if helper_start < 0 or helper_end < 0:
-            fail("Could not locate old LegendStream progress metrics helper block")
-        java_text = java_text[:helper_start] + java_text[helper_end:]
-        java_text = java_text.replace(
-            "                                legendStreamAppendProgressMetrics(map);\n",
-            "",
-            1,
-        )
 
     fields_anchor = "    private WritableMap mVideoInfo = null;\n"
     if fields_anchor not in java_text:
-        fail("Could not locate VLC metadata field anchor for FPS cache")
+        fail("Could not locate VLC metadata field anchor")
     java_text = java_text.replace(
         fields_anchor,
         fields_anchor
-        + "    // LegendStream progress runtime metrics v2 fallback cache.\n"
+        + "    // LegendStream progress runtime metrics v3 FPS fallback cache.\n"
         + "    private long legendStreamLastFallbackFpsProbeAt = 0L;\n"
         + "    private double legendStreamCachedFallbackFps = 0d;\n",
         1,
@@ -85,13 +68,9 @@ def main() -> None:
     if helper_anchor not in java_text:
         fail("Could not locate VLC progress runnable helper anchor")
 
-    helper = r'''    // LegendStream progress runtime metrics v2: prefer the visible video
-    // dimensions reported by IVLCVout. Coded H.264 frames can be 1920x1088 even
-    // when the real visible picture is 1920x1080. Track dimensions are fallback.
+    helper = r'''    // LegendStream progress runtime metrics v3.
     private Number legendStreamReadTrackNumber(Object track, String fieldName) {
-        if (track == null) {
-            return null;
-        }
+        if (track == null) return null;
         try {
             return (Number) track.getClass().getField(fieldName).get(track);
         } catch (Throwable ignored) {
@@ -106,24 +85,28 @@ def main() -> None:
     }
 
     private Object legendStreamGetCurrentVideoTrackSafely() {
-        if (mMediaPlayer == null) {
-            return null;
-        }
+        if (mMediaPlayer == null) return null;
         try {
-            return mMediaPlayer.getClass()
-                    .getMethod("getCurrentVideoTrack")
-                    .invoke(mMediaPlayer);
+            return mMediaPlayer.getClass().getMethod("getCurrentVideoTrack").invoke(mMediaPlayer);
         } catch (Throwable ignored) {
             return null;
         }
     }
 
+    private boolean legendStreamLooksLikeScreenSize(int width, int height) {
+        if (width <= 0 || height <= 0 || screenWidth <= 0 || screenHeight <= 0) return false;
+        final int tolerance = 8;
+        final boolean same = Math.abs(width - screenWidth) <= tolerance
+                && Math.abs(height - screenHeight) <= tolerance;
+        final boolean swapped = Math.abs(width - screenHeight) <= tolerance
+                && Math.abs(height - screenWidth) <= tolerance;
+        return same || swapped;
+    }
+
     private double legendStreamReadTrackFps(Object track) {
         Number numerator = legendStreamReadTrackNumber(track, "frameRateNum");
         Number denominator = legendStreamReadTrackNumber(track, "frameRateDen");
-        if (numerator == null || denominator == null || denominator.doubleValue() <= 0d) {
-            return 0d;
-        }
+        if (numerator == null || denominator == null || denominator.doubleValue() <= 0d) return 0d;
         final double fps = numerator.doubleValue() / denominator.doubleValue();
         return !Double.isNaN(fps) && !Double.isInfinite(fps) && fps > 0d ? fps : 0d;
     }
@@ -135,20 +118,14 @@ def main() -> None:
         }
         legendStreamLastFallbackFpsProbeAt = now;
 
-        Object media = null;
         try {
-            media = mMediaPlayer.getClass().getMethod("getMedia").invoke(mMediaPlayer);
-            if (media == null) {
-                return legendStreamCachedFallbackFps;
-            }
+            Object media = mMediaPlayer.getClass().getMethod("getMedia").invoke(mMediaPlayer);
+            if (media == null) return legendStreamCachedFallbackFps;
             Number countValue = (Number) media.getClass().getMethod("getTrackCount").invoke(media);
             final int count = countValue == null ? 0 : countValue.intValue();
             java.lang.reflect.Method getTrack = media.getClass().getMethod("getTrack", int.class);
             for (int i = 0; i < count; i++) {
                 Object candidate = getTrack.invoke(media, i);
-                if (candidate == null) {
-                    continue;
-                }
                 double fps = legendStreamReadTrackFps(candidate);
                 if (fps > 0d) {
                     legendStreamCachedFallbackFps = fps;
@@ -156,53 +133,64 @@ def main() -> None:
                 }
             }
         } catch (Throwable ignored) {
-            // Optional metadata path only.
-        } finally {
-            if (media != null) {
-                try { media.getClass().getMethod("release").invoke(media); } catch (Throwable ignored) {}
-            }
+            // FPS is optional metadata; playback must never depend on it.
         }
         return legendStreamCachedFallbackFps;
     }
 
     private void legendStreamPutVideoSize(WritableMap map, int width, int height) {
-        if (map == null || width <= 0 || height <= 0) {
-            return;
-        }
+        if (map == null || width <= 0 || height <= 0) return;
         WritableMap videoSize = Arguments.createMap();
         videoSize.putInt("width", width);
         videoSize.putInt("height", height);
         map.putMap("videoSize", videoSize);
         map.putInt("videoWidth", width);
         map.putInt("videoHeight", height);
-        map.putInt("videoVisibleWidth", width);
-        map.putInt("videoVisibleHeight", height);
     }
 
     private void legendStreamAppendProgressMetrics(WritableMap map) {
-        if (map == null || mMediaPlayer == null) {
-            return;
-        }
-
-        // This path works even on streams where getCurrentVideoTrack() is null.
-        // onNewVideoLayout updates these fields as soon as a picture is visible.
-        int width = mVideoVisibleWidth > 0 ? mVideoVisibleWidth : mVideoWidth;
-        int height = mVideoVisibleHeight > 0 ? mVideoVisibleHeight : mVideoHeight;
+        if (map == null || mMediaPlayer == null) return;
 
         Object track = legendStreamGetCurrentVideoTrackSafely();
-        if ((width <= 0 || height <= 0) && track != null) {
+        int width = 0;
+        int height = 0;
+
+        // Prefer actual LibVLC video-track dimensions when they exist.
+        if (track != null) {
             Number widthValue = legendStreamReadTrackNumber(track, "width");
             Number heightValue = legendStreamReadTrackNumber(track, "height");
-            width = widthValue == null ? 0 : widthValue.intValue();
-            height = heightValue == null ? 0 : heightValue.intValue();
+            int trackWidth = widthValue == null ? 0 : widthValue.intValue();
+            int trackHeight = heightValue == null ? 0 : heightValue.intValue();
+            if (trackWidth > 0 && trackHeight > 0
+                    && !legendStreamLooksLikeScreenSize(trackWidth, trackHeight)) {
+                width = trackWidth;
+                height = trackHeight;
+            }
+        }
+
+        // Some live streams do not expose getCurrentVideoTrack(). In that case
+        // use VLC layout dimensions only when they are not just the phone view.
+        if (width <= 0 || height <= 0) {
+            int visibleWidth = mVideoVisibleWidth > 0 ? mVideoVisibleWidth : 0;
+            int visibleHeight = mVideoVisibleHeight > 0 ? mVideoVisibleHeight : 0;
+            if (visibleWidth > 0 && visibleHeight > 0
+                    && !legendStreamLooksLikeScreenSize(visibleWidth, visibleHeight)) {
+                width = visibleWidth;
+                height = visibleHeight;
+            }
+        }
+
+        if ((width <= 0 || height <= 0)
+                && mVideoWidth > 0 && mVideoHeight > 0
+                && !legendStreamLooksLikeScreenSize(mVideoWidth, mVideoHeight)) {
+            width = mVideoWidth;
+            height = mVideoHeight;
         }
 
         legendStreamPutVideoSize(map, width, height);
 
         double fps = legendStreamReadTrackFps(track);
-        if (fps <= 0d) {
-            fps = legendStreamProbeMediaTrackFps();
-        }
+        if (fps <= 0d) fps = legendStreamProbeMediaTrackFps();
         if (fps > 0d) {
             map.putDouble("frameRate", fps);
             map.putDouble("fps", fps);
@@ -230,17 +218,15 @@ def main() -> None:
     player_view.write_text(java_text, encoding="utf-8")
     verify = player_view.read_text(encoding="utf-8")
     if MARKER not in verify:
-        fail("VLC progress runtime metrics v2 marker missing after patch")
-    if "mVideoVisibleWidth > 0 ? mVideoVisibleWidth : mVideoWidth" not in verify:
-        fail("VLC visible-width fallback is missing after patch")
+        fail("VLC progress runtime metrics v3 marker missing after patch")
+    if "legendStreamLooksLikeScreenSize" not in verify:
+        fail("VLC viewport rejection helper is missing after patch")
     if "legendStreamAppendProgressMetrics(map);" not in verify:
         fail("VLC progress runtime metrics hook missing after patch")
     if 'legendStreamReadTrackNumber(track, "frameRateNum")' not in verify:
         fail("VLC frame-rate metric reader missing after patch")
-    if "legendStreamProbeMediaTrackFps()" not in verify:
-        fail("VLC fallback FPS probe missing after patch")
 
-    print("Applied VLC visible-resolution/FPS progress metrics bridge v2")
+    print("Applied VLC stream resolution/FPS progress metrics bridge v3")
 
 
 if __name__ == "__main__":
