@@ -63,7 +63,9 @@ export function getActiveDownloads(): ActiveDownload[] {
 export function subscribeActiveDownloads(listener: ActiveListener) {
   activeListeners.add(listener);
   listener(getActiveDownloads());
-  return () => activeListeners.delete(listener);
+  return () => {
+    activeListeners.delete(listener);
+  };
 }
 
 const setActive = (id: string, patch: Partial<ActiveDownload>) => {
@@ -98,7 +100,7 @@ export async function listDownloads(): Promise<DownloadedMedia[]> {
   const valid: DownloadedMedia[] = [];
   for (const item of items) {
     try {
-      const info = await FileSystem.getInfoAsync(item.uri, { size: true });
+      const info = await FileSystem.getInfoAsync(item.uri);
       if (info.exists) valid.push({ ...item, size: "size" in info ? info.size : item.size });
     } catch {
       // Missing files are pruned from the manifest.
@@ -182,8 +184,8 @@ export async function downloadMedia(
       lastStatus = result.status;
       if (result.status < 200 || result.status >= 300) continue;
 
-      const info = await FileSystem.getInfoAsync(result.uri, { size: true });
-      if (!info.exists || !info.size) throw new Error("DOWNLOAD_EMPTY_FILE");
+      const info = await FileSystem.getInfoAsync(result.uri);
+      if (!info.exists || !("size" in info) || !info.size) throw new Error("DOWNLOAD_EMPTY_FILE");
 
       const item: DownloadedMedia = {
         id: unique,
