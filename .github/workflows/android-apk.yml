@@ -2,6 +2,9 @@ name: Android APK
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
@@ -11,7 +14,7 @@ on:
       - ".github/workflows/android-apk.yml"
 
 concurrency:
-  group: android-apk-main
+  group: android-apk-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
