@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.media.AudioManager
 import android.os.Build
 import android.util.Rational
+import android.view.WindowManager
 import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -46,6 +47,16 @@ class LegendStreamPipModule : Module() {
         (safe * max.toDouble()).roundToInt().coerceIn(0, max),
         0
       )
+      true
+    }.runOnQueue(Queues.MAIN)
+
+    AsyncFunction("setKeepScreenAwake") { enabled: Boolean ->
+      val activity = appContext.currentActivity ?: return@AsyncFunction false
+      if (enabled) {
+        activity.window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+      } else {
+        activity.window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+      }
       true
     }.runOnQueue(Queues.MAIN)
 

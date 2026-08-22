@@ -6,6 +6,7 @@ type LegendStreamPipNativeModule = {
   isInPictureInPictureMode: () => boolean;
   getMediaVolume: () => number;
   setMediaVolume: (value: number) => Promise<boolean>;
+  setKeepScreenAwake: (enabled: boolean) => Promise<boolean>;
   enter: (width: number, height: number) => Promise<boolean>;
 };
 
@@ -17,15 +18,8 @@ const getNativeModule = () => {
   return cachedModule;
 };
 
-/**
- * PiP isolation build:
- * - Do not resolve the native module while the player is opening.
- * - Android API level alone controls whether the PiP button is shown.
- * - Resolve the native bridge only when PiP is actually used.
- *
- * Volume bridging stays dormant in this build so PiP is the only native feature
- * being reintroduced on top of the stable scaling baseline.
- */
+const clamp = (value: number) => Math.min(1, Math.max(0, value));
+
 export const isPipSupported = () =>
   Platform.OS === "android" && Number(Platform.Version) >= 26;
 
@@ -38,10 +32,36 @@ export const isInPipMode = () => {
   }
 };
 
-export const getMediaVolume = () => 1;
+export const getMediaVolume = () => {
+  if (Platform.OS !== "android") return 1;
+  try {
+    const value = Number(getNativeModule()?.getMediaVolume?.() ?? 1);
+    return Number.isFinite(value) ? clamp(value) : 1;
+  } catch {
+    return 1;
+  }
+};
 
-export async function setMediaVolume(_value: number) {
-  return false;
+export async function setMediaVolume(value: number) {
+  if (Platform.OS !== "android") return false;
+  try {
+    const nativeModule = getNativeModule();
+    if (!nativeModule?.setMediaVolume) return false;
+    return Boolean(await nativeModule.setMediaVolume(clamp(value)));
+  } catch {
+    return false;
+  }
+}
+
+export async function setPlayerKeepAwake(enabled: boolean) {
+  if (Platform.OS !== "android") return false;
+  try {
+    const nativeModule = getNativeModule();
+    if (!nativeModule?.setKeepScreenAwake) return false;
+    return Boolean(await nativeModule.setKeepScreenAwake(enabled));
+  } catch {
+    return false;
+  }
 }
 
 export async function enterPictureInPicture(width = 16, height = 9) {
