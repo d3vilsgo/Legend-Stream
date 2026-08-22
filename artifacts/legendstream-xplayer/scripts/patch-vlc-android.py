@@ -100,7 +100,7 @@ def main() -> None:
                 }
 
                 legendStreamPipExitMonitor = null;
-                if (!legendStreamHostResumed && !isPaused && mMediaPlayer != null && !isReleased) {
+                if (!legendStreamHostResumed && !isPaused && mMediaPlayer != null) {
                     isPaused = true;
                     isHostPaused = true;
                     mMediaPlayer.pause();
@@ -171,6 +171,8 @@ def main() -> None:
         fail("VLC PiP lifecycle check is missing after patch")
     if "startLegendStreamPipExitMonitor()" not in java_verify:
         fail("VLC PiP dismiss monitor hook is missing after patch")
+    if "isReleased" in java_verify:
+        fail("VLC 1.0.98 PiP patch must not reference non-existent isReleased state")
 
     print("VLC Android compatibility patch verification passed")
 
