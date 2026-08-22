@@ -1,1 +1,1 @@
-export { CompatibilityVideoPlayer as NativeVideoPlayer } from "@/components/CompatibilityVideoPlayer";
+export { CompatibilityVideoPlayer as NativeVideoPlayer } from "@/components/CompatibilityVideoPlayerV2";
