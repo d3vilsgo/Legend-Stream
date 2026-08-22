@@ -6,6 +6,7 @@ import {
   resetPlayerRuntimeInfo,
   updatePlayerRuntimeInfo,
 } from "@/lib/playerRuntimeInfo";
+import { setPlayerKeepScreenOn } from "@/modules/legendstream-pip";
 
 export type PlayerFitMode = "fit" | "full" | "original" | "16:9" | "4:3";
 export type PlayerCodecMode = "auto" | "hardware" | "software";
@@ -17,6 +18,10 @@ export type VlcLoadEvent = {
   videoSize?: PlayerVideoSize;
   videoWidth?: number;
   videoHeight?: number;
+  mVideoWidth?: number;
+  mVideoHeight?: number;
+  mVideoVisibleWidth?: number;
+  mVideoVisibleHeight?: number;
   audioTracks?: PlayerTrack[];
   textTracks?: PlayerTrack[];
   frameRate?: number;
@@ -65,6 +70,12 @@ const readFrameRate = (event?: Record<string, unknown>) => {
 };
 
 const readVideoSize = (event?: Record<string, unknown>): PlayerVideoSize | undefined => {
+  const visibleWidth = Number((event as any)?.mVideoVisibleWidth ?? 0);
+  const visibleHeight = Number((event as any)?.mVideoVisibleHeight ?? 0);
+  if (visibleWidth > 0 && visibleHeight > 0) {
+    return { width: visibleWidth, height: visibleHeight };
+  }
+
   const nested = (event as any)?.videoSize;
   if (nested) {
     const candidate = {
@@ -90,14 +101,6 @@ const publishRuntimeInfo = (size?: PlayerVideoSize, fps?: number) => {
   if (update.resolution || update.fps) updatePlayerRuntimeInfo(update);
 };
 
-/**
- * Stable VLC playback surface.
- *
- * Scaling/PiP behavior is intentionally unchanged. Live stream metrics are
- * collected from both load/layout callbacks and VLC's existing progress event.
- * The progress route is the reliable Android route because VLCPlayer.js already
- * emits it every 250 ms whenever onProgress is supplied.
- */
 const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurface(
   {
     uri,
@@ -122,7 +125,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   const lastLoadEvent = useRef<VlcLoadEvent | undefined>(undefined);
   const lastMetricKey = useRef("");
   const [playbackReady, setPlaybackReady] = useState(false);
-  const [videoSize, setVideoSize] = useState<PlayerVideoSize | undefined>(undefined);
+  const [trustedVideoSize, setTrustedVideoSize] = useState<PlayerVideoSize | undefined>(undefined);
 
   const assignRef = useCallback((node: any) => {
     playerRef.current = node;
@@ -146,11 +149,18 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [codecMode]);
 
   useEffect(() => {
+    void setPlayerKeepScreenOn(true);
+    return () => {
+      void setPlayerKeepScreenOn(false);
+    };
+  }, []);
+
+  useEffect(() => {
     applyGeneration.current += 1;
     lastLoadEvent.current = undefined;
     lastMetricKey.current = "";
     setPlaybackReady(false);
-    setVideoSize(undefined);
+    setTrustedVideoSize(undefined);
     resetPlayerRuntimeInfo();
     void logPlayerDiagnostic("vlc_mount", { codec: codecMode, fit });
     return () => {
@@ -165,15 +175,14 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
       if (window.width <= 0 || window.height <= 0) return null;
       return `${Math.max(1, Math.round(window.width))}:${Math.max(1, Math.round(window.height))}`;
     }
-    if (fit === "original" && validVideoSize(videoSize)) {
-      return `${Math.round(videoSize!.width)}:${Math.round(videoSize!.height)}`;
+    if (fit === "original" && validVideoSize(trustedVideoSize)) {
+      return `${Math.round(trustedVideoSize!.width)}:${Math.round(trustedVideoSize!.height)}`;
     }
     return null;
-  }, [fit, videoSize, window.height, window.width]);
+  }, [fit, trustedVideoSize, window.height, window.width]);
 
   useEffect(() => {
     if (!playbackReady || !playerRef.current) return;
-
     if (fit === "fit" && !displayModeActivated.current) return;
     if (fit !== "fit") displayModeActivated.current = true;
 
@@ -198,20 +207,32 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     return () => clearTimeout(timer);
   }, [explicitAspectRatio, fit, playbackReady]);
 
-  const acceptRuntimeMetrics = useCallback((event?: Record<string, unknown>, source = "unknown") => {
-    const size = readVideoSize(event);
+  const acceptRuntimeMetrics = useCallback((
+    event?: Record<string, unknown>,
+    source = "unknown",
+    trustForAspectRatio = false,
+  ) => {
+    const rawSize = readVideoSize(event);
     const fps = readFrameRate(event);
+    const matchesViewport = Boolean(
+      rawSize &&
+      Math.abs(rawSize.width - window.width) <= 4 &&
+      Math.abs(rawSize.height - window.height) <= 4,
+    );
+    const size = source === "progress" && matchesViewport ? undefined : rawSize;
+
     if (!size && !fps) return;
 
-    if (size) {
-      setVideoSize((previous) => {
+    if (size && trustForAspectRatio) {
+      setTrustedVideoSize((previous) => {
         if (previous?.width === size.width && previous?.height === size.height) return previous;
         return size;
       });
     }
+
     publishRuntimeInfo(size, fps);
 
-    const key = `${size?.width ?? 0}x${size?.height ?? 0}@${fps ? fps.toFixed(3) : "0"}`;
+    const key = `${size?.width ?? 0}x${size?.height ?? 0}@${fps ? fps.toFixed(3) : "0"}:${source}`;
     if (key !== lastMetricKey.current) {
       lastMetricKey.current = key;
       void logPlayerDiagnostic("vlc_runtime_metrics", {
@@ -219,9 +240,10 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
         width: size ? Math.round(size.width) : null,
         height: size ? Math.round(size.height) : null,
         fps: fps ?? null,
+        trustedForAspectRatio: trustForAspectRatio,
       });
     }
-  }, []);
+  }, [window.height, window.width]);
 
   const handleLoad = useCallback((event: VlcLoadEvent) => {
     const previous = lastLoadEvent.current;
@@ -236,7 +258,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
         : previous?.textTracks,
     };
     lastLoadEvent.current = mergedEvent;
-    acceptRuntimeMetrics(mergedEvent as Record<string, unknown>, "load");
+    acceptRuntimeMetrics(mergedEvent as Record<string, unknown>, "load", true);
 
     const size = readVideoSize(mergedEvent as Record<string, unknown>);
     const fps = readFrameRate(mergedEvent as Record<string, unknown>);
@@ -250,7 +272,9 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [acceptRuntimeMetrics, onLoad]);
 
   const handleProgress = useCallback((event: VlcProgressEvent) => {
-    acceptRuntimeMetrics(event as Record<string, unknown>, "progress");
+    // Runtime metrics are display-only. Never let progress metadata redefine
+    // ORIGINAL aspect ratio; some devices expose their viewport dimensions here.
+    acceptRuntimeMetrics(event as Record<string, unknown>, "progress", false);
     onProgress(event);
   }, [acceptRuntimeMetrics, onProgress]);
 
@@ -258,7 +282,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     const payload = event?.nativeEvent ?? event;
     if (!payload || payload.type !== "onNewVideoLayout") return;
 
-    acceptRuntimeMetrics(payload, "layout");
+    acceptRuntimeMetrics(payload, "layout", true);
     const size = readVideoSize(payload);
     const fps = readFrameRate(payload);
     if (!size) return;
@@ -266,6 +290,8 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     const mergedLoad: VlcLoadEvent = {
       ...(lastLoadEvent.current ?? {}),
       videoSize: size,
+      mVideoVisibleWidth: Number(payload?.mVideoVisibleWidth || 0) || undefined,
+      mVideoVisibleHeight: Number(payload?.mVideoVisibleHeight || 0) || undefined,
       ...(fps ? { frameRate: fps } : {}),
     };
     lastLoadEvent.current = mergedLoad;
@@ -293,11 +319,6 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     onError();
   }, [codecMode, fit, onError]);
 
-  const nativeStateProps = useMemo(
-    () => validVideoSize(videoSize) ? {} : { onVideoStateChange: handleNativeStateChange },
-    [handleNativeStateChange, videoSize],
-  );
-
   return (
     <View style={styles.surface} pointerEvents="none">
       <VLCPlayer
@@ -317,7 +338,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
         onPaused={handlePaused}
         onEnd={handleEnd}
         onError={handleError}
-        {...(nativeStateProps as any)}
+        {...({ onVideoStateChange: handleNativeStateChange } as any)}
       />
     </View>
   );
