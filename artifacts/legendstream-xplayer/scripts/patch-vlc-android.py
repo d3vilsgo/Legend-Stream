@@ -58,6 +58,7 @@ def main() -> None:
     java_text = player_view.read_text(encoding="utf-8")
     guard_marker = "LegendStream PiP lifecycle guard"
     dismiss_marker = "LegendStream PiP dismiss monitor"
+    grace_marker = "LegendStream PiP return grace"
 
     if guard_marker not in java_text:
         fields_marker = "    private final AudioManager audioManager;\n"
@@ -69,7 +70,8 @@ def main() -> None:
             + "\n"
             + "    // LegendStream PiP dismiss monitor state.\n"
             + "    private boolean legendStreamHostResumed = true;\n"
-            + "    private Runnable legendStreamPipExitMonitor = null;\n",
+            + "    private Runnable legendStreamPipExitMonitor = null;\n"
+            + "    private long legendStreamPipExitDetectedAt = 0L;\n",
             1,
         )
 
@@ -78,14 +80,14 @@ def main() -> None:
             fail("Could not locate VLC onHostResume() for the PiP lifecycle patch")
 
         resume_replacement = """    // LegendStream PiP dismiss monitor: while PiP is visible we keep VLC
-    // playing. If the PiP window is closed to the launcher/background, Android
-    // can leave the Activity paused without calling onHostPause() again. Poll
-    // the PiP flag briefly and pause VLC only when PiP has ended and the host
-    // has not resumed.
+    // playing. When PiP disappears we wait briefly for Android to resume the
+    // Activity before deciding that the user actually dismissed the PiP window.
+    // This avoids pausing during the normal PiP -> full-app expand animation.
     private void startLegendStreamPipExitMonitor() {
         if (legendStreamPipExitMonitor != null) {
             mProgressUpdateHandler.removeCallbacks(legendStreamPipExitMonitor);
         }
+        legendStreamPipExitDetectedAt = 0L;
         legendStreamPipExitMonitor = new Runnable() {
             @Override
             public void run() {
@@ -93,12 +95,36 @@ def main() -> None:
                 final boolean inPip = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O
                         && activity != null
                         && activity.isInPictureInPictureMode();
+                final boolean returningToApp = legendStreamHostResumed
+                        || (activity != null && activity.hasWindowFocus());
 
                 if (inPip) {
+                    legendStreamPipExitDetectedAt = 0L;
                     mProgressUpdateHandler.postDelayed(this, 250);
                     return;
                 }
 
+                if (returningToApp) {
+                    legendStreamPipExitDetectedAt = 0L;
+                    legendStreamPipExitMonitor = null;
+                    return;
+                }
+
+                final long now = android.os.SystemClock.uptimeMillis();
+                if (legendStreamPipExitDetectedAt == 0L) {
+                    // LegendStream PiP return grace: Android can report PiP=false
+                    // a little before onHostResume()/window focus during expand.
+                    legendStreamPipExitDetectedAt = now;
+                    mProgressUpdateHandler.postDelayed(this, 900);
+                    return;
+                }
+
+                if (now - legendStreamPipExitDetectedAt < 800L) {
+                    mProgressUpdateHandler.postDelayed(this, 250);
+                    return;
+                }
+
+                legendStreamPipExitDetectedAt = 0L;
                 legendStreamPipExitMonitor = null;
                 if (!legendStreamHostResumed && !isPaused && mMediaPlayer != null) {
                     isPaused = true;
@@ -116,6 +142,7 @@ def main() -> None:
     @Override
     public void onHostResume() {
         legendStreamHostResumed = true;
+        legendStreamPipExitDetectedAt = 0L;
         if (legendStreamPipExitMonitor != null) {
             mProgressUpdateHandler.removeCallbacks(legendStreamPipExitMonitor);
             legendStreamPipExitMonitor = null;
@@ -146,6 +173,7 @@ def main() -> None:
         if release_marker not in java_text:
             fail("Could not locate VLC releasePlayer() for PiP monitor cleanup")
         release_replacement = """    private void releasePlayer() {
+        legendStreamPipExitDetectedAt = 0L;
         if (legendStreamPipExitMonitor != null) {
             mProgressUpdateHandler.removeCallbacks(legendStreamPipExitMonitor);
             legendStreamPipExitMonitor = null;
@@ -154,7 +182,7 @@ def main() -> None:
         java_text = java_text.replace(release_marker, release_replacement, 1)
 
         player_view.write_text(java_text, encoding="utf-8")
-        print("Applied VLC PiP lifecycle guard and dismiss monitor")
+        print("Applied VLC PiP lifecycle guard, return grace and dismiss monitor")
     else:
         print("VLC PiP lifecycle patch already present")
 
@@ -167,6 +195,8 @@ def main() -> None:
         fail("VLC PiP lifecycle guard is missing after patch")
     if dismiss_marker not in java_verify:
         fail("VLC PiP dismiss monitor is missing after patch")
+    if grace_marker not in java_verify:
+        fail("VLC PiP return grace is missing after patch")
     if "isInPictureInPictureMode()" not in java_verify:
         fail("VLC PiP lifecycle check is missing after patch")
     if "startLegendStreamPipExitMonitor()" not in java_verify:
