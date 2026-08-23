@@ -29,6 +29,39 @@ export interface ProviderConfig {
   loadError?: string;
 }
 
+export type EpgSelection = {
+  now?: EpgProgram;
+  next?: EpgProgram;
+};
+
+/**
+ * EPG programs are normalized to the app's internal channel id by loadEpg().
+ * XMLTV does the tvg-id/name -> channel.id mapping in parseXmltv(), while
+ * Xtream short EPG is attached directly to the active Xtream channel id.
+ */
+export function selectChannelEpg(
+  epg: EpgProgram[],
+  channel?: Channel,
+  nowMs = Date.now(),
+): EpgSelection {
+  if (!channel) return {};
+  const programs = epg
+    .filter((program) => program.channelId === channel.id)
+    .sort((a, b) => a.start - b.start);
+  const currentIndex = programs.findIndex(
+    (program) => program.start <= nowMs && nowMs < program.end,
+  );
+  if (currentIndex >= 0) {
+    return {
+      now: programs[currentIndex],
+      next: programs[currentIndex + 1],
+    };
+  }
+  return {
+    next: programs.find((program) => program.start > nowMs),
+  };
+}
+
 interface PlayerState {
   providers: ProviderConfig[];
   provider: ProviderConfig | null;
@@ -52,12 +85,13 @@ interface PlayerContextValue extends PlayerState {
   isHydrating: boolean;
   isSaving: boolean;
   isLoading: boolean;
+  isEpgLoading: boolean;
   error: string | null;
   connectProvider: (config: ProviderInput) => Promise<boolean>;
   removeProvider: (providerId?: string) => Promise<void>;
   disconnectProvider: () => Promise<void>;
   refreshProvider: (providerId?: string) => Promise<void>;
-  refreshEpg: (providerId?: string) => Promise<void>;
+  refreshEpg: (providerId?: string, channelId?: string) => Promise<void>;
   setActiveProvider: (providerId: string) => Promise<boolean>;
   toggleFavorite: (channelId: string) => Promise<void>;
   recordWatched: (channelId: string) => Promise<void>;
@@ -149,6 +183,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<PlayerState>(emptyState);
   const [isHydrating, setIsHydrating] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [isEpgLoading, setIsEpgLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -324,28 +359,38 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const refreshEpg = async (providerId = state.provider?.id) => {
+  const refreshEpg = async (providerId = state.provider?.id, channelId?: string) => {
     if (!providerId) return;
     const provider = state.providers.find((item) => item.id === providerId);
     if (!provider) return;
-    setIsLoading(true);
-    setError(null);
+    const providerChannels = state.channels.filter((channel) => channel.providerId === providerId);
+    const targetChannels = channelId
+      ? providerChannels.filter((channel) => channel.id === channelId)
+      : providerChannels;
+    if (!targetChannels.length) return;
+
+    setIsEpgLoading(true);
     try {
-      const providerChannels = state.channels.filter((channel) => channel.providerId === providerId);
-      const programs = await loadEpg(fromProvider(provider), providerChannels);
+      const programs = await loadEpg(fromProvider(provider), targetChannels);
       await persist({
         ...state,
         epg: [
           ...state.epg.filter(
-            (program) => !providerChannels.some((channel) => channel.id === program.channelId),
+            (program) => !targetChannels.some((channel) => channel.id === program.channelId),
           ),
           ...programs,
         ],
       });
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The EPG could not be loaded.");
+    } catch {
+      // EPG is optional. A provider/XMLTV failure must never break playback.
+      await persist({
+        ...state,
+        epg: state.epg.filter(
+          (program) => !targetChannels.some((channel) => channel.id === program.channelId),
+        ),
+      });
     } finally {
-      setIsLoading(false);
+      setIsEpgLoading(false);
     }
   };
 
@@ -368,6 +413,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       isHydrating,
       isSaving: isLoading,
       isLoading,
+      isEpgLoading,
       error,
       connectProvider,
       removeProvider,
@@ -379,7 +425,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       recordWatched,
       clearError: () => setError(null),
     }),
-    [state, isHydrating, isLoading, error],
+    [state, isHydrating, isLoading, isEpgLoading, error],
   );
 
   return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>;
