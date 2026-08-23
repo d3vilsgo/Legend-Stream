@@ -26,6 +26,7 @@ export type VlcLoadEvent = {
   textTracks?: PlayerTrack[];
   frameRate?: number;
   fps?: number;
+  codec?: string;
 };
 
 export type VlcProgressEvent = {
@@ -38,6 +39,7 @@ export type VlcProgressEvent = {
   videoHeight?: number;
   frameRate?: number;
   fps?: number;
+  codec?: string;
 };
 
 type Props = {
@@ -73,6 +75,12 @@ const readFrameRate = (event?: Record<string, unknown>) => {
   return Number.isFinite(value) && value > 0 ? value : undefined;
 };
 
+const readCodec = (event?: Record<string, unknown>) => {
+  const payload = eventPayload(event);
+  const raw = String((payload as any)?.codec ?? "").trim();
+  return raw || undefined;
+};
+
 const readVideoSize = (event?: Record<string, unknown>): PlayerVideoSize | undefined => {
   const payload = eventPayload(event);
   const nested = (payload as any)?.videoSize;
@@ -91,13 +99,14 @@ const readVideoSize = (event?: Record<string, unknown>): PlayerVideoSize | undef
   return validVideoSize(candidate) ? candidate : undefined;
 };
 
-const publishRuntimeInfo = (size?: PlayerVideoSize, fps?: number) => {
-  const update: { resolution?: string; fps?: number } = {};
+const publishRuntimeInfo = (size?: PlayerVideoSize, fps?: number, codec?: string) => {
+  const update: { resolution?: string; fps?: number; codec?: string } = {};
   if (validVideoSize(size)) {
     update.resolution = `${Math.round(Number(size!.width))}×${Math.round(Number(size!.height))}`;
   }
   if (fps && Number.isFinite(fps) && fps > 0) update.fps = fps;
-  if (update.resolution || update.fps) updatePlayerRuntimeInfo(update);
+  if (codec) update.codec = codec;
+  if (update.resolution || update.fps || update.codec) updatePlayerRuntimeInfo(update);
 };
 
 const ratioString = (size: PlayerVideoSize) =>
@@ -286,6 +295,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   ) => {
     let size = readVideoSize(event);
     const fps = readFrameRate(event);
+    const codec = readCodec(event);
     if (rejectWindowSurface && size && isLikelyWindowSurface(size)) {
       void logPlayerDiagnostic("vlc_metric_rejected_window_size", {
         source,
@@ -294,16 +304,16 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
       });
       size = undefined;
     }
-    if (!size && !fps) return { size: undefined, fps: undefined };
+    if (!size && !fps && !codec) return { size: undefined, fps: undefined, codec: undefined };
 
     if (size) {
       setSourceVideoSize((previous) =>
         previous?.width === size!.width && previous?.height === size!.height ? previous : size,
       );
     }
-    publishRuntimeInfo(size, fps);
+    publishRuntimeInfo(size, fps, codec);
 
-    const key = `${size?.width ?? 0}x${size?.height ?? 0}@${fps ? fps.toFixed(3) : "0"}`;
+    const key = `${size?.width ?? 0}x${size?.height ?? 0}@${fps ? fps.toFixed(3) : "0"}:${codec ?? ""}`;
     if (key !== lastMetricKey.current) {
       lastMetricKey.current = key;
       void logPlayerDiagnostic("vlc_runtime_metrics", {
@@ -311,9 +321,10 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
         width: size ? Math.round(size.width) : null,
         height: size ? Math.round(size.height) : null,
         fps: fps ?? null,
+        codec: codec ?? null,
       });
     }
-    return { size, fps };
+    return { size, fps, codec };
   }, [isLikelyWindowSurface]);
 
   const handleLoad = useCallback((event: VlcLoadEvent) => {
@@ -321,6 +332,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     const rawSize = readVideoSize(event as Record<string, unknown>);
     const safeSize = rawSize && !isLikelyWindowSurface(rawSize) ? rawSize : previous?.videoSize;
     const safeFps = readFrameRate(event as Record<string, unknown>) ?? previous?.frameRate ?? previous?.fps;
+    const safeCodec = readCodec(event as Record<string, unknown>) ?? previous?.codec;
 
     const mergedEvent: VlcLoadEvent = {
       ...(previous ?? {}),
@@ -330,6 +342,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
       videoHeight: safeSize?.height,
       frameRate: safeFps,
       fps: safeFps,
+      codec: safeCodec,
       audioTracks: Array.isArray(event?.audioTracks)
         ? event.audioTracks
         : previous?.audioTracks,
@@ -344,35 +357,40 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
       width: safeSize ? Math.round(safeSize.width) : null,
       height: safeSize ? Math.round(safeSize.height) : null,
       fps: safeFps ?? null,
+      codec: safeCodec ?? null,
       duration: Number(mergedEvent?.duration || 0),
     });
     onLoad(mergedEvent);
   }, [acceptRuntimeMetrics, isLikelyWindowSurface, onLoad]);
 
   const handleProgress = useCallback((event: VlcProgressEvent) => {
-    const { size, fps } = acceptRuntimeMetrics(
+    const { size, fps, codec } = acceptRuntimeMetrics(
       event as Record<string, unknown>,
       "progress-selected-track",
       false,
     );
 
-    if (size) {
-      const previous = lastLoadEvent.current;
-      if (
+    const previous = lastLoadEvent.current;
+    if (
+      (size && (
         previous?.videoSize?.width !== size.width ||
-        previous?.videoSize?.height !== size.height ||
-        (fps && previous?.fps !== fps)
-      ) {
-        const merged: VlcLoadEvent = {
-          ...(previous ?? {}),
+        previous?.videoSize?.height !== size.height
+      )) ||
+      (fps && previous?.fps !== fps) ||
+      (codec && previous?.codec !== codec)
+    ) {
+      const merged: VlcLoadEvent = {
+        ...(previous ?? {}),
+        ...(size ? {
           videoSize: size,
           videoWidth: size.width,
           videoHeight: size.height,
-          ...(fps ? { frameRate: fps, fps } : {}),
-        };
-        lastLoadEvent.current = merged;
-        onLoad(merged);
-      }
+        } : {}),
+        ...(fps ? { frameRate: fps, fps } : {}),
+        ...(codec ? { codec } : {}),
+      };
+      lastLoadEvent.current = merged;
+      onLoad(merged);
     }
 
     onProgress(event);

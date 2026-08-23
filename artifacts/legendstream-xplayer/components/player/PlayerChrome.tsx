@@ -28,10 +28,20 @@ export type {
 } from "./PlayerChromeV2";
 export { playerCodecLabel };
 
+export type PlayerProgramInfo = {
+  title: string;
+  start: number;
+  end: number;
+};
+
 type FeatherName = React.ComponentProps<typeof Feather>["name"];
 type Props = React.ComponentProps<typeof PlayerChromeV2> & {
   resolution?: string;
   fps?: number;
+  streamCodec?: string;
+  epgNow?: PlayerProgramInfo;
+  epgNext?: PlayerProgramInfo;
+  epgLoading?: boolean;
 };
 type Action = {
   key: string;
@@ -72,6 +82,14 @@ const formatFps = (fps: number) => {
   return fps.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 };
 
+const formatClock = (timestamp: number) =>
+  new Date(timestamp).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+
+const formatRemaining = (end: number) => {
+  const minutes = Math.max(0, Math.ceil((end - Date.now()) / 60_000));
+  return minutes > 0 ? `${minutes} dk kaldı` : `bitiş ${formatClock(end)}`;
+};
+
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
 
@@ -85,15 +103,25 @@ export function PlayerChrome(props: Props) {
     getPlayerRuntimeInfoSnapshot,
     getPlayerRuntimeInfoSnapshot,
   );
-  const { resolution: resolutionOverride, fps: fpsOverride, ...chrome } = props;
+  const {
+    resolution: resolutionOverride,
+    fps: fpsOverride,
+    streamCodec: codecOverride,
+    epgNow,
+    epgNext,
+    epgLoading,
+    ...chrome
+  } = props;
 
   const resolution = resolutionOverride ?? runtime.resolution;
   const fps = fpsOverride ?? runtime.fps;
-  const technicalLabel = resolution
-    ? `${resolution}${fps ? ` · ${formatFps(fps)} FPS` : ""}`
-    : fps
-      ? `${formatFps(fps)} FPS`
-      : undefined;
+  const streamCodec = codecOverride ?? runtime.codec;
+  const technicalParts = [
+    resolution,
+    streamCodec,
+    fps ? `${formatFps(fps)} FPS` : undefined,
+  ].filter(Boolean);
+  const technicalLabel = technicalParts.length ? technicalParts.join(" · ") : undefined;
 
   const progress = chrome.duration > 0
     ? Math.max(0, Math.min(1, chrome.position / chrome.duration))
@@ -193,6 +221,9 @@ export function PlayerChrome(props: Props) {
           tech={technicalLabel}
           fit={chrome.fitMode}
           codec={chrome.codecMode}
+          epgNow={epgNow}
+          epgNext={epgNext}
+          epgLoading={epgLoading}
         />
       ) : null}
 
@@ -288,7 +319,7 @@ export function PlayerChrome(props: Props) {
   );
 }
 
-function InfoCard({ portrait, title, meta, live, tech, fit, codec }: {
+function InfoCard({ portrait, title, meta, live, tech, fit, codec, epgNow, epgNext, epgLoading }: {
   portrait: boolean;
   title: string;
   meta?: string;
@@ -296,6 +327,9 @@ function InfoCard({ portrait, title, meta, live, tech, fit, codec }: {
   tech?: string;
   fit: PlayerFitMode;
   codec: Props["codecMode"];
+  epgNow?: PlayerProgramInfo;
+  epgNext?: PlayerProgramInfo;
+  epgLoading?: boolean;
 }) {
   return (
     <View pointerEvents="none" style={[styles.info, portrait ? styles.infoPortrait : styles.infoLandscape]}>
@@ -306,6 +340,20 @@ function InfoCard({ portrait, title, meta, live, tech, fit, codec }: {
           {live ? <View style={styles.livePill}><View style={styles.liveDot} /><Text style={styles.liveText}>CANLI</Text></View> : null}
           <Text numberOfLines={1} style={[styles.title, portrait && styles.titlePortrait]}>{title}</Text>
         </View>
+        {live ? (
+          <View style={styles.epgBlock}>
+            {epgLoading && !epgNow ? (
+              <Text numberOfLines={1} style={styles.epgMuted}>Program bilgisi yükleniyor…</Text>
+            ) : epgNow ? (
+              <>
+                <Text numberOfLines={1} style={styles.epgNow}>Şimdi: {epgNow.title} · {formatClock(epgNow.end)} · {formatRemaining(epgNow.end)}</Text>
+                {epgNext ? <Text numberOfLines={1} style={styles.epgNext}>Sıradaki: {epgNext.title} · {formatClock(epgNext.start)}</Text> : null}
+              </>
+            ) : (
+              <Text numberOfLines={1} style={styles.epgMuted}>Program bilgisi yok</Text>
+            )}
+          </View>
+        ) : null}
         <View style={styles.metaRow}>
           {meta ? <Text numberOfLines={1} style={styles.meta}>{meta}</Text> : null}
           <View style={[styles.techPill, !tech && styles.techPillMuted]}>
@@ -356,8 +404,8 @@ function AdaptiveDockButton({ action, size, iconSize }: { action: Action; size: 
 
 const styles = StyleSheet.create({
   info: { position: "absolute", zIndex: 52, top: 18, overflow: "hidden", borderWidth: 1, borderColor: "rgba(71,101,124,.42)", backgroundColor: "#07101a", elevation: 8, flexDirection: "row", alignItems: "center" },
-  infoLandscape: { left: 94, right: 24, minHeight: 62, borderRadius: 18, paddingLeft: 18, paddingRight: 14 },
-  infoPortrait: { left: 72, right: 14, minHeight: 72, borderRadius: 18, paddingLeft: 14, paddingRight: 10 },
+  infoLandscape: { left: 94, right: 24, minHeight: 78, borderRadius: 18, paddingLeft: 18, paddingRight: 14 },
+  infoPortrait: { left: 72, right: 14, minHeight: 88, borderRadius: 18, paddingLeft: 14, paddingRight: 10 },
   infoRail: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4, backgroundColor: "#22d3ee" },
   infoMain: { flex: 1, minWidth: 0, paddingVertical: 9 },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 },
@@ -366,6 +414,10 @@ const styles = StyleSheet.create({
   livePill: { height: 23, paddingHorizontal: 8, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderColor: "rgba(34,211,238,.38)", backgroundColor: "rgba(8,145,178,.16)" },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#22d3ee" },
   liveText: { color: "#8beeff", fontSize: 10, fontWeight: "900" },
+  epgBlock: { marginTop: 4, minWidth: 0 },
+  epgNow: { color: "#e2e8f0", fontSize: 11, fontWeight: "800" },
+  epgNext: { marginTop: 1, color: "#94a3b8", fontSize: 10, fontWeight: "700" },
+  epgMuted: { color: "#64748b", fontSize: 10, fontWeight: "700" },
   metaRow: { marginTop: 5, flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 },
   meta: { flexShrink: 1, color: "#94a3b8", fontSize: 11, fontWeight: "700" },
   techPill: { flexShrink: 0, minHeight: 22, maxWidth: "62%", paddingHorizontal: 7, borderRadius: 11, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderColor: "rgba(103,232,249,.28)", backgroundColor: "rgba(8,145,178,.11)" },

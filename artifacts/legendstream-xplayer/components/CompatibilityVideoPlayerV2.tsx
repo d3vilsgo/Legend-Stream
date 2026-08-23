@@ -2,7 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, BackHandler, StyleSheet, Text, View } from "react-native";
 import { useMediaLibrary } from "@/context/MediaLibraryContext";
-import { usePlayer } from "@/context/PlayerContext";
+import { selectChannelEpg, usePlayer } from "@/context/PlayerContext";
 import { downloadMedia } from "@/lib/downloads";
 import {
   DEFAULT_PLAYER_CHROME_TIMEOUT_SECONDS,
@@ -37,6 +37,7 @@ import {
 const CODEC_MODE_KEY = "@legendstream/codec-mode-v1";
 const UI_PROGRESS_INTERVAL_MS = 500;
 const PROGRESS_PERSIST_INTERVAL_MS = 15_000;
+const EPG_CLOCK_INTERVAL_MS = 30_000;
 
 const inferMediaKind = (source: string): PlayerMediaKind => {
   if (/^file:/i.test(source)) return "download";
@@ -85,7 +86,14 @@ export function CompatibilityVideoPlayer({
   allowDownload?: boolean;
 }) {
   const { getProgress, saveProgress } = useMediaLibrary();
-  const { provider, channels, recordWatched } = usePlayer();
+  const {
+    provider,
+    channels,
+    epg,
+    isEpgLoading,
+    refreshEpg,
+    recordWatched,
+  } = usePlayer();
   const orientation = usePlayerOrientation(autoFullscreen);
 
   const vlcRef = useRef<any>(null);
@@ -120,6 +128,8 @@ export function CompatibilityVideoPlayer({
   const [duration, setDuration] = useState(0);
   const [videoSize, setVideoSize] = useState<PlayerVideoSize>({ width: 16, height: 9 });
   const [resolutionLabel, setResolutionLabel] = useState<string | undefined>(undefined);
+  const [streamCodec, setStreamCodec] = useState<string | undefined>(undefined);
+  const [epgClock, setEpgClock] = useState(() => Date.now());
   const [chromeTimeoutSeconds, setChromeTimeoutSeconds] = useState(DEFAULT_PLAYER_CHROME_TIMEOUT_SECONDS);
   const [audioTracks, setAudioTracks] = useState<PlayerTrack[]>([]);
   const [textTracks, setTextTracks] = useState<PlayerTrack[]>([]);
@@ -142,6 +152,11 @@ export function CompatibilityVideoPlayer({
       .catch(() => undefined);
     setPipSupported(isPipSupported());
     setVolume(getMediaVolume());
+  }, []);
+
+  useEffect(() => {
+    const timer = setInterval(() => setEpgClock(Date.now()), EPG_CLOCK_INTERVAL_MS);
+    return () => clearInterval(timer);
   }, []);
 
   const effectiveUri = useMemo(
@@ -228,6 +243,7 @@ export function CompatibilityVideoPlayer({
     const subscription = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
       setVolume(getMediaVolume());
+      setEpgClock(Date.now());
       if (pipActive && !isInPipMode()) {
         setPipActive(false);
         revealControls();
@@ -264,6 +280,17 @@ export function CompatibilityVideoPlayer({
       : undefined,
     [channels, currentKind, currentSource, provider],
   );
+
+  const currentEpg = useMemo(
+    () => selectChannelEpg(epg, currentLive, epgClock),
+    [currentLive, epg, epgClock],
+  );
+
+  useEffect(() => {
+    if (!provider || !currentLive || currentKind !== "live") return;
+    setEpgClock(Date.now());
+    void refreshEpg(provider.id, currentLive.id);
+  }, [currentKind, currentLive?.id, provider?.id]);
 
   const liveQueue = useMemo(() => {
     if (!provider || !currentLive) return [];
@@ -339,6 +366,7 @@ export function CompatibilityVideoPlayer({
     setPanel(null);
     setErrorText(null);
     setResolutionLabel(undefined);
+    setStreamCodec(undefined);
     setAudioTracks([]);
     setTextTracks([]);
     setAudioTrack(undefined);
@@ -417,6 +445,7 @@ export function CompatibilityVideoPlayer({
     setCodecMode(mode);
     setPanel(null);
     setErrorText(null);
+    setStreamCodec(undefined);
     resumedSource.current = null;
     await AsyncStorage.setItem(CODEC_MODE_KEY, mode).catch(() => undefined);
     revealControls();
@@ -465,6 +494,7 @@ export function CompatibilityVideoPlayer({
       setVideoSize({ width, height });
       setResolutionLabel(`${width}×${height}`);
     }
+    if (event?.codec) setStreamCodec(event.codec);
     setAudioTracks(Array.isArray(event?.audioTracks) ? event.audioTracks : []);
     setTextTracks(Array.isArray(event?.textTracks) ? event.textTracks : []);
 
@@ -563,6 +593,10 @@ export function CompatibilityVideoPlayer({
           title={currentTitle}
           meta={currentMeta}
           resolution={resolutionLabel}
+          streamCodec={streamCodec}
+          epgNow={currentEpg.now}
+          epgNext={currentEpg.next}
+          epgLoading={currentKind === "live" && isEpgLoading}
           mediaKind={currentKind}
           codecMode={codecMode}
           fitMode={fit}
