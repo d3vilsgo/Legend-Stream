@@ -4,9 +4,11 @@ const MARKER_START = "// @legendstream abi-splits:start";
 const MARKER_END = "// @legendstream abi-splits:end";
 
 const SPLIT_BLOCK = `${MARKER_START}
+    def legendStreamAbiSplitEnabled = project.hasProperty("abiSplit")
+
     splits {
         abi {
-            enable true
+            enable legendStreamAbiSplitEnabled
             reset()
             include "arm64-v8a", "armeabi-v7a"
             universalApk false
@@ -14,11 +16,13 @@ const SPLIT_BLOCK = `${MARKER_START}
     }
 
     applicationVariants.all { variant ->
-        variant.outputs.each { output ->
-            def abi = output.getFilter(com.android.build.OutputFile.ABI)
-            if (abi != null) {
-                def abiCode = ["armeabi-v7a": 1, "arm64-v8a": 2][abi]
-                output.versionCodeOverride = variant.versionCode * 1000 + abiCode
+        if (legendStreamAbiSplitEnabled) {
+            variant.outputs.each { output ->
+                def abi = output.getFilter(com.android.build.OutputFile.ABI)
+                if (abi != null) {
+                    def abiCode = ["armeabi-v7a": 1, "arm64-v8a": 2][abi]
+                    output.versionCodeOverride = variant.versionCode * 1000 + abiCode
+                }
             }
         }
     }
