@@ -1,0 +1,48 @@
+name: Player UX Source Verification
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    if: github.head_ref == 'feat/player-adaptive-ux'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 1
+      - name: Verify source-aspect FIT behavior
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path('artifacts/legendstream-xplayer')
+          compatibility = root / 'components' / 'CompatibilityVideoPlayerV2.tsx'
+          surface = root / 'components' / 'player' / 'VlcPlaybackSurface.tsx'
+
+          compatibility_text = compatibility.read_text(encoding='utf-8')
+          if 'const [fit, setFit] = useState<PlayerFitMode>("fit")' not in compatibility_text:
+              raise SystemExit('Player must default to FIT')
+
+          text = surface.read_text(encoding='utf-8')
+          required = [
+              'fit = "fit"',
+              'autoAspectRatio={false}',
+              'setSourceVideoSize',
+              'containedFrame(',
+              'player.changeVideoAspectRatio?.(nativeAspectRatio)',
+          ]
+          for anchor in required:
+              if anchor not in text:
+                  raise SystemExit(f'Source-aspect FIT anchor missing: {anchor}')
+          if 'resizeMode="contain"' in text:
+              raise SystemExit('Unsupported Android resizeMode must not be used as FIT enforcement')
+          if text.count('const PLAYER_KEEP_AWAKE_TAG = "legendstream-active-playback";') != 1:
+              raise SystemExit('PLAYER_KEEP_AWAKE_TAG must be declared exactly once')
+          PY

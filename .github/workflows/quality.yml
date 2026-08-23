@@ -36,6 +36,30 @@ jobs:
             git commit -m "chore: update pnpm lockfile"
             git push origin HEAD:${{ github.head_ref }}
           fi
+      - name: Verify Replit removal
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find . -path './.git' -prune -o \( -name '.replit' -o -name '.replitignore' -o -name '.replit-artifact' -o -name 'replit.md' \) -print | grep -q .; then
+            echo 'Replit metadata still present:'
+            find . -path './.git' -prune -o \( -name '.replit' -o -name '.replitignore' -o -name '.replit-artifact' -o -name 'replit.md' \) -print
+            exit 1
+          fi
+          if [ -d artifacts/mockup-sandbox ]; then
+            echo 'artifacts/mockup-sandbox still exists'
+            exit 1
+          fi
+          active_matches="$(grep -RInE --exclude='pnpm-lock.yaml' --exclude='*.md' --exclude-dir='.git' --exclude-dir='node_modules' --exclude-dir='.github' '(@replit/|stripe-replit-sync|REPLIT_|REPL_ID)' package.json pnpm-workspace.yaml artifacts lib scripts 2>/dev/null || true)"
+          if [ -n "$active_matches" ]; then
+            echo 'Active Replit references still present:'
+            echo "$active_matches"
+            exit 1
+          fi
+          if grep -Ein '(@replit/|stripe-replit-sync)' pnpm-lock.yaml; then
+            echo 'Replit packages remain in pnpm-lock.yaml'
+            exit 1
+          fi
+          echo 'Replit cleanup verification passed.'
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references
