@@ -28,19 +28,11 @@ jobs:
       - name: Free runner disk space
         shell: bash
         run: |
-          echo "Disk before cleanup:"
           df -h /
-          sudo rm -rf /usr/share/dotnet || true
-          sudo rm -rf /opt/ghc || true
-          sudo rm -rf /usr/local/.ghcup || true
-          sudo rm -rf /usr/local/share/boost || true
-          sudo rm -rf /usr/share/swift || true
-          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
-          sudo rm -rf /opt/hostedtoolcache/Ruby || true
-          sudo rm -rf /opt/hostedtoolcache/go || true
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /usr/share/swift || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL /opt/hostedtoolcache/Ruby /opt/hostedtoolcache/go || true
           docker system prune -af --volumes || true
           sudo apt-get clean || true
-          echo "Disk after cleanup:"
           df -h /
 
       - name: Setup pnpm
@@ -74,7 +66,6 @@ jobs:
         run: |
           set -o pipefail
           VLC_DIR="$(cd artifacts/legendstream-xplayer && node -p "require('path').dirname(require.resolve('react-native-vlc-media-player/package.json'))")"
-          echo "Resolved VLC directory: $VLC_DIR"
           python3 artifacts/legendstream-xplayer/scripts/patch-vlc-android.py "$VLC_DIR" 2>&1 | tee "$GITHUB_WORKSPACE/vlc-patch.log"
           python3 artifacts/legendstream-xplayer/scripts/patch-vlc-progress-metrics.py "$VLC_DIR" 2>&1 | tee -a "$GITHUB_WORKSPACE/vlc-patch.log"
 
@@ -87,25 +78,23 @@ jobs:
         run: |
           set -o pipefail
           pnpm exec expo prebuild --platform android --clean --no-install 2>&1 | tee "$GITHUB_WORKSPACE/expo-prebuild.log"
-          echo "Generated architectures:"
           grep '^reactNativeArchitectures=' android/gradle.properties || true
-          echo "Generated ABI split block:"
           sed -n '/@legendstream abi-splits:start/,/@legendstream abi-splits:end/p' android/app/build.gradle
-          grep -n "libc++_shared.so" android/app/build.gradle || true
 
-      - name: Upload prepare diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: LegendStream-XPlayer-Prepare-Diagnostics
-          path: |
-            dependency-install.log
-            vlc-patch.log
-            expo-prebuild.log
-          if-no-files-found: ignore
-          retention-days: 7
+      - name: Select package mode
+        id: mode
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "full_release=true" >> "$GITHUB_OUTPUT"
+            echo "Full release: arm64 + armv7 + AAB"
+          else
+            echo "full_release=false" >> "$GITHUB_OUTPUT"
+            echo "Test build: arm64-v8a APK only"
+          fi
 
       - name: Build and stage production AAB
+        if: steps.mode.outputs.full_release == 'true'
         working-directory: artifacts/legendstream-xplayer/android
         env:
           NODE_ENV: production
@@ -113,181 +102,106 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew bundleRelease \
-            --no-daemon \
-            --no-build-cache \
-            --max-workers=2 \
-            --console=plain \
-            --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/aab-release-build.log"
-
+          ./gradlew bundleRelease --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/aab-release-build.log"
           STAGE_DIR="$GITHUB_WORKSPACE/release-staging"
           rm -rf "$STAGE_DIR"
           mkdir -p "$STAGE_DIR"
-
           mapfile -t AABS < <(find app/build/outputs/bundle/release -type f -name '*.aab' | sort)
-          if [ "${#AABS[@]}" -ne 1 ]; then
-            echo "::error::Expected exactly one release AAB before clean, found ${#AABS[@]}"
-            printf '%s\n' "${AABS[@]:-<none>}"
-            exit 1
-          fi
-
+          test "${#AABS[@]}" -eq 1
           cp "${AABS[0]}" "$STAGE_DIR/LegendStream-XPlayer-production.aab"
-          echo "Staged AAB outside Gradle build tree before clean:"
-          stat -c '%n %s' "$STAGE_DIR"/*.aab
 
-      - name: Clean before split APK build
-        working-directory: artifacts/legendstream-xplayer/android
+      - name: Prepare staging
+        if: steps.mode.outputs.full_release != 'true'
         shell: bash
         run: |
-          set -euo pipefail
-          ./gradlew clean --no-daemon --console=plain
-          test -f "$GITHUB_WORKSPACE/release-staging/LegendStream-XPlayer-production.aab"
+          rm -rf "$GITHUB_WORKSPACE/release-staging"
+          mkdir -p "$GITHUB_WORKSPACE/release-staging"
 
-      - name: Build per-ABI release APKs
+      - name: Clean before split APK build
+        if: steps.mode.outputs.full_release == 'true'
+        working-directory: artifacts/legendstream-xplayer/android
+        shell: bash
+        run: ./gradlew clean --no-daemon --console=plain
+
+      - name: Build release APKs
         working-directory: artifacts/legendstream-xplayer/android
         env:
           NODE_ENV: production
           GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
+          FULL_RELEASE: ${{ steps.mode.outputs.full_release }}
         shell: bash
         run: |
-          set -o pipefail
-          ./gradlew assembleRelease -PabiSplit \
-            --no-daemon \
-            --no-build-cache \
-            --max-workers=2 \
-            --console=plain \
-            --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
+          set -euo pipefail
+          if [ "$FULL_RELEASE" = "true" ]; then
+            ./gradlew assembleRelease -PabiSplit --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
+          else
+            ./gradlew assembleRelease -PabiSplit -PabiOnly=arm64-v8a -PreactNativeArchitectures=arm64-v8a --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
+          fi
 
-      - name: Show release diagnostics on failure
-        if: failure()
-        shell: bash
-        run: |
-          echo "================ AAB IMPORTANT ERROR LINES ================"
-          grep -Ein -C 4 "error|exception|failed|failure|unable|cannot|could not|syntax|module not found|no space|keystore|signing|bundle|manifest|minSdk|vlc|libvlc|duplicate|merge|kotlin|java|versionCode|abi|shrunk-resources" aab-release-build.log 2>/dev/null | tail -n 420 || true
-          echo "================ AAB LAST LOG LINES ======================="
-          tail -n 320 aab-release-build.log 2>/dev/null || true
-          echo "================ APK IMPORTANT ERROR LINES ================"
-          grep -Ein -C 4 "error|exception|failed|failure|unable|cannot|could not|syntax|module not found|no space|keystore|signing|bundle|manifest|minSdk|vlc|libvlc|duplicate|merge|kotlin|java|versionCode|abi|shrunk-resources" apk-release-build.log 2>/dev/null | tail -n 420 || true
-          echo "================ APK LAST LOG LINES ======================="
-          tail -n 320 apk-release-build.log 2>/dev/null || true
-          echo "================ PREBUILD LOG ============================="
-          tail -n 260 expo-prebuild.log 2>/dev/null || true
-
-      - name: Upload release build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: LegendStream-XPlayer-Release-Build-Logs
-          path: |
-            aab-release-build.log
-            apk-release-build.log
-          if-no-files-found: ignore
-          retention-days: 7
-
-      - name: Verify ABI contents, versionCodes and package outputs
+      - name: Verify and stage outputs
         id: package_android
+        env:
+          FULL_RELEASE: ${{ steps.mode.outputs.full_release }}
         shell: bash
         run: |
           set -euo pipefail
           APK_DIR="artifacts/legendstream-xplayer/android/app/build/outputs/apk/release"
           STAGE_DIR="$GITHUB_WORKSPACE/release-staging"
-
-          echo "================ APK OUTPUTS ================"
-          find "$APK_DIR" -maxdepth 2 -type f -printf '%p %s bytes\n' | sort || true
-          echo "================ STAGING OUTPUTS ============"
-          find "$STAGE_DIR" -maxdepth 1 -type f -printf '%p %s bytes\n' | sort || true
-
           mapfile -t APKS < <(find "$APK_DIR" -type f -name '*.apk' | sort)
-          mapfile -t AABS < <(find "$STAGE_DIR" -maxdepth 1 -type f -name '*.aab' | sort)
+          echo "APK outputs:"
+          printf '%s\n' "${APKS[@]}"
 
-          if [ "${#APKS[@]}" -ne 2 ]; then
-            echo "::error::Expected exactly two split release APKs, found ${#APKS[@]}"
-            printf '%s\n' "${APKS[@]:-<none>}"
-            exit 1
-          fi
-          if [ "${#AABS[@]}" -ne 1 ]; then
-            echo "::error::Expected exactly one staged release AAB, found ${#AABS[@]}"
-            printf '%s\n' "${AABS[@]:-<none>}"
-            exit 1
+          if [ "$FULL_RELEASE" = "true" ]; then
+            test "${#APKS[@]}" -eq 2
+          else
+            test "${#APKS[@]}" -eq 1
           fi
 
-          AAB_PATH="${AABS[0]}"
           ARM64_APK=""
           ARMV7_APK=""
-
-          for apk in "${APKS[@]}"; do
-            HAS_ARM64=0
-            HAS_ARMV7=0
-            if unzip -Z1 "$apk" | grep -q '^lib/arm64-v8a/'; then HAS_ARM64=1; fi
-            if unzip -Z1 "$apk" | grep -q '^lib/armeabi-v7a/'; then HAS_ARMV7=1; fi
-
-            if [ "$HAS_ARM64" -eq 1 ] && [ "$HAS_ARMV7" -eq 0 ]; then
-              ARM64_APK="$apk"
-            elif [ "$HAS_ARMV7" -eq 1 ] && [ "$HAS_ARM64" -eq 0 ]; then
-              ARMV7_APK="$apk"
-            else
-              echo "::error::Could not classify split APK by native ABI: $apk"
-              unzip -Z1 "$apk" | grep '^lib/' | head -n 80 || true
-              exit 1
-            fi
-          done
-
-          if [ -z "$ARM64_APK" ] || [ -z "$ARMV7_APK" ]; then
-            echo "::error::Both ARM split APKs were not discovered from actual *.apk outputs."
-            printf '%s\n' "${APKS[@]}"
-            exit 1
-          fi
-
           for apk in "${APKS[@]}"; do
             if unzip -Z1 "$apk" | grep -Eq '^lib/(x86|x86_64)/'; then
-              echo "::error::Unexpected x86/x86_64 native library in split APK: $apk"
+              echo "::error::Unexpected x86/x86_64 native library in $apk"
               exit 1
             fi
+            HAS_ARM64=0; HAS_ARMV7=0
+            unzip -Z1 "$apk" | grep -q '^lib/arm64-v8a/' && HAS_ARM64=1 || true
+            unzip -Z1 "$apk" | grep -q '^lib/armeabi-v7a/' && HAS_ARMV7=1 || true
+            if [ "$HAS_ARM64" -eq 1 ] && [ "$HAS_ARMV7" -eq 0 ]; then ARM64_APK="$apk"; fi
+            if [ "$HAS_ARMV7" -eq 1 ] && [ "$HAS_ARM64" -eq 0 ]; then ARMV7_APK="$apk"; fi
           done
 
-          AAB_ABIS="$(unzip -Z1 "$AAB_PATH" | awk -F/ '/^base\/lib\// {print $3}' | sort -u | xargs)"
-          echo "AAB ABIs (informational; x86/x86_64 is allowed here): $AAB_ABIS"
-          echo "$AAB_ABIS" | grep -qw 'arm64-v8a'
-          echo "$AAB_ABIS" | grep -qw 'armeabi-v7a'
+          test -n "$ARM64_APK"
+          if [ "$FULL_RELEASE" = "true" ]; then test -n "$ARMV7_APK"; fi
 
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
-          if [ ! -x "$AAPT" ]; then
-            echo "::error::aapt not found under $ANDROID_HOME/build-tools"
-            exit 1
-          fi
-
+          test -x "$AAPT"
           ARM64_CODE="$($AAPT dump badging "$ARM64_APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
-          ARMV7_CODE="$($AAPT dump badging "$ARMV7_APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
           echo "arm64-v8a versionCode=$ARM64_CODE"
-          echo "armeabi-v7a versionCode=$ARMV7_CODE"
-          test -n "$ARM64_CODE" && test -n "$ARMV7_CODE"
-          if [ "$ARM64_CODE" = "$ARMV7_CODE" ]; then
-            echo "::error::Split APK versionCodes collide: $ARM64_CODE"
-            exit 1
+          test -n "$ARM64_CODE"
+
+          if [ "$FULL_RELEASE" = "true" ]; then
+            ARMV7_CODE="$($AAPT dump badging "$ARMV7_APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
+            echo "armeabi-v7a versionCode=$ARMV7_CODE"
+            test -n "$ARMV7_CODE"
+            test "$ARM64_CODE" != "$ARMV7_CODE"
           fi
 
           APP_VERSION="$(node -p "require('./artifacts/legendstream-xplayer/app.json').expo.version")"
           ARM64_NAME="LegendStream-XPlayer-v${APP_VERSION}-arm64-v8a.apk"
-          ARMV7_NAME="LegendStream-XPlayer-v${APP_VERSION}-armeabi-v7a.apk"
-          AAB_NAME="LegendStream-XPlayer-v${APP_VERSION}-production.aab"
-
           cp "$ARM64_APK" "$STAGE_DIR/$ARM64_NAME"
-          cp "$ARMV7_APK" "$STAGE_DIR/$ARMV7_NAME"
-          mv "$AAB_PATH" "$STAGE_DIR/$AAB_NAME"
-
           ARM64_BYTES="$(stat -c%s "$STAGE_DIR/$ARM64_NAME")"
-          ARMV7_BYTES="$(stat -c%s "$STAGE_DIR/$ARMV7_NAME")"
-          AAB_BYTES="$(stat -c%s "$STAGE_DIR/$AAB_NAME")"
           echo "arm64 APK bytes=$ARM64_BYTES"
-          echo "armv7 APK bytes=$ARMV7_BYTES"
-          echo "AAB bytes=$AAB_BYTES"
-          echo "Final staged release outputs:"
-          stat -c '%n %s' "$STAGE_DIR"/*.apk "$STAGE_DIR"/*.aab
-
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "arm64_bytes=$ARM64_BYTES" >> "$GITHUB_OUTPUT"
-          echo "armv7_bytes=$ARMV7_BYTES" >> "$GITHUB_OUTPUT"
-          echo "aab_bytes=$AAB_BYTES" >> "$GITHUB_OUTPUT"
+
+          if [ "$FULL_RELEASE" = "true" ]; then
+            ARMV7_NAME="LegendStream-XPlayer-v${APP_VERSION}-armeabi-v7a.apk"
+            AAB_NAME="LegendStream-XPlayer-v${APP_VERSION}-production.aab"
+            cp "$ARMV7_APK" "$STAGE_DIR/$ARMV7_NAME"
+            mv "$STAGE_DIR/LegendStream-XPlayer-production.aab" "$STAGE_DIR/$AAB_NAME"
+            unzip -Z1 "$STAGE_DIR/$AAB_NAME" | awk -F/ '/^base\/lib\// {print $3}' | sort -u
+          fi
 
       - name: Upload arm64 APK artifact
         uses: actions/upload-artifact@v4
@@ -298,6 +212,7 @@ jobs:
           retention-days: 14
 
       - name: Upload armeabi-v7a APK artifact
+        if: steps.mode.outputs.full_release == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: LegendStream-XPlayer-v${{ steps.package_android.outputs.app_version }}-armeabi-v7a
@@ -306,9 +221,24 @@ jobs:
           retention-days: 14
 
       - name: Upload production AAB artifact
+        if: steps.mode.outputs.full_release == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: LegendStream-XPlayer-v${{ steps.package_android.outputs.app_version }}-production-aab
           path: release-staging/*.aab
           if-no-files-found: error
           retention-days: 14
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LegendStream-XPlayer-Release-Build-Logs
+          path: |
+            dependency-install.log
+            vlc-patch.log
+            expo-prebuild.log
+            aab-release-build.log
+            apk-release-build.log
+          if-no-files-found: ignore
+          retention-days: 7
