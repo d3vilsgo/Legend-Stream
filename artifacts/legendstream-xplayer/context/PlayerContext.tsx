@@ -15,10 +15,10 @@ import {
   loadEpg,
   loadProvider,
   normalizeXtreamBaseUrl,
-  parseXmltv,
   Provider,
   ProviderType,
 } from "@/lib/iptv";
+import { mapInBatches, yieldToUi } from "@/lib/cooperative";
 
 export { ProviderType };
 export type { Channel, EpgProgram };
@@ -43,6 +43,7 @@ export interface ProviderConfig {
 export type EpgSelection = { now?: EpgProgram; next?: EpgProgram };
 
 const EPG_CACHE_TTL_MS = 15 * 60 * 1000;
+const EPG_START_DELAY_MS = 1_200;
 const STORAGE_KEY = "@legendstream/player-state-v3";
 const LEGACY_STORAGE_KEY = "@legendstream/player-state-v2";
 const LOGGED_OUT = "__logged_out__";
@@ -307,14 +308,18 @@ function decodeMaybeBase64(value: string) {
   return printable / decoded.length >= 0.9 ? decoded : value;
 }
 
-function normalizeProgramText(programs: EpgProgram[]) {
-  return programs.map((program) => ({
-    ...program,
-    title: decodeMaybeBase64(program.title),
-    description: program.description
-      ? decodeMaybeBase64(program.description)
-      : undefined,
-  }));
+async function normalizeProgramText(programs: EpgProgram[]) {
+  return mapInBatches(
+    programs,
+    (program) => ({
+      ...program,
+      title: decodeMaybeBase64(program.title),
+      description: program.description
+        ? decodeMaybeBase64(program.description)
+        : undefined,
+    }),
+    250,
+  );
 }
 
 async function loadBulkProviderEpg(
@@ -335,14 +340,15 @@ async function loadBulkProviderEpg(
   }
   if (!epgUrl) return [];
 
-  const response = await fetch(epgUrl, {
-    headers: { Accept: "application/xml,text/xml,*/*" },
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!response.ok) throw new Error(`EPG request failed with ${response.status}.`);
-  const xml = await response.text();
-  await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  return normalizeProgramText(parseXmltv(xml, channels));
+  await yieldToUi();
+  const programs = await loadEpg(
+    {
+      ...toXtreamLoadProvider(fromProvider(provider)),
+      epgUrl,
+    },
+    channels,
+  );
+  return normalizeProgramText(programs);
 }
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
@@ -605,6 +611,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         const promise = (async () => {
           try {
             const programs = await loadBulkProviderEpg(provider, providerChannels);
+            await yieldToUi();
             const ids = new Set(providerChannels.map((channel) => channel.id));
             setState((previous) => {
               const next = {
@@ -618,7 +625,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               return next;
             });
           } catch {
-            // EPG is optional
+            // EPG is optional; a timeout/parse problem must never block live TV.
           } finally {
             epgCacheRef.current.set(resolvedProviderId, {
               loadedAt: Date.now(),
@@ -653,7 +660,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
       setIsEpgLoading(true);
       try {
-        const programs = normalizeProgramText(
+        const programs = await normalizeProgramText(
           await loadEpg(
             {
               ...toXtreamLoadProvider(fromProvider(provider)),
@@ -689,7 +696,22 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     ) {
       return;
     }
-    void refreshEpg(state.provider.id);
+
+    // Live channels must become visible/respond to input before bulk XMLTV work
+    // starts. This intentionally decouples "load live TV" from EPG refresh.
+    let cancelled = false;
+    const providerId = state.provider.id;
+    const timer = setTimeout(() => {
+      void (async () => {
+        await yieldToUi();
+        if (!cancelled) await refreshEpg(providerId);
+      })();
+    }, EPG_START_DELAY_MS);
+
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [
     isHydrating,
     state.provider?.id,
