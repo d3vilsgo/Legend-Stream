@@ -63,12 +63,40 @@ const decodeEntities = (value: string) =>
     .replace(/&lt;/g, "<")
     .replace(/&gt;/g, ">");
 
+const MOJIBAKE_MARKERS = /[ÃÄÅÂ]/;
+
+const binaryStringToUtf8 = (binary: string) => {
+  try {
+    const encoded = Array.from(binary, (char) =>
+      `%${char.charCodeAt(0).toString(16).padStart(2, "0")}`,
+    ).join("");
+    return decodeURIComponent(encoded);
+  } catch {
+    return binary;
+  }
+};
+
+export function repairUtf8Mojibake(value: string) {
+  if (!value || !MOJIBAKE_MARKERS.test(value)) return value;
+  const chars = Array.from(value);
+  if (chars.some((char) => char.charCodeAt(0) > 0xff)) return value;
+
+  const repaired = binaryStringToUtf8(value);
+  if (!repaired || repaired === value) return value;
+  const before = (value.match(/[ÃÄÅÂ]/g) || []).length;
+  const after = (repaired.match(/[ÃÄÅÂ]/g) || []).length;
+  return after < before ? repaired : value;
+}
+
+const decodeEpgText = (value: string) =>
+  repairUtf8Mojibake(decodeEntities(value));
+
 const parseAttributes = (line: string) => {
   const attributes: Record<string, string> = {};
   const attributePattern = /([\w-]+)=(?:"([^"]*)"|'([^']*)'|([^\s]*))/g;
   let match: RegExpExecArray | null;
   while ((match = attributePattern.exec(line))) {
-    attributes[match[1].toLowerCase()] = decodeEntities(
+    attributes[match[1].toLowerCase()] = decodeEpgText(
       match[2] ?? match[3] ?? match[4] ?? "",
     );
   }
@@ -103,14 +131,14 @@ export function parseM3U(
       const label = comma >= 0 ? line.slice(comma + 1).trim() : "Untitled channel";
       pending = {
         attributes: parseAttributes(line),
-        name: decodeEntities(label) || "Untitled channel",
+        name: decodeEpgText(label) || "Untitled channel",
         group: nextGroup,
       };
       nextGroup = undefined;
       continue;
     }
     if (/^#EXTGRP:/i.test(line)) {
-      const group = decodeEntities(line.slice(line.indexOf(":") + 1).trim());
+      const group = decodeEpgText(line.slice(line.indexOf(":") + 1).trim());
       if (pending) pending.group = group || pending.group;
       else nextGroup = group || nextGroup;
       continue;
@@ -319,7 +347,7 @@ async function loadXtream(provider: Provider): Promise<ProviderLoadResult> {
   const categoryMap = new Map<string, string>(
     (Array.isArray(categoryRows) ? categoryRows : []).map((row: any) => [
       String(row.category_id),
-      row.category_name,
+      decodeEpgText(String(row.category_name ?? "")),
     ]),
   );
 
@@ -329,7 +357,7 @@ async function loadXtream(provider: Provider): Promise<ProviderLoadResult> {
     return {
       id: makeId(provider.id, index, streamId),
       providerId: provider.id,
-      name: stream.name || `Channel ${index + 1}`,
+      name: decodeEpgText(String(stream.name || `Channel ${index + 1}`)),
       streamUrl: `${baseUrl}/live/${encodeURIComponent(provider.username!)}/${encodeURIComponent(provider.password!)}/${streamId}.${extension}`,
       logoUrl: stream.stream_icon || undefined,
       category: categoryMap.get(String(stream.category_id)) || "Live TV",
@@ -405,10 +433,10 @@ async function loadStalker(provider: Provider): Promise<ProviderLoadResult> {
     return {
       id: makeId(provider.id, index, String(row.id ?? row.name ?? index)),
       providerId: provider.id,
-      name: row.name || `Channel ${index + 1}`,
+      name: decodeEpgText(String(row.name || `Channel ${index + 1}`)),
       streamUrl,
       logoUrl: row.logo || undefined,
-      category: row.tv_genre_name || row.category_name || "Live TV",
+      category: decodeEpgText(String(row.tv_genre_name || row.category_name || "Live TV")),
       tvgId: row.xmltv_id || undefined,
       streamType: "stalker",
     };
@@ -429,17 +457,40 @@ const parseXmlDate = (value: string) => {
   return Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6]));
 };
 
-const stripTags = (value: string) => decodeEntities(value.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
+const stripTags = (value: string) =>
+  decodeEpgText(value.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
+
+const decodeResponseText = async (response: Response) => {
+  try {
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const head = Array.from(bytes.slice(0, 256), (byte) => String.fromCharCode(byte)).join("");
+    const declared = head.match(/<\?xml[^>]*encoding=["']\s*([^"']+)\s*["']/i)?.[1]?.toLowerCase();
+    const encoding = declared || "utf-8";
+    const Decoder = (globalThis as any).TextDecoder;
+    if (typeof Decoder === "function") {
+      try {
+        return new Decoder(encoding).decode(bytes);
+      } catch {
+        return new Decoder("utf-8").decode(bytes);
+      }
+    }
+    const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+    if (/^(?:utf-?8)$/i.test(encoding)) return binaryStringToUtf8(binary);
+    return binary;
+  } catch {
+    return response.text();
+  }
+};
 
 export function parseXmltv(content: string, channels: Channel[]): EpgProgram[] {
-  const channelIds = new Map(channels.map((channel) => [channel.tvgId || channel.name, channel.id]));
+  const channelIds = new Map(channels.map((channel) => [decodeEpgText(channel.tvgId || channel.name), channel.id]));
   const programs: EpgProgram[] = [];
   const programmePattern = /<programme\b([^>]*)>([\s\S]*?)<\/programme>/gi;
   let match: RegExpExecArray | null;
   while ((match = programmePattern.exec(content))) {
     const attributes = parseAttributes(match[1]);
     const body = match[2];
-    const channelId = channelIds.get(attributes.channel || "");
+    const channelId = channelIds.get(decodeEpgText(attributes.channel || ""));
     const start = parseXmlDate(attributes.start || "");
     const end = parseXmlDate(attributes.stop || "");
     if (!channelId || !Number.isFinite(start) || !Number.isFinite(end)) continue;
@@ -455,7 +506,7 @@ export async function loadEpg(provider: Provider, channels: Channel[]): Promise<
   if (provider.epgUrl) {
     const response = await fetch(provider.epgUrl, { headers: { Accept: "application/xml,text/xml,*/*" } });
     if (!response.ok) throw new Error(`EPG request failed with ${response.status}.`);
-    return parseXmltv(await response.text(), channels);
+    return parseXmltv(await decodeResponseText(response), channels);
   }
 
   if (provider.type === "xtream" && provider.username && provider.password) {
@@ -475,8 +526,8 @@ export async function loadEpg(provider: Provider, channels: Channel[]): Promise<
             .map((row: any, index: number) => ({
               id: `${channel.id}:${row.id ?? index}`,
               channelId: channel.id,
-              title: row.title ? decodeEntities(atobSafe(row.title)) : "Program",
-              description: row.description ? decodeEntities(atobSafe(row.description)) : undefined,
+              title: row.title ? decodeEpgText(atobUtf8Safe(row.title)) : "Program",
+              description: row.description ? decodeEpgText(atobUtf8Safe(row.description)) : undefined,
               start: Number(row.start_timestamp) * 1000,
               end: Number(row.stop_timestamp) * 1000,
             }))
@@ -491,11 +542,12 @@ export async function loadEpg(provider: Provider, channels: Channel[]): Promise<
   return [];
 }
 
-function atobSafe(value: string) {
+function atobUtf8Safe(value: string) {
   try {
-    if (typeof globalThis.atob === "function") return globalThis.atob(value);
-    return value;
+    if (typeof globalThis.atob !== "function") return repairUtf8Mojibake(value);
+    const binary = globalThis.atob(value);
+    return repairUtf8Mojibake(binaryStringToUtf8(binary));
   } catch {
-    return value;
+    return repairUtf8Mojibake(value);
   }
 }
