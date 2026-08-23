@@ -130,8 +130,8 @@ const containedFrame = (
  * Therefore FIT/ORIGINAL are enforced twice:
  *   1) React Native sizes the VLC TextureView container from the real coded
  *      track width/height bridged by patch-vlc-progress-metrics.py.
- *   2) VLC receives that same explicit width:height through videoAspectRatio /
- *      changeVideoAspectRatio with autoAspectRatio disabled.
+ *   2) VLC receives that same explicit width:height through the imperative
+ *      changeVideoAspectRatio path with autoAspectRatio disabled.
  *
  * This prevents a portrait phone surface from forcing a 16:9 stream into the
  * phone's tall aspect ratio. Black letterbox/pillarbox space belongs to the
@@ -413,7 +413,6 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
           paused={paused}
           autoplay
           autoAspectRatio={false}
-          videoAspectRatio={nativeAspectRatio}
           audioTrack={audioTrack}
           textTrack={textTrack}
           onLoad={handleLoad as any}
