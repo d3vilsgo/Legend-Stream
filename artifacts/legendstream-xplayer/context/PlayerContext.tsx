@@ -44,6 +44,8 @@ export type EpgSelection = { now?: EpgProgram; next?: EpgProgram };
 
 const EPG_CACHE_TTL_MS = 15 * 60 * 1000;
 const EPG_START_DELAY_MS = 1_200;
+const LARGE_PROVIDER_CHANNEL_THRESHOLD = 1_000;
+const LARGE_PROVIDER_INITIAL_EPG_CHANNELS = 48;
 const STORAGE_KEY = "@legendstream/player-state-v3";
 const LEGACY_STORAGE_KEY = "@legendstream/player-state-v2";
 const LOGGED_OUT = "__logged_out__";
@@ -308,24 +310,76 @@ function decodeMaybeBase64(value: string) {
   return printable / decoded.length >= 0.9 ? decoded : value;
 }
 
+function compactEpgPrograms(programs: EpgProgram[], nowMs = Date.now()) {
+  const byChannel = new Map<string, EpgProgram[]>();
+  for (const program of programs) {
+    if (!Number.isFinite(program.start) || !Number.isFinite(program.end)) continue;
+    const list = byChannel.get(program.channelId);
+    if (list) list.push(program);
+    else byChannel.set(program.channelId, [program]);
+  }
+
+  const compact: EpgProgram[] = [];
+  for (const list of byChannel.values()) {
+    list.sort((a, b) => a.start - b.start);
+    const currentIndex = list.findIndex(
+      (program) => program.start <= nowMs && nowMs < program.end,
+    );
+    if (currentIndex >= 0) {
+      compact.push(list[currentIndex]);
+      if (list[currentIndex + 1]) compact.push(list[currentIndex + 1]);
+      continue;
+    }
+    const nextIndex = list.findIndex((program) => program.start > nowMs);
+    if (nextIndex >= 0) {
+      compact.push(list[nextIndex]);
+      if (list[nextIndex + 1]) compact.push(list[nextIndex + 1]);
+    }
+  }
+  return compact;
+}
+
 async function normalizeProgramText(programs: EpgProgram[]) {
-  return mapInBatches(
+  const normalized = await mapInBatches(
     programs,
     (program) => ({
       ...program,
       title: decodeMaybeBase64(program.title),
-      description: program.description
-        ? decodeMaybeBase64(program.description)
-        : undefined,
+      // Live UI only renders now/next titles and times. Do not retain large
+      // descriptions in the shared in-memory EPG cache.
+      description: undefined,
     }),
     250,
   );
+  return compactEpgPrograms(normalized);
 }
 
 async function loadBulkProviderEpg(
   provider: ProviderConfig,
   channels: Channel[],
 ): Promise<EpgProgram[]> {
+  const xtreamProvider = toXtreamLoadProvider(fromProvider(provider));
+
+  // Large Xtream XMLTV files can be tens or hundreds of MB. React Native fetch
+  // materializes the body before parsing, which can create simultaneous byte
+  // buffer + UTF-8 string copies and trigger a native OOM. Never download bulk
+  // XMLTV for a large catalog; use bounded get_short_epg requests instead.
+  if (
+    provider.type === "xtream" &&
+    channels.length >= LARGE_PROVIDER_CHANNEL_THRESHOLD
+  ) {
+    await yieldToUi();
+    const seedChannels = channels.slice(0, LARGE_PROVIDER_INITIAL_EPG_CHANNELS);
+    const programs = await loadEpg(
+      {
+        ...xtreamProvider,
+        epgUrl: undefined,
+      },
+      seedChannels,
+    );
+    return normalizeProgramText(programs);
+  }
+
   let epgUrl = provider.epgUrl?.trim();
   if (
     !epgUrl &&
@@ -343,7 +397,7 @@ async function loadBulkProviderEpg(
   await yieldToUi();
   const programs = await loadEpg(
     {
-      ...toXtreamLoadProvider(fromProvider(provider)),
+      ...xtreamProvider,
       epgUrl,
     },
     channels,
@@ -697,8 +751,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Live channels must become visible/respond to input before bulk XMLTV work
-    // starts. This intentionally decouples "load live TV" from EPG refresh.
+    // Live channels must become visible/respond to input before EPG work starts.
+    // Large Xtream catalogs use bounded short-EPG requests instead of XMLTV.
     let cancelled = false;
     const providerId = state.provider.id;
     const timer = setTimeout(() => {
