@@ -37,7 +37,6 @@ import {
 const CODEC_MODE_KEY = "@legendstream/codec-mode-v1";
 const UI_PROGRESS_INTERVAL_MS = 500;
 const PROGRESS_PERSIST_INTERVAL_MS = 15_000;
-const EPG_CLOCK_INTERVAL_MS = 30_000;
 
 const inferMediaKind = (source: string): PlayerMediaKind => {
   if (/^file:/i.test(source)) return "download";
@@ -91,7 +90,6 @@ export function CompatibilityVideoPlayer({
     channels,
     epg,
     isEpgLoading,
-    refreshEpg,
     recordWatched,
   } = usePlayer();
   const orientation = usePlayerOrientation(autoFullscreen);
@@ -129,7 +127,6 @@ export function CompatibilityVideoPlayer({
   const [videoSize, setVideoSize] = useState<PlayerVideoSize>({ width: 16, height: 9 });
   const [resolutionLabel, setResolutionLabel] = useState<string | undefined>(undefined);
   const [streamCodec, setStreamCodec] = useState<string | undefined>(undefined);
-  const [epgClock, setEpgClock] = useState(() => Date.now());
   const [chromeTimeoutSeconds, setChromeTimeoutSeconds] = useState(DEFAULT_PLAYER_CHROME_TIMEOUT_SECONDS);
   const [audioTracks, setAudioTracks] = useState<PlayerTrack[]>([]);
   const [textTracks, setTextTracks] = useState<PlayerTrack[]>([]);
@@ -152,11 +149,6 @@ export function CompatibilityVideoPlayer({
       .catch(() => undefined);
     setPipSupported(isPipSupported());
     setVolume(getMediaVolume());
-  }, []);
-
-  useEffect(() => {
-    const timer = setInterval(() => setEpgClock(Date.now()), EPG_CLOCK_INTERVAL_MS);
-    return () => clearInterval(timer);
   }, []);
 
   const effectiveUri = useMemo(
@@ -243,7 +235,6 @@ export function CompatibilityVideoPlayer({
     const subscription = AppState.addEventListener("change", (state) => {
       if (state !== "active") return;
       setVolume(getMediaVolume());
-      setEpgClock(Date.now());
       if (pipActive && !isInPipMode()) {
         setPipActive(false);
         revealControls();
@@ -281,16 +272,11 @@ export function CompatibilityVideoPlayer({
     [channels, currentKind, currentSource, provider],
   );
 
-  const currentEpg = useMemo(
-    () => selectChannelEpg(epg, currentLive, epgClock),
-    [currentLive, epg, epgClock],
-  );
-
-  useEffect(() => {
-    if (!provider || !currentLive || currentKind !== "live") return;
-    setEpgClock(Date.now());
-    void refreshEpg(provider.id, currentLive.id);
-  }, [currentKind, currentLive?.id, provider?.id]);
+  // EPG is presentation-only while playback is active. Do not start any EPG
+  // network request from the player and do not use an EPG timer in this parent.
+  // The normal VLC progress updates already re-render the overlay often enough
+  // for Date.now() to advance without touching the native video surface.
+  const currentEpg = selectChannelEpg(epg, currentLive, Date.now());
 
   const liveQueue = useMemo(() => {
     if (!provider || !currentLive) return [];
@@ -528,6 +514,14 @@ export function CompatibilityVideoPlayer({
     if (normalizedDuration > 0) setDuration(normalizedDuration);
   }, []);
 
+  const handlePlaying = useCallback(() => {
+    setPaused(false);
+  }, []);
+
+  const handlePaused = useCallback(() => {
+    setPaused(true);
+  }, []);
+
   const handleError = useCallback(() => {
     setErrorText(
       codecMode === "hardware"
@@ -582,8 +576,8 @@ export function CompatibilityVideoPlayer({
         textTrack={textTrack}
         onLoad={handleLoad}
         onProgress={handleProgress}
-        onPlaying={() => setPaused(false)}
-        onPaused={() => setPaused(true)}
+        onPlaying={handlePlaying}
+        onPaused={handlePaused}
         onEnd={handleEnd}
         onError={handleError}
       />
