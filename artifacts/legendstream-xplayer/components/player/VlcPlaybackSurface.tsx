@@ -12,8 +12,6 @@ import { setPlayerKeepAwake } from "@/modules/legendstream-pip";
 const PLAYER_KEEP_AWAKE_TAG = "legendstream-active-playback";
 const FALLBACK_VIDEO_SIZE = { width: 16, height: 9 } as const;
 
-const PLAYER_KEEP_AWAKE_TAG = "legendstream-active-playback";
-
 export type PlayerFitMode = "fit" | "full" | "original" | "16:9" | "4:3";
 export type PlayerCodecMode = "auto" | "hardware" | "software";
 export type PlayerTrack = { id: number; name: string };
