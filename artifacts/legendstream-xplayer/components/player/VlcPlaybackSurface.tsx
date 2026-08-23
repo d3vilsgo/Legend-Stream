@@ -1,5 +1,5 @@
 import React, { forwardRef, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PixelRatio, StyleSheet, useWindowDimensions, View } from "react-native";
+import { PixelRatio, StyleSheet, useWindowDimensions, View, ViewStyle } from "react-native";
 import { VLCPlayer } from "react-native-vlc-media-player";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { logPlayerDiagnostic } from "@/lib/playerDiagnostics";
@@ -10,6 +10,7 @@ import {
 import { setPlayerKeepAwake } from "@/modules/legendstream-pip";
 
 const PLAYER_KEEP_AWAKE_TAG = "legendstream-active-playback";
+const FALLBACK_VIDEO_SIZE = { width: 16, height: 9 } as const;
 
 export type PlayerFitMode = "fit" | "full" | "original" | "16:9" | "4:3";
 export type PlayerCodecMode = "auto" | "hardware" | "software";
@@ -99,15 +100,42 @@ const publishRuntimeInfo = (size?: PlayerVideoSize, fps?: number) => {
   if (update.resolution || update.fps) updatePlayerRuntimeInfo(update);
 };
 
+const ratioString = (size: PlayerVideoSize) =>
+  `${Math.max(1, Math.round(size.width))}:${Math.max(1, Math.round(size.height))}`;
+
+const containedFrame = (
+  containerWidth: number,
+  containerHeight: number,
+  aspectRatio: number,
+): ViewStyle => {
+  if (containerWidth <= 0 || containerHeight <= 0 || !Number.isFinite(aspectRatio) || aspectRatio <= 0) {
+    return { width: "100%", height: "100%" };
+  }
+
+  const containerRatio = containerWidth / containerHeight;
+  if (containerRatio > aspectRatio) {
+    return { height: "100%", aspectRatio };
+  }
+  return { width: "100%", aspectRatio };
+};
+
 /**
- * Stable VLC surface.
+ * Stable VLC surface with a layout-level aspect-ratio guarantee.
  *
- * ORIG/FIT deliberately use VLC's natural aspect-ratio path. We never force
- * ORIG from window/layout dimensions; that was the source of portrait streams
- * being stretched to the phone's display size.
+ * react-native-vlc-media-player@1.0.98 exposes resizeMode in JS, but Android's
+ * ReactVlcPlayerViewManager does not register a resizeMode ReactProp, so that
+ * prop is ignored on Android. Its autoAspectRatio implementation also uses the
+ * TextureView dimensions (surface width:height), not the coded video track.
  *
- * Live resolution/FPS are consumed from the coded selected video track appended
- * to VLC's normal progress event by patch-vlc-progress-metrics.py.
+ * Therefore FIT/ORIGINAL are enforced twice:
+ *   1) React Native sizes the VLC TextureView container from the real coded
+ *      track width/height bridged by patch-vlc-progress-metrics.py.
+ *   2) VLC receives that same explicit width:height through videoAspectRatio /
+ *      changeVideoAspectRatio with autoAspectRatio disabled.
+ *
+ * This prevents a portrait phone surface from forcing a 16:9 stream into the
+ * phone's tall aspect ratio. Black letterbox/pillarbox space belongs to the
+ * outer surface, never to a stretched VLC TextureView.
  */
 const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurface(
   {
@@ -129,10 +157,10 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   const window = useWindowDimensions();
   const playerRef = useRef<any>(null);
   const applyGeneration = useRef(0);
-  const displayModeActivated = useRef(false);
   const lastLoadEvent = useRef<VlcLoadEvent | undefined>(undefined);
   const lastMetricKey = useRef("");
   const [playbackReady, setPlaybackReady] = useState(false);
+  const [sourceVideoSize, setSourceVideoSize] = useState<PlayerVideoSize | undefined>(undefined);
 
   const assignRef = useCallback((node: any) => {
     playerRef.current = node;
@@ -174,8 +202,8 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     applyGeneration.current += 1;
     lastLoadEvent.current = undefined;
     lastMetricKey.current = "";
-    displayModeActivated.current = false;
     setPlaybackReady(false);
+    setSourceVideoSize(undefined);
     resetPlayerRuntimeInfo();
     void logPlayerDiagnostic("vlc_mount", { codec: codecMode, fit });
     return () => {
@@ -194,26 +222,37 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     );
   }, [window.height, window.width]);
 
-  const explicitAspectRatio = useMemo(() => {
-    if (fit === "fit" || fit === "original") return null;
-    if (fit === "4:3" || fit === "16:9") return fit;
+  const effectiveVideoSize = sourceVideoSize ?? FALLBACK_VIDEO_SIZE;
+
+  const targetAspectRatio = useMemo(() => {
     if (fit === "full") {
-      if (window.width <= 0 || window.height <= 0) return null;
+      return window.width > 0 && window.height > 0 ? window.width / window.height : 16 / 9;
+    }
+    if (fit === "4:3") return 4 / 3;
+    if (fit === "16:9") return 16 / 9;
+    return effectiveVideoSize.width / effectiveVideoSize.height;
+  }, [effectiveVideoSize.height, effectiveVideoSize.width, fit, window.height, window.width]);
+
+  const nativeAspectRatio = useMemo(() => {
+    if (fit === "full") {
       return `${Math.max(1, Math.round(window.width))}:${Math.max(1, Math.round(window.height))}`;
     }
-    return null;
-  }, [fit, window.height, window.width]);
+    if (fit === "4:3" || fit === "16:9") return fit;
+    return ratioString(effectiveVideoSize);
+  }, [effectiveVideoSize, fit, window.height, window.width]);
+
+  const frameStyle = useMemo<ViewStyle>(() => {
+    if (fit === "full") return styles.fullFrame;
+    return containedFrame(window.width, window.height, targetAspectRatio);
+  }, [fit, targetAspectRatio, window.height, window.width]);
 
   useEffect(() => {
     if (!playbackReady || !playerRef.current) return;
 
-    const naturalMode = fit === "fit" || fit === "original";
-    if (naturalMode && !displayModeActivated.current) return;
-    if (!naturalMode) displayModeActivated.current = true;
-
     const generation = ++applyGeneration.current;
     const player = playerRef.current;
 
+    // 1.0.98 autoAspectRatio is surface-aspect, not source-aspect. Keep it off.
     try {
       player.autoAspectRatio?.(false);
     } catch {
@@ -223,14 +262,22 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     const timer = setTimeout(() => {
       if (generation !== applyGeneration.current || playerRef.current !== player) return;
       try {
-        player.changeVideoAspectRatio?.(explicitAspectRatio);
+        player.changeVideoAspectRatio?.(nativeAspectRatio);
       } catch {
-        try { player.setNativeProps?.({ videoAspectRatio: explicitAspectRatio }); } catch { /* best effort */ }
+        try { player.setNativeProps?.({ videoAspectRatio: nativeAspectRatio }); } catch { /* best effort */ }
       }
+      void logPlayerDiagnostic("vlc_aspect_applied", {
+        fit,
+        nativeAspectRatio,
+        sourceWidth: sourceVideoSize?.width ?? null,
+        sourceHeight: sourceVideoSize?.height ?? null,
+        surfaceWidth: Math.round(window.width),
+        surfaceHeight: Math.round(window.height),
+      });
     }, 32);
 
     return () => clearTimeout(timer);
-  }, [explicitAspectRatio, fit, playbackReady]);
+  }, [fit, nativeAspectRatio, playbackReady, sourceVideoSize, window.height, window.width]);
 
   const acceptRuntimeMetrics = useCallback((
     event?: Record<string, unknown>,
@@ -249,6 +296,11 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     }
     if (!size && !fps) return { size: undefined, fps: undefined };
 
+    if (size) {
+      setSourceVideoSize((previous) =>
+        previous?.width === size!.width && previous?.height === size!.height ? previous : size,
+      );
+    }
     publishRuntimeInfo(size, fps);
 
     const key = `${size?.width ?? 0}x${size?.height ?? 0}@${fps ? fps.toFixed(3) : "0"}`;
@@ -352,24 +404,26 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
 
   return (
     <View style={styles.surface} pointerEvents="none">
-      <VLCPlayer
-        key={`${uri}:${codecMode}`}
-        ref={assignRef}
-        style={styles.video}
-        source={{ uri, initType: 2, initOptions }}
-        paused={paused}
-        autoplay
-        autoAspectRatio
-        resizeMode="contain"
-        audioTrack={audioTrack}
-        textTrack={textTrack}
-        onLoad={handleLoad as any}
-        onProgress={handleProgress as any}
-        onPlaying={handlePlaying}
-        onPaused={handlePaused}
-        onEnd={handleEnd}
-        onError={handleError}
-      />
+      <View style={[styles.videoFrame, frameStyle]}>
+        <VLCPlayer
+          key={`${uri}:${codecMode}`}
+          ref={assignRef}
+          style={styles.video}
+          source={{ uri, initType: 2, initOptions }}
+          paused={paused}
+          autoplay
+          autoAspectRatio={false}
+          videoAspectRatio={nativeAspectRatio}
+          audioTrack={audioTrack}
+          textTrack={textTrack}
+          onLoad={handleLoad as any}
+          onProgress={handleProgress as any}
+          onPlaying={handlePlaying}
+          onPaused={handlePaused}
+          onEnd={handleEnd}
+          onError={handleError}
+        />
+      </View>
     </View>
   );
 });
@@ -381,6 +435,17 @@ const styles = StyleSheet.create({
     ...StyleSheet.absoluteFillObject,
     overflow: "hidden",
     backgroundColor: "#000",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  videoFrame: {
+    overflow: "hidden",
+    backgroundColor: "#000",
+    alignSelf: "center",
+  },
+  fullFrame: {
+    width: "100%",
+    height: "100%",
   },
   video: {
     ...StyleSheet.absoluteFillObject,
