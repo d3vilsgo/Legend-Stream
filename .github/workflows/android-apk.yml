@@ -88,6 +88,11 @@ jobs:
         run: |
           set -o pipefail
           pnpm exec expo prebuild --platform android --clean --no-install 2>&1 | tee "$GITHUB_WORKSPACE/expo-prebuild.log"
+          echo "Generated architectures:"
+          grep '^reactNativeArchitectures=' android/gradle.properties || true
+          echo "Generated ABI split block:"
+          sed -n '/@legendstream abi-splits:start/,/@legendstream abi-splits:end/p' android/app/build.gradle
+          grep -n "libc++_shared.so" android/app/build.gradle || true
 
       - name: Upload prepare diagnostics
         if: always()
@@ -101,13 +106,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Check disk before Gradle
-        run: |
-          echo "Disk before Gradle:"
-          df -h /
-          du -sh node_modules artifacts/legendstream-xplayer/node_modules artifacts/legendstream-xplayer/android 2>/dev/null || true
-
-      - name: Build standalone release APK
+      - name: Build split release APKs and AAB
         working-directory: artifacts/legendstream-xplayer/android
         env:
           NODE_ENV: production
@@ -115,7 +114,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew assembleRelease \
+          ./gradlew assembleRelease bundleRelease \
             --no-daemon \
             --no-build-cache \
             --max-workers=2 \
@@ -127,16 +126,11 @@ jobs:
         shell: bash
         run: |
           echo "================ IMPORTANT ERROR LINES ================"
-          grep -Ein -C 4 "error|exception|failed|failure|unable|cannot|could not|syntax|module not found|no space|keystore|signing|bundle|manifest|minSdk|vlc|libvlc|duplicate|merge|kotlin|java" release-build.log 2>/dev/null | tail -n 420 || true
-          echo "================ LAST 420 LOG LINES ===================="
-          tail -n 420 release-build.log 2>/dev/null || true
+          grep -Ein -C 4 "error|exception|failed|failure|unable|cannot|could not|syntax|module not found|no space|keystore|signing|bundle|manifest|minSdk|vlc|libvlc|duplicate|merge|kotlin|java|versionCode|abi" release-build.log 2>/dev/null | tail -n 520 || true
+          echo "================ LAST 520 LOG LINES ===================="
+          tail -n 520 release-build.log 2>/dev/null || true
           echo "================ PREBUILD LOG ==========================="
-          tail -n 220 expo-prebuild.log 2>/dev/null || true
-          echo "================ VLC PATCH LOG =========================="
-          cat vlc-patch.log 2>/dev/null || true
-          echo "================ DEPENDENCY LOG ========================="
-          tail -n 160 dependency-install.log 2>/dev/null || true
-          echo "========================================================="
+          tail -n 260 expo-prebuild.log 2>/dev/null || true
 
       - name: Upload release build log
         if: always()
@@ -147,29 +141,96 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Package beta APK
-        id: package_apk
+      - name: Verify ABI contents, versionCodes and package outputs
+        id: package_android
         shell: bash
         run: |
-          mkdir -p apk-output
-          APK_PATH="$(find artifacts/legendstream-xplayer/android/app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' | head -n 1)"
-          if [ -z "$APK_PATH" ]; then
-            echo "Release APK not found"
+          set -euo pipefail
+          APK_DIR="artifacts/legendstream-xplayer/android/app/build/outputs/apk/release"
+          AAB_PATH="artifacts/legendstream-xplayer/android/app/build/outputs/bundle/release/app-release.aab"
+
+          ARM64_APK="$(find "$APK_DIR" -type f -name '*arm64-v8a*.apk' | head -n 1)"
+          ARMV7_APK="$(find "$APK_DIR" -type f -name '*armeabi-v7a*.apk' | head -n 1)"
+
+          test -n "$ARM64_APK" && test -f "$ARM64_APK"
+          test -n "$ARMV7_APK" && test -f "$ARMV7_APK"
+          test -f "$AAB_PATH"
+
+          verify_apk_abi() {
+            local apk="$1"
+            local expected="$2"
+            local libs
+            libs="$(unzip -Z1 "$apk" | awk -F/ '/^lib\// {print $2}' | sort -u | xargs)"
+            echo "$(basename "$apk") ABIs: $libs"
+            test "$libs" = "$expected"
+          }
+
+          verify_apk_abi "$ARM64_APK" "arm64-v8a"
+          verify_apk_abi "$ARMV7_APK" "armeabi-v7a"
+
+          AAB_ABIS="$(unzip -Z1 "$AAB_PATH" | awk -F/ '/^base\/lib\// {print $3}' | sort -u | xargs)"
+          echo "AAB ABIs: $AAB_ABIS"
+          echo "$AAB_ABIS" | grep -qw 'arm64-v8a'
+          echo "$AAB_ABIS" | grep -qw 'armeabi-v7a'
+          if echo "$AAB_ABIS" | grep -Eqw 'x86|x86_64'; then
+            echo "Unexpected x86 ABI in AAB"
             exit 1
           fi
 
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          test -x "$AAPT"
+          ARM64_CODE="$($AAPT dump badging "$ARM64_APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
+          ARMV7_CODE="$($AAPT dump badging "$ARMV7_APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
+          echo "arm64 versionCode=$ARM64_CODE"
+          echo "armeabi-v7a versionCode=$ARMV7_CODE"
+          test -n "$ARM64_CODE" && test -n "$ARMV7_CODE"
+          test "$ARM64_CODE" != "$ARMV7_CODE"
+
+          mkdir -p apk-output aab-output
           APP_VERSION="$(node -p "require('./artifacts/legendstream-xplayer/app.json').expo.version")"
-          APK_NAME="LegendStream-XPlayer-v${APP_VERSION}-beta.apk"
+          ARM64_NAME="LegendStream-XPlayer-v${APP_VERSION}-arm64-v8a.apk"
+          ARMV7_NAME="LegendStream-XPlayer-v${APP_VERSION}-armeabi-v7a.apk"
+          AAB_NAME="LegendStream-XPlayer-v${APP_VERSION}-production.aab"
+          cp "$ARM64_APK" "apk-output/$ARM64_NAME"
+          cp "$ARMV7_APK" "apk-output/$ARMV7_NAME"
+          cp "$AAB_PATH" "aab-output/$AAB_NAME"
 
-          cp "$APK_PATH" "apk-output/$APK_NAME"
+          ARM64_BYTES="$(stat -c%s "apk-output/$ARM64_NAME")"
+          ARMV7_BYTES="$(stat -c%s "apk-output/$ARMV7_NAME")"
+          AAB_BYTES="$(stat -c%s "aab-output/$AAB_NAME")"
+          echo "arm64 APK bytes=$ARM64_BYTES"
+          echo "armv7 APK bytes=$ARMV7_BYTES"
+          echo "AAB bytes=$AAB_BYTES"
+          ls -lh apk-output/* aab-output/*
+
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
-          echo "apk_name=$APK_NAME" >> "$GITHUB_OUTPUT"
-          ls -lh "apk-output/$APK_NAME"
+          echo "arm64_name=$ARM64_NAME" >> "$GITHUB_OUTPUT"
+          echo "armv7_name=$ARMV7_NAME" >> "$GITHUB_OUTPUT"
+          echo "aab_name=$AAB_NAME" >> "$GITHUB_OUTPUT"
+          echo "arm64_bytes=$ARM64_BYTES" >> "$GITHUB_OUTPUT"
+          echo "armv7_bytes=$ARMV7_BYTES" >> "$GITHUB_OUTPUT"
+          echo "aab_bytes=$AAB_BYTES" >> "$GITHUB_OUTPUT"
 
-      - name: Upload beta APK artifact
+      - name: Upload arm64 APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: LegendStream-XPlayer-v${{ steps.package_apk.outputs.app_version }}-beta
-          path: apk-output/${{ steps.package_apk.outputs.apk_name }}
+          name: LegendStream-XPlayer-v${{ steps.package_android.outputs.app_version }}-arm64-v8a
+          path: apk-output/${{ steps.package_android.outputs.arm64_name }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload armeabi-v7a APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LegendStream-XPlayer-v${{ steps.package_android.outputs.app_version }}-armeabi-v7a
+          path: apk-output/${{ steps.package_android.outputs.armv7_name }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload production AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LegendStream-XPlayer-v${{ steps.package_android.outputs.app_version }}-production-aab
+          path: aab-output/${{ steps.package_android.outputs.aab_name }}
           if-no-files-found: error
           retention-days: 14
