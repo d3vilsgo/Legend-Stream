@@ -40,12 +40,12 @@ export interface ProviderConfig {
   loadError?: string;
 }
 
-export type EpgSelection = {
-  now?: EpgProgram;
-  next?: EpgProgram;
-};
+export type EpgSelection = { now?: EpgProgram; next?: EpgProgram };
 
 const EPG_CACHE_TTL_MS = 15 * 60 * 1000;
+const STORAGE_KEY = "@legendstream/player-state-v3";
+const LEGACY_STORAGE_KEY = "@legendstream/player-state-v2";
+const LOGGED_OUT = "__logged_out__";
 
 export function selectProgramsAt(
   programs: readonly EpgProgram[] | undefined,
@@ -56,31 +56,23 @@ export function selectProgramsAt(
     (program) => program.start <= nowMs && nowMs < program.end,
   );
   if (currentIndex >= 0) {
-    return {
-      now: programs[currentIndex],
-      next: programs[currentIndex + 1],
-    };
+    return { now: programs[currentIndex], next: programs[currentIndex + 1] };
   }
-  return {
-    next: programs.find((program) => program.start > nowMs),
-  };
+  return { next: programs.find((program) => program.start > nowMs) };
 }
 
-/**
- * EPG programs are normalized to the app's internal channel id by loadEpg()/parseXmltv().
- * XMLTV uses tvg-id/name -> channel.id mapping; Xtream short EPG is attached directly
- * to the active Xtream channel id.
- */
 export function selectChannelEpg(
   epg: EpgProgram[],
   channel?: Channel,
   nowMs = Date.now(),
 ): EpgSelection {
   if (!channel) return {};
-  const programs = epg
-    .filter((program) => program.channelId === channel.id)
-    .sort((a, b) => a.start - b.start);
-  return selectProgramsAt(programs, nowMs);
+  return selectProgramsAt(
+    epg
+      .filter((program) => program.channelId === channel.id)
+      .sort((a, b) => a.start - b.start),
+    nowMs,
+  );
 }
 
 interface PlayerState {
@@ -120,11 +112,6 @@ interface PlayerContextValue extends PlayerState {
   clearError: () => void;
 }
 
-const STORAGE_KEY = "@legendstream/player-state-v3";
-const LEGACY_STORAGE_KEY = "@legendstream/player-state-v2";
-const LOGGED_OUT = "__logged_out__";
-const PlayerContext = createContext<PlayerContextValue | null>(null);
-
 const emptyState: PlayerState = {
   providers: [],
   provider: null,
@@ -133,6 +120,8 @@ const emptyState: PlayerState = {
   favorites: [],
   history: [],
 };
+
+const PlayerContext = createContext<PlayerContextValue | null>(null);
 
 const toProvider = (provider: Provider): ProviderConfig => ({
   ...provider,
@@ -155,10 +144,88 @@ const fromProvider = (provider: ProviderConfig): Provider => ({
   loadError: provider.loadError,
 });
 
-const normalizeUrl = (value: string) => value.trim().replace(/\/+$/, "").toLowerCase();
+const normalizeUrl = (value: string) =>
+  value.trim().replace(/\/+$/, "").toLowerCase();
+
+function parseXtreamGetPhp(value: string) {
+  try {
+    const url = new URL(value.trim());
+    if (!/\/get\.php$/i.test(url.pathname)) return null;
+    const username = url.searchParams.get("username")?.trim();
+    const password = url.searchParams.get("password") ?? "";
+    const type = url.searchParams.get("type")?.toLowerCase();
+    if (!username || !password || (type && type !== "m3u_plus")) return null;
+    const path = url.pathname.replace(/\/get\.php$/i, "").replace(/\/+$/, "");
+    return {
+      baseUrl: `${url.origin}${path}`,
+      username,
+      password,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeGetPhpIdentity(provider: Provider): Provider {
+  const parsed = parseXtreamGetPhp(provider.url);
+  return parsed
+    ? {
+        ...provider,
+        type: "xtream",
+        username: parsed.username,
+        password: parsed.password,
+      }
+    : provider;
+}
+
+function toXtreamLoadProvider(provider: Provider): Provider {
+  const parsed = parseXtreamGetPhp(provider.url);
+  return parsed
+    ? {
+        ...provider,
+        type: "xtream",
+        url: parsed.baseUrl,
+        username: parsed.username,
+        password: parsed.password,
+      }
+    : provider;
+}
+
+async function loadProviderSmart(provider: Provider) {
+  const parsed = parseXtreamGetPhp(provider.url);
+  if (!parsed) {
+    return { provider, loaded: await loadProvider(provider) };
+  }
+
+  const savedXtream: Provider = {
+    ...provider,
+    type: "xtream",
+    username: parsed.username,
+    password: parsed.password,
+  };
+
+  try {
+    return {
+      provider: savedXtream,
+      loaded: await loadProvider(toXtreamLoadProvider(savedXtream)),
+    };
+  } catch {
+    const fallback: Provider = {
+      ...provider,
+      type: "m3u",
+      username: undefined,
+      password: undefined,
+    };
+    return { provider: fallback, loaded: await loadProvider(fallback) };
+  }
+}
+
+function xtreamBaseUrl(provider: Pick<ProviderConfig, "url" | "playlistUrl">) {
+  const raw = provider.url || provider.playlistUrl;
+  return parseXtreamGetPhp(raw)?.baseUrl ?? normalizeXtreamBaseUrl(raw);
+}
 
 const sameAccount = (a: ProviderConfig, b: Provider) =>
-  a.type === b.type &&
   normalizeUrl(a.url || a.playlistUrl) === normalizeUrl(b.url) &&
   (a.username || "") === (b.username || "") &&
   (a.mac || "").toLowerCase() === (b.mac || "").toLowerCase();
@@ -171,7 +238,7 @@ const readState = async (): Promise<PlayerState> => {
       try {
         await AsyncStorage.setItem(STORAGE_KEY, raw);
       } catch {
-        // best-effort migration
+        // best effort
       }
     }
   }
@@ -255,9 +322,16 @@ async function loadBulkProviderEpg(
   channels: Channel[],
 ): Promise<EpgProgram[]> {
   let epgUrl = provider.epgUrl?.trim();
-  if (!epgUrl && provider.type === "xtream" && provider.username && provider.password) {
-    const baseUrl = normalizeXtreamBaseUrl(provider.url || provider.playlistUrl);
-    epgUrl = `${baseUrl}/xmltv.php?username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}`;
+  if (
+    !epgUrl &&
+    provider.type === "xtream" &&
+    provider.username &&
+    provider.password
+  ) {
+    const baseUrl = xtreamBaseUrl(provider);
+    epgUrl = `${baseUrl}/xmltv.php?username=${encodeURIComponent(
+      provider.username,
+    )}&password=${encodeURIComponent(provider.password)}`;
   }
   if (!epgUrl) return [];
 
@@ -265,11 +339,8 @@ async function loadBulkProviderEpg(
     headers: { Accept: "application/xml,text/xml,*/*" },
     signal: AbortSignal.timeout(30_000),
   });
-  if (!response.ok) {
-    throw new Error(`EPG request failed with ${response.status}.`);
-  }
+  if (!response.ok) throw new Error(`EPG request failed with ${response.status}.`);
   const xml = await response.text();
-  // Let channel names render first; parse the potentially large XMLTV on the next turn.
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
   return normalizeProgramText(parseXmltv(xml, channels));
 }
@@ -281,7 +352,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [isEpgLoading, setIsEpgLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const stateRef = useRef(state);
-  const epgCacheRef = useRef(new Map<string, { loadedAt: number; channelCount: number }>());
+  const epgCacheRef = useRef(
+    new Map<string, { loadedAt: number; channelCount: number }>(),
+  );
   const bulkEpgPromiseRef = useRef(new Map<string, Promise<void>>());
 
   useEffect(() => {
@@ -291,6 +364,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     readState()
       .then((saved) => {
+        stateRef.current = saved;
         setState(saved);
         setIsHydrating(false);
       })
@@ -300,24 +374,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const persist = async (next: PlayerState) => {
     stateRef.current = next;
     setState(next);
-    const persisted = {
-      providers: next.providers,
-      provider: next.provider,
-      activeProviderId: next.activeProviderId,
-      favorites: next.favorites.slice(0, 500),
-      history: next.history.slice(0, 50),
-    };
     try {
-      await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(persisted));
+      await AsyncStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify({
+          providers: next.providers,
+          provider: next.provider,
+          activeProviderId: next.activeProviderId,
+          favorites: next.favorites.slice(0, 500),
+          history: next.history.slice(0, 50),
+        }),
+      );
     } catch {
-      // Storage is best-effort; keep the in-memory session usable.
+      // keep in-memory session usable
     }
   };
 
   const connectProvider = async (config: ProviderInput) => {
     setIsLoading(true);
     setError(null);
-    const candidate: Provider = {
+    const candidate = normalizeGetPhpIdentity({
       id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       name: config.name.trim() || "My provider",
       type: config.type,
@@ -327,7 +403,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       mac: config.mac?.trim() || undefined,
       epgUrl: config.epgUrl?.trim() || undefined,
       createdAt: Date.now(),
-    };
+    });
 
     try {
       const current = stateRef.current;
@@ -335,12 +411,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const providerToLoad = duplicate
         ? { ...candidate, id: duplicate.id, createdAt: duplicate.createdAt }
         : candidate;
-      const loaded = await loadProvider(providerToLoad);
+      const smart = await loadProviderSmart(providerToLoad);
       const savedProvider = toProvider({
-        ...providerToLoad,
+        ...smart.provider,
         lastLoadedAt: Date.now(),
-        channelCount: loaded.channels.length,
-        epgUrl: providerToLoad.epgUrl || loaded.epgUrl,
+        channelCount: smart.loaded.channels.length,
+        epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
       });
       const providers = duplicate
         ? current.providers.map((item) =>
@@ -354,13 +430,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         provider: savedProvider,
         activeProviderId: savedProvider.id,
         channels: [
-          ...current.channels.filter((channel) => channel.providerId !== savedProvider.id),
-          ...loaded.channels,
+          ...current.channels.filter(
+            (channel) => channel.providerId !== savedProvider.id,
+          ),
+          ...smart.loaded.channels,
         ],
       });
       return true;
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The provider could not be loaded.");
+      setError(
+        caught instanceof Error ? caught.message : "The provider could not be loaded.",
+      );
       return false;
     } finally {
       setIsLoading(false);
@@ -375,28 +455,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     setError(null);
     try {
-      const loaded = await loadProvider(fromProvider(existing));
-      const updated: ProviderConfig = {
-        ...existing,
+      const smart = await loadProviderSmart(fromProvider(existing));
+      const updated = toProvider({
+        ...smart.provider,
         lastLoadedAt: Date.now(),
-        channelCount: loaded.channels.length,
-        epgUrl: existing.epgUrl || loaded.epgUrl,
+        channelCount: smart.loaded.channels.length,
+        epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
         loadError: undefined,
-      };
+      });
       epgCacheRef.current.delete(providerId);
       await persist({
         ...stateRef.current,
-        provider: stateRef.current.provider?.id === providerId ? updated : stateRef.current.provider,
+        provider:
+          stateRef.current.provider?.id === providerId
+            ? updated
+            : stateRef.current.provider,
         providers: stateRef.current.providers.map((item) =>
           item.id === providerId ? updated : item,
         ),
         channels: [
-          ...stateRef.current.channels.filter((channel) => channel.providerId !== providerId),
-          ...loaded.channels,
+          ...stateRef.current.channels.filter(
+            (channel) => channel.providerId !== providerId,
+          ),
+          ...smart.loaded.channels,
         ],
       });
     } catch (caught) {
-      const message = caught instanceof Error ? caught.message : "The provider could not be refreshed.";
+      const message =
+        caught instanceof Error ? caught.message : "The provider could not be refreshed.";
       setError(message);
       await persist({
         ...stateRef.current,
@@ -416,21 +502,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     setError(null);
     try {
-      const alreadyLoaded = current.channels.some(
-        (channel) => channel.providerId === providerId,
-      );
-      if (alreadyLoaded) {
+      if (current.channels.some((channel) => channel.providerId === providerId)) {
         await persist({ ...current, provider: existing, activeProviderId: providerId });
         return true;
       }
-      const loaded = await loadProvider(fromProvider(existing));
-      const updated: ProviderConfig = {
-        ...existing,
+      const smart = await loadProviderSmart(fromProvider(existing));
+      const updated = toProvider({
+        ...smart.provider,
         lastLoadedAt: Date.now(),
-        channelCount: loaded.channels.length,
-        epgUrl: existing.epgUrl || loaded.epgUrl,
+        channelCount: smart.loaded.channels.length,
+        epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
         loadError: undefined,
-      };
+      });
       epgCacheRef.current.delete(providerId);
       await persist({
         ...stateRef.current,
@@ -440,13 +523,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           item.id === providerId ? updated : item,
         ),
         channels: [
-          ...stateRef.current.channels.filter((channel) => channel.providerId !== providerId),
-          ...loaded.channels,
+          ...stateRef.current.channels.filter(
+            (channel) => channel.providerId !== providerId,
+          ),
+          ...smart.loaded.channels,
         ],
       });
       return true;
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "The saved provider could not be opened.");
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : "The saved provider could not be opened.",
+      );
       return false;
     } finally {
       setIsLoading(false);
@@ -454,138 +543,152 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const disconnectProvider = async () => {
-    await persist({ ...stateRef.current, provider: null, activeProviderId: LOGGED_OUT });
+    await persist({
+      ...stateRef.current,
+      provider: null,
+      activeProviderId: LOGGED_OUT,
+    });
   };
 
   const removeProvider = async (providerId = stateRef.current.provider?.id) => {
     if (!providerId) return;
     const current = stateRef.current;
     const providers = current.providers.filter((item) => item.id !== providerId);
-    const channels = current.channels.filter((channel) => channel.providerId !== providerId);
-    const favorites = current.favorites.filter((id) =>
-      channels.some((channel) => channel.id === id),
+    const channels = current.channels.filter(
+      (channel) => channel.providerId !== providerId,
     );
-    const history = current.history.filter((id) =>
-      channels.some((channel) => channel.id === id),
-    );
-    const nextProvider = current.provider?.id === providerId ? providers[0] ?? null : current.provider;
+    const channelIds = new Set(channels.map((channel) => channel.id));
+    const nextProvider =
+      current.provider?.id === providerId ? providers[0] ?? null : current.provider;
     epgCacheRef.current.delete(providerId);
     bulkEpgPromiseRef.current.delete(providerId);
     await persist({
       ...current,
       providers,
       provider: nextProvider,
-      activeProviderId: nextProvider?.id ?? (providers.length ? providers[0].id : LOGGED_OUT),
+      activeProviderId:
+        nextProvider?.id ?? (providers.length ? providers[0].id : LOGGED_OUT),
       channels,
-      favorites,
-      history,
-      epg: current.epg.filter((program) =>
-        channels.some((channel) => channel.id === program.channelId),
-      ),
+      favorites: current.favorites.filter((id) => channelIds.has(id)),
+      history: current.history.filter((id) => channelIds.has(id)),
+      epg: current.epg.filter((program) => channelIds.has(program.channelId)),
     });
   };
 
-  const refreshEpg = useCallback(async (providerId?: string, channelId?: string) => {
-    const snapshot = stateRef.current;
-    const resolvedProviderId = providerId ?? snapshot.provider?.id;
-    if (!resolvedProviderId) return;
-    const provider = snapshot.providers.find((item) => item.id === resolvedProviderId);
-    if (!provider) return;
-    const providerChannels = snapshot.channels.filter(
-      (channel) => channel.providerId === resolvedProviderId,
-    );
-    if (!providerChannels.length) return;
+  const refreshEpg = useCallback(
+    async (providerId?: string, channelId?: string) => {
+      const snapshot = stateRef.current;
+      const resolvedProviderId = providerId ?? snapshot.provider?.id;
+      if (!resolvedProviderId) return;
+      const provider = snapshot.providers.find(
+        (item) => item.id === resolvedProviderId,
+      );
+      if (!provider) return;
+      const providerChannels = snapshot.channels.filter(
+        (channel) => channel.providerId === resolvedProviderId,
+      );
+      if (!providerChannels.length) return;
 
-    if (!channelId) {
-      const cached = epgCacheRef.current.get(resolvedProviderId);
+      if (!channelId) {
+        const cached = epgCacheRef.current.get(resolvedProviderId);
+        if (
+          cached &&
+          cached.channelCount === providerChannels.length &&
+          Date.now() - cached.loadedAt < EPG_CACHE_TTL_MS
+        ) {
+          return;
+        }
+        const existingPromise = bulkEpgPromiseRef.current.get(resolvedProviderId);
+        if (existingPromise) return existingPromise;
+
+        setIsEpgLoading(true);
+        const promise = (async () => {
+          try {
+            const programs = await loadBulkProviderEpg(provider, providerChannels);
+            const ids = new Set(providerChannels.map((channel) => channel.id));
+            setState((previous) => {
+              const next = {
+                ...previous,
+                epg: [
+                  ...previous.epg.filter((program) => !ids.has(program.channelId)),
+                  ...programs,
+                ],
+              };
+              stateRef.current = next;
+              return next;
+            });
+          } catch {
+            // EPG is optional
+          } finally {
+            epgCacheRef.current.set(resolvedProviderId, {
+              loadedAt: Date.now(),
+              channelCount: providerChannels.length,
+            });
+            bulkEpgPromiseRef.current.delete(resolvedProviderId);
+            setIsEpgLoading(false);
+          }
+        })();
+        bulkEpgPromiseRef.current.set(resolvedProviderId, promise);
+        await promise;
+        return;
+      }
+
+      const inFlight = bulkEpgPromiseRef.current.get(resolvedProviderId);
+      if (inFlight) await inFlight;
+      const latest = stateRef.current;
+      const targetChannel = latest.channels.find(
+        (channel) =>
+          channel.providerId === resolvedProviderId && channel.id === channelId,
+      );
+      if (!targetChannel) return;
+      const now = Date.now();
       if (
-        cached &&
-        cached.channelCount === providerChannels.length &&
-        Date.now() - cached.loadedAt < EPG_CACHE_TTL_MS
+        latest.epg.some(
+          (program) => program.channelId === channelId && program.end > now,
+        )
       ) {
         return;
       }
-      const existingPromise = bulkEpgPromiseRef.current.get(resolvedProviderId);
-      if (existingPromise) {
-        await existingPromise;
-        return;
-      }
+      if (provider.type !== "xtream") return;
 
       setIsEpgLoading(true);
-      const promise = (async () => {
-        try {
-          const programs = await loadBulkProviderEpg(provider, providerChannels);
-          const channelIds = new Set(providerChannels.map((channel) => channel.id));
-          setState((previous) => {
-            const next = {
-              ...previous,
-              epg: [
-                ...previous.epg.filter((program) => !channelIds.has(program.channelId)),
-                ...programs,
-              ],
-            };
-            stateRef.current = next;
-            return next;
-          });
-        } catch {
-          // Bulk EPG is optional. Keep any previous cache and do not break channels/playback.
-        } finally {
-          epgCacheRef.current.set(resolvedProviderId, {
-            loadedAt: Date.now(),
-            channelCount: providerChannels.length,
-          });
-          bulkEpgPromiseRef.current.delete(resolvedProviderId);
-          setIsEpgLoading(false);
-        }
-      })();
-      bulkEpgPromiseRef.current.set(resolvedProviderId, promise);
-      await promise;
-      return;
-    }
-
-    const inFlightBulk = bulkEpgPromiseRef.current.get(resolvedProviderId);
-    if (inFlightBulk) await inFlightBulk;
-
-    const latest = stateRef.current;
-    const targetChannel = latest.channels.find(
-      (channel) => channel.providerId === resolvedProviderId && channel.id === channelId,
-    );
-    if (!targetChannel) return;
-    const cachedPrograms = latest.epg.filter((program) => program.channelId === channelId);
-    const now = Date.now();
-    if (cachedPrograms.some((program) => program.end > now)) return;
-
-    // Only Xtream gets a per-channel network fallback. The live list never calls this path.
-    if (provider.type !== "xtream") return;
-    setIsEpgLoading(true);
-    try {
-      const programs = normalizeProgramText(
-        await loadEpg({ ...fromProvider(provider), epgUrl: undefined }, [targetChannel]),
-      );
-      setState((previous) => {
-        const next = {
-          ...previous,
-          epg: [
-            ...previous.epg.filter((program) => program.channelId !== channelId),
-            ...programs,
-          ],
-        };
-        stateRef.current = next;
-        return next;
-      });
-    } catch {
-      // Active-channel fallback is optional; leave playback running.
-    } finally {
-      setIsEpgLoading(false);
-    }
-  }, []);
+      try {
+        const programs = normalizeProgramText(
+          await loadEpg(
+            {
+              ...toXtreamLoadProvider(fromProvider(provider)),
+              epgUrl: undefined,
+            },
+            [targetChannel],
+          ),
+        );
+        setState((previous) => {
+          const next = {
+            ...previous,
+            epg: [
+              ...previous.epg.filter((program) => program.channelId !== channelId),
+              ...programs,
+            ],
+          };
+          stateRef.current = next;
+          return next;
+        });
+      } catch {
+        // active-channel fallback is optional
+      } finally {
+        setIsEpgLoading(false);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (isHydrating || !state.provider) return;
-    const count = state.channels.filter(
-      (channel) => channel.providerId === state.provider?.id,
-    ).length;
-    if (!count) return;
+    if (
+      !state.channels.some((channel) => channel.providerId === state.provider?.id)
+    ) {
+      return;
+    }
     void refreshEpg(state.provider.id);
   }, [
     isHydrating,
@@ -607,20 +710,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const current = stateRef.current;
     await persist({
       ...current,
-      history: [channelId, ...current.history.filter((id) => id !== channelId)].slice(0, 50),
+      history: [
+        channelId,
+        ...current.history.filter((id) => id !== channelId),
+      ].slice(0, 50),
     });
   };
 
   const epgByChannel = useMemo(() => {
     const map = new Map<string, EpgProgram[]>();
     for (const program of state.epg) {
-      const existing = map.get(program.channelId);
-      if (existing) existing.push(program);
+      const programs = map.get(program.channelId);
+      if (programs) programs.push(program);
       else map.set(program.channelId, [program]);
     }
-    for (const programs of map.values()) {
-      programs.sort((a, b) => a.start - b.start);
-    }
+    for (const programs of map.values()) programs.sort((a, b) => a.start - b.start);
     return map as ReadonlyMap<string, readonly EpgProgram[]>;
   }, [state.epg]);
 
@@ -643,7 +747,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       recordWatched,
       clearError: () => setError(null),
     }),
-    [state, epgByChannel, isHydrating, isLoading, isEpgLoading, error, refreshEpg],
+    [
+      state,
+      epgByChannel,
+      isHydrating,
+      isLoading,
+      isEpgLoading,
+      error,
+      refreshEpg,
+    ],
   );
 
   return <PlayerContext.Provider value={value}>{children}</PlayerContext.Provider>;
