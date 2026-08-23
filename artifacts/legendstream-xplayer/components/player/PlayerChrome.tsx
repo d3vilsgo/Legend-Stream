@@ -28,7 +28,6 @@ export type {
 } from "./PlayerChromeV2";
 export { playerCodecLabel };
 
-const initializedPlayers = new WeakSet<Function>();
 type FeatherName = React.ComponentProps<typeof Feather>["name"];
 type Props = React.ComponentProps<typeof PlayerChromeV2> & {
   resolution?: string;
@@ -87,16 +86,6 @@ export function PlayerChrome(props: Props) {
     getPlayerRuntimeInfoSnapshot,
   );
   const { resolution: resolutionOverride, fps: fpsOverride, ...chrome } = props;
-
-  useEffect(() => {
-    const cycle = props.onCycleFit as unknown as Function;
-    if (initializedPlayers.has(cycle)) return;
-    initializedPlayers.add(cycle);
-    if (props.fitMode === "fit") {
-      props.onCycleFit();
-      props.onCycleFit();
-    }
-  }, [props.fitMode, props.onCycleFit]);
 
   const resolution = resolutionOverride ?? runtime.resolution;
   const fps = fpsOverride ?? runtime.fps;
