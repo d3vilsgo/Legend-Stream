@@ -106,7 +106,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Build split release APKs and AAB
+      - name: Build production AAB with ABI split disabled
         working-directory: artifacts/legendstream-xplayer/android
         env:
           NODE_ENV: production
@@ -114,30 +114,61 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          ./gradlew assembleRelease bundleRelease \
+          ./gradlew bundleRelease \
             --no-daemon \
             --no-build-cache \
             --max-workers=2 \
             --console=plain \
-            --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/release-build.log"
+            --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/aab-release-build.log"
+
+          AAB_PATH="app/build/outputs/bundle/release/app-release.aab"
+          test -f "$AAB_PATH"
+          mkdir -p "$GITHUB_WORKSPACE/staged-aab"
+          cp "$AAB_PATH" "$GITHUB_WORKSPACE/staged-aab/app-release.aab"
+
+      - name: Clean before split APK build
+        working-directory: artifacts/legendstream-xplayer/android
+        shell: bash
+        run: ./gradlew clean --no-daemon --console=plain
+
+      - name: Build per-ABI release APKs
+        working-directory: artifacts/legendstream-xplayer/android
+        env:
+          NODE_ENV: production
+          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease -PabiSplit \
+            --no-daemon \
+            --no-build-cache \
+            --max-workers=2 \
+            --console=plain \
+            --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
 
       - name: Show release diagnostics on failure
         if: failure()
         shell: bash
         run: |
-          echo "================ IMPORTANT ERROR LINES ================"
-          grep -Ein -C 4 "error|exception|failed|failure|unable|cannot|could not|syntax|module not found|no space|keystore|signing|bundle|manifest|minSdk|vlc|libvlc|duplicate|merge|kotlin|java|versionCode|abi" release-build.log 2>/dev/null | tail -n 520 || true
-          echo "================ LAST 520 LOG LINES ===================="
-          tail -n 520 release-build.log 2>/dev/null || true
-          echo "================ PREBUILD LOG ==========================="
+          echo "================ AAB IMPORTANT ERROR LINES ================"
+          grep -Ein -C 4 "error|exception|failed|failure|unable|cannot|could not|syntax|module not found|no space|keystore|signing|bundle|manifest|minSdk|vlc|libvlc|duplicate|merge|kotlin|java|versionCode|abi|shrunk-resources" aab-release-build.log 2>/dev/null | tail -n 420 || true
+          echo "================ AAB LAST LOG LINES ======================="
+          tail -n 320 aab-release-build.log 2>/dev/null || true
+          echo "================ APK IMPORTANT ERROR LINES ================"
+          grep -Ein -C 4 "error|exception|failed|failure|unable|cannot|could not|syntax|module not found|no space|keystore|signing|bundle|manifest|minSdk|vlc|libvlc|duplicate|merge|kotlin|java|versionCode|abi|shrunk-resources" apk-release-build.log 2>/dev/null | tail -n 420 || true
+          echo "================ APK LAST LOG LINES ======================="
+          tail -n 320 apk-release-build.log 2>/dev/null || true
+          echo "================ PREBUILD LOG ============================="
           tail -n 260 expo-prebuild.log 2>/dev/null || true
 
-      - name: Upload release build log
+      - name: Upload release build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: LegendStream-XPlayer-Release-Build-Log
-          path: release-build.log
+          name: LegendStream-XPlayer-Release-Build-Logs
+          path: |
+            aab-release-build.log
+            apk-release-build.log
           if-no-files-found: ignore
           retention-days: 7
 
@@ -147,7 +178,7 @@ jobs:
         run: |
           set -euo pipefail
           APK_DIR="artifacts/legendstream-xplayer/android/app/build/outputs/apk/release"
-          AAB_PATH="artifacts/legendstream-xplayer/android/app/build/outputs/bundle/release/app-release.aab"
+          AAB_PATH="staged-aab/app-release.aab"
 
           ARM64_APK="$(find "$APK_DIR" -type f -name '*arm64-v8a*.apk' | head -n 1)"
           ARMV7_APK="$(find "$APK_DIR" -type f -name '*armeabi-v7a*.apk' | head -n 1)"
