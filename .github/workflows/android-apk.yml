@@ -193,6 +193,11 @@ jobs:
           APK_DIR="artifacts/legendstream-xplayer/android/app/build/outputs/apk/release"
           STAGE_DIR="$GITHUB_WORKSPACE/release-staging"
 
+          echo "================ APK OUTPUTS ================"
+          find "$APK_DIR" -maxdepth 2 -type f -printf '%p %s bytes\n' | sort || true
+          echo "================ STAGING OUTPUTS ============"
+          find "$STAGE_DIR" -maxdepth 1 -type f -printf '%p %s bytes\n' | sort || true
+
           mapfile -t APKS < <(find "$APK_DIR" -type f -name '*.apk' | sort)
           mapfile -t AABS < <(find "$STAGE_DIR" -maxdepth 1 -type f -name '*.aab' | sort)
 
@@ -234,21 +239,19 @@ jobs:
             exit 1
           fi
 
-          for package in "${APKS[@]}" "${AABS[@]}"; do
-            if unzip -Z1 "$package" | grep -Eq '(^|/)(x86|x86_64)(/|$)'; then
-              echo "::error::Unexpected x86/x86_64 native library in $package"
+          # x86/x86_64 is forbidden only in the sideload APK deliverables.
+          # The production AAB intentionally remains multi-ABI so Google Play can split per device.
+          for apk in "${APKS[@]}"; do
+            if unzip -Z1 "$apk" | grep -Eq '^lib/(x86|x86_64)/'; then
+              echo "::error::Unexpected x86/x86_64 native library in split APK: $apk"
               exit 1
             fi
           done
 
           AAB_ABIS="$(unzip -Z1 "$AAB_PATH" | awk -F/ '/^base\/lib\// {print $3}' | sort -u | xargs)"
-          echo "AAB ABIs: $AAB_ABIS"
+          echo "AAB ABIs (informational; x86/x86_64 is allowed here): $AAB_ABIS"
           echo "$AAB_ABIS" | grep -qw 'arm64-v8a'
           echo "$AAB_ABIS" | grep -qw 'armeabi-v7a'
-          if echo "$AAB_ABIS" | grep -Eqw 'x86|x86_64'; then
-            echo "::error::Unexpected x86/x86_64 ABI in AAB"
-            exit 1
-          fi
 
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           if [ ! -x "$AAPT" ]; then
