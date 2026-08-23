@@ -110,7 +110,7 @@ export function CompatibilityVideoPlayer({
   const [currentSubtitle, setCurrentSubtitle] = useState(subtitle);
   const [currentKind, setCurrentKind] = useState<PlayerMediaKind>(initialKind);
   const [paused, setPaused] = useState(false);
-  const [fit, setFit] = useState<PlayerFitMode>("fit");
+  const [fit, setFit] = useState<PlayerFitMode>("full");
   const [codecMode, setCodecMode] = useState<PlayerCodecMode>("auto");
   const [volume, setVolume] = useState(1);
   const [controlsVisible, setControlsVisible] = useState(true);

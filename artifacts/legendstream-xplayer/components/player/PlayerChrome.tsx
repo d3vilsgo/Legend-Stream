@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import React, { useEffect, useState, useSyncExternalStore } from "react";
+import React, { useState, useSyncExternalStore } from "react";
 import {
   LayoutChangeEvent,
   Pressable,
@@ -9,6 +9,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   PlayerChrome as PlayerChromeV2,
   playerCodecLabel,
@@ -46,7 +47,7 @@ type Action = {
 
 const fitLabel = (mode: PlayerFitMode) =>
   mode === "full"
-    ? "FULL"
+    ? "FILL"
     : mode === "original"
       ? "ORIG"
       : mode === "16:9"
@@ -77,6 +78,7 @@ const clamp = (value: number, min: number, max: number) =>
 
 export function PlayerChrome(props: Props) {
   const { width, height } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
   const portrait = height > width;
   const [seekWidth, setSeekWidth] = useState(1);
   const runtime = useSyncExternalStore(
@@ -173,16 +175,21 @@ export function PlayerChrome(props: Props) {
     }] : []),
   ];
 
-  const gap = portrait ? 3 : 6;
-  const sidePadding = portrait ? 20 : 54;
-  const availableWidth = Math.max(240, width - sidePadding);
+  const gap = portrait ? 2 : 5;
+  const outerPadding = portrait ? 8 : 20;
+  const safeHorizontal = insets.left + insets.right;
+  const dockInnerPadding = 12;
+  const availableWidth = Math.max(1, width - safeHorizontal - outerPadding * 2 - dockInnerPadding);
   const buttonSize = clamp(
     Math.floor((availableWidth - gap * Math.max(0, actions.length - 1)) / Math.max(1, actions.length)),
-    34,
-    portrait ? 46 : 52,
+    30,
+    portrait ? 46 : 54,
   );
-  const iconSize = clamp(Math.round(buttonSize * 0.46), 17, 23);
-  const dockHeight = buttonSize + (portrait ? 14 : 16);
+  const iconSize = clamp(Math.round(buttonSize * 0.46), 15, 24);
+  const dockHeight = buttonSize + (portrait ? 12 : 16);
+  const progressScale = clamp(width / (portrait ? 390 : 840), 0.82, 1.2);
+  const timeWidth = clamp(Math.round(54 * progressScale), 44, 64);
+  const timeFontSize = clamp(Math.round(11 * progressScale), 9, 13);
 
   return (
     <>
@@ -247,10 +254,21 @@ export function PlayerChrome(props: Props) {
       ) : null}
 
       {chrome.controlsVisible && !chrome.panel ? (
-        <View style={[styles.bottom, portrait ? styles.bottomPortrait : styles.bottomLandscape]} pointerEvents="box-none">
+        <View
+          style={[
+            styles.bottom,
+            portrait ? styles.bottomPortrait : styles.bottomLandscape,
+            {
+              bottom: Math.max(insets.bottom, portrait ? 8 : 12),
+              paddingLeft: Math.max(outerPadding, insets.left + 8),
+              paddingRight: Math.max(outerPadding, insets.right + 8),
+            },
+          ]}
+          pointerEvents="box-none"
+        >
           {chrome.mediaKind !== "live" ? (
-            <View style={styles.seekRow}>
-              <Text style={styles.time}>{formatTime(chrome.position)}</Text>
+            <View style={[styles.seekRow, { height: Math.round(32 * progressScale), gap: Math.max(5, Math.round(8 * progressScale)) }]}>
+              <Text style={[styles.time, { width: timeWidth, fontSize: timeFontSize }]}>{formatTime(chrome.position)}</Text>
               <Pressable
                 onLayout={(event: LayoutChangeEvent) => setSeekWidth(Math.max(1, event.nativeEvent.layout.width))}
                 onPress={(event) => chrome.onSeekRatio(Math.max(0, Math.min(1, event.nativeEvent.locationX / seekWidth)))}
@@ -262,7 +280,7 @@ export function PlayerChrome(props: Props) {
                   <View style={[styles.seekThumb, { left: `${progress * 100}%` }]} />
                 </View>
               </Pressable>
-              <Text style={[styles.time, styles.timeRight]}>{formatTime(chrome.duration)}</Text>
+              <Text style={[styles.time, styles.timeRight, { width: timeWidth, fontSize: timeFontSize }]}>{formatTime(chrome.duration)}</Text>
             </View>
           ) : null}
 
@@ -332,7 +350,7 @@ function AdaptiveDockButton({ action, size, iconSize }: { action: Action; size: 
       accessibilityRole="button"
       accessibilityLabel={action.label}
       onPress={action.onPress}
-      hitSlop={3}
+      hitSlop={Math.max(3, Math.ceil((44 - size) / 2))}
       style={({ pressed }) => [
         styles.dockButton,
         { width: size, height: size, borderRadius: Math.max(11, Math.round(size * 0.3)) },
@@ -383,8 +401,8 @@ const styles = StyleSheet.create({
   playShellPortrait: { width: 74, height: 74, borderRadius: 37 },
   playInner: { flex: 1, borderRadius: 999, alignItems: "center", justifyContent: "center" },
   bottom: { position: "absolute", zIndex: 62, left: 0, right: 0 },
-  bottomLandscape: { bottom: 18, paddingHorizontal: 28 },
-  bottomPortrait: { bottom: 14, paddingHorizontal: 10 },
+  bottomLandscape: {},
+  bottomPortrait: {},
   seekRow: { width: "100%", height: 32, marginBottom: 7, flexDirection: "row", alignItems: "center", gap: 8 },
   time: { width: 54, color: "#fff", fontSize: 11, fontWeight: "800", fontVariant: ["tabular-nums"] },
   timeRight: { textAlign: "right" },

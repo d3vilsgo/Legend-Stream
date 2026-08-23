@@ -1,12 +1,15 @@
 import React, { forwardRef, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PixelRatio, StyleSheet, useWindowDimensions, View } from "react-native";
 import { VLCPlayer } from "react-native-vlc-media-player";
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { logPlayerDiagnostic } from "@/lib/playerDiagnostics";
 import {
   resetPlayerRuntimeInfo,
   updatePlayerRuntimeInfo,
 } from "@/lib/playerRuntimeInfo";
 import { setPlayerKeepAwake } from "@/modules/legendstream-pip";
+
+const PLAYER_KEEP_AWAKE_TAG = "legendstream-active-playback";
 
 export type PlayerFitMode = "fit" | "full" | "original" | "16:9" | "4:3";
 export type PlayerCodecMode = "auto" | "hardware" | "software";
@@ -153,11 +156,19 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [codecMode]);
 
   useEffect(() => {
-    void setPlayerKeepAwake(true);
+    const shouldKeepAwake = playbackReady && !paused;
+    if (shouldKeepAwake) {
+      void activateKeepAwakeAsync(PLAYER_KEEP_AWAKE_TAG).catch(() => undefined);
+      void setPlayerKeepAwake(true);
+    } else {
+      void deactivateKeepAwake(PLAYER_KEEP_AWAKE_TAG).catch(() => undefined);
+      void setPlayerKeepAwake(false);
+    }
     return () => {
+      void deactivateKeepAwake(PLAYER_KEEP_AWAKE_TAG).catch(() => undefined);
       void setPlayerKeepAwake(false);
     };
-  }, []);
+  }, [paused, playbackReady]);
 
   useEffect(() => {
     applyGeneration.current += 1;
@@ -322,16 +333,19 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [codecMode, fit, onPlaying]);
 
   const handlePaused = useCallback(() => {
+    setPlaybackReady(false);
     void logPlayerDiagnostic("vlc_paused");
     onPaused();
   }, [onPaused]);
 
   const handleEnd = useCallback(() => {
+    setPlaybackReady(false);
     void logPlayerDiagnostic("vlc_end");
     onEnd();
   }, [onEnd]);
 
   const handleError = useCallback(() => {
+    setPlaybackReady(false);
     void logPlayerDiagnostic("vlc_error", { codec: codecMode, fit });
     onError();
   }, [codecMode, fit, onError]);

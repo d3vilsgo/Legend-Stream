@@ -83,7 +83,7 @@ export const playerCodecLabel = (mode: PlayerCodecMode) =>
   mode === "hardware" ? "HW" : mode === "software" ? "SW" : "AUTO";
 
 const fitLabel = (mode: PlayerFitMode) => {
-  if (mode === "full") return "FULL";
+  if (mode === "full") return "FILL";
   if (mode === "original") return "ORIG";
   if (mode === "16:9") return "16:9";
   if (mode === "4:3") return "4:3";
@@ -112,9 +112,13 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
       <PlayerGestureLayer
         enabled={!props.panel}
         volume={props.volume}
+        seekEnabled={props.mediaKind !== "live" && props.duration > 0}
+        position={props.position}
+        duration={props.duration}
         onTap={props.onBackgroundPress}
         onVolumeChange={props.onVolumeChange}
         onVolumeCommit={props.onVolumeCommit}
+        onSeekBy={props.onSeekBy}
       />
 
       {(props.controlsVisible || props.infoVisible) ? (
