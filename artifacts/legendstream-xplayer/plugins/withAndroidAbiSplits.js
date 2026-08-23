@@ -5,12 +5,17 @@ const MARKER_END = "// @legendstream abi-splits:end";
 
 const SPLIT_BLOCK = `${MARKER_START}
     def legendStreamAbiSplitEnabled = project.hasProperty("abiSplit")
+    def legendStreamAbiOnly = project.findProperty("abiOnly")?.toString()
 
     splits {
         abi {
             enable legendStreamAbiSplitEnabled
             reset()
-            include "arm64-v8a", "armeabi-v7a"
+            if (legendStreamAbiOnly) {
+                include legendStreamAbiOnly
+            } else {
+                include "arm64-v8a", "armeabi-v7a"
+            }
             universalApk false
         }
     }
