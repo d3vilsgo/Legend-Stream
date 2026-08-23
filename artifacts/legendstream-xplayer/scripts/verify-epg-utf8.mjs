@@ -8,11 +8,11 @@ const binaryStringToUtf8 = (binary) => {
 const repairUtf8Mojibake = (value) => {
   if (!/[ÃÄÅÂ]/.test(value)) return value;
   if (Array.from(value).some((char) => char.charCodeAt(0) > 0xff)) return value;
-  return binaryStringToUtf8(value);
+  const repaired = binaryStringToUtf8(value);
+  const before = (value.match(/[ÃÄÅÂ]/g) || []).length;
+  const after = (repaired.match(/[ÃÄÅÂ]/g) || []).length;
+  return after < before ? repaired : value;
 };
-
-const decodeBase64Utf8 = (value) =>
-  Buffer.from(value, "base64").toString("utf8");
 
 const cases = [
   ["Kim Milyoner Olmak Ä°ster?", "Kim Milyoner Olmak İster?"],
@@ -29,7 +29,7 @@ for (const [input, expected] of cases) {
 
 for (const expected of ["Kim Milyoner Olmak İster?", "Türkiye - Slovenya", "Ana Haber"]) {
   const encoded = Buffer.from(expected, "utf8").toString("base64");
-  const actual = decodeBase64Utf8(encoded);
+  const actual = Buffer.from(encoded, "base64").toString("utf8");
   if (actual !== expected) {
     throw new Error(`Base64 UTF-8 regression: ${JSON.stringify(expected)} -> ${JSON.stringify(actual)}`);
   }
