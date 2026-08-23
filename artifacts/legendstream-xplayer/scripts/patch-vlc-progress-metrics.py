@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Expose coded VLC resolution/FPS on the existing progress event.
+"""Expose coded VLC resolution/FPS/codec on the existing progress event.
 
 This patch intentionally avoids compile-time calls into optional LibVLC track APIs.
 react-native-vlc-media-player@1.0.98 currently depends on
@@ -37,6 +37,8 @@ def verify(java_text: str) -> None:
         fail("VLC reflective current-video-track fallback missing after patch")
     if "frameRateNum" not in java_text or "frameRateDen" not in java_text:
         fail("VLC reflective frame-rate lookup missing after patch")
+    if 'map.putString("codec", codec)' not in java_text:
+        fail("VLC codec metadata bridge missing after patch")
 
     # These were the two compile-breaking references in the previous bridge.
     if re.search(r"\bisReleased\b", java_text):
@@ -95,8 +97,8 @@ def main() -> None:
         fail("Could not locate VLC progress runnable helper anchor")
 
     helper = r'''    // LegendStream selected-track progress metrics.
-    // Query coded resolution/FPS without compiling against an optional LibVLC
-    // selected-track API. Missing methods/fields simply disable the metadata.
+    // Query coded resolution/FPS/codec without compiling against an optional
+    // LibVLC selected-track API. Missing methods/fields simply disable metadata.
     private Object legendStreamGetSelectedVideoTrackReflectively() {
         if (legendStreamPlayerReleased || mMediaPlayer == null) {
             return null;
@@ -119,16 +121,56 @@ def main() -> None:
         }
     }
 
-    private Number legendStreamReadTrackNumber(Object track, String fieldName) {
+    private Object legendStreamReadTrackValue(Object track, String name) {
         if (track == null) {
             return null;
         }
         try {
-            Object value = track.getClass().getField(fieldName).get(track);
-            return value instanceof Number ? (Number) value : null;
+            return track.getClass().getField(name).get(track);
         } catch (Throwable ignored) {
-            return null;
+            try {
+                return track.getClass().getMethod(name).invoke(track);
+            } catch (Throwable ignoredMethod) {
+                return null;
+            }
         }
+    }
+
+    private Number legendStreamReadTrackNumber(Object track, String fieldName) {
+        final Object value = legendStreamReadTrackValue(track, fieldName);
+        return value instanceof Number ? (Number) value : null;
+    }
+
+    private String legendStreamCodecLabel(Object track) {
+        Object raw = legendStreamReadTrackValue(track, "codec");
+        String value = null;
+        if (raw instanceof Number) {
+            final int code = ((Number) raw).intValue();
+            final StringBuilder fourcc = new StringBuilder(4);
+            for (int shift = 0; shift <= 24; shift += 8) {
+                final char c = (char) ((code >> shift) & 0xff);
+                if (c >= 32 && c <= 126) {
+                    fourcc.append(c);
+                }
+            }
+            value = fourcc.toString();
+        } else if (raw != null) {
+            value = String.valueOf(raw);
+        }
+        if (value == null || value.trim().isEmpty()) {
+            raw = legendStreamReadTrackValue(track, "codecDescription");
+            if (raw != null) value = String.valueOf(raw);
+        }
+        if (value == null) return null;
+
+        final String normalized = value.trim().toLowerCase(java.util.Locale.US);
+        if (normalized.isEmpty()) return null;
+        if (normalized.contains("h264") || normalized.contains("avc1") || normalized.equals("avc")) return "H264";
+        if (normalized.contains("hevc") || normalized.contains("h265") || normalized.contains("hev1") || normalized.contains("hvc1")) return "HEVC";
+        if (normalized.contains("vp9") || normalized.contains("vp09")) return "VP9";
+        if (normalized.contains("av1") || normalized.contains("av01")) return "AV1";
+        if (normalized.contains("mpeg2") || normalized.contains("mpgv")) return "MPEG2";
+        return value.trim().toUpperCase(java.util.Locale.US);
     }
 
     private void legendStreamAppendProgressMetrics(WritableMap map) {
@@ -165,6 +207,11 @@ def main() -> None:
                     map.putDouble("fps", fps);
                 }
             }
+
+            final String codec = legendStreamCodecLabel(videoTrack);
+            if (codec != null && !codec.isEmpty()) {
+                map.putString("codec", codec);
+            }
         } catch (Throwable ignored) {
             // Runtime metadata is optional and must never affect playback.
         }
@@ -190,7 +237,7 @@ def main() -> None:
 
     player_view.write_text(java_text, encoding="utf-8")
     verify(player_view.read_text(encoding="utf-8"))
-    print("Applied VLC selected-track resolution/FPS progress bridge")
+    print("Applied VLC selected-track resolution/FPS/codec progress bridge")
 
 
 if __name__ == "__main__":
