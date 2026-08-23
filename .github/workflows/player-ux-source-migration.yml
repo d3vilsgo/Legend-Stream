@@ -20,6 +20,36 @@ jobs:
         run: |
           python3 artifacts/legendstream-xplayer/scripts/apply-player-ux.py
           python3 artifacts/legendstream-xplayer/scripts/fix-player-chrome-migration.py
+      - name: Enforce original-aspect default
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path('artifacts/legendstream-xplayer')
+          compatibility = root / 'components' / 'CompatibilityVideoPlayerV2.tsx'
+          surface = root / 'components' / 'player' / 'VlcPlaybackSurface.tsx'
+
+          text = compatibility.read_text(encoding='utf-8')
+          old = '  const [fit, setFit] = useState<PlayerFitMode>("full");'
+          new = '  const [fit, setFit] = useState<PlayerFitMode>("fit");'
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('Player fit state default anchor not found')
+          compatibility.write_text(text, encoding='utf-8')
+
+          text = surface.read_text(encoding='utf-8')
+          old = '    fit,\n    codecMode,'
+          new = '    fit = "fit",\n    codecMode,'
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif new not in text:
+              raise SystemExit('VLC fit prop default anchor not found')
+          if 'resizeMode="contain"' not in text:
+              raise SystemExit('VLC contain resize mode is missing')
+          surface.write_text(text, encoding='utf-8')
+          PY
       - name: Commit generated source edits
         shell: bash
         run: |
@@ -27,6 +57,6 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git add artifacts/legendstream-xplayer
-            git commit -m "feat(player): adaptive fill controls and active keep-awake"
+            git commit -m "fix(player): default to original aspect ratio"
             git push origin HEAD:${{ github.head_ref }}
           fi
