@@ -17,7 +17,9 @@ jobs:
           ref: ${{ github.head_ref }}
           fetch-depth: 1
       - name: Apply player UX source migration
-        run: python3 artifacts/legendstream-xplayer/scripts/apply-player-ux.py
+        run: |
+          python3 artifacts/legendstream-xplayer/scripts/apply-player-ux.py
+          python3 artifacts/legendstream-xplayer/scripts/fix-player-chrome-migration.py
       - name: Commit generated source edits
         shell: bash
         run: |
