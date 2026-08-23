@@ -1,4 +1,5 @@
 import { Platform } from "react-native";
+import { mapInBatches, yieldToUi } from "./cooperative";
 
 export type ProviderType = "m3u" | "xtream" | "stalker";
 
@@ -106,70 +107,110 @@ const parseAttributes = (line: string) => {
 const makeId = (providerId: string, index: number, value: string) =>
   `${providerId}:${index}:${value}`.replace(/[^a-zA-Z0-9:_-]/g, "-");
 
+function parseM3ULine(
+  line: string,
+  providerId: string,
+  channels: Channel[],
+  state: {
+    pending: { attributes: Record<string, string>; name: string; group?: string } | null;
+    nextGroup?: string;
+    epgUrl?: string;
+  },
+) {
+  if (line.startsWith("#EXTM3U")) {
+    const attributes = parseAttributes(line);
+    state.epgUrl = attributes["url-tvg"] ?? attributes["x-tvg-url"];
+    return;
+  }
+  if (line.startsWith("#EXTINF")) {
+    const comma = line.indexOf(",");
+    const label = comma >= 0 ? line.slice(comma + 1).trim() : "Untitled channel";
+    state.pending = {
+      attributes: parseAttributes(line),
+      name: decodeEpgText(label) || "Untitled channel",
+      group: state.nextGroup,
+    };
+    state.nextGroup = undefined;
+    return;
+  }
+  if (/^#EXTGRP:/i.test(line)) {
+    const group = decodeEpgText(line.slice(line.indexOf(":") + 1).trim());
+    if (state.pending) state.pending.group = group || state.pending.group;
+    else state.nextGroup = group || state.nextGroup;
+    return;
+  }
+  if (line.startsWith("#") || !state.pending) return;
+
+  const category =
+    state.pending.attributes["group-title"] ||
+    state.pending.attributes["group"] ||
+    state.pending.attributes["category"] ||
+    state.pending.attributes["tvg-group"] ||
+    state.pending.group ||
+    "Uncategorized";
+  const streamId = state.pending.attributes["tvg-id"] || state.pending.name;
+  channels.push({
+    id: makeId(providerId, channels.length, streamId),
+    providerId,
+    name: state.pending.attributes["tvg-name"] || state.pending.name,
+    streamUrl: line,
+    logoUrl: state.pending.attributes["tvg-logo"] || undefined,
+    category,
+    tvgId: state.pending.attributes["tvg-id"] || undefined,
+    streamType: state.pending.attributes["type"] || undefined,
+  });
+  state.pending = null;
+}
+
 export function parseM3U(
   content: string,
   providerId: string,
 ): ProviderLoadResult {
-  const lines = content
-    .replace(/^\uFEFF/, "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
   const channels: Channel[] = [];
-  let pending: { attributes: Record<string, string>; name: string; group?: string } | null = null;
-  let nextGroup: string | undefined;
-  let epgUrl: string | undefined;
+  const state: {
+    pending: { attributes: Record<string, string>; name: string; group?: string } | null;
+    nextGroup?: string;
+    epgUrl?: string;
+  } = { pending: null };
 
-  for (const line of lines) {
-    if (line.startsWith("#EXTM3U")) {
-      const attributes = parseAttributes(line);
-      epgUrl = attributes["url-tvg"] ?? attributes["x-tvg-url"];
-      continue;
-    }
-    if (line.startsWith("#EXTINF")) {
-      const comma = line.indexOf(",");
-      const label = comma >= 0 ? line.slice(comma + 1).trim() : "Untitled channel";
-      pending = {
-        attributes: parseAttributes(line),
-        name: decodeEpgText(label) || "Untitled channel",
-        group: nextGroup,
-      };
-      nextGroup = undefined;
-      continue;
-    }
-    if (/^#EXTGRP:/i.test(line)) {
-      const group = decodeEpgText(line.slice(line.indexOf(":") + 1).trim());
-      if (pending) pending.group = group || pending.group;
-      else nextGroup = group || nextGroup;
-      continue;
-    }
-    if (line.startsWith("#") || !pending) continue;
-
-    const category =
-      pending.attributes["group-title"] ||
-      pending.attributes["group"] ||
-      pending.attributes["category"] ||
-      pending.attributes["tvg-group"] ||
-      pending.group ||
-      "Uncategorized";
-    const streamId = pending.attributes["tvg-id"] || pending.name;
-    channels.push({
-      id: makeId(providerId, channels.length, streamId),
-      providerId,
-      name: pending.attributes["tvg-name"] || pending.name,
-      streamUrl: line,
-      logoUrl: pending.attributes["tvg-logo"] || undefined,
-      category,
-      tvgId: pending.attributes["tvg-id"] || undefined,
-      streamType: pending.attributes["type"] || undefined,
-    });
-    pending = null;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (line) parseM3ULine(line, providerId, channels, state);
   }
 
   if (!channels.length) {
     throw new Error("No playable channels were found in this M3U playlist.");
   }
-  return { channels, epgUrl };
+  return { channels, epgUrl: state.epgUrl };
+}
+
+async function parseM3UCooperatively(
+  content: string,
+  providerId: string,
+): Promise<ProviderLoadResult> {
+  const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const channels: Channel[] = [];
+  const state: {
+    pending: { attributes: Record<string, string>; name: string; group?: string } | null;
+    nextGroup?: string;
+    epgUrl?: string;
+  } = { pending: null };
+  const batchSize = 500;
+
+  for (let start = 0; start < lines.length; start += batchSize) {
+    const end = Math.min(start + batchSize, lines.length);
+    for (let index = start; index < end; index += 1) {
+      const line = lines[index].trim();
+      if (line) parseM3ULine(line, providerId, channels, state);
+    }
+    if (end < lines.length) await yieldToUi();
+  }
+
+  if (!channels.length) {
+    throw new Error("No playable channels were found in this M3U playlist.");
+  }
+  return { channels, epgUrl: state.epgUrl };
 }
 
 export class ProviderLoadError extends Error {
@@ -194,6 +235,10 @@ export class ProviderLoadError extends Error {
 
 const asJson = async (response: Response) => {
   const text = await response.text();
+  // Give pending input/layout work a chance to run before a potentially large
+  // JSON.parse. React Native has no portable streaming JSON parser, so the
+  // expensive post-parse transformation is also cooperatively batched below.
+  await yieldToUi();
   try {
     const parsed = JSON.parse(text) as any;
     if (!response.ok) {
@@ -250,7 +295,7 @@ async function fetchProviderJson(url: string, init?: RequestInit) {
   try {
     response = await fetch(url, {
       ...init,
-      signal: init?.signal ?? AbortSignal.timeout(15_000),
+      signal: init?.signal ?? AbortSignal.timeout(20_000),
     });
   } catch {
     throw new ProviderLoadError(
@@ -266,7 +311,7 @@ async function fetchProviderText(url: string, init?: RequestInit) {
   try {
     response = await fetch(url, {
       ...init,
-      signal: init?.signal ?? AbortSignal.timeout(15_000),
+      signal: init?.signal ?? AbortSignal.timeout(20_000),
     });
   } catch {
     throw new ProviderLoadError(
@@ -294,7 +339,7 @@ async function loadXtreamInBrowser(
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ baseUrl, username, password }),
-      signal: AbortSignal.timeout(20_000),
+      signal: AbortSignal.timeout(25_000),
     });
   } catch {
     throw new ProviderLoadError(
@@ -309,7 +354,7 @@ async function loadM3U(provider: Provider): Promise<ProviderLoadResult> {
   const content = await fetchProviderText(provider.url, {
     headers: { Accept: "application/vnd.apple.mpegurl,text/plain,*/*" },
   });
-  const result = parseM3U(content, provider.id);
+  const result = await parseM3UCooperatively(content, provider.id);
   return { ...result, epgUrl: provider.epgUrl || result.epgUrl };
 }
 
@@ -338,11 +383,12 @@ async function loadXtream(provider: Provider): Promise<ProviderLoadResult> {
   }
 
   const streams = payload.streams;
-  if (!Array.isArray(streams))
+  if (!Array.isArray(streams)) {
     throw new ProviderLoadError(
       "Xtream authentication succeeded, but no live stream list was returned.",
       "NO_LIVE_STREAMS",
     );
+  }
   const categoryRows = payload.categories;
   const categoryMap = new Map<string, string>(
     (Array.isArray(categoryRows) ? categoryRows : []).map((row: any) => [
@@ -351,20 +397,24 @@ async function loadXtream(provider: Provider): Promise<ProviderLoadResult> {
     ]),
   );
 
-  const channels = streams.map((stream: any, index: number): Channel => {
-    const streamId = String(stream.stream_id ?? index);
-    const extension = stream.container_extension || "m3u8";
-    return {
-      id: makeId(provider.id, index, streamId),
-      providerId: provider.id,
-      name: decodeEpgText(String(stream.name || `Channel ${index + 1}`)),
-      streamUrl: `${baseUrl}/live/${encodeURIComponent(provider.username!)}/${encodeURIComponent(provider.password!)}/${streamId}.${extension}`,
-      logoUrl: stream.stream_icon || undefined,
-      category: categoryMap.get(String(stream.category_id)) || "Live TV",
-      tvgId: stream.epg_channel_id || undefined,
-      streamType: "xtream",
-    };
-  });
+  const channels = await mapInBatches(
+    streams,
+    (stream: any, index: number): Channel => {
+      const streamId = String(stream.stream_id ?? index);
+      const extension = stream.container_extension || "m3u8";
+      return {
+        id: makeId(provider.id, index, streamId),
+        providerId: provider.id,
+        name: decodeEpgText(String(stream.name || `Channel ${index + 1}`)),
+        streamUrl: `${baseUrl}/live/${encodeURIComponent(provider.username!)}/${encodeURIComponent(provider.password!)}/${streamId}.${extension}`,
+        logoUrl: stream.stream_icon || undefined,
+        category: categoryMap.get(String(stream.category_id)) || "Live TV",
+        tvgId: stream.epg_channel_id || undefined,
+        streamType: "xtream",
+      };
+    },
+    250,
+  );
   return { channels, epgUrl: provider.epgUrl };
 }
 
@@ -377,10 +427,12 @@ async function loadXtreamDirect(
   apiUrl.searchParams.set("username", username);
   apiUrl.searchParams.set("password", password);
   const auth = await fetchProviderJson(apiUrl.toString());
+  await yieldToUi();
 
   const streamsUrl = new URL(apiUrl);
   streamsUrl.searchParams.set("action", "get_live_streams");
   const streams = await fetchProviderJson(streamsUrl.toString());
+  await yieldToUi();
 
   let categories: unknown[] = [];
   try {
@@ -396,6 +448,7 @@ async function loadXtreamDirect(
 
 const stalkerJson = async (response: Response) => {
   const text = await response.text();
+  await yieldToUi();
   if (!response.ok) throw new Error(`Stalker Portal returned ${response.status}.`);
   try {
     const parsed = JSON.parse(text);
@@ -427,20 +480,24 @@ async function loadStalker(provider: Provider): Promise<ProviderLoadResult> {
     await fetch(`${baseUrl}/portal.php?type=itv&action=get_ordered_list&p=1&JsHttpRequest=1-xml`, { headers: authenticatedHeaders }),
   );
   const rows = Array.isArray(result?.data) ? result.data : Array.isArray(result) ? result : [];
-  const channels = rows.map((row: any, index: number): Channel => {
-    const rawCommand = String(row.cmd ?? row.url ?? "").replace(/^ffmpeg\s+/i, "").trim();
-    const streamUrl = rawCommand || `${baseUrl}/play/live.php?mac=${encodeURIComponent(mac)}&stream=${encodeURIComponent(String(row.id ?? index))}&extension=ts`;
-    return {
-      id: makeId(provider.id, index, String(row.id ?? row.name ?? index)),
-      providerId: provider.id,
-      name: decodeEpgText(String(row.name || `Channel ${index + 1}`)),
-      streamUrl,
-      logoUrl: row.logo || undefined,
-      category: decodeEpgText(String(row.tv_genre_name || row.category_name || "Live TV")),
-      tvgId: row.xmltv_id || undefined,
-      streamType: "stalker",
-    };
-  });
+  const channels = await mapInBatches(
+    rows,
+    (row: any, index: number): Channel => {
+      const rawCommand = String(row.cmd ?? row.url ?? "").replace(/^ffmpeg\s+/i, "").trim();
+      const streamUrl = rawCommand || `${baseUrl}/play/live.php?mac=${encodeURIComponent(mac)}&stream=${encodeURIComponent(String(row.id ?? index))}&extension=ts`;
+      return {
+        id: makeId(provider.id, index, String(row.id ?? row.name ?? index)),
+        providerId: provider.id,
+        name: decodeEpgText(String(row.name || `Channel ${index + 1}`)),
+        streamUrl,
+        logoUrl: row.logo || undefined,
+        category: decodeEpgText(String(row.tv_genre_name || row.category_name || "Live TV")),
+        tvgId: row.xmltv_id || undefined,
+        streamType: "stalker",
+      };
+    },
+    250,
+  );
   if (!channels.length) throw new Error("The Stalker Portal returned no live channels.");
   return { channels, epgUrl: provider.epgUrl };
 }
@@ -482,31 +539,107 @@ const decodeResponseText = async (response: Response) => {
   }
 };
 
+function channelIdMap(channels: Channel[]) {
+  return new Map(
+    channels.map((channel) => [decodeEpgText(channel.tvgId || channel.name), channel.id]),
+  );
+}
+
+function parseProgramme(
+  attributesText: string,
+  body: string,
+  channelIds: Map<string, string>,
+): EpgProgram | null {
+  const attributes = parseAttributes(attributesText);
+  const channelId = channelIds.get(decodeEpgText(attributes.channel || ""));
+  const start = parseXmlDate(attributes.start || "");
+  const end = parseXmlDate(attributes.stop || "");
+  if (!channelId || !Number.isFinite(start) || !Number.isFinite(end)) return null;
+
+  const title = stripTags(body.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "Untitled program");
+  const description = stripTags(body.match(/<desc[^>]*>([\s\S]*?)<\/desc>/i)?.[1] || "");
+  return {
+    id: `${channelId}:${start}:${title}`,
+    channelId,
+    title,
+    description: description || undefined,
+    start,
+    end,
+  };
+}
+
 export function parseXmltv(content: string, channels: Channel[]): EpgProgram[] {
-  const channelIds = new Map(channels.map((channel) => [decodeEpgText(channel.tvgId || channel.name), channel.id]));
+  const channelIds = channelIdMap(channels);
   const programs: EpgProgram[] = [];
   const programmePattern = /<programme\b([^>]*)>([\s\S]*?)<\/programme>/gi;
   let match: RegExpExecArray | null;
   while ((match = programmePattern.exec(content))) {
-    const attributes = parseAttributes(match[1]);
-    const body = match[2];
-    const channelId = channelIds.get(decodeEpgText(attributes.channel || ""));
-    const start = parseXmlDate(attributes.start || "");
-    const end = parseXmlDate(attributes.stop || "");
-    if (!channelId || !Number.isFinite(start) || !Number.isFinite(end)) continue;
-
-    const title = stripTags(body.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "Untitled program");
-    const description = stripTags(body.match(/<desc[^>]*>([\s\S]*?)<\/desc>/i)?.[1] || "");
-    programs.push({ id: `${channelId}:${start}:${title}`, channelId, title, description: description || undefined, start, end });
+    const program = parseProgramme(match[1], match[2], channelIds);
+    if (program) programs.push(program);
   }
+  return programs.sort((a, b) => a.start - b.start);
+}
+
+export async function parseXmltvAsync(
+  content: string,
+  channels: Channel[],
+  nowMs = Date.now(),
+): Promise<EpgProgram[]> {
+  const channelIds = channelIdMap(channels);
+  const programs: EpgProgram[] = [];
+  const perChannel = new Map<string, number>();
+  const programmePattern = /<programme\b([^>]*)>([\s\S]*?)<\/programme>/gi;
+  // The UI only needs current/next. Ignore stale multi-day history and remote
+  // future schedules before extracting title/description to keep memory bounded.
+  const windowStart = nowMs - 2 * 60 * 60 * 1000;
+  const windowEnd = nowMs + 18 * 60 * 60 * 1000;
+  let match: RegExpExecArray | null;
+  let scanned = 0;
+
+  while ((match = programmePattern.exec(content))) {
+    const attributes = parseAttributes(match[1]);
+    const channelId = channelIds.get(decodeEpgText(attributes.channel || ""));
+    if (channelId) {
+      const start = parseXmlDate(attributes.start || "");
+      const end = parseXmlDate(attributes.stop || "");
+      const count = perChannel.get(channelId) ?? 0;
+      if (
+        Number.isFinite(start) &&
+        Number.isFinite(end) &&
+        end >= windowStart &&
+        start <= windowEnd &&
+        count < 6
+      ) {
+        const title = stripTags(match[2].match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || "Untitled program");
+        const description = stripTags(match[2].match(/<desc[^>]*>([\s\S]*?)<\/desc>/i)?.[1] || "");
+        programs.push({
+          id: `${channelId}:${start}:${title}`,
+          channelId,
+          title,
+          description: description || undefined,
+          start,
+          end,
+        });
+        perChannel.set(channelId, count + 1);
+      }
+    }
+
+    scanned += 1;
+    if (scanned % 120 === 0) await yieldToUi();
+  }
+
+  await yieldToUi();
   return programs.sort((a, b) => a.start - b.start);
 }
 
 export async function loadEpg(provider: Provider, channels: Channel[]): Promise<EpgProgram[]> {
   if (provider.epgUrl) {
-    const response = await fetch(provider.epgUrl, { headers: { Accept: "application/xml,text/xml,*/*" } });
+    const response = await fetch(provider.epgUrl, {
+      headers: { Accept: "application/xml,text/xml,*/*" },
+      signal: AbortSignal.timeout(30_000),
+    });
     if (!response.ok) throw new Error(`EPG request failed with ${response.status}.`);
-    return parseXmltv(await decodeResponseText(response), channels);
+    return parseXmltvAsync(await decodeResponseText(response), channels);
   }
 
   if (provider.type === "xtream" && provider.username && provider.password) {
@@ -518,7 +651,9 @@ export async function loadEpg(provider: Provider, channels: Channel[]): Promise<
         const streamId = channel.id.split(":").pop();
         if (!streamId) return [] as EpgProgram[];
         try {
-          const response = await fetch(`${baseUrl}/player_api.php?${query}&action=get_short_epg&stream_id=${encodeURIComponent(streamId)}&limit=8`);
+          const response = await fetch(`${baseUrl}/player_api.php?${query}&action=get_short_epg&stream_id=${encodeURIComponent(streamId)}&limit=8`, {
+            signal: AbortSignal.timeout(12_000),
+          });
           if (!response.ok) return [] as EpgProgram[];
           const data = await asJson(response);
           const rows = Array.isArray(data?.epg_listings) ? data.epg_listings : [];
