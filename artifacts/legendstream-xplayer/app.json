@@ -33,12 +33,19 @@
           "android": {
             "minSdkVersion": 24,
             "usesCleartextTraffic": true,
+            "buildArchs": [
+              "arm64-v8a",
+              "armeabi-v7a"
+            ],
+            "enableMinifyInReleaseBuilds": true,
+            "enableShrinkResourcesInReleaseBuilds": true,
             "useLegacyPackaging": true,
             "packagingOptions": {
               "pickFirst": [
                 "**/libc++_shared.so"
               ]
-            }
+            },
+            "extraProguardRules": "-keep class com.brentvatne.react.** { *; }\n-keep class com.reactnativevlc.** { *; }\n-keep class com.vlcplayer.** { *; }\n-keep class org.videolan.** { *; }\n-keep class com.legendstream.xplayer.** { *; }\n-keepclasseswithmembers class * { native <methods>; }\n-keepclassmembers class * { native <methods>; }\n"
           }
         }
       ],
@@ -49,6 +56,7 @@
         }
       ],
       "./plugins/withLegendStreamPip",
+      "./plugins/withAndroidAbiSplits",
       "expo-font",
       "expo-web-browser"
     ],
