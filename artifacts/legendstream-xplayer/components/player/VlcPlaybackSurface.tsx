@@ -113,7 +113,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   {
     uri,
     paused,
-    fit,
+    fit = "fit",
     codecMode,
     audioTrack,
     textTrack,
