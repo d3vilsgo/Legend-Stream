@@ -1,0 +1,157 @@
+name: Final arm64 main test
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/final-arm64-main-test.yml"
+
+concurrency:
+  group: final-arm64-main-test-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout exact main source
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/share/swift /opt/hostedtoolcache/CodeQL || true
+          docker system prune -af --volumes || true
+          df -h /
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install mobile dependencies
+        shell: bash
+        run: pnpm --filter @workspace/legendstream-xplayer... install --no-frozen-lockfile
+
+      - name: Verify final main feature markers
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'Şu an:' artifacts/legendstream-xplayer/components/OptimizedHomeScreenV6.tsx
+          grep -q 'Şimdi:' artifacts/legendstream-xplayer/components/player/PlayerChrome.tsx
+          grep -q 'Sıradaki:' artifacts/legendstream-xplayer/components/player/PlayerChrome.tsx
+          grep -q 'decodeBase64Utf8' artifacts/legendstream-xplayer/context/PlayerContext.tsx
+          grep -q 'xmltv.php?username=' artifacts/legendstream-xplayer/context/PlayerContext.tsx
+          grep -q 'EPG is presentation-only while playback is active' artifacts/legendstream-xplayer/components/CompatibilityVideoPlayerV2.tsx
+          if grep -q 'EPG_CLOCK_INTERVAL_MS' artifacts/legendstream-xplayer/components/CompatibilityVideoPlayerV2.tsx; then
+            echo '::error::Player-side EPG interval regression is present'
+            exit 1
+          fi
+          if grep -q 'void refreshEpg(provider.id, currentLive.id)' artifacts/legendstream-xplayer/components/CompatibilityVideoPlayerV2.tsx; then
+            echo '::error::Player-side EPG network refresh regression is present'
+            exit 1
+          fi
+
+      - name: Patch VLC for Android compatibility and runtime metrics
+        shell: bash
+        run: |
+          set -euo pipefail
+          VLC_DIR="$(cd artifacts/legendstream-xplayer && node -p "require('path').dirname(require.resolve('react-native-vlc-media-player/package.json'))")"
+          python3 artifacts/legendstream-xplayer/scripts/patch-vlc-android.py "$VLC_DIR"
+          python3 artifacts/legendstream-xplayer/scripts/patch-vlc-progress-metrics.py "$VLC_DIR"
+
+      - name: Generate Android project
+        working-directory: artifacts/legendstream-xplayer
+        env:
+          EXPO_NO_DOCTOR: "1"
+          NODE_ENV: production
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm exec expo prebuild --platform android --clean --no-install
+          sed -n '/@legendstream abi-splits:start/,/@legendstream abi-splits:end/p' android/app/build.gradle
+
+      - name: Build arm64-v8a release APK only
+        working-directory: artifacts/legendstream-xplayer/android
+        env:
+          NODE_ENV: production
+          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
+        shell: bash
+        run: |
+          set -o pipefail
+          ./gradlew assembleRelease -PabiSplit -PabiOnly=arm64-v8a \
+            --no-daemon \
+            --no-build-cache \
+            --max-workers=2 \
+            --console=plain \
+            --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/arm64-release-build.log"
+
+      - name: Verify and stage arm64 APK
+        id: package_arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_DIR="artifacts/legendstream-xplayer/android/app/build/outputs/apk/release"
+          STAGE_DIR="$GITHUB_WORKSPACE/release-staging"
+          mkdir -p "$STAGE_DIR"
+          find "$APK_DIR" -type f -name '*.apk' -printf '%p %s bytes\n' | sort
+          mapfile -t APKS < <(find "$APK_DIR" -type f -name '*.apk' | sort)
+          if [ "${#APKS[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one arm64 APK, found ${#APKS[@]}"
+            printf '%s\n' "${APKS[@]:-<none>}"
+            exit 1
+          fi
+          APK="${APKS[0]}"
+          unzip -Z1 "$APK" | grep -q '^lib/arm64-v8a/'
+          if unzip -Z1 "$APK" | grep -Eq '^lib/(armeabi-v7a|x86|x86_64)/'; then
+            echo "::error::Unexpected non-arm64 native ABI in $APK"
+            unzip -Z1 "$APK" | grep '^lib/' | head -n 100 || true
+            exit 1
+          fi
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          CODE="$($AAPT dump badging "$APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
+          APP_VERSION="$(node -p "require('./artifacts/legendstream-xplayer/app.json').expo.version")"
+          NAME="LegendStream-XPlayer-v${APP_VERSION}-arm64-v8a.apk"
+          cp "$APK" "$STAGE_DIR/$NAME"
+          BYTES="$(stat -c%s "$STAGE_DIR/$NAME")"
+          echo "arm64-v8a versionCode=$CODE"
+          echo "arm64 APK bytes=$BYTES"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "arm64_bytes=$BYTES" >> "$GITHUB_OUTPUT"
+
+      - name: Upload arm64 APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LegendStream-XPlayer-v${{ steps.package_arm64.outputs.app_version }}-arm64-v8a-final-main
+          path: release-staging/*-arm64-v8a.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LegendStream-XPlayer-Final-arm64-Build-Log
+          path: arm64-release-build.log
+          if-no-files-found: ignore
+          retention-days: 7
