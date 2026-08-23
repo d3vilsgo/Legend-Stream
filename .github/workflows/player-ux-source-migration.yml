@@ -1,14 +1,14 @@
-name: Player UX Source Migration
+name: Player UX Source Verification
 
 on:
   pull_request:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  apply:
+  verify:
     if: github.head_ref == 'feat/player-adaptive-ux'
     runs-on: ubuntu-latest
     steps:
@@ -16,11 +16,7 @@ jobs:
         with:
           ref: ${{ github.head_ref }}
           fetch-depth: 1
-      - name: Apply player UX source migration
-        run: |
-          python3 artifacts/legendstream-xplayer/scripts/apply-player-ux.py
-          python3 artifacts/legendstream-xplayer/scripts/fix-player-chrome-migration.py
-      - name: Enforce source-aspect FIT behavior
+      - name: Verify source-aspect FIT behavior
         shell: bash
         run: |
           python3 - <<'PY'
@@ -30,24 +26,13 @@ jobs:
           compatibility = root / 'components' / 'CompatibilityVideoPlayerV2.tsx'
           surface = root / 'components' / 'player' / 'VlcPlaybackSurface.tsx'
 
-          text = compatibility.read_text(encoding='utf-8')
-          old = '  const [fit, setFit] = useState<PlayerFitMode>("full");'
-          new = '  const [fit, setFit] = useState<PlayerFitMode>("fit");'
-          if old in text:
-              text = text.replace(old, new, 1)
-          elif new not in text:
-              raise SystemExit('Player fit state default anchor not found')
-          compatibility.write_text(text, encoding='utf-8')
+          compatibility_text = compatibility.read_text(encoding='utf-8')
+          if 'const [fit, setFit] = useState<PlayerFitMode>("fit")' not in compatibility_text:
+              raise SystemExit('Player must default to FIT')
 
           text = surface.read_text(encoding='utf-8')
-          old = '    fit,\n    codecMode,'
-          new = '    fit = "fit",\n    codecMode,'
-          if old in text:
-              text = text.replace(old, new, 1)
-          elif new not in text:
-              raise SystemExit('VLC fit prop default anchor not found')
-
           required = [
+              'fit = "fit"',
               'autoAspectRatio={false}',
               'setSourceVideoSize',
               'containedFrame(',
@@ -58,15 +43,6 @@ jobs:
                   raise SystemExit(f'Source-aspect FIT anchor missing: {anchor}')
           if 'resizeMode="contain"' in text:
               raise SystemExit('Unsupported Android resizeMode must not be used as FIT enforcement')
-          surface.write_text(text, encoding='utf-8')
+          if text.count('const PLAYER_KEEP_AWAKE_TAG = "legendstream-active-playback";') != 1:
+              raise SystemExit('PLAYER_KEEP_AWAKE_TAG must be declared exactly once')
           PY
-      - name: Commit generated source edits
-        shell: bash
-        run: |
-          if ! git diff --quiet; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add artifacts/legendstream-xplayer
-            git commit -m "fix(player): keep source-aspect FIT behavior"
-            git push origin HEAD:${{ github.head_ref }}
-          fi
