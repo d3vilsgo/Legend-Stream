@@ -12,6 +12,10 @@ on:
       - "pnpm-lock.yaml"
       - ".github/workflows/android-apk.yml"
 
+permissions:
+  contents: read
+  issues: write
+
 concurrency:
   group: android-apk-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
@@ -204,12 +208,28 @@ jobs:
           fi
 
       - name: Upload arm64 APK artifact
+        id: upload_arm64
         uses: actions/upload-artifact@v4
         with:
           name: LegendStream-XPlayer-v${{ steps.package_android.outputs.app_version }}-arm64-v8a
           path: release-staging/*-arm64-v8a.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish arm64 artifact handoff
+        if: steps.mode.outputs.full_release != 'true'
+        uses: actions/github-script@v7
+        env:
+          ARTIFACT_URL: ${{ steps.upload_arm64.outputs.artifact-url }}
+          ARM64_BYTES: ${{ steps.package_android.outputs.arm64_bytes }}
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 12,
+              body: `ARM64_APK_READY\nrun_id=${context.runId}\nsha=${context.sha}\nbytes=${process.env.ARM64_BYTES}\nartifact=${process.env.ARTIFACT_URL}`,
+            });
 
       - name: Upload armeabi-v7a APK artifact
         if: steps.mode.outputs.full_release == 'true'
