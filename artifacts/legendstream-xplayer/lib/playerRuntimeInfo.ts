@@ -1,6 +1,7 @@
 export type PlayerRuntimeInfo = Readonly<{
   resolution?: string;
   fps?: number;
+  codec?: string;
 }>;
 
 let snapshot: PlayerRuntimeInfo = {};
@@ -18,7 +19,11 @@ export function subscribePlayerRuntimeInfo(listener: () => void) {
 }
 
 const publish = (next: PlayerRuntimeInfo) => {
-  if (snapshot.resolution === next.resolution && snapshot.fps === next.fps) return;
+  if (
+    snapshot.resolution === next.resolution &&
+    snapshot.fps === next.fps &&
+    snapshot.codec === next.codec
+  ) return;
   snapshot = next;
   for (const listener of listeners) listener();
 };
