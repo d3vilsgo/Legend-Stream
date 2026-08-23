@@ -1,8 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import React, { useState, useSyncExternalStore } from "react";
 import {
-  Animated,
   LayoutChangeEvent,
   Pressable,
   StyleSheet,
@@ -84,10 +83,7 @@ const formatFps = (fps: number) => {
 };
 
 const formatClock = (timestamp: number) =>
-  new Date(timestamp).toLocaleTimeString("tr-TR", {
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  new Date(timestamp).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
 
 const formatRemaining = (end: number) => {
   const minutes = Math.max(0, Math.ceil((end - Date.now()) / 60_000));
@@ -96,18 +92,6 @@ const formatRemaining = (end: number) => {
 
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
-
-function useFade(visible: boolean) {
-  const opacity = useRef(new Animated.Value(visible ? 1 : 0)).current;
-  useEffect(() => {
-    Animated.timing(opacity, {
-      toValue: visible ? 1 : 0,
-      duration: visible ? 170 : 260,
-      useNativeDriver: true,
-    }).start();
-  }, [opacity, visible]);
-  return opacity;
-}
 
 export function PlayerChrome(props: Props) {
   const { width, height } = useWindowDimensions();
@@ -125,13 +109,9 @@ export function PlayerChrome(props: Props) {
     streamCodec: codecOverride,
     epgNow,
     epgNext,
-    epgLoading: _epgLoading,
+    epgLoading,
     ...chrome
   } = props;
-
-  const controlsOpacity = useFade(chrome.controlsVisible);
-  const infoOpacity = useFade(chrome.infoVisible);
-  const shadeOpacity = useFade(chrome.controlsVisible || chrome.infoVisible);
 
   const resolution = resolutionOverride ?? runtime.resolution;
   const fps = fpsOverride ?? runtime.fps;
@@ -141,9 +121,7 @@ export function PlayerChrome(props: Props) {
     streamCodec,
     fps ? `${formatFps(fps)} FPS` : undefined,
   ].filter(Boolean);
-  const technicalLabel = technicalParts.length
-    ? technicalParts.join(" · ")
-    : undefined;
+  const technicalLabel = technicalParts.length ? technicalParts.join(" · ") : undefined;
 
   const progress = chrome.duration > 0
     ? Math.max(0, Math.min(1, chrome.position / chrome.duration))
@@ -151,15 +129,13 @@ export function PlayerChrome(props: Props) {
   const showCenter = chrome.controlsVisible && !chrome.panel;
 
   const actions: Action[] = [
-    ...(chrome.selectableItems.length
-      ? [{
-          key: "list",
-          label: chrome.mediaKind === "live" ? "Kanallar" : "Liste",
-          icon: "list" as FeatherName,
-          active: chrome.panel === "content",
-          onPress: () => chrome.onTogglePanel("content"),
-        }]
-      : []),
+    ...(chrome.selectableItems.length ? [{
+      key: "list",
+      label: chrome.mediaKind === "live" ? "Kanallar" : "Liste",
+      icon: "list" as FeatherName,
+      active: chrome.panel === "content",
+      onPress: () => chrome.onTogglePanel("content"),
+    }] : []),
     {
       key: "fit",
       label: `Görüntü ${fitLabel(chrome.fitMode)}`,
@@ -174,14 +150,12 @@ export function PlayerChrome(props: Props) {
       icon: "rotate-cw",
       onPress: chrome.onRotate,
     },
-    ...(chrome.pipSupported
-      ? [{
-          key: "pip",
-          label: "Picture in Picture",
-          glyph: "PiP",
-          onPress: chrome.onEnterPip,
-        }]
-      : []),
+    ...(chrome.pipSupported ? [{
+      key: "pip",
+      label: "Picture in Picture",
+      glyph: "PiP",
+      onPress: chrome.onEnterPip,
+    }] : []),
     {
       key: "cc",
       label: "Altyazı",
@@ -205,432 +179,208 @@ export function PlayerChrome(props: Props) {
       active: chrome.panel === "codec",
       onPress: () => chrome.onTogglePanel("codec"),
     },
-    ...(chrome.allowDownload
-      ? [{
-          key: "download",
-          label: chrome.downloadState === "done" ? "İndirildi" : "İndir",
-          icon: (chrome.downloadState === "done"
-            ? "check-circle"
-            : chrome.downloadState === "error"
-              ? "alert-circle"
-              : "download") as FeatherName,
-          active: chrome.downloadState === "done",
-          onPress: chrome.onDownload,
-        }]
-      : []),
+    ...(chrome.allowDownload ? [{
+      key: "download",
+      label: chrome.downloadState === "done" ? "İndirildi" : "İndir",
+      icon: (chrome.downloadState === "done"
+        ? "check-circle"
+        : chrome.downloadState === "error"
+          ? "alert-circle"
+          : "download") as FeatherName,
+      active: chrome.downloadState === "done",
+      onPress: chrome.onDownload,
+    }] : []),
   ];
 
   const gap = portrait ? 2 : 5;
   const outerPadding = portrait ? 8 : 20;
   const safeHorizontal = insets.left + insets.right;
-  const availableWidth = Math.max(
-    1,
-    width - safeHorizontal - outerPadding * 2 - 8,
-  );
+  const dockInnerPadding = 12;
+  const availableWidth = Math.max(1, width - safeHorizontal - outerPadding * 2 - dockInnerPadding);
   const buttonSize = clamp(
-    Math.floor(
-      (availableWidth - gap * Math.max(0, actions.length - 1)) /
-        Math.max(1, actions.length),
-    ),
+    Math.floor((availableWidth - gap * Math.max(0, actions.length - 1)) / Math.max(1, actions.length)),
     30,
     portrait ? 46 : 54,
   );
   const iconSize = clamp(Math.round(buttonSize * 0.46), 15, 24);
+  const dockHeight = buttonSize + (portrait ? 12 : 16);
   const progressScale = clamp(width / (portrait ? 390 : 840), 0.82, 1.2);
   const timeWidth = clamp(Math.round(54 * progressScale), 44, 64);
   const timeFontSize = clamp(Math.round(11 * progressScale), 9, 13);
-  const topInset = Math.max(insets.top, portrait ? 10 : 12);
-  const infoLeft = Math.max(insets.left + (portrait ? 70 : 82), portrait ? 70 : 86);
-  const infoMaxWidth = portrait
-    ? Math.max(180, width - infoLeft - Math.max(insets.right + 12, 12))
-    : Math.min(Math.max(320, width * 0.56), 680);
 
   return (
     <>
       <PlayerChromeV2 {...chrome} controlsVisible={false} infoVisible={false} />
 
-      <Animated.View
-        pointerEvents="none"
-        style={[StyleSheet.absoluteFillObject, { opacity: shadeOpacity }]}
-      >
-        <LinearGradient
-          colors={["rgba(0,0,0,.68)", "rgba(0,0,0,.34)", "rgba(0,0,0,0)"]}
-          locations={[0, 0.48, 1]}
-          style={styles.topGradient}
-        />
-        <LinearGradient
-          colors={["rgba(0,0,0,0)", "rgba(0,0,0,.34)", "rgba(0,0,0,.74)"]}
-          locations={[0, 0.48, 1]}
-          style={styles.bottomGradient}
-        />
-      </Animated.View>
-
-      <Animated.View
-        pointerEvents="none"
-        style={[
-          styles.info,
-          portrait ? styles.infoPortrait : styles.infoLandscape,
-          {
-            top: topInset,
-            left: infoLeft,
-            maxWidth: infoMaxWidth,
-            opacity: infoOpacity,
-          },
-        ]}
-      >
+      {chrome.infoVisible ? (
         <InfoCard
           portrait={portrait}
           title={chrome.title}
           meta={chrome.meta}
           live={chrome.mediaKind === "live"}
           tech={technicalLabel}
+          fit={chrome.fitMode}
+          codec={chrome.codecMode}
           epgNow={epgNow}
           epgNext={epgNext}
+          epgLoading={epgLoading}
         />
-      </Animated.View>
+      ) : null}
 
-      <Animated.View
-        pointerEvents={chrome.controlsVisible ? "box-none" : "none"}
-        style={[StyleSheet.absoluteFillObject, { opacity: controlsOpacity }]}
-      >
-        {chrome.canExit ? (
+      {chrome.controlsVisible && chrome.canExit ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Oynatıcıdan çık"
+          onPress={chrome.onExit}
+          style={({ pressed }) => [
+            styles.back,
+            portrait ? styles.backPortrait : styles.backLandscape,
+            pressed && styles.pressed,
+          ]}
+          hitSlop={10}
+        >
+          <Feather name="arrow-left" size={portrait ? 24 : 27} color="#fff" />
+        </Pressable>
+      ) : null}
+
+      {showCenter ? (
+        <View
+          style={[styles.center, portrait ? styles.centerPortrait : styles.centerLandscape]}
+          pointerEvents="box-none"
+        >
+          {chrome.mediaKind !== "live" ? (
+            <RoundButton compact={portrait} icon="rotate-ccw" badge="10" label="10 saniye geri" onPress={() => chrome.onSeekBy(-10)} />
+          ) : chrome.canNavigate ? (
+            <RoundButton compact={portrait} icon="skip-back" label="Önceki kanal" onPress={() => chrome.onMoveRelative(-1)} />
+          ) : null}
+
           <Pressable
             accessibilityRole="button"
-            accessibilityLabel="Oynatıcıdan çık"
-            onPress={chrome.onExit}
-            style={({ pressed }) => [
-              styles.back,
-              {
-                left: Math.max(insets.left + 12, 16),
-                top: topInset + 1,
-              },
-              portrait ? styles.backPortrait : styles.backLandscape,
-              pressed && styles.pressed,
-            ]}
-            hitSlop={10}
+            accessibilityLabel={chrome.paused ? "Oynat" : "Duraklat"}
+            onPress={chrome.onTogglePause}
+            style={({ pressed }) => [styles.playShell, portrait && styles.playShellPortrait, pressed && styles.pressed]}
           >
-            <Feather
-              name="arrow-left"
-              size={portrait ? 23 : 26}
-              color="#fff"
-            />
+            <LinearGradient colors={["#c7fbff", "#22d3ee", "#0ea5e9"]} style={styles.playInner}>
+              <Feather name={chrome.paused ? "play" : "pause"} size={portrait ? 31 : 36} color="#02131b" />
+            </LinearGradient>
           </Pressable>
-        ) : null}
 
-        {!portrait ? (
-          <View
-            style={[
-              styles.modeCluster,
-              {
-                top: topInset + 3,
-                right: Math.max(insets.right + 18, 20),
-              },
-            ]}
-          >
-            <ModeChip
-              icon="maximize-2"
-              text={fitLabel(chrome.fitMode)}
-              onPress={chrome.onCycleFit}
-            />
-            <ModeChip
-              icon="cpu"
-              text={playerCodecLabel(chrome.codecMode)}
-              accent
-              onPress={() => chrome.onTogglePanel("codec")}
-            />
-          </View>
-        ) : null}
+          {chrome.mediaKind !== "live" ? (
+            <RoundButton compact={portrait} icon="rotate-cw" badge="15" label="15 saniye ileri" onPress={() => chrome.onSeekBy(15)} />
+          ) : chrome.canNavigate ? (
+            <RoundButton compact={portrait} icon="skip-forward" label="Sonraki kanal" onPress={() => chrome.onMoveRelative(1)} />
+          ) : null}
+        </View>
+      ) : null}
 
-        {showCenter ? (
-          <View
-            style={[
-              styles.center,
-              portrait ? styles.centerPortrait : styles.centerLandscape,
-            ]}
-            pointerEvents="box-none"
-          >
-            {chrome.mediaKind !== "live" ? (
-              <RoundButton
-                compact={portrait}
-                icon="rotate-ccw"
-                badge="10"
-                label="10 saniye geri"
-                onPress={() => chrome.onSeekBy(-10)}
-              />
-            ) : chrome.canNavigate ? (
-              <RoundButton
-                compact={portrait}
-                icon="skip-back"
-                label="Önceki kanal"
-                onPress={() => chrome.onMoveRelative(-1)}
-              />
-            ) : null}
-
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={chrome.paused ? "Oynat" : "Duraklat"}
-              onPress={chrome.onTogglePause}
-              style={({ pressed }) => [
-                styles.playShell,
-                portrait && styles.playShellPortrait,
-                pressed && styles.pressed,
-              ]}
-            >
-              <LinearGradient
-                colors={["#c7fbff", "#22d3ee", "#0ea5e9"]}
-                style={styles.playInner}
+      {chrome.controlsVisible && !chrome.panel ? (
+        <View
+          style={[
+            styles.bottom,
+            portrait ? styles.bottomPortrait : styles.bottomLandscape,
+            {
+              bottom: Math.max(insets.bottom, portrait ? 8 : 12),
+              paddingLeft: Math.max(outerPadding, insets.left + 8),
+              paddingRight: Math.max(outerPadding, insets.right + 8),
+            },
+          ]}
+          pointerEvents="box-none"
+        >
+          {chrome.mediaKind !== "live" ? (
+            <View style={[styles.seekRow, { height: Math.round(32 * progressScale), gap: Math.max(5, Math.round(8 * progressScale)) }]}>
+              <Text style={[styles.time, { width: timeWidth, fontSize: timeFontSize }]}>{formatTime(chrome.position)}</Text>
+              <Pressable
+                onLayout={(event: LayoutChangeEvent) => setSeekWidth(Math.max(1, event.nativeEvent.layout.width))}
+                onPress={(event) => chrome.onSeekRatio(Math.max(0, Math.min(1, event.nativeEvent.locationX / seekWidth)))}
+                style={styles.seekTouch}
+                hitSlop={{ top: 12, bottom: 12, left: 0, right: 0 }}
               >
-                <Feather
-                  name={chrome.paused ? "play" : "pause"}
-                  size={portrait ? 31 : 36}
-                  color="#02131b"
-                />
-              </LinearGradient>
-            </Pressable>
+                <View style={styles.seekTrack}>
+                  <View style={[styles.seekFill, { width: `${progress * 100}%` }]} />
+                  <View style={[styles.seekThumb, { left: `${progress * 100}%` }]} />
+                </View>
+              </Pressable>
+              <Text style={[styles.time, styles.timeRight, { width: timeWidth, fontSize: timeFontSize }]}>{formatTime(chrome.duration)}</Text>
+            </View>
+          ) : null}
 
-            {chrome.mediaKind !== "live" ? (
-              <RoundButton
-                compact={portrait}
-                icon="rotate-cw"
-                badge="15"
-                label="15 saniye ileri"
-                onPress={() => chrome.onSeekBy(15)}
-              />
-            ) : chrome.canNavigate ? (
-              <RoundButton
-                compact={portrait}
-                icon="skip-forward"
-                label="Sonraki kanal"
-                onPress={() => chrome.onMoveRelative(1)}
-              />
-            ) : null}
-          </View>
-        ) : null}
-
-        {!chrome.panel ? (
-          <View
-            style={[
-              styles.bottom,
-              {
-                bottom: Math.max(insets.bottom, portrait ? 8 : 12),
-                paddingLeft: Math.max(outerPadding, insets.left + 8),
-                paddingRight: Math.max(outerPadding, insets.right + 8),
-              },
-            ]}
-            pointerEvents="box-none"
-          >
-            {chrome.mediaKind !== "live" ? (
-              <View
-                style={[
-                  styles.seekRow,
-                  {
-                    height: Math.round(32 * progressScale),
-                    gap: Math.max(5, Math.round(8 * progressScale)),
-                  },
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.time,
-                    { width: timeWidth, fontSize: timeFontSize },
-                  ]}
-                >
-                  {formatTime(chrome.position)}
-                </Text>
-                <Pressable
-                  onLayout={(event: LayoutChangeEvent) =>
-                    setSeekWidth(Math.max(1, event.nativeEvent.layout.width))
-                  }
-                  onPress={(event) =>
-                    chrome.onSeekRatio(
-                      Math.max(
-                        0,
-                        Math.min(1, event.nativeEvent.locationX / seekWidth),
-                      ),
-                    )
-                  }
-                  style={styles.seekTouch}
-                  hitSlop={{ top: 12, bottom: 12, left: 0, right: 0 }}
-                >
-                  <View style={styles.seekTrack}>
-                    <View
-                      style={[styles.seekFill, { width: `${progress * 100}%` }]}
-                    />
-                    <View
-                      style={[styles.seekThumb, { left: `${progress * 100}%` }]}
-                    />
-                  </View>
-                </Pressable>
-                <Text
-                  style={[
-                    styles.time,
-                    styles.timeRight,
-                    { width: timeWidth, fontSize: timeFontSize },
-                  ]}
-                >
-                  {formatTime(chrome.duration)}
-                </Text>
-              </View>
-            ) : null}
-
-            <View style={[styles.dockRow, { gap }]}> 
+          <View style={[styles.dockShell, { minHeight: dockHeight }]}>
+            <LinearGradient pointerEvents="none" colors={["rgba(13,23,34,.97)", "rgba(4,9,15,.97)"]} style={StyleSheet.absoluteFillObject} />
+            <View style={styles.dockGlow} />
+            <View style={[styles.dockRow, { gap }]}>
               {actions.map((action) => (
-                <AdaptiveDockButton
-                  key={action.key}
-                  action={action}
-                  size={buttonSize}
-                  iconSize={iconSize}
-                />
+                <AdaptiveDockButton key={action.key} action={action} size={buttonSize} iconSize={iconSize} />
               ))}
             </View>
           </View>
-        ) : null}
-      </Animated.View>
+        </View>
+      ) : null}
     </>
   );
 }
 
-function InfoCard({
-  portrait,
-  title,
-  meta,
-  live,
-  tech,
-  epgNow,
-  epgNext,
-}: {
+function InfoCard({ portrait, title, meta, live, tech, fit, codec, epgNow, epgNext, epgLoading }: {
   portrait: boolean;
   title: string;
   meta?: string;
   live: boolean;
   tech?: string;
+  fit: PlayerFitMode;
+  codec: Props["codecMode"];
   epgNow?: PlayerProgramInfo;
   epgNext?: PlayerProgramInfo;
+  epgLoading?: boolean;
 }) {
   return (
-    <View pointerEvents="none" style={styles.infoMain}>
-      <View style={styles.titleRow}>
+    <View pointerEvents="none" style={[styles.info, portrait ? styles.infoPortrait : styles.infoLandscape]}>
+      <LinearGradient colors={["rgba(5,14,23,.97)", "rgba(5,12,20,.88)"]} style={StyleSheet.absoluteFillObject} />
+      <View style={styles.infoRail} />
+      <View style={styles.infoMain}>
+        <View style={styles.titleRow}>
+          {live ? <View style={styles.livePill}><View style={styles.liveDot} /><Text style={styles.liveText}>CANLI</Text></View> : null}
+          <Text numberOfLines={1} style={[styles.title, portrait && styles.titlePortrait]}>{title}</Text>
+        </View>
         {live ? (
-          <View style={styles.livePill}>
-            <View style={styles.liveDot} />
-            <Text style={styles.liveText}>CANLI</Text>
+          <View style={styles.epgBlock}>
+            {epgLoading && !epgNow ? (
+              <Text numberOfLines={1} style={styles.epgMuted}>Program bilgisi yükleniyor…</Text>
+            ) : epgNow ? (
+              <>
+                <Text numberOfLines={1} style={styles.epgNow}>Şimdi: {epgNow.title} · {formatClock(epgNow.end)} · {formatRemaining(epgNow.end)}</Text>
+                {epgNext ? <Text numberOfLines={1} style={styles.epgNext}>Sıradaki: {epgNext.title} · {formatClock(epgNext.start)}</Text> : null}
+              </>
+            ) : (
+              <Text numberOfLines={1} style={styles.epgMuted}>Program bilgisi yok</Text>
+            )}
           </View>
         ) : null}
-        <Text
-          numberOfLines={1}
-          style={[styles.title, portrait && styles.titlePortrait]}
-        >
-          {title}
-        </Text>
-      </View>
-
-      {live && epgNow ? (
-        <View style={styles.epgBlock}>
-          <Text numberOfLines={1} style={styles.epgNow}>
-            Şimdi: {epgNow.title} · {formatRemaining(epgNow.end)}
-          </Text>
-          {epgNext ? (
-            <Text numberOfLines={1} style={styles.epgNext}>
-              Sıradaki: {epgNext.title} · {formatClock(epgNext.start)}
-            </Text>
-          ) : null}
-        </View>
-      ) : null}
-
-      {(meta || tech) ? (
         <View style={styles.metaRow}>
-          {meta ? (
-            <Text numberOfLines={1} style={styles.meta}>
-              {meta}
-            </Text>
-          ) : null}
-          {tech ? (
-            <View style={styles.techPill}>
-              <Feather name="monitor" size={10} color="#a5f3fc" />
-              <Text numberOfLines={1} style={styles.techText}>
-                {tech}
-              </Text>
-            </View>
-          ) : null}
+          {meta ? <Text numberOfLines={1} style={styles.meta}>{meta}</Text> : null}
+          <View style={[styles.techPill, !tech && styles.techPillMuted]}>
+            <Feather name="monitor" size={11} color={tech ? "#67e8f9" : "#64748b"} />
+            <Text numberOfLines={1} style={tech ? styles.techText : styles.techMutedText}>{tech ?? "Akış bilgisi bekleniyor"}</Text>
+          </View>
+        </View>
+      </View>
+      {!portrait ? (
+        <View style={styles.modeCluster}>
+          <ModeChip icon="maximize-2" text={fitLabel(fit)} />
+          <ModeChip icon="cpu" text={playerCodecLabel(codec)} accent />
         </View>
       ) : null}
     </View>
   );
 }
 
-function ModeChip({
-  icon,
-  text,
-  accent,
-  onPress,
-}: {
-  icon: FeatherName;
-  text: string;
-  accent?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={text}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.modeChip,
-        accent && styles.modeChipAccent,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Feather
-        name={icon}
-        size={11}
-        color={accent ? "#67e8f9" : "#e2e8f0"}
-      />
-      <Text style={[styles.modeText, accent && styles.modeTextAccent]}>
-        {text}
-      </Text>
-    </Pressable>
-  );
+function ModeChip({ icon, text, accent }: { icon: FeatherName; text: string; accent?: boolean }) {
+  return <View style={[styles.modeChip, accent && styles.modeChipAccent]}><Feather name={icon} size={11} color={accent ? "#67e8f9" : "#cbd5e1"} /><Text style={[styles.modeText, accent && styles.modeTextAccent]}>{text}</Text></View>;
 }
 
-function RoundButton({
-  icon,
-  badge,
-  compact,
-  label,
-  onPress,
-}: {
-  icon: FeatherName;
-  badge?: string;
-  compact?: boolean;
-  label: string;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      onPress={onPress}
-      style={({ pressed }) => [
-        styles.roundButton,
-        compact && styles.roundButtonPortrait,
-        pressed && styles.pressed,
-      ]}
-    >
-      <Feather name={icon} size={compact ? 24 : 29} color="#fff" />
-      {badge ? <Text style={styles.roundBadge}>{badge}</Text> : null}
-    </Pressable>
-  );
+function RoundButton({ icon, badge, compact, label, onPress }: { icon: FeatherName; badge?: string; compact?: boolean; label: string; onPress: () => void }) {
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => [styles.roundButton, compact && styles.roundButtonPortrait, pressed && styles.pressed]}><Feather name={icon} size={compact ? 24 : 29} color="#fff" />{badge ? <Text style={styles.roundBadge}>{badge}</Text> : null}</Pressable>;
 }
 
-function AdaptiveDockButton({
-  action,
-  size,
-  iconSize,
-}: {
-  action: Action;
-  size: number;
-  iconSize: number;
-}) {
+function AdaptiveDockButton({ action, size, iconSize }: { action: Action; size: number; iconSize: number }) {
   const highlighted = Boolean(action.active || action.accent);
   return (
     <Pressable
@@ -640,385 +390,76 @@ function AdaptiveDockButton({
       hitSlop={Math.max(3, Math.ceil((44 - size) / 2))}
       style={({ pressed }) => [
         styles.dockButton,
-        {
-          width: size,
-          height: size,
-          borderRadius: Math.max(11, Math.round(size * 0.3)),
-        },
+        { width: size, height: size, borderRadius: Math.max(11, Math.round(size * 0.3)) },
         highlighted && styles.dockButtonHighlighted,
         action.active && styles.dockButtonActive,
         pressed && styles.pressed,
       ]}
     >
-      {action.icon ? (
-        <Feather
-          name={action.icon}
-          size={iconSize}
-          color={highlighted ? "#8beeff" : "#f8fafc"}
-        />
-      ) : (
-        <Text style={[styles.glyph, highlighted && styles.glyphAccent]}>
-          {action.glyph}
-        </Text>
-      )}
-      {action.badge ? (
-        <View style={styles.microBadge} pointerEvents="none">
-          <Text numberOfLines={1} style={styles.microBadgeText}>
-            {action.badge}
-          </Text>
-        </View>
-      ) : null}
+      {action.icon ? <Feather name={action.icon} size={iconSize} color={highlighted ? "#8beeff" : "#f8fafc"} /> : <Text style={[styles.glyph, highlighted && styles.glyphAccent]}>{action.glyph}</Text>}
+      {action.badge ? <View style={styles.microBadge} pointerEvents="none"><Text numberOfLines={1} style={styles.microBadgeText}>{action.badge}</Text></View> : null}
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  topGradient: {
-    position: "absolute",
-    top: 0,
-    left: 0,
-    right: 0,
-    height: "33%",
-  },
-  bottomGradient: {
-    position: "absolute",
-    bottom: 0,
-    left: 0,
-    right: 0,
-    height: "31%",
-  },
-  info: {
-    position: "absolute",
-    zIndex: 52,
-  },
-  infoLandscape: {
-    minHeight: 62,
-  },
-  infoPortrait: {
-    minHeight: 54,
-  },
-  infoMain: {
-    alignSelf: "flex-start",
-    maxWidth: "100%",
-    paddingVertical: 4,
-    paddingRight: 8,
-  },
-  titleRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-    maxWidth: "100%",
-  },
-  title: {
-    flexShrink: 1,
-    color: "#fff",
-    fontSize: 19,
-    fontWeight: "900",
-    textShadowColor: "rgba(0,0,0,.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 5,
-  },
-  titlePortrait: {
-    fontSize: 16,
-  },
-  livePill: {
-    height: 20,
-    paddingHorizontal: 7,
-    borderRadius: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    borderWidth: 1,
-    borderColor: "rgba(103,232,249,.42)",
-    backgroundColor: "rgba(8,145,178,.18)",
-  },
-  liveDot: {
-    width: 5,
-    height: 5,
-    borderRadius: 3,
-    backgroundColor: "#22d3ee",
-  },
-  liveText: {
-    color: "#c7fbff",
-    fontSize: 9,
-    fontWeight: "900",
-  },
-  epgBlock: {
-    marginTop: 3,
-    maxWidth: "100%",
-  },
-  epgNow: {
-    color: "#f1f5f9",
-    fontSize: 11,
-    fontWeight: "800",
-    textShadowColor: "rgba(0,0,0,.88)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
-  epgNext: {
-    marginTop: 1,
-    color: "#cbd5e1",
-    fontSize: 10,
-    fontWeight: "700",
-    textShadowColor: "rgba(0,0,0,.88)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
-  metaRow: {
-    marginTop: 4,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 7,
-    maxWidth: "100%",
-  },
-  meta: {
-    flexShrink: 1,
-    color: "#cbd5e1",
-    fontSize: 10,
-    fontWeight: "700",
-    textShadowColor: "rgba(0,0,0,.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
-  techPill: {
-    flexShrink: 1,
-    minHeight: 20,
-    maxWidth: "66%",
-    paddingHorizontal: 7,
-    borderRadius: 10,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 4,
-    borderWidth: 1,
-    borderColor: "rgba(103,232,249,.22)",
-    backgroundColor: "rgba(3,12,20,.34)",
-  },
-  techText: {
-    color: "#dffaff",
-    fontSize: 9,
-    fontWeight: "800",
-  },
-  modeCluster: {
-    position: "absolute",
-    zIndex: 64,
-    flexDirection: "row",
-    gap: 6,
-  },
-  modeChip: {
-    height: 30,
-    minWidth: 58,
-    paddingHorizontal: 9,
-    borderRadius: 15,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 5,
-    borderWidth: 1,
-    borderColor: "rgba(226,232,240,.24)",
-    backgroundColor: "rgba(3,10,18,.42)",
-  },
-  modeChipAccent: {
-    borderColor: "rgba(34,211,238,.34)",
-    backgroundColor: "rgba(8,145,178,.13)",
-  },
-  modeText: {
-    color: "#f1f5f9",
-    fontSize: 9,
-    fontWeight: "900",
-  },
-  modeTextAccent: {
-    color: "#a5f3fc",
-  },
-  back: {
-    position: "absolute",
-    zIndex: 65,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(3,10,18,.42)",
-    borderWidth: 1,
-    borderColor: "rgba(226,232,240,.22)",
-    elevation: 6,
-  },
-  backLandscape: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-  },
-  backPortrait: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-  },
-  center: {
-    position: "absolute",
-    zIndex: 60,
-    left: 0,
-    right: 0,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  centerLandscape: {
-    top: "50%",
-    transform: [{ translateY: -44 }],
-    gap: 54,
-  },
-  centerPortrait: {
-    top: "48%",
-    transform: [{ translateY: -38 }],
-    gap: 28,
-  },
-  roundButton: {
-    width: 62,
-    height: 62,
-    borderRadius: 31,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(3,10,18,.48)",
-    borderWidth: 1,
-    borderColor: "rgba(226,232,240,.22)",
-    elevation: 5,
-  },
-  roundButtonPortrait: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-  },
-  roundBadge: {
-    position: "absolute",
-    color: "#fff",
-    fontSize: 9,
-    fontWeight: "900",
-  },
-  playShell: {
-    width: 82,
-    height: 82,
-    borderRadius: 41,
-    padding: 5,
-    backgroundColor: "rgba(34,211,238,.14)",
-    borderWidth: 1,
-    borderColor: "rgba(103,232,249,.52)",
-    elevation: 8,
-  },
-  playShellPortrait: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-  },
-  playInner: {
-    flex: 1,
-    borderRadius: 999,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  bottom: {
-    position: "absolute",
-    zIndex: 62,
-    left: 0,
-    right: 0,
-  },
-  seekRow: {
-    width: "100%",
-    marginBottom: 5,
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  time: {
-    color: "#fff",
-    fontSize: 11,
-    fontWeight: "800",
-    fontVariant: ["tabular-nums"],
-    textShadowColor: "rgba(0,0,0,.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 4,
-  },
-  timeRight: {
-    textAlign: "right",
-  },
-  seekTouch: {
-    flex: 1,
-    height: 28,
-    justifyContent: "center",
-  },
-  seekTrack: {
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: "rgba(226,232,240,.32)",
-    overflow: "visible",
-  },
-  seekFill: {
-    position: "absolute",
-    left: 0,
-    top: 0,
-    bottom: 0,
-    borderRadius: 2,
-    backgroundColor: "#22d3ee",
-  },
-  seekThumb: {
-    position: "absolute",
-    top: -4,
-    marginLeft: -6,
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-    backgroundColor: "#67e8f9",
-    borderWidth: 2,
-    borderColor: "#e6fcff",
-  },
-  dockRow: {
-    width: "100%",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    paddingHorizontal: 4,
-    paddingVertical: 4,
-  },
-  dockButton: {
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "rgba(226,232,240,.08)",
-    backgroundColor: "rgba(3,10,18,.36)",
-  },
-  dockButtonHighlighted: {
-    borderColor: "rgba(34,211,238,.28)",
-    backgroundColor: "rgba(8,145,178,.11)",
-  },
-  dockButtonActive: {
-    borderColor: "rgba(103,232,249,.66)",
-    backgroundColor: "rgba(8,145,178,.18)",
-  },
-  glyph: {
-    color: "#fff",
-    fontSize: 15,
-    fontWeight: "900",
-  },
-  glyphAccent: {
-    color: "#8beeff",
-  },
-  microBadge: {
-    position: "absolute",
-    right: 2,
-    bottom: 2,
-    minWidth: 23,
-    maxWidth: 42,
-    height: 15,
-    paddingHorizontal: 3,
-    borderRadius: 8,
-    alignItems: "center",
-    justifyContent: "center",
-    backgroundColor: "rgba(8,47,73,.9)",
-    borderWidth: 1,
-    borderColor: "rgba(103,232,249,.5)",
-  },
-  microBadgeText: {
-    color: "#a5f3fc",
-    fontSize: 7,
-    fontWeight: "900",
-  },
-  pressed: {
-    opacity: 0.78,
-    transform: [{ scale: 0.96 }],
-  },
+  info: { position: "absolute", zIndex: 52, top: 18, overflow: "hidden", borderWidth: 1, borderColor: "rgba(71,101,124,.42)", backgroundColor: "#07101a", elevation: 8, flexDirection: "row", alignItems: "center" },
+  infoLandscape: { left: 94, right: 24, minHeight: 78, borderRadius: 18, paddingLeft: 18, paddingRight: 14 },
+  infoPortrait: { left: 72, right: 14, minHeight: 88, borderRadius: 18, paddingLeft: 14, paddingRight: 10 },
+  infoRail: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4, backgroundColor: "#22d3ee" },
+  infoMain: { flex: 1, minWidth: 0, paddingVertical: 9 },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 },
+  title: { flex: 1, color: "#f8fafc", fontSize: 18, fontWeight: "900" },
+  titlePortrait: { fontSize: 15 },
+  livePill: { height: 23, paddingHorizontal: 8, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderColor: "rgba(34,211,238,.38)", backgroundColor: "rgba(8,145,178,.16)" },
+  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#22d3ee" },
+  liveText: { color: "#8beeff", fontSize: 10, fontWeight: "900" },
+  epgBlock: { marginTop: 4, minWidth: 0 },
+  epgNow: { color: "#e2e8f0", fontSize: 11, fontWeight: "800" },
+  epgNext: { marginTop: 1, color: "#94a3b8", fontSize: 10, fontWeight: "700" },
+  epgMuted: { color: "#64748b", fontSize: 10, fontWeight: "700" },
+  metaRow: { marginTop: 5, flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 },
+  meta: { flexShrink: 1, color: "#94a3b8", fontSize: 11, fontWeight: "700" },
+  techPill: { flexShrink: 0, minHeight: 22, maxWidth: "62%", paddingHorizontal: 7, borderRadius: 11, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderColor: "rgba(103,232,249,.28)", backgroundColor: "rgba(8,145,178,.11)" },
+  techPillMuted: { borderColor: "transparent", backgroundColor: "transparent" },
+  techText: { color: "#dffaff", fontSize: 10, fontWeight: "900" },
+  techMutedText: { color: "#64748b", fontSize: 9, fontWeight: "700" },
+  modeCluster: { marginLeft: 10, flexDirection: "row", gap: 6 },
+  modeChip: { height: 29, minWidth: 62, paddingHorizontal: 9, borderRadius: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderWidth: 1, borderColor: "rgba(148,163,184,.22)", backgroundColor: "rgba(15,23,42,.66)" },
+  modeChipAccent: { borderColor: "rgba(34,211,238,.38)", backgroundColor: "rgba(8,145,178,.12)" },
+  modeText: { color: "#e2e8f0", fontSize: 10, fontWeight: "900" },
+  modeTextAccent: { color: "#8beeff" },
+  back: { position: "absolute", zIndex: 65, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(5,12,20,.88)", borderWidth: 1, borderColor: "rgba(148,163,184,.28)", elevation: 12 },
+  backLandscape: { left: 22, top: 20, width: 56, height: 56, borderRadius: 28 },
+  backPortrait: { left: 16, top: 20, width: 48, height: 48, borderRadius: 24 },
+  center: { position: "absolute", zIndex: 60, left: 0, right: 0, flexDirection: "row", alignItems: "center", justifyContent: "center" },
+  centerLandscape: { top: "50%", transform: [{ translateY: -44 }], gap: 54 },
+  centerPortrait: { top: "48%", transform: [{ translateY: -38 }], gap: 28 },
+  roundButton: { width: 66, height: 66, borderRadius: 33, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(5,12,20,.72)", borderWidth: 1, borderColor: "rgba(148,163,184,.32)", elevation: 7 },
+  roundButtonPortrait: { width: 54, height: 54, borderRadius: 27 },
+  roundBadge: { position: "absolute", color: "#fff", fontSize: 9, fontWeight: "900" },
+  playShell: { width: 86, height: 86, borderRadius: 43, padding: 5, backgroundColor: "rgba(34,211,238,.18)", borderWidth: 1, borderColor: "rgba(103,232,249,.58)", elevation: 14 },
+  playShellPortrait: { width: 74, height: 74, borderRadius: 37 },
+  playInner: { flex: 1, borderRadius: 999, alignItems: "center", justifyContent: "center" },
+  bottom: { position: "absolute", zIndex: 62, left: 0, right: 0 },
+  bottomLandscape: {},
+  bottomPortrait: {},
+  seekRow: { width: "100%", height: 32, marginBottom: 7, flexDirection: "row", alignItems: "center", gap: 8 },
+  time: { width: 54, color: "#fff", fontSize: 11, fontWeight: "800", fontVariant: ["tabular-nums"] },
+  timeRight: { textAlign: "right" },
+  seekTouch: { flex: 1, height: 28, justifyContent: "center" },
+  seekTrack: { height: 4, borderRadius: 2, backgroundColor: "rgba(226,232,240,.3)", overflow: "visible" },
+  seekFill: { position: "absolute", left: 0, top: 0, bottom: 0, borderRadius: 2, backgroundColor: "#22d3ee" },
+  seekThumb: { position: "absolute", top: -4, marginLeft: -6, width: 12, height: 12, borderRadius: 6, backgroundColor: "#67e8f9", borderWidth: 2, borderColor: "#e6fcff" },
+  dockShell: { width: "100%", alignSelf: "center", overflow: "hidden", borderRadius: 22, borderWidth: 1, borderColor: "rgba(71,101,124,.46)", backgroundColor: "#050b12", elevation: 12, justifyContent: "center" },
+  dockGlow: { position: "absolute", left: 18, right: 18, top: 0, height: 1, backgroundColor: "rgba(103,232,249,.54)" },
+  dockRow: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 6, paddingVertical: 6 },
+  dockButton: { alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "transparent", backgroundColor: "rgba(15,23,42,.5)" },
+  dockButtonHighlighted: { borderColor: "rgba(34,211,238,.3)", backgroundColor: "rgba(8,145,178,.12)" },
+  dockButtonActive: { borderColor: "rgba(103,232,249,.72)", backgroundColor: "rgba(8,145,178,.2)" },
+  glyph: { color: "#fff", fontSize: 15, fontWeight: "900" },
+  glyphAccent: { color: "#8beeff" },
+  microBadge: { position: "absolute", right: 2, bottom: 2, minWidth: 23, maxWidth: 42, height: 15, paddingHorizontal: 3, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(8,47,73,.96)", borderWidth: 1, borderColor: "rgba(103,232,249,.58)" },
+  microBadgeText: { color: "#a5f3fc", fontSize: 7, fontWeight: "900" },
+  pressed: { opacity: 0.78, transform: [{ scale: 0.96 }] },
 });
