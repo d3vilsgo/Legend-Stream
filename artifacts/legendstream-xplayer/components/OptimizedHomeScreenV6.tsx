@@ -1,6 +1,7 @@
 import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useState } from "react";
 import {
+  FlatList,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -19,7 +20,14 @@ import { DownloadsView } from "@/components/DownloadsView";
 import { ContinueWatchingView } from "@/components/ContinueWatchingView";
 import { ProviderSubscriptionChip } from "@/components/ProviderSubscriptionChip";
 import { PlayerChromeTimeoutSetting } from "@/components/PlayerChromeTimeoutSetting";
-import { Channel, ProviderConfig, ProviderType, usePlayer } from "@/context/PlayerContext";
+import {
+  Channel,
+  EpgProgram,
+  ProviderConfig,
+  ProviderType,
+  selectProgramsAt,
+  usePlayer,
+} from "@/context/PlayerContext";
 import { MediaProgress } from "@/context/MediaLibraryContext";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
@@ -61,9 +69,24 @@ export default function OptimizedHomeScreenV6() {
   const insets = useSafeAreaInsets();
   const { t } = useI18n();
   const {
-    provider, providers, channels, favorites, history, isHydrating, isLoading, error,
-    connectProvider, refreshProvider, toggleFavorite, recordWatched, setActiveProvider,
-    removeProvider, disconnectProvider, clearError,
+    provider,
+    providers,
+    channels,
+    epgByChannel,
+    favorites,
+    history,
+    isHydrating,
+    isLoading,
+    isEpgLoading,
+    error,
+    connectProvider,
+    refreshProvider,
+    toggleFavorite,
+    recordWatched,
+    setActiveProvider,
+    removeProvider,
+    disconnectProvider,
+    clearError,
   } = usePlayer();
 
   const [view, setView] = useState<ViewName>("home");
@@ -241,15 +264,24 @@ export default function OptimizedHomeScreenV6() {
       <Pressable onPress={() => { clearError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable>
     </View> : null}
 
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+    {view === "live" ? <Live
+      channels={providerChannels}
+      epgByChannel={epgByChannel}
+      favorites={favorites}
+      providerType={provider.type}
+      loading={isLoading}
+      epgLoading={isEpgLoading}
+      onRefresh={() => void refreshProvider()}
+      onOpen={openLive}
+      onFavorite={(id) => void toggleFavorite(id)}
+    /> : <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
       {view === "home" ? <Home provider={provider} providers={providers} live={providerChannels.length} vod={vodLoaded ? vod.length : null} series={seriesLoaded ? series.length : null} loading={isLoading} onRefresh={() => void refreshProvider()} onNavigate={navigate} onSwitch={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} /> : null}
-      {view === "live" ? <Live channels={providerChannels} favorites={favorites} providerType={provider.type} loading={isLoading} onRefresh={() => void refreshProvider()} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} /> : null}
       {view === "movies" ? <Movies items={vod} cats={vodCats} loading={vodLoading} loaded={vodLoaded} onRefresh={() => void loadVod(true)} onOpen={openMovie} /> : null}
       {view === "series" ? <Series items={series} cats={seriesCats} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onRefresh={() => void loadSeries(true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} /> : null}
       {view === "history" ? <HistoryView channels={providerChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
       {view === "settings" ? <Settings provider={provider} providers={providers} busy={isLoading} onEdit={() => setEditing(true)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
-    </ScrollView>
+    </ScrollView>}
   </View>;
 }
 
@@ -354,15 +386,32 @@ function Home({ provider, providers, live, vod, series, loading, onRefresh, onNa
   </View>;
 }
 
-function Live({ channels, favorites, providerType, loading, onRefresh, onOpen, onFavorite }: {
-  channels: Channel[]; favorites: string[]; providerType: ProviderType; loading: boolean; onRefresh: () => void; onOpen: (channel: Channel) => void; onFavorite: (id: string) => void;
+function Live({ channels, epgByChannel, favorites, providerType, loading, epgLoading, onRefresh, onOpen, onFavorite }: {
+  channels: Channel[];
+  epgByChannel: ReadonlyMap<string, readonly EpgProgram[]>;
+  favorites: string[];
+  providerType: ProviderType;
+  loading: boolean;
+  epgLoading: boolean;
+  onRefresh: () => void;
+  onOpen: (channel: Channel) => void;
+  onFavorite: (id: string) => void;
 }) {
   const colors = useColors(); const { t } = useI18n();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState(() => catalogCategoryMemory.live);
-  const [limit, setLimit] = useState(120);
+  const [epgClock, setEpgClock] = useState(() => Date.now());
   const categoryNames = useMemo(() => Array.from(new Set(channels.map((channel) => channel.category).filter(Boolean))), [channels]);
   const hasMeaningfulGroups = categoryNames.some((name) => name !== "Uncategorized" && name !== "Live TV");
+
+  useEffect(() => {
+    const timer = setInterval(() => setEpgClock(Date.now()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    setEpgClock(Date.now());
+  }, [category, search]);
 
   useEffect(() => {
     if (category !== "__all__" && !categoryNames.includes(category)) {
@@ -375,17 +424,71 @@ function Live({ channels, favorites, providerType, loading, onRefresh, onOpen, o
     const query = search.trim().toLowerCase();
     return channels.filter((channel) => (category === "__all__" || channel.category === category) && (!query || channel.name.toLowerCase().includes(query)));
   }, [channels, search, category]);
-  const shown = filtered.slice(0, limit);
 
-  return <Catalog title={t("liveTv")} detail={t("channels", { count: channels.length.toLocaleString() })} search={search} onSearch={(value) => { setSearch(value); setLimit(120); }} loading={loading} onRefresh={onRefresh}>
-    <Rail items={[{ id: "__all__", name: t("all") }, ...categoryNames.map((name) => ({ id: name, name }))]} selected={category} onSelect={(value) => { catalogCategoryMemory.live = value; setCategory(value); setLimit(120); }} />
+  const header = <View>
+    <View style={s.catalogHead}>
+      <View>
+        <Text style={[s.title, { color: colors.foreground }]}>{t("liveTv")}</Text>
+        <Text style={{ color: colors.mutedForeground }}>
+          {t("channels", { count: channels.length.toLocaleString() })}{epgLoading ? " · EPG…" : ""}
+        </Text>
+      </View>
+      <FocusButton label={loading ? t("loading") : t("refresh")} icon="refresh-cw" variant="ghost" onPress={onRefresh} disabled={loading} />
+    </View>
+    <View style={[s.search, { borderColor: colors.border, backgroundColor: colors.card }]}>
+      <Feather name="search" size={18} color={colors.mutedForeground} />
+      <TextInput
+        value={search}
+        onChangeText={setSearch}
+        placeholder={`${t("search")} ${t("liveTv").toLowerCase()}`}
+        placeholderTextColor={colors.mutedForeground}
+        style={{ flex: 1, color: colors.foreground, minHeight: 44 }}
+      />
+    </View>
+    <Rail
+      items={[{ id: "__all__", name: t("all") }, ...categoryNames.map((name) => ({ id: name, name }))]}
+      selected={category}
+      onSelect={(value) => { catalogCategoryMemory.live = value; setCategory(value); }}
+    />
     {providerType === "m3u" && !hasMeaningfulGroups ? <Text style={[s.hint, { color: colors.mutedForeground }]}>{t("m3uNoGroups")}</Text> : null}
-    <View style={s.list}>{shown.map((channel) => <View key={channel.id} style={[s.liveRow, { borderColor: colors.border, backgroundColor: colors.card }]}>
-      <Pressable style={s.liveMain} onPress={() => onOpen(channel)}><Poster uri={channel.logoUrl} title={channel.name} /><View style={{ flex: 1 }}><Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700" }}>{channel.name}</Text><Text numberOfLines={1} style={{ color: colors.mutedForeground }}>{channel.category}</Text></View></Pressable>
-      <Pressable onPress={() => onFavorite(channel.id)} style={s.iconButton}><Feather name="star" size={20} color={favorites.includes(channel.id) ? colors.primary : colors.mutedForeground} /></Pressable>
-    </View>)}</View>
-    {shown.length < filtered.length ? <View style={s.more}><FocusButton label={`${t("loadMore")} · ${Math.min(120, filtered.length - shown.length)}`} onPress={() => setLimit((value) => value + 120)} /></View> : null}
-  </Catalog>;
+  </View>;
+
+  return <FlatList
+    style={{ flex: 1 }}
+    contentContainerStyle={s.liveListContent}
+    data={filtered}
+    keyExtractor={(channel) => channel.id}
+    ListHeaderComponent={header}
+    ListEmptyComponent={<Text style={{ color: colors.mutedForeground, textAlign: "center", paddingVertical: 30 }}>—</Text>}
+    renderItem={({ item: channel }) => {
+      const current = selectProgramsAt(epgByChannel.get(channel.id), epgClock).now;
+      const endLabel = current
+        ? new Date(current.end).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })
+        : undefined;
+      return <View style={[s.liveRow, { borderColor: colors.border, backgroundColor: colors.card }]}>
+        <Pressable style={s.liveMain} onPress={() => onOpen(channel)}>
+          <Poster uri={channel.logoUrl} title={channel.name} />
+          <View style={{ flex: 1 }}>
+            <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700" }}>{channel.name}</Text>
+            <Text numberOfLines={1} style={[s.liveProgram, { color: current ? colors.foreground : colors.mutedForeground }]}>
+              {current ? `Şu an: ${current.title}${endLabel ? ` · ${endLabel}` : ""}` : "—"}
+            </Text>
+          </View>
+        </Pressable>
+        <Pressable onPress={() => onFavorite(channel.id)} style={s.iconButton}>
+          <Feather name="star" size={20} color={favorites.includes(channel.id) ? colors.primary : colors.mutedForeground} />
+        </Pressable>
+      </View>;
+    }}
+    extraData={{ favorites, epgByChannel, epgClock }}
+    initialNumToRender={16}
+    maxToRenderPerBatch={12}
+    windowSize={9}
+    updateCellsBatchingPeriod={50}
+    removeClippedSubviews={Platform.OS !== "web"}
+    keyboardShouldPersistTaps="handled"
+    showsVerticalScrollIndicator={false}
+  />;
 }
 
 function Movies({ items, cats, loading, loaded, onRefresh, onOpen }: { items: XtreamVodItem[]; cats: XtreamCategory[]; loading: boolean; loaded: boolean; onRefresh: () => void; onOpen: (item: XtreamVodItem) => void }) {
@@ -549,6 +652,7 @@ const s = StyleSheet.create({
   fullPlayer: { flex: 1, backgroundColor: "#000" },
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },
   content: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
+  liveListContent: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center", gap: 8 },
   header: { borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingBottom: 8 },
   headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 48 },
   nav: { gap: 6, paddingVertical: 4 },
@@ -575,8 +679,9 @@ const s = StyleSheet.create({
   search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
   rail: { gap: 6, paddingVertical: 14 },
   list: { gap: 8 },
-  liveRow: { borderWidth: 1, borderRadius: 14, padding: 8, flexDirection: "row", alignItems: "center", gap: 8 },
+  liveRow: { borderWidth: 1, borderRadius: 14, padding: 8, flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   liveMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
+  liveProgram: { fontSize: 12.5, marginTop: 3 },
   logo: { width: 50, height: 50, borderRadius: 10 },
   iconButton: { padding: 10 },
   more: { alignItems: "center", paddingVertical: 18 },
