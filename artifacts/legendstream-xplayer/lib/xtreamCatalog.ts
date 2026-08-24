@@ -136,6 +136,35 @@ export type VodPlaybackQueue = {
   index: number;
 };
 
+export type XtreamCatalogErrorCode =
+  | "INVALID_RESPONSE"
+  | "UNSUPPORTED_RESPONSE"
+  | "NOT_FOUND"
+  | "TIMEOUT"
+  | "UNREACHABLE"
+  | "HTTP_ERROR";
+
+export class XtreamCatalogError extends Error {
+  readonly code: XtreamCatalogErrorCode;
+  readonly status?: number;
+
+  constructor(code: XtreamCatalogErrorCode, message: string, status?: number) {
+    super(message);
+    this.name = "XtreamCatalogError";
+    this.code = code;
+    this.status = status;
+  }
+}
+
+export function isXtreamCatalogFallbackError(error: unknown) {
+  return (
+    error instanceof XtreamCatalogError &&
+    (error.code === "INVALID_RESPONSE" ||
+      error.code === "UNSUPPORTED_RESPONSE" ||
+      error.code === "NOT_FOUND")
+  );
+}
+
 const episodeQueueByUrl = new Map<string, EpisodePlaybackQueue>();
 const vodQueueByUrl = new Map<string, VodPlaybackQueue>();
 
@@ -148,17 +177,57 @@ const encodeCredentials = (credentials: XtreamCredentials) => ({
 async function parseResponse(response: Response) {
   const text = await response.text();
   await yieldToUi();
+
+  if (response.status === 404) {
+    throw new XtreamCatalogError(
+      "NOT_FOUND",
+      "Xtream catalog endpoint is not available on this server.",
+      response.status,
+    );
+  }
+
+  if (response.status >= 500) {
+    throw new XtreamCatalogError(
+      "HTTP_ERROR",
+      `Xtream request failed with HTTP ${response.status}.`,
+      response.status,
+    );
+  }
+
   let data: unknown;
   try {
     data = JSON.parse(text);
   } catch {
-    throw new Error("Xtream server returned an invalid JSON response.");
+    if (!response.ok) {
+      throw new XtreamCatalogError(
+        "HTTP_ERROR",
+        `Xtream request failed with HTTP ${response.status}.`,
+        response.status,
+      );
+    }
+    throw new XtreamCatalogError(
+      "INVALID_RESPONSE",
+      "Xtream server returned an invalid JSON response.",
+      response.status,
+    );
   }
   if (!response.ok) {
     const message = (data as any)?.error?.message;
-    throw new Error(message || `Xtream request failed with HTTP ${response.status}.`);
+    throw new XtreamCatalogError(
+      "HTTP_ERROR",
+      message || `Xtream request failed with HTTP ${response.status}.`,
+      response.status,
+    );
   }
   return data as any;
+}
+
+function transportError(caught: unknown, target: "server" | "web proxy") {
+  const name = caught instanceof Error ? caught.name : "";
+  if (name === "TimeoutError" || name === "AbortError") {
+    return new XtreamCatalogError("TIMEOUT", `Xtream ${target} timed out.`);
+  }
+  return new XtreamCatalogError("UNREACHABLE", `Xtream ${target} could not be reached.`);
 }
 
 async function requestNative(
@@ -184,8 +253,8 @@ async function requestNative(
       },
       signal: AbortSignal.timeout(20_000),
     });
-  } catch {
-    throw new Error("Xtream server could not be reached.");
+  } catch (caught) {
+    throw transportError(caught, "server");
   }
   return parseResponse(response);
 }
@@ -203,8 +272,8 @@ async function requestWeb(
       body: JSON.stringify({ ...encodeCredentials(credentials), action, params }),
       signal: AbortSignal.timeout(25_000),
     });
-  } catch {
-    throw new Error("Xtream web proxy could not be reached.");
+  } catch (caught) {
+    throw transportError(caught, "web proxy");
   }
   return parseResponse(response);
 }
@@ -219,9 +288,19 @@ async function requestXtream(
     : requestNative(credentials, action, params);
 }
 
+function requireArray<T>(data: unknown, label: string): T[] {
+  if (!Array.isArray(data)) {
+    throw new XtreamCatalogError(
+      "UNSUPPORTED_RESPONSE",
+      `Xtream server returned an unsupported ${label} response.`,
+    );
+  }
+  return data as T[];
+}
+
 export async function getVodCategories(credentials: XtreamCredentials) {
   const data = await requestXtream(credentials, "get_vod_categories");
-  return Array.isArray(data) ? (data as XtreamCategory[]) : [];
+  return requireArray<XtreamCategory>(data, "VOD categories");
 }
 
 function registerVodQueue(credentials: XtreamCredentials | null | undefined, rows: XtreamVodItem[]) {
@@ -248,7 +327,7 @@ export async function getVodStreams(
   const data = await requestXtream(credentials, "get_vod_streams", {
     category_id: categoryId,
   });
-  const rows = Array.isArray(data) ? (data as XtreamVodItem[]) : [];
+  const rows = requireArray<XtreamVodItem>(data, "VOD streams");
   registerVodQueue(credentials, rows);
   await yieldToUi();
   return rows;
@@ -270,7 +349,7 @@ export async function getVodInfo(
 
 export async function getSeriesCategories(credentials: XtreamCredentials) {
   const data = await requestXtream(credentials, "get_series_categories");
-  return Array.isArray(data) ? (data as XtreamCategory[]) : [];
+  return requireArray<XtreamCategory>(data, "series categories");
 }
 
 export async function getSeries(
@@ -281,7 +360,7 @@ export async function getSeries(
     category_id: categoryId,
   });
   await yieldToUi();
-  return Array.isArray(data) ? (data as XtreamSeriesItem[]) : [];
+  return requireArray<XtreamSeriesItem>(data, "series catalog");
 }
 
 function registerEpisodeQueue(credentials: XtreamCredentials | null | undefined, info: XtreamSeriesInfo) {
