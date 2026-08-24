@@ -95,13 +95,14 @@ jobs:
         id: mode
         env:
           DISPATCH_DUAL_ABI: ${{ inputs.dual_abi || false }}
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message || '' }}
         shell: bash
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "full_release=true" >> "$GITHUB_OUTPUT"
             echo "dual_abi=true" >> "$GITHUB_OUTPUT"
             echo "Full release: arm64 + armv7 + AAB"
-          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$DISPATCH_DUAL_ABI" == "true" ]]; then
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$DISPATCH_DUAL_ABI" == "true" ]] || [[ "$GITHUB_EVENT_NAME" == "push" && "$HEAD_COMMIT_MESSAGE" == *"[dual-abi]"* ]]; then
             echo "full_release=false" >> "$GITHUB_OUTPUT"
             echo "dual_abi=true" >> "$GITHUB_OUTPUT"
             echo "Dual-ABI test build: arm64 + armv7 APKs"
