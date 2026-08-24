@@ -165,7 +165,8 @@ export function PlayerChrome(props: Props) {
   const technicalParts = [resolution, streamCodec, fps ? `${formatFps(fps)} FPS` : undefined].filter(Boolean);
   const technicalLabel = technicalParts.length ? technicalParts.join(" · ") : undefined;
   const progress = chrome.duration > 0 ? clamp(chrome.position / chrome.duration, 0, 1) : 0;
-  const showCenter = chrome.controlsVisible && !chrome.panel;
+  const hasBlockingStatus = typeof chrome.errorText === "string" && chrome.errorText.trim().length > 0;
+  const showCenter = chrome.controlsVisible && !chrome.panel && !hasBlockingStatus;
 
   const actions: Action[] = [
     ...(chrome.selectableItems.length ? [{
@@ -304,14 +305,14 @@ export function PlayerChrome(props: Props) {
         </Pressable>
       ) : null}
 
-      {!chrome.panel ? (
+      {showCenter ? (
         <Animated.View
           style={[
             styles.center,
             portrait ? styles.centerPortrait : styles.centerLandscape,
             { opacity: controlsOpacity },
           ]}
-          pointerEvents={showCenter ? "box-none" : "none"}
+          pointerEvents="box-none"
         >
           {chrome.mediaKind !== "live" ? (
             <RoundButton
@@ -571,15 +572,36 @@ function EmbossedIcon({ name, size, accent = false, compact = false }: {
   accent?: boolean;
   compact?: boolean;
 }) {
-  const main = accent ? "#67e8f9" : "#f8fafc";
-  const highlight = accent ? "rgba(217,252,255,.9)" : "rgba(255,255,255,.88)";
-  const lowlight = accent ? "rgba(8,145,178,.7)" : "rgba(15,23,42,.78)";
-  const box = compact ? size + 3 : size + 8;
+  const main = accent ? "#22d3ee" : "#e2e8f0";
+  const highlight = accent ? "#e6fdff" : "#ffffff";
+  const lowlight = accent ? "#036f8b" : "#475569";
+  const box = compact ? size + 4 : size + 10;
   return (
     <View pointerEvents="none" style={{ width: box, height: box, alignItems: "center", justifyContent: "center" }}>
-      <Feather name={name} size={size} color="rgba(0,0,0,.68)" style={[styles.embossLayer, { transform: [{ translateX: 1 }, { translateY: 2 }] }]} />
-      <Feather name={name} size={size} color={lowlight} style={[styles.embossLayer, { transform: [{ translateY: 1 }] }]} />
-      <Feather name={name} size={size} color={highlight} style={[styles.embossLayer, { opacity: 0.72, transform: [{ translateX: -0.6 }, { translateY: -0.7 }] }]} />
+      <Feather
+        name={name}
+        size={size}
+        color="rgba(0,0,0,.92)"
+        style={[styles.embossLayer, styles.depthDrop, { transform: [{ translateX: 1.4 }, { translateY: 2.4 }, { scale: 1.03 }] }]}
+      />
+      <Feather
+        name={name}
+        size={size}
+        color={lowlight}
+        style={[styles.embossLayer, { opacity: 0.96, transform: [{ translateX: 0.7 }, { translateY: 1.15 }, { scale: 1.025 }] }]}
+      />
+      <Feather
+        name={name}
+        size={size}
+        color={highlight}
+        style={[styles.embossLayer, { opacity: 0.94, transform: [{ translateX: -0.95 }, { translateY: -1.05 }, { scale: 1.025 }] }]}
+      />
+      <Feather
+        name={name}
+        size={size}
+        color={accent ? "rgba(190,250,255,.78)" : "rgba(255,255,255,.72)"}
+        style={[styles.embossLayer, { opacity: 0.58, transform: [{ translateX: -0.35 }, { translateY: -0.45 }] }]}
+      />
       <Feather name={name} size={size} color={main} style={accent ? styles.cyanTextShadow : styles.iconTextShadow} />
     </View>
   );
@@ -590,14 +612,35 @@ function EmbossedMaterialIcon({ name, size, accent = false }: {
   size: number;
   accent?: boolean;
 }) {
-  const main = accent ? "#67e8f9" : "#f8fafc";
-  const highlight = accent ? "rgba(217,252,255,.9)" : "rgba(255,255,255,.88)";
-  const lowlight = accent ? "rgba(8,145,178,.7)" : "rgba(15,23,42,.78)";
+  const main = accent ? "#22d3ee" : "#e2e8f0";
+  const highlight = accent ? "#e6fdff" : "#ffffff";
+  const lowlight = accent ? "#036f8b" : "#475569";
   return (
-    <View pointerEvents="none" style={{ width: size + 8, height: size + 8, alignItems: "center", justifyContent: "center" }}>
-      <MaterialIcons name={name} size={size} color="rgba(0,0,0,.68)" style={[styles.embossLayer, { transform: [{ translateX: 1 }, { translateY: 2 }] }]} />
-      <MaterialIcons name={name} size={size} color={lowlight} style={[styles.embossLayer, { transform: [{ translateY: 1 }] }]} />
-      <MaterialIcons name={name} size={size} color={highlight} style={[styles.embossLayer, { opacity: 0.72, transform: [{ translateX: -0.6 }, { translateY: -0.7 }] }]} />
+    <View pointerEvents="none" style={{ width: size + 10, height: size + 10, alignItems: "center", justifyContent: "center" }}>
+      <MaterialIcons
+        name={name}
+        size={size}
+        color="rgba(0,0,0,.92)"
+        style={[styles.embossLayer, styles.depthDrop, { transform: [{ translateX: 1.4 }, { translateY: 2.4 }, { scale: 1.03 }] }]}
+      />
+      <MaterialIcons
+        name={name}
+        size={size}
+        color={lowlight}
+        style={[styles.embossLayer, { opacity: 0.96, transform: [{ translateX: 0.7 }, { translateY: 1.15 }, { scale: 1.025 }] }]}
+      />
+      <MaterialIcons
+        name={name}
+        size={size}
+        color={highlight}
+        style={[styles.embossLayer, { opacity: 0.94, transform: [{ translateX: -0.95 }, { translateY: -1.05 }, { scale: 1.025 }] }]}
+      />
+      <MaterialIcons
+        name={name}
+        size={size}
+        color={accent ? "rgba(190,250,255,.78)" : "rgba(255,255,255,.72)"}
+        style={[styles.embossLayer, { opacity: 0.58, transform: [{ translateX: -0.35 }, { translateY: -0.45 }] }]}
+      />
       <MaterialIcons name={name} size={size} color={main} style={accent ? styles.cyanTextShadow : styles.iconTextShadow} />
     </View>
   );
@@ -694,15 +737,20 @@ const styles = StyleSheet.create({
   actionSubLabelAccent: { color: "#9af4ff" },
 
   embossLayer: { position: "absolute" },
-  iconTextShadow: {
-    textShadowColor: "rgba(0,0,0,.9)",
+  depthDrop: {
+    textShadowColor: "rgba(0,0,0,.82)",
     textShadowOffset: { width: 0, height: 2 },
-    textShadowRadius: 5,
+    textShadowRadius: 4,
+  },
+  iconTextShadow: {
+    textShadowColor: "rgba(0,0,0,.96)",
+    textShadowOffset: { width: 0, height: 1.4 },
+    textShadowRadius: 4.5,
   },
   cyanTextShadow: {
-    textShadowColor: "rgba(34,211,238,.9)",
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 7,
+    textShadowColor: "rgba(34,211,238,.98)",
+    textShadowOffset: { width: 0, height: 0.8 },
+    textShadowRadius: 8,
   },
   pressed: { opacity: 0.62, transform: [{ scale: 0.94 }] },
 });
