@@ -46,6 +46,7 @@ const EPG_CACHE_TTL_MS = 15 * 60 * 1000;
 const EPG_START_DELAY_MS = 1_200;
 const LARGE_PROVIDER_CHANNEL_THRESHOLD = 1_000;
 const LARGE_PROVIDER_INITIAL_EPG_CHANNELS = 48;
+const XTREAM_PROBE_TIMEOUT_MS = 7_000;
 const STORAGE_KEY = "@legendstream/player-state-v3";
 const LEGACY_STORAGE_KEY = "@legendstream/player-state-v2";
 const LOGGED_OUT = "__logged_out__";
@@ -169,16 +170,59 @@ function parseXtreamGetPhp(value: string) {
   }
 }
 
-function normalizeGetPhpIdentity(provider: Provider): Provider {
+type ParsedGetPhp = NonNullable<ReturnType<typeof parseXtreamGetPhp>>;
+
+async function probeXtreamApi(parsed: ParsedGetPhp) {
+  try {
+    const apiUrl = new URL("player_api.php", `${parsed.baseUrl}/`);
+    apiUrl.searchParams.set("username", parsed.username);
+    apiUrl.searchParams.set("password", parsed.password);
+    const response = await fetch(apiUrl.toString(), {
+      headers: { Accept: "application/json,*/*" },
+      signal: AbortSignal.timeout(XTREAM_PROBE_TIMEOUT_MS),
+    });
+    if (!response.ok) return false;
+    const text = await response.text();
+    const payload = JSON.parse(text) as {
+      user_info?: { auth?: number | string; status?: string };
+    };
+    const userInfo = payload?.user_info;
+    if (!userInfo || typeof userInfo !== "object") return false;
+    const auth = userInfo.auth;
+    if (auth === 0 || auth === "0") return false;
+    const status = String(userInfo.status ?? "").toLowerCase();
+    if (["disabled", "banned", "expired"].includes(status)) return false;
+    return auth === 1 || auth === "1" || status === "active";
+  } catch {
+    return false;
+  }
+}
+
+async function resolveProviderOnConnect(provider: Provider): Promise<Provider> {
+  // An explicitly selected M3U source is authoritative. Never silently turn it
+  // into Xtream merely because its URL happens to be a get.php/m3u_plus link.
+  if (provider.type !== "xtream") return provider;
+
   const parsed = parseXtreamGetPhp(provider.url);
-  return parsed
-    ? {
-        ...provider,
-        type: "xtream",
-        username: parsed.username,
-        password: parsed.password,
-      }
-    : provider;
+  if (!parsed) return provider;
+
+  // get.php can be exposed by both full Xtream servers and playlist-only
+  // gateways. Promote only after a cheap, bounded player_api.php auth probe.
+  if (await probeXtreamApi(parsed)) {
+    return {
+      ...provider,
+      type: "xtream",
+      username: parsed.username,
+      password: parsed.password,
+    };
+  }
+
+  return {
+    ...provider,
+    type: "m3u",
+    username: undefined,
+    password: undefined,
+  };
 }
 
 function toXtreamLoadProvider(provider: Provider): Provider {
@@ -195,6 +239,12 @@ function toXtreamLoadProvider(provider: Provider): Provider {
 }
 
 async function loadProviderSmart(provider: Provider) {
+  // The saved type is authoritative for explicit M3U/Stalker accounts. This
+  // also prevents Home/VOD from ever entering player_api.php for M3U sources.
+  if (provider.type !== "xtream") {
+    return { provider, loaded: await loadProvider(provider) };
+  }
+
   const parsed = parseXtreamGetPhp(provider.url);
   if (!parsed) {
     return { provider, loaded: await loadProvider(provider) };
@@ -213,6 +263,9 @@ async function loadProviderSmart(provider: Provider) {
       loaded: await loadProvider(toXtreamLoadProvider(savedXtream)),
     };
   } catch {
+    // Migration path for accounts that older APKs blindly persisted as Xtream.
+    // A failed player_api.php load silently falls back to the original get.php
+    // playlist and callers persist this resolved M3U type after the load.
     const fallback: Provider = {
       ...provider,
       type: "m3u",
@@ -345,8 +398,6 @@ async function normalizeProgramText(programs: EpgProgram[]) {
     (program) => ({
       ...program,
       title: decodeMaybeBase64(program.title),
-      // Live UI only renders now/next titles and times. Do not retain large
-      // descriptions in the shared in-memory EPG cache.
       description: undefined,
     }),
     250,
@@ -360,10 +411,6 @@ async function loadBulkProviderEpg(
 ): Promise<EpgProgram[]> {
   const xtreamProvider = toXtreamLoadProvider(fromProvider(provider));
 
-  // Large Xtream XMLTV files can be tens or hundreds of MB. React Native fetch
-  // materializes the body before parsing, which can create simultaneous byte
-  // buffer + UTF-8 string copies and trigger a native OOM. Never download bulk
-  // XMLTV for a large catalog; use bounded get_short_epg requests instead.
   if (
     provider.type === "xtream" &&
     channels.length >= LARGE_PROVIDER_CHANNEL_THRESHOLD
@@ -453,19 +500,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const connectProvider = async (config: ProviderInput) => {
     setIsLoading(true);
     setError(null);
-    const candidate = normalizeGetPhpIdentity({
-      id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
-      name: config.name.trim() || "My provider",
-      type: config.type,
-      url: (config.url || config.playlistUrl).trim(),
-      username: config.username?.trim() || undefined,
-      password: config.password || undefined,
-      mac: config.mac?.trim() || undefined,
-      epgUrl: config.epgUrl?.trim() || undefined,
-      createdAt: Date.now(),
-    });
 
     try {
+      const rawCandidate: Provider = {
+        id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+        name: config.name.trim() || "My provider",
+        type: config.type,
+        url: (config.url || config.playlistUrl).trim(),
+        username: config.username?.trim() || undefined,
+        password: config.password || undefined,
+        mac: config.mac?.trim() || undefined,
+        epgUrl: config.epgUrl?.trim() || undefined,
+        createdAt: Date.now(),
+      };
+      const candidate = await resolveProviderOnConnect(rawCandidate);
       const current = stateRef.current;
       const duplicate = current.providers.find((item) => sameAccount(item, candidate));
       const providerToLoad = duplicate
@@ -751,8 +799,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    // Live channels must become visible/respond to input before EPG work starts.
-    // Large Xtream catalogs use bounded short-EPG requests instead of XMLTV.
     let cancelled = false;
     const providerId = state.provider.id;
     const timer = setTimeout(() => {
