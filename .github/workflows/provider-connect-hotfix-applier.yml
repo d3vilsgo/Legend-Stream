@@ -1,0 +1,74 @@
+name: Apply provider connect deadline hotfix
+
+on:
+  push:
+    branches:
+      - hotfix/provider-connect-deadline
+    paths:
+      - .github/workflows/provider-connect-hotfix-applier.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/provider-connect-deadline
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Patch provider timeout handling
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          player = Path('artifacts/legendstream-xplayer/context/PlayerContext.tsx')
+          text = player.read_text()
+
+          old_import = '''  Provider,\n  ProviderType,\n} from "@/lib/iptv";'''
+          new_import = '''  Provider,\n  ProviderLoadError,\n  ProviderType,\n} from "@/lib/iptv";'''
+          if old_import not in text:
+              raise SystemExit('PlayerContext import anchor not found')
+          text = text.replace(old_import, new_import, 1)
+
+          old_const = 'const XTREAM_PROBE_TIMEOUT_MS = 7_000;'
+          new_const = 'const XTREAM_PROBE_TIMEOUT_MS = 7_000;\nconst PROVIDER_CONNECT_TIMEOUT_MS = 30_000;'
+          if old_const not in text:
+              raise SystemExit('PlayerContext timeout anchor not found')
+          text = text.replace(old_const, new_const, 1)
+
+          marker = 'export function PlayerProvider({ children }: { children: ReactNode }) {'
+          helper = '''function withProviderConnectDeadline<T>(promise: Promise<T>): Promise<T> {\n  return new Promise<T>((resolve, reject) => {\n    let settled = false;\n    const timer = setTimeout(() => {\n      if (settled) return;\n      settled = true;\n      reject(\n        new ProviderLoadError(\n          "The provider connection timed out. Check the URL, server response time, and try again.",\n          "PROVIDER_TIMEOUT",\n        ),\n      );\n    }, PROVIDER_CONNECT_TIMEOUT_MS);\n\n    promise.then(\n      (value) => {\n        if (settled) return;\n        settled = true;\n        clearTimeout(timer);\n        resolve(value);\n      },\n      (error) => {\n        if (settled) return;\n        settled = true;\n        clearTimeout(timer);\n        reject(error);\n      },\n    );\n  });\n}\n\n'''
+          if marker not in text:
+              raise SystemExit('PlayerContext provider marker not found')
+          text = text.replace(marker, helper + marker, 1)
+
+          old_load = '      const smart = await loadProviderSmart(providerToLoad);'
+          new_load = '      const smart = await withProviderConnectDeadline(loadProviderSmart(providerToLoad));'
+          if old_load not in text:
+              raise SystemExit('PlayerContext connect load anchor not found')
+          text = text.replace(old_load, new_load, 1)
+          player.write_text(text)
+
+          iptv = Path('artifacts/legendstream-xplayer/lib/iptv.ts')
+          text = iptv.read_text()
+          old_fetch = '''async function fetchProviderText(url: string, init?: RequestInit) {\n  let response: Response;\n  try {\n    response = await fetch(url, {\n      ...init,\n      signal: init?.signal ?? AbortSignal.timeout(20_000),\n    });\n  } catch {\n    throw new ProviderLoadError(\n      "The provider could not be reached. Check the URL, port, and network.",\n      "PROVIDER_UNREACHABLE",\n    );\n  }\n  if (!response.ok) {\n    throw new ProviderLoadError(\n      `The provider returned HTTP ${response.status}.`,\n      "PROVIDER_HTTP_ERROR",\n    );\n  }\n  return response.text();\n}\n'''
+          new_fetch = '''async function fetchProviderText(url: string, init?: RequestInit) {\n  const controller = new AbortController();\n  const timeout = setTimeout(() => controller.abort(), 20_000);\n  let response: Response;\n  try {\n    response = await fetch(url, {\n      ...init,\n      signal: init?.signal ?? controller.signal,\n    });\n    if (!response.ok) {\n      throw new ProviderLoadError(\n        `The provider returned HTTP ${response.status}.`,\n        "PROVIDER_HTTP_ERROR",\n      );\n    }\n    return await response.text();\n  } catch (caught) {\n    if (caught instanceof ProviderLoadError) throw caught;\n    const name = caught instanceof Error ? caught.name : "";\n    if (name === "AbortError" || name === "TimeoutError" || controller.signal.aborted) {\n      throw new ProviderLoadError(\n        "The provider request timed out. The playlist may be too large or the server is responding too slowly.",\n        "PROVIDER_TIMEOUT",\n      );\n    }\n    throw new ProviderLoadError(\n      "The provider could not be reached. Check the URL, port, and network.",\n      "PROVIDER_UNREACHABLE",\n    );\n  } finally {\n    clearTimeout(timeout);\n  }\n}\n'''
+          if old_fetch not in text:
+              raise SystemExit('iptv fetchProviderText anchor not found')
+          text = text.replace(old_fetch, new_fetch, 1)
+          iptv.write_text(text)
+          PY
+      - name: Remove temporary applier
+        run: rm .github/workflows/provider-connect-hotfix-applier.yml
+      - name: Commit hotfix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add artifacts/legendstream-xplayer/context/PlayerContext.tsx artifacts/legendstream-xplayer/lib/iptv.ts .github/workflows/provider-connect-hotfix-applier.yml
+          git commit -m "fix(provider): guarantee connect timeout and loading cleanup"
+          git push origin HEAD:hotfix/provider-connect-deadline
