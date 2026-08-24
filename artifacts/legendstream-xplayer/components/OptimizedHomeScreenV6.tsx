@@ -78,6 +78,24 @@ const categoryRows = (names: string[]): XtreamCategory[] =>
     category_name: name,
   }));
 
+const exactCategoryTotal = (categories: XtreamCategory[]) => {
+  if (!categories.length) return 0;
+  const counts = categories.map((category) => {
+    const row = category as XtreamCategory & {
+      count?: unknown;
+      stream_count?: unknown;
+      items_count?: unknown;
+    };
+    const raw = row.count ?? row.stream_count ?? row.items_count;
+    if (raw === undefined || raw === null || raw === "") return null;
+    const value = Number(raw);
+    return Number.isFinite(value) && value >= 0 ? Math.trunc(value) : null;
+  });
+  return counts.every((value): value is number => value !== null)
+    ? counts.reduce((sum, value) => sum + value, 0)
+    : null;
+};
+
 const isGetPhpM3UPlusProvider = (provider: ProviderConfig) => {
   try {
     const source = new URL(provider.url || provider.playlistUrl);
@@ -129,6 +147,8 @@ export default function OptimizedHomeScreenV6() {
   const [seriesCats, setSeriesCats] = useState<XtreamCategory[]>([]);
   const [series, setSeries] = useState<XtreamSeriesItem[]>([]);
   const [seriesCache, setSeriesCache] = useState<Record<string, XtreamSeriesItem[]>>({});
+  const [homeVodCount, setHomeVodCount] = useState<number | null>(null);
+  const [homeSeriesCount, setHomeSeriesCount] = useState<number | null>(null);
   const [selectedSeries, setSelectedSeries] = useState<XtreamSeriesItem | null>(null);
   const [seriesInfo, setSeriesInfo] = useState<XtreamSeriesInfo | null>(null);
 
@@ -149,10 +169,46 @@ export default function OptimizedHomeScreenV6() {
   useEffect(() => {
     setVod([]); setVodCats([]); setVodCache({}); setVodLoaded(false); setVodLoading(false);
     setSeries([]); setSeriesCats([]); setSeriesCache({}); setSeriesLoaded(false); setSeriesLoading(false);
+    setHomeVodCount(null); setHomeSeriesCount(null);
     setSelectedSeries(null); setSeriesInfo(null); setCatalogError(null);
     catalogCategoryMemory.movies = "__all__";
     catalogCategoryMemory.series = "__all__";
   }, [provider?.id]);
+
+  useEffect(() => {
+    if (!provider) return;
+    if (provider.type === "m3u") {
+      const local = getM3UCatalog(provider.id);
+      setHomeVodCount(local.movieItems.length);
+      setHomeSeriesCount(local.seriesGroups.length);
+      return;
+    }
+    if (provider.type !== "xtream" || !credentials) return;
+
+    let cancelled = false;
+    void (async () => {
+      const [vodResult, seriesResult] = await Promise.allSettled([
+        getVodCategories(credentials),
+        getSeriesCategories(credentials),
+      ]);
+      if (cancelled) return;
+
+      if (vodResult.status === "fulfilled") {
+        setVodCats(vodResult.value);
+        setVodLoaded(true);
+        setHomeVodCount(exactCategoryTotal(vodResult.value));
+      }
+      if (seriesResult.status === "fulfilled") {
+        setSeriesCats(seriesResult.value);
+        setSeriesLoaded(true);
+        setHomeSeriesCount(exactCategoryTotal(seriesResult.value));
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [provider?.id, provider?.type, credentials]);
 
   const applyLocalVod = () => {
     if (!provider) return;
@@ -168,6 +224,7 @@ export default function OptimizedHomeScreenV6() {
     setVodCats(categoryRows(local.movieItems.map((item) => item.category)));
     setVod(items);
     setVodCache({ __m3u__: items });
+    setHomeVodCount(items.length);
     setVodLoaded(true);
   };
 
@@ -183,6 +240,7 @@ export default function OptimizedHomeScreenV6() {
     setSeriesCats(categoryRows(local.seriesGroups.map((group) => group.category)));
     setSeries(items);
     setSeriesCache({ __m3u__: items });
+    setHomeSeriesCount(items.length);
     setSeriesLoaded(true);
   };
 
@@ -229,6 +287,7 @@ export default function OptimizedHomeScreenV6() {
       }
       const cats = await getVodCategories(credentials);
       setVodCats(cats);
+      setHomeVodCount(exactCategoryTotal(cats));
       setVodLoaded(true);
     } catch (caught) {
       if (await tryCatalogFallbackToM3U(caught, "movies")) return;
@@ -271,6 +330,7 @@ export default function OptimizedHomeScreenV6() {
       }
       const cats = await getSeriesCategories(credentials);
       setSeriesCats(cats);
+      setHomeSeriesCount(exactCategoryTotal(cats));
       setSeriesLoaded(true);
     } catch (caught) {
       if (await tryCatalogFallbackToM3U(caught, "series")) return;
@@ -432,8 +492,6 @@ export default function OptimizedHomeScreenV6() {
     { key: "settings" as const, label: t("settings"), icon: "settings" as const },
   ];
 
-  const hasLoadedVodCategory = provider.type === "m3u" || Object.keys(vodCache).length > 0;
-  const hasLoadedSeriesCategory = provider.type === "m3u" || Object.keys(seriesCache).length > 0;
   const top = Math.max(insets.top, Platform.OS === "web" ? 20 : 0);
   return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
     <View style={[s.header, { borderColor: colors.border }]}>
@@ -462,7 +520,7 @@ export default function OptimizedHomeScreenV6() {
       onOpen={openLive}
       onFavorite={(id) => void toggleFavorite(id)}
     /> : <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-      {view === "home" ? <Home provider={provider} providers={providers} live={providerChannels.length} vod={vodLoaded && hasLoadedVodCategory ? vod.length : null} series={seriesLoaded && hasLoadedSeriesCategory ? series.length : null} loading={isLoading} onRefresh={() => void refreshProvider()} onNavigate={navigate} onSwitch={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} /> : null}
+      {view === "home" ? <Home provider={provider} providers={providers} live={providerChannels.length} vod={homeVodCount} series={homeSeriesCount} loading={isLoading} onRefresh={() => void refreshProvider()} onNavigate={navigate} onSwitch={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} /> : null}
       {view === "movies" ? <Movies items={vod} cats={vodCats} loading={vodLoading} loaded={vodLoaded} onCategory={(category) => void loadVodCategory(category)} onRefresh={(category) => category === "__all__" ? void loadVod(true) : void loadVodCategory(category, true)} onOpen={openMovie} /> : null}
       {view === "series" ? <Series items={series} cats={seriesCats} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => category === "__all__" ? void loadSeries(true) : void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} /> : null}
       {view === "history" ? <HistoryView channels={providerChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
