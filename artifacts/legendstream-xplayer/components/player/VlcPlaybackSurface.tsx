@@ -14,6 +14,7 @@ const FALLBACK_VIDEO_SIZE = { width: 16, height: 9 } as const;
 
 export type PlayerFitMode = "fit" | "full" | "original" | "16:9" | "4:3";
 export type PlayerCodecMode = "auto" | "hardware" | "software";
+type RuntimeCodecMode = "hardware" | "software";
 export type PlayerTrack = { id: number; name: string };
 export type PlayerVideoSize = { width: number; height: number };
 
@@ -131,20 +132,10 @@ const containedFrame = (
 /**
  * Stable VLC surface with a layout-level aspect-ratio guarantee.
  *
- * react-native-vlc-media-player@1.0.98 exposes resizeMode in JS, but Android's
- * ReactVlcPlayerViewManager does not register a resizeMode ReactProp, so that
- * prop is ignored on Android. Its autoAspectRatio implementation also uses the
- * TextureView dimensions (surface width:height), not the coded video track.
- *
- * Therefore FIT/ORIGINAL are enforced twice:
- *   1) React Native sizes the VLC TextureView container from the real coded
- *      track width/height bridged by patch-vlc-progress-metrics.py.
- *   2) VLC receives that same explicit width:height through the imperative
- *      changeVideoAspectRatio path with autoAspectRatio disabled.
- *
- * This prevents a portrait phone surface from forcing a 16:9 stream into the
- * phone's tall aspect ratio. Black letterbox/pillarbox space belongs to the
- * outer surface, never to a stretched VLC TextureView.
+ * AUTO codec mode is intentionally implemented inside this stable surface:
+ * each new URI starts with hardware decode and may fall back to software once
+ * after VLC reports a playback error. Only the second failure is surfaced to
+ * the parent, so the UI remains in AUTO and never asks for manual intervention.
  */
 const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurface(
   {
@@ -168,6 +159,10 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   const applyGeneration = useRef(0);
   const lastLoadEvent = useRef<VlcLoadEvent | undefined>(undefined);
   const lastMetricKey = useRef("");
+  const autoFallbackAttempted = useRef(false);
+  const [runtimeCodecMode, setRuntimeCodecMode] = useState<RuntimeCodecMode>(
+    codecMode === "software" ? "software" : "hardware",
+  );
   const [playbackReady, setPlaybackReady] = useState(false);
   const [sourceVideoSize, setSourceVideoSize] = useState<PlayerVideoSize | undefined>(undefined);
 
@@ -180,6 +175,11 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     }
   }, [forwardedRef]);
 
+  useEffect(() => {
+    autoFallbackAttempted.current = false;
+    setRuntimeCodecMode(codecMode === "software" ? "software" : "hardware");
+  }, [codecMode, uri]);
+
   const initOptions = useMemo(() => {
     const base = [
       "--network-caching=1200",
@@ -187,10 +187,10 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
       "--http-reconnect",
       "--no-drop-late-frames",
     ];
-    if (codecMode === "hardware") return [...base, "--avcodec-hw=any"];
-    if (codecMode === "software") return [...base, "--avcodec-hw=none"];
-    return base;
-  }, [codecMode]);
+    return runtimeCodecMode === "software"
+      ? [...base, "--avcodec-hw=none"]
+      : [...base, "--avcodec-hw=any"];
+  }, [runtimeCodecMode]);
 
   useEffect(() => {
     const shouldKeepAwake = playbackReady && !paused;
@@ -214,11 +214,18 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     setPlaybackReady(false);
     setSourceVideoSize(undefined);
     resetPlayerRuntimeInfo();
-    void logPlayerDiagnostic("vlc_mount", { codec: codecMode, fit });
+    void logPlayerDiagnostic("vlc_mount", {
+      codec: codecMode,
+      effectiveCodec: runtimeCodecMode,
+      fit,
+    });
     return () => {
-      void logPlayerDiagnostic("vlc_unmount", { codec: codecMode });
+      void logPlayerDiagnostic("vlc_unmount", {
+        codec: codecMode,
+        effectiveCodec: runtimeCodecMode,
+      });
     };
-  }, [codecMode, uri]);
+  }, [codecMode, runtimeCodecMode, uri]);
 
   const isLikelyWindowSurface = useCallback((size?: PlayerVideoSize) => {
     if (!validVideoSize(size)) return false;
@@ -261,7 +268,6 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     const generation = ++applyGeneration.current;
     const player = playerRef.current;
 
-    // 1.0.98 autoAspectRatio is surface-aspect, not source-aspect. Keep it off.
     try {
       player.autoAspectRatio?.(false);
     } catch {
@@ -398,9 +404,13 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
 
   const handlePlaying = useCallback(() => {
     setPlaybackReady(true);
-    void logPlayerDiagnostic("vlc_playing", { codec: codecMode, fit });
+    void logPlayerDiagnostic("vlc_playing", {
+      codec: codecMode,
+      effectiveCodec: runtimeCodecMode,
+      fit,
+    });
     onPlaying();
-  }, [codecMode, fit, onPlaying]);
+  }, [codecMode, fit, onPlaying, runtimeCodecMode]);
 
   const handlePaused = useCallback(() => {
     setPlaybackReady(false);
@@ -416,15 +426,35 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
 
   const handleError = useCallback(() => {
     setPlaybackReady(false);
-    void logPlayerDiagnostic("vlc_error", { codec: codecMode, fit });
+
+    if (
+      codecMode === "auto" &&
+      runtimeCodecMode === "hardware" &&
+      !autoFallbackAttempted.current
+    ) {
+      autoFallbackAttempted.current = true;
+      void logPlayerDiagnostic("vlc_auto_codec_fallback", {
+        from: "hardware",
+        to: "software",
+        fit,
+      });
+      setRuntimeCodecMode("software");
+      return;
+    }
+
+    void logPlayerDiagnostic("vlc_error", {
+      codec: codecMode,
+      effectiveCodec: runtimeCodecMode,
+      fit,
+    });
     onError();
-  }, [codecMode, fit, onError]);
+  }, [codecMode, fit, onError, runtimeCodecMode]);
 
   return (
     <View style={styles.surface} pointerEvents="none">
       <View style={[styles.videoFrame, frameStyle]}>
         <VLCPlayer
-          key={`${uri}:${codecMode}`}
+          key={`${uri}:${codecMode}:${runtimeCodecMode}`}
           ref={assignRef}
           style={styles.video}
           source={{ uri, initType: 2, initOptions }}

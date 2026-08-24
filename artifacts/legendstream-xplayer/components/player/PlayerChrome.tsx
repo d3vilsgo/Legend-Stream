@@ -1,7 +1,8 @@
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import React, { useState, useSyncExternalStore } from "react";
+import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
+  Animated,
   LayoutChangeEvent,
   Pressable,
   StyleSheet,
@@ -29,9 +30,9 @@ export type {
 export { playerCodecLabel };
 
 export type PlayerProgramInfo = {
-  title: string;
-  start: number;
-  end: number;
+  title?: string;
+  start?: number;
+  end?: number;
 };
 
 type FeatherName = React.ComponentProps<typeof Feather>["name"];
@@ -82,12 +83,29 @@ const formatFps = (fps: number) => {
   return fps.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
 };
 
-const formatClock = (timestamp: number) =>
-  new Date(timestamp).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+const safeTimestamp = (value?: number) =>
+  Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : undefined;
 
-const formatRemaining = (end: number) => {
-  const minutes = Math.max(0, Math.ceil((end - Date.now()) / 60_000));
-  return minutes > 0 ? `${minutes} dk kaldı` : `bitiş ${formatClock(end)}`;
+const safeProgramTitle = (value?: string) => {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text || "Program bilgisi";
+};
+
+const formatClock = (timestamp?: number) => {
+  const safe = safeTimestamp(timestamp);
+  if (!safe) return "--:--";
+  try {
+    return new Date(safe).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+  } catch {
+    return "--:--";
+  }
+};
+
+const formatRemaining = (end?: number) => {
+  const safe = safeTimestamp(end);
+  if (!safe) return "";
+  const minutes = Math.max(0, Math.ceil((safe - Date.now()) / 60_000));
+  return minutes > 0 ? `${minutes} dk kaldı` : `bitiş ${formatClock(safe)}`;
 };
 
 const clamp = (value: number, min: number, max: number) =>
@@ -112,6 +130,24 @@ export function PlayerChrome(props: Props) {
     epgLoading,
     ...chrome
   } = props;
+  const controlsOpacity = useRef(new Animated.Value(chrome.controlsVisible ? 1 : 0)).current;
+  const infoOpacity = useRef(new Animated.Value(chrome.infoVisible ? 1 : 0)).current;
+
+  useEffect(() => {
+    Animated.timing(controlsOpacity, {
+      toValue: chrome.controlsVisible ? 1 : 0,
+      duration: chrome.controlsVisible ? 170 : 240,
+      useNativeDriver: true,
+    }).start();
+  }, [chrome.controlsVisible, controlsOpacity]);
+
+  useEffect(() => {
+    Animated.timing(infoOpacity, {
+      toValue: chrome.infoVisible ? 1 : 0,
+      duration: chrome.infoVisible ? 190 : 260,
+      useNativeDriver: true,
+    }).start();
+  }, [chrome.infoVisible, infoOpacity]);
 
   const resolution = resolutionOverride ?? runtime.resolution;
   const fps = fpsOverride ?? runtime.fps;
@@ -212,20 +248,19 @@ export function PlayerChrome(props: Props) {
     <>
       <PlayerChromeV2 {...chrome} controlsVisible={false} infoVisible={false} />
 
-      {chrome.infoVisible ? (
-        <InfoCard
-          portrait={portrait}
-          title={chrome.title}
-          meta={chrome.meta}
-          live={chrome.mediaKind === "live"}
-          tech={technicalLabel}
-          fit={chrome.fitMode}
-          codec={chrome.codecMode}
-          epgNow={epgNow}
-          epgNext={epgNext}
-          epgLoading={epgLoading}
-        />
-      ) : null}
+      <InfoCard
+        opacity={infoOpacity}
+        portrait={portrait}
+        title={chrome.title}
+        meta={chrome.meta}
+        live={chrome.mediaKind === "live"}
+        tech={technicalLabel}
+        fit={chrome.fitMode}
+        codec={chrome.codecMode}
+        epgNow={epgNow}
+        epgNext={epgNext}
+        epgLoading={epgLoading}
+      />
 
       {chrome.controlsVisible && chrome.canExit ? (
         <Pressable
@@ -239,14 +274,19 @@ export function PlayerChrome(props: Props) {
           ]}
           hitSlop={10}
         >
+          <LinearGradient pointerEvents="none" colors={["rgba(255,255,255,.12)", "rgba(7,18,29,.26)"]} style={StyleSheet.absoluteFillObject} />
           <Feather name="arrow-left" size={portrait ? 24 : 27} color="#fff" />
         </Pressable>
       ) : null}
 
-      {showCenter ? (
-        <View
-          style={[styles.center, portrait ? styles.centerPortrait : styles.centerLandscape]}
-          pointerEvents="box-none"
+      {!chrome.panel ? (
+        <Animated.View
+          style={[
+            styles.center,
+            portrait ? styles.centerPortrait : styles.centerLandscape,
+            { opacity: controlsOpacity },
+          ]}
+          pointerEvents={showCenter ? "box-none" : "none"}
         >
           {chrome.mediaKind !== "live" ? (
             <RoundButton compact={portrait} icon="rotate-ccw" badge="10" label="10 saniye geri" onPress={() => chrome.onSeekBy(-10)} />
@@ -260,7 +300,7 @@ export function PlayerChrome(props: Props) {
             onPress={chrome.onTogglePause}
             style={({ pressed }) => [styles.playShell, portrait && styles.playShellPortrait, pressed && styles.pressed]}
           >
-            <LinearGradient colors={["#c7fbff", "#22d3ee", "#0ea5e9"]} style={styles.playInner}>
+            <LinearGradient pointerEvents="none" colors={["rgba(199,251,255,.96)", "rgba(34,211,238,.9)", "rgba(14,165,233,.92)"]} style={styles.playInner}>
               <Feather name={chrome.paused ? "play" : "pause"} size={portrait ? 31 : 36} color="#02131b" />
             </LinearGradient>
           </Pressable>
@@ -270,21 +310,22 @@ export function PlayerChrome(props: Props) {
           ) : chrome.canNavigate ? (
             <RoundButton compact={portrait} icon="skip-forward" label="Sonraki kanal" onPress={() => chrome.onMoveRelative(1)} />
           ) : null}
-        </View>
+        </Animated.View>
       ) : null}
 
-      {chrome.controlsVisible && !chrome.panel ? (
-        <View
+      {!chrome.panel ? (
+        <Animated.View
           style={[
             styles.bottom,
             portrait ? styles.bottomPortrait : styles.bottomLandscape,
             {
+              opacity: controlsOpacity,
               bottom: Math.max(insets.bottom, portrait ? 8 : 12),
               paddingLeft: Math.max(outerPadding, insets.left + 8),
               paddingRight: Math.max(outerPadding, insets.right + 8),
             },
           ]}
-          pointerEvents="box-none"
+          pointerEvents={chrome.controlsVisible ? "box-none" : "none"}
         >
           {chrome.mediaKind !== "live" ? (
             <View style={[styles.seekRow, { height: Math.round(32 * progressScale), gap: Math.max(5, Math.round(8 * progressScale)) }]}>
@@ -305,21 +346,22 @@ export function PlayerChrome(props: Props) {
           ) : null}
 
           <View style={[styles.dockShell, { minHeight: dockHeight }]}>
-            <LinearGradient pointerEvents="none" colors={["rgba(13,23,34,.97)", "rgba(4,9,15,.97)"]} style={StyleSheet.absoluteFillObject} />
-            <View style={styles.dockGlow} />
+            <LinearGradient pointerEvents="none" colors={["rgba(34,211,238,.12)", "rgba(8,18,30,.52)", "rgba(2,8,16,.42)"]} style={StyleSheet.absoluteFillObject} />
+            <View pointerEvents="none" style={styles.dockGlow} />
             <View style={[styles.dockRow, { gap }]}>
               {actions.map((action) => (
                 <AdaptiveDockButton key={action.key} action={action} size={buttonSize} iconSize={iconSize} />
               ))}
             </View>
           </View>
-        </View>
+        </Animated.View>
       ) : null}
     </>
   );
 }
 
-function InfoCard({ portrait, title, meta, live, tech, fit, codec, epgNow, epgNext, epgLoading }: {
+function InfoCard({ opacity, portrait, title, meta, live, tech, fit, codec, epgNow, epgNext, epgLoading }: {
+  opacity: Animated.Value;
   portrait: boolean;
   title: string;
   meta?: string;
@@ -331,14 +373,21 @@ function InfoCard({ portrait, title, meta, live, tech, fit, codec, epgNow, epgNe
   epgNext?: PlayerProgramInfo;
   epgLoading?: boolean;
 }) {
+  const nowTitle = safeProgramTitle(epgNow?.title);
+  const nowEnd = safeTimestamp(epgNow?.end);
+  const nextTitle = safeProgramTitle(epgNext?.title);
+  const nextStart = safeTimestamp(epgNext?.start);
+  const remaining = formatRemaining(nowEnd);
+
   return (
-    <View pointerEvents="none" style={[styles.info, portrait ? styles.infoPortrait : styles.infoLandscape]}>
-      <LinearGradient colors={["rgba(5,14,23,.97)", "rgba(5,12,20,.88)"]} style={StyleSheet.absoluteFillObject} />
-      <View style={styles.infoRail} />
+    <Animated.View pointerEvents="none" style={[styles.info, portrait ? styles.infoPortrait : styles.infoLandscape, { opacity }]}>
+      <LinearGradient pointerEvents="none" colors={["rgba(34,211,238,.1)", "rgba(7,17,28,.48)", "rgba(3,10,18,.38)"]} style={StyleSheet.absoluteFillObject} />
+      <View pointerEvents="none" style={styles.infoHighlight} />
+      <View pointerEvents="none" style={styles.infoRail} />
       <View style={styles.infoMain}>
         <View style={styles.titleRow}>
           {live ? <View style={styles.livePill}><View style={styles.liveDot} /><Text style={styles.liveText}>CANLI</Text></View> : null}
-          <Text numberOfLines={1} style={[styles.title, portrait && styles.titlePortrait]}>{title}</Text>
+          <Text numberOfLines={1} style={[styles.title, portrait && styles.titlePortrait]}>{title || "Canlı yayın"}</Text>
         </View>
         {live ? (
           <View style={styles.epgBlock}>
@@ -346,8 +395,8 @@ function InfoCard({ portrait, title, meta, live, tech, fit, codec, epgNow, epgNe
               <Text numberOfLines={1} style={styles.epgMuted}>Program bilgisi yükleniyor…</Text>
             ) : epgNow ? (
               <>
-                <Text numberOfLines={1} style={styles.epgNow}>Şimdi: {epgNow.title} · {formatClock(epgNow.end)} · {formatRemaining(epgNow.end)}</Text>
-                {epgNext ? <Text numberOfLines={1} style={styles.epgNext}>Sıradaki: {epgNext.title} · {formatClock(epgNext.start)}</Text> : null}
+                <Text numberOfLines={1} style={styles.epgNow}>Şimdi: {nowTitle} · {formatClock(nowEnd)}{remaining ? ` · ${remaining}` : ""}</Text>
+                {epgNext ? <Text numberOfLines={1} style={styles.epgNext}>Sıradaki: {nextTitle} · {formatClock(nextStart)}</Text> : null}
               </>
             ) : (
               <Text numberOfLines={1} style={styles.epgMuted}>Program bilgisi yok</Text>
@@ -357,7 +406,7 @@ function InfoCard({ portrait, title, meta, live, tech, fit, codec, epgNow, epgNe
         <View style={styles.metaRow}>
           {meta ? <Text numberOfLines={1} style={styles.meta}>{meta}</Text> : null}
           <View style={[styles.techPill, !tech && styles.techPillMuted]}>
-            <Feather name="monitor" size={11} color={tech ? "#67e8f9" : "#64748b"} />
+            <Feather name="monitor" size={11} color={tech ? "#67e8f9" : "#94a3b8"} />
             <Text numberOfLines={1} style={tech ? styles.techText : styles.techMutedText}>{tech ?? "Akış bilgisi bekleniyor"}</Text>
           </View>
         </View>
@@ -368,16 +417,16 @@ function InfoCard({ portrait, title, meta, live, tech, fit, codec, epgNow, epgNe
           <ModeChip icon="cpu" text={playerCodecLabel(codec)} accent />
         </View>
       ) : null}
-    </View>
+    </Animated.View>
   );
 }
 
 function ModeChip({ icon, text, accent }: { icon: FeatherName; text: string; accent?: boolean }) {
-  return <View style={[styles.modeChip, accent && styles.modeChipAccent]}><Feather name={icon} size={11} color={accent ? "#67e8f9" : "#cbd5e1"} /><Text style={[styles.modeText, accent && styles.modeTextAccent]}>{text}</Text></View>;
+  return <View style={[styles.modeChip, accent && styles.modeChipAccent]}><Feather name={icon} size={11} color={accent ? "#67e8f9" : "#e2e8f0"} /><Text style={[styles.modeText, accent && styles.modeTextAccent]}>{text}</Text></View>;
 }
 
 function RoundButton({ icon, badge, compact, label, onPress }: { icon: FeatherName; badge?: string; compact?: boolean; label: string; onPress: () => void }) {
-  return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => [styles.roundButton, compact && styles.roundButtonPortrait, pressed && styles.pressed]}><Feather name={icon} size={compact ? 24 : 29} color="#fff" />{badge ? <Text style={styles.roundBadge}>{badge}</Text> : null}</Pressable>;
+  return <Pressable accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={({ pressed }) => [styles.roundButton, compact && styles.roundButtonPortrait, pressed && styles.pressed]}><LinearGradient pointerEvents="none" colors={["rgba(255,255,255,.15)", "rgba(7,20,33,.28)"]} style={StyleSheet.absoluteFillObject} /><Feather name={icon} size={compact ? 24 : 29} color="#fff" />{badge ? <Text style={styles.roundBadge}>{badge}</Text> : null}</Pressable>;
 }
 
 function AdaptiveDockButton({ action, size, iconSize }: { action: Action; size: number; iconSize: number }) {
@@ -396,6 +445,7 @@ function AdaptiveDockButton({ action, size, iconSize }: { action: Action; size: 
         pressed && styles.pressed,
       ]}
     >
+      <LinearGradient pointerEvents="none" colors={highlighted ? ["rgba(103,232,249,.18)", "rgba(8,145,178,.08)"] : ["rgba(255,255,255,.09)", "rgba(15,23,42,.16)"]} style={StyleSheet.absoluteFillObject} />
       {action.icon ? <Feather name={action.icon} size={iconSize} color={highlighted ? "#8beeff" : "#f8fafc"} /> : <Text style={[styles.glyph, highlighted && styles.glyphAccent]}>{action.glyph}</Text>}
       {action.badge ? <View style={styles.microBadge} pointerEvents="none"><Text numberOfLines={1} style={styles.microBadgeText}>{action.badge}</Text></View> : null}
     </Pressable>
@@ -403,44 +453,45 @@ function AdaptiveDockButton({ action, size, iconSize }: { action: Action; size: 
 }
 
 const styles = StyleSheet.create({
-  info: { position: "absolute", zIndex: 52, top: 18, overflow: "hidden", borderWidth: 1, borderColor: "rgba(71,101,124,.42)", backgroundColor: "#07101a", elevation: 8, flexDirection: "row", alignItems: "center" },
-  infoLandscape: { left: 94, right: 24, minHeight: 78, borderRadius: 18, paddingLeft: 18, paddingRight: 14 },
-  infoPortrait: { left: 72, right: 14, minHeight: 88, borderRadius: 18, paddingLeft: 14, paddingRight: 10 },
-  infoRail: { position: "absolute", left: 0, top: 0, bottom: 0, width: 4, backgroundColor: "#22d3ee" },
+  info: { position: "absolute", zIndex: 52, top: 18, overflow: "hidden", borderWidth: 1, borderColor: "rgba(255,255,255,.2)", backgroundColor: "rgba(4,12,21,.34)", elevation: 5, shadowColor: "#000", shadowOpacity: 0.24, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, flexDirection: "row", alignItems: "center" },
+  infoLandscape: { left: 94, right: 24, minHeight: 78, borderRadius: 20, paddingLeft: 18, paddingRight: 14 },
+  infoPortrait: { left: 72, right: 14, minHeight: 88, borderRadius: 20, paddingLeft: 14, paddingRight: 10 },
+  infoHighlight: { position: "absolute", left: 14, right: 14, top: 0, height: 1, backgroundColor: "rgba(255,255,255,.34)" },
+  infoRail: { position: "absolute", left: 0, top: 0, bottom: 0, width: 3, backgroundColor: "rgba(34,211,238,.88)" },
   infoMain: { flex: 1, minWidth: 0, paddingVertical: 9 },
   titleRow: { flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 },
   title: { flex: 1, color: "#f8fafc", fontSize: 18, fontWeight: "900" },
   titlePortrait: { fontSize: 15 },
-  livePill: { height: 23, paddingHorizontal: 8, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderColor: "rgba(34,211,238,.38)", backgroundColor: "rgba(8,145,178,.16)" },
+  livePill: { height: 23, paddingHorizontal: 8, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderColor: "rgba(103,232,249,.42)", backgroundColor: "rgba(8,145,178,.18)" },
   liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#22d3ee" },
-  liveText: { color: "#8beeff", fontSize: 10, fontWeight: "900" },
+  liveText: { color: "#b8f7ff", fontSize: 10, fontWeight: "900" },
   epgBlock: { marginTop: 4, minWidth: 0 },
-  epgNow: { color: "#e2e8f0", fontSize: 11, fontWeight: "800" },
-  epgNext: { marginTop: 1, color: "#94a3b8", fontSize: 10, fontWeight: "700" },
-  epgMuted: { color: "#64748b", fontSize: 10, fontWeight: "700" },
+  epgNow: { color: "#f1f5f9", fontSize: 11, fontWeight: "800" },
+  epgNext: { marginTop: 1, color: "#cbd5e1", fontSize: 10, fontWeight: "700" },
+  epgMuted: { color: "#94a3b8", fontSize: 10, fontWeight: "700" },
   metaRow: { marginTop: 5, flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 },
-  meta: { flexShrink: 1, color: "#94a3b8", fontSize: 11, fontWeight: "700" },
-  techPill: { flexShrink: 0, minHeight: 22, maxWidth: "62%", paddingHorizontal: 7, borderRadius: 11, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderColor: "rgba(103,232,249,.28)", backgroundColor: "rgba(8,145,178,.11)" },
-  techPillMuted: { borderColor: "transparent", backgroundColor: "transparent" },
+  meta: { flexShrink: 1, color: "#cbd5e1", fontSize: 11, fontWeight: "700" },
+  techPill: { flexShrink: 0, minHeight: 22, maxWidth: "62%", paddingHorizontal: 7, borderRadius: 11, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: 1, borderColor: "rgba(103,232,249,.3)", backgroundColor: "rgba(8,145,178,.1)" },
+  techPillMuted: { borderColor: "rgba(255,255,255,.1)", backgroundColor: "rgba(255,255,255,.04)" },
   techText: { color: "#dffaff", fontSize: 10, fontWeight: "900" },
-  techMutedText: { color: "#64748b", fontSize: 9, fontWeight: "700" },
+  techMutedText: { color: "#94a3b8", fontSize: 9, fontWeight: "700" },
   modeCluster: { marginLeft: 10, flexDirection: "row", gap: 6 },
-  modeChip: { height: 29, minWidth: 62, paddingHorizontal: 9, borderRadius: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderWidth: 1, borderColor: "rgba(148,163,184,.22)", backgroundColor: "rgba(15,23,42,.66)" },
-  modeChipAccent: { borderColor: "rgba(34,211,238,.38)", backgroundColor: "rgba(8,145,178,.12)" },
-  modeText: { color: "#e2e8f0", fontSize: 10, fontWeight: "900" },
-  modeTextAccent: { color: "#8beeff" },
-  back: { position: "absolute", zIndex: 65, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(5,12,20,.88)", borderWidth: 1, borderColor: "rgba(148,163,184,.28)", elevation: 12 },
+  modeChip: { height: 29, minWidth: 62, paddingHorizontal: 9, borderRadius: 12, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderWidth: 1, borderColor: "rgba(255,255,255,.16)", backgroundColor: "rgba(255,255,255,.06)" },
+  modeChipAccent: { borderColor: "rgba(103,232,249,.4)", backgroundColor: "rgba(8,145,178,.12)" },
+  modeText: { color: "#f1f5f9", fontSize: 10, fontWeight: "900" },
+  modeTextAccent: { color: "#a5f3fc" },
+  back: { position: "absolute", zIndex: 65, alignItems: "center", justifyContent: "center", overflow: "hidden", backgroundColor: "rgba(5,12,20,.28)", borderWidth: 1, borderColor: "rgba(255,255,255,.22)", elevation: 7, shadowColor: "#000", shadowOpacity: 0.24, shadowRadius: 12, shadowOffset: { width: 0, height: 6 } },
   backLandscape: { left: 22, top: 20, width: 56, height: 56, borderRadius: 28 },
   backPortrait: { left: 16, top: 20, width: 48, height: 48, borderRadius: 24 },
   center: { position: "absolute", zIndex: 60, left: 0, right: 0, flexDirection: "row", alignItems: "center", justifyContent: "center" },
   centerLandscape: { top: "50%", transform: [{ translateY: -44 }], gap: 54 },
   centerPortrait: { top: "48%", transform: [{ translateY: -38 }], gap: 28 },
-  roundButton: { width: 66, height: 66, borderRadius: 33, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(5,12,20,.72)", borderWidth: 1, borderColor: "rgba(148,163,184,.32)", elevation: 7 },
+  roundButton: { width: 66, height: 66, borderRadius: 33, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(5,12,20,.2)", borderWidth: 1, borderColor: "rgba(255,255,255,.24)", elevation: 5, shadowColor: "#000", shadowOpacity: 0.22, shadowRadius: 12, shadowOffset: { width: 0, height: 6 } },
   roundButtonPortrait: { width: 54, height: 54, borderRadius: 27 },
   roundBadge: { position: "absolute", color: "#fff", fontSize: 9, fontWeight: "900" },
-  playShell: { width: 86, height: 86, borderRadius: 43, padding: 5, backgroundColor: "rgba(34,211,238,.18)", borderWidth: 1, borderColor: "rgba(103,232,249,.58)", elevation: 14 },
+  playShell: { width: 86, height: 86, borderRadius: 43, padding: 5, backgroundColor: "rgba(34,211,238,.12)", borderWidth: 1, borderColor: "rgba(207,250,254,.62)", elevation: 10, shadowColor: "#22d3ee", shadowOpacity: 0.18, shadowRadius: 14, shadowOffset: { width: 0, height: 7 } },
   playShellPortrait: { width: 74, height: 74, borderRadius: 37 },
-  playInner: { flex: 1, borderRadius: 999, alignItems: "center", justifyContent: "center" },
+  playInner: { flex: 1, borderRadius: 999, alignItems: "center", justifyContent: "center", overflow: "hidden" },
   bottom: { position: "absolute", zIndex: 62, left: 0, right: 0 },
   bottomLandscape: {},
   bottomPortrait: {},
@@ -448,18 +499,18 @@ const styles = StyleSheet.create({
   time: { width: 54, color: "#fff", fontSize: 11, fontWeight: "800", fontVariant: ["tabular-nums"] },
   timeRight: { textAlign: "right" },
   seekTouch: { flex: 1, height: 28, justifyContent: "center" },
-  seekTrack: { height: 4, borderRadius: 2, backgroundColor: "rgba(226,232,240,.3)", overflow: "visible" },
+  seekTrack: { height: 4, borderRadius: 2, backgroundColor: "rgba(226,232,240,.28)", overflow: "visible" },
   seekFill: { position: "absolute", left: 0, top: 0, bottom: 0, borderRadius: 2, backgroundColor: "#22d3ee" },
   seekThumb: { position: "absolute", top: -4, marginLeft: -6, width: 12, height: 12, borderRadius: 6, backgroundColor: "#67e8f9", borderWidth: 2, borderColor: "#e6fcff" },
-  dockShell: { width: "100%", alignSelf: "center", overflow: "hidden", borderRadius: 22, borderWidth: 1, borderColor: "rgba(71,101,124,.46)", backgroundColor: "#050b12", elevation: 12, justifyContent: "center" },
-  dockGlow: { position: "absolute", left: 18, right: 18, top: 0, height: 1, backgroundColor: "rgba(103,232,249,.54)" },
+  dockShell: { width: "100%", alignSelf: "center", overflow: "hidden", borderRadius: 24, borderWidth: 1, borderColor: "rgba(255,255,255,.2)", backgroundColor: "rgba(3,10,18,.28)", elevation: 7, shadowColor: "#000", shadowOpacity: 0.25, shadowRadius: 16, shadowOffset: { width: 0, height: 8 }, justifyContent: "center" },
+  dockGlow: { position: "absolute", left: 18, right: 18, top: 0, height: 1, backgroundColor: "rgba(207,250,254,.5)" },
   dockRow: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 6, paddingVertical: 6 },
-  dockButton: { alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "transparent", backgroundColor: "rgba(15,23,42,.5)" },
-  dockButtonHighlighted: { borderColor: "rgba(34,211,238,.3)", backgroundColor: "rgba(8,145,178,.12)" },
-  dockButtonActive: { borderColor: "rgba(103,232,249,.72)", backgroundColor: "rgba(8,145,178,.2)" },
+  dockButton: { alignItems: "center", justifyContent: "center", overflow: "hidden", borderWidth: 1, borderColor: "rgba(255,255,255,.12)", backgroundColor: "rgba(255,255,255,.045)" },
+  dockButtonHighlighted: { borderColor: "rgba(103,232,249,.34)", backgroundColor: "rgba(8,145,178,.08)" },
+  dockButtonActive: { borderColor: "rgba(165,243,252,.72)", backgroundColor: "rgba(8,145,178,.18)" },
   glyph: { color: "#fff", fontSize: 15, fontWeight: "900" },
   glyphAccent: { color: "#8beeff" },
-  microBadge: { position: "absolute", right: 2, bottom: 2, minWidth: 23, maxWidth: 42, height: 15, paddingHorizontal: 3, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(8,47,73,.96)", borderWidth: 1, borderColor: "rgba(103,232,249,.58)" },
+  microBadge: { position: "absolute", right: 2, bottom: 2, minWidth: 23, maxWidth: 42, height: 15, paddingHorizontal: 3, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(8,47,73,.72)", borderWidth: 1, borderColor: "rgba(103,232,249,.54)" },
   microBadgeText: { color: "#a5f3fc", fontSize: 7, fontWeight: "900" },
   pressed: { opacity: 0.78, transform: [{ scale: 0.96 }] },
 });

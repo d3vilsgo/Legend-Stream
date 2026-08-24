@@ -524,9 +524,11 @@ export function CompatibilityVideoPlayer({
 
   const handleError = useCallback(() => {
     setErrorText(
-      codecMode === "hardware"
-        ? "Donanımsal çözümleme başarısız. AUTO veya SW codec modunu deneyin."
-        : "Bu medya seçili codec moduyla oynatılamadı. Codec menüsünden AUTO veya SW deneyin.",
+      codecMode === "auto"
+        ? "Oynatma başarısız. AUTO modu hem donanım hem yazılım çözümlemeyi denedi."
+        : codecMode === "hardware"
+          ? "Donanımsal çözümleme başarısız. AUTO veya SW codec modunu deneyin."
+          : "Yazılımsal çözümleme ile bu medya oynatılamadı.",
     );
     revealControls(true);
     revealMediaInfo();
