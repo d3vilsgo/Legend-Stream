@@ -168,40 +168,28 @@ export function isXtreamCatalogFallbackError(error: unknown) {
 const episodeQueueByUrl = new Map<string, EpisodePlaybackQueue>();
 const vodQueueByUrl = new Map<string, VodPlaybackQueue>();
 
+const normalizeCatalogBaseUrl = (value: string) => {
+  const normalized = normalizeXtreamBaseUrl(value);
+  try {
+    const url = new URL(normalized);
+    if (/\/get\.php$/i.test(url.pathname)) {
+      url.pathname = url.pathname.replace(/\/get\.php$/i, "") || "/";
+      return url.toString().replace(/\/+$/, "");
+    }
+  } catch {
+    // normalizeXtreamBaseUrl already validates URL inputs.
+  }
+  return normalized;
+};
+
 const encodeCredentials = (credentials: XtreamCredentials) => ({
-  baseUrl: normalizeXtreamBaseUrl(credentials.baseUrl),
+  baseUrl: normalizeCatalogBaseUrl(credentials.baseUrl),
   username: credentials.username.trim(),
   password: credentials.password,
 });
 
-const redactXtreamUrl = (value: string) => {
-  try {
-    const url = new URL(value);
-    if (url.searchParams.has("username")) url.searchParams.set("username", "***");
-    if (url.searchParams.has("password")) url.searchParams.set("password", "***");
-    return url.toString();
-  } catch {
-    return value.replace(/([?&](?:username|password)=)[^&]*/gi, "$1***");
-  }
-};
-
-type XtreamDebugContext = {
-  action: string;
-  requestUrl: string;
-};
-
-async function parseResponse(response: Response, debug?: XtreamDebugContext) {
+async function parseResponse(response: Response) {
   const text = await response.text();
-  if (debug) {
-    console.info("[LegendStream][XtreamCatalog][response]", {
-      action: debug.action,
-      requestUrl: debug.requestUrl,
-      status: response.status,
-      ok: response.ok,
-      contentType: response.headers.get("content-type") ?? "",
-      bodyPreview: text.slice(0, 200),
-    });
-  }
   await yieldToUi();
 
   if (response.status === 404) {
@@ -270,18 +258,9 @@ async function requestNative(
     if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
   });
 
-  const requestUrl = url.toString();
-  const redactedRequestUrl = redactXtreamUrl(requestUrl);
-  console.info("[LegendStream][XtreamCatalog][request]", {
-    action,
-    sourceBaseUrl: redactXtreamUrl(credentials.baseUrl),
-    normalizedBaseUrl: redactXtreamUrl(normalized.baseUrl),
-    requestUrl: redactedRequestUrl,
-  });
-
   let response: Response;
   try {
-    response = await fetch(requestUrl, {
+    response = await fetch(url.toString(), {
       headers: {
         Accept: "application/json,text/plain,*/*",
         "User-Agent": "LegendStream-XPlayer/1.0 Android",
@@ -291,7 +270,7 @@ async function requestNative(
   } catch (caught) {
     throw transportError(caught, "server");
   }
-  return parseResponse(response, { action, requestUrl: redactedRequestUrl });
+  return parseResponse(response);
 }
 
 async function requestWeb(
@@ -443,7 +422,7 @@ export function buildVodStreamUrl(
 ) {
   if (item.direct_source) return item.direct_source;
   if (!credentials) throw new Error("Xtream credentials are required for this VOD stream.");
-  const baseUrl = normalizeXtreamBaseUrl(credentials.baseUrl);
+  const baseUrl = normalizeCatalogBaseUrl(credentials.baseUrl);
   const extension = item.container_extension || "mp4";
   return `${baseUrl}/movie/${encodeURIComponent(credentials.username)}/${encodeURIComponent(
     credentials.password,
@@ -456,7 +435,7 @@ export function buildEpisodeStreamUrl(
 ) {
   if (episode.direct_source) return episode.direct_source;
   if (!credentials) throw new Error("Xtream credentials are required for this episode stream.");
-  const baseUrl = normalizeXtreamBaseUrl(credentials.baseUrl);
+  const baseUrl = normalizeCatalogBaseUrl(credentials.baseUrl);
   const extension = episode.container_extension || "mp4";
   return `${baseUrl}/series/${encodeURIComponent(credentials.username)}/${encodeURIComponent(
     credentials.password,
