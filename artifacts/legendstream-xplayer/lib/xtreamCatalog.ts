@@ -174,8 +174,34 @@ const encodeCredentials = (credentials: XtreamCredentials) => ({
   password: credentials.password,
 });
 
-async function parseResponse(response: Response) {
+const redactXtreamUrl = (value: string) => {
+  try {
+    const url = new URL(value);
+    if (url.searchParams.has("username")) url.searchParams.set("username", "***");
+    if (url.searchParams.has("password")) url.searchParams.set("password", "***");
+    return url.toString();
+  } catch {
+    return value.replace(/([?&](?:username|password)=)[^&]*/gi, "$1***");
+  }
+};
+
+type XtreamDebugContext = {
+  action: string;
+  requestUrl: string;
+};
+
+async function parseResponse(response: Response, debug?: XtreamDebugContext) {
   const text = await response.text();
+  if (debug) {
+    console.info("[LegendStream][XtreamCatalog][response]", {
+      action: debug.action,
+      requestUrl: debug.requestUrl,
+      status: response.status,
+      ok: response.ok,
+      contentType: response.headers.get("content-type") ?? "",
+      bodyPreview: text.slice(0, 200),
+    });
+  }
   await yieldToUi();
 
   if (response.status === 404) {
@@ -244,9 +270,18 @@ async function requestNative(
     if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
   });
 
+  const requestUrl = url.toString();
+  const redactedRequestUrl = redactXtreamUrl(requestUrl);
+  console.info("[LegendStream][XtreamCatalog][request]", {
+    action,
+    sourceBaseUrl: redactXtreamUrl(credentials.baseUrl),
+    normalizedBaseUrl: redactXtreamUrl(normalized.baseUrl),
+    requestUrl: redactedRequestUrl,
+  });
+
   let response: Response;
   try {
-    response = await fetch(url.toString(), {
+    response = await fetch(requestUrl, {
       headers: {
         Accept: "application/json,text/plain,*/*",
         "User-Agent": "LegendStream-XPlayer/1.0 Android",
@@ -256,7 +291,7 @@ async function requestNative(
   } catch (caught) {
     throw transportError(caught, "server");
   }
-  return parseResponse(response);
+  return parseResponse(response, { action, requestUrl: redactedRequestUrl });
 }
 
 async function requestWeb(
