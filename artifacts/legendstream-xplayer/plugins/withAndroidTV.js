@@ -23,7 +23,7 @@ const ensureUsesFeature = (manifest, name) => {
 
 const TV_FOCUS_MARKER = "// @legendstream-tv-focus";
 
-function injectTvFocusRing(source) {
+function injectTvRuntime(source) {
   if (source.includes(TV_FOCUS_MARKER)) return source;
   const imports = `
 import android.app.UiModeManager
@@ -32,7 +32,11 @@ import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
+import android.view.KeyEvent
 import android.view.View
+import com.facebook.react.ReactApplication
+import com.facebook.react.bridge.Arguments
+import com.facebook.react.modules.core.DeviceEventManagerModule
 import java.util.WeakHashMap
 `;
   const packageLine = source.match(/^package\s+[^\n]+\n/m);
@@ -53,9 +57,58 @@ import java.util.WeakHashMap
   const helper = `
 
   ${TV_FOCUS_MARKER}
+  private fun isLegendStreamTv(): Boolean {
+    val manager = getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
+    return manager?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION
+  }
+
+  private fun legendStreamTvEventType(keyCode: Int): String? = when (keyCode) {
+    KeyEvent.KEYCODE_DPAD_UP -> "up"
+    KeyEvent.KEYCODE_DPAD_DOWN -> "down"
+    KeyEvent.KEYCODE_DPAD_LEFT -> "left"
+    KeyEvent.KEYCODE_DPAD_RIGHT -> "right"
+    KeyEvent.KEYCODE_DPAD_CENTER,
+    KeyEvent.KEYCODE_ENTER,
+    KeyEvent.KEYCODE_NUMPAD_ENTER,
+    KeyEvent.KEYCODE_BUTTON_A -> "select"
+    KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> "playPause"
+    KeyEvent.KEYCODE_MEDIA_PLAY -> "play"
+    KeyEvent.KEYCODE_MEDIA_PAUSE -> "pause"
+    else -> null
+  }
+
+  private fun emitLegendStreamTvKey(eventType: String, event: KeyEvent) {
+    val reactApplication = application as? ReactApplication ?: return
+    val reactContext = reactApplication.reactNativeHost.reactInstanceManager.currentReactContext ?: return
+    val payload = Arguments.createMap().apply {
+      putString("eventType", eventType)
+      putInt("eventKeyAction", event.action)
+      putInt("repeatCount", event.repeatCount)
+    }
+    reactContext
+      .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
+      .emit("LegendStreamTVRemote", payload)
+  }
+
+  override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+    if (isLegendStreamTv()) {
+      val eventType = legendStreamTvEventType(event.keyCode)
+      if (eventType != null) {
+        emitLegendStreamTvKey(eventType, event)
+        if (
+          event.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE ||
+          event.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY ||
+          event.keyCode == KeyEvent.KEYCODE_MEDIA_PAUSE
+        ) {
+          return true
+        }
+      }
+    }
+    return super.dispatchKeyEvent(event)
+  }
+
   private fun installLegendStreamTvFocusRing() {
-    val uiModeManager = getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
-    if (uiModeManager?.currentModeType != Configuration.UI_MODE_TYPE_TELEVISION) return
+    if (!isLegendStreamTv()) return
 
     val previousForeground = WeakHashMap<View, Drawable?>()
     val previousElevation = WeakHashMap<View, Float>()
@@ -138,7 +191,7 @@ module.exports = function withAndroidTV(config) {
     if (configWithActivity.modResults.language !== "kt") {
       throw new Error("LegendStream Android TV plugin expects Kotlin MainActivity");
     }
-    configWithActivity.modResults.contents = injectTvFocusRing(
+    configWithActivity.modResults.contents = injectTvRuntime(
       configWithActivity.modResults.contents,
     );
     return configWithActivity;
