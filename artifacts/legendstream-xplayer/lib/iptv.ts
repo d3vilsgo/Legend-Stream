@@ -2,6 +2,7 @@ import { Platform } from "react-native";
 import { mapInBatches, yieldToUi } from "./cooperative";
 
 export type ProviderType = "m3u" | "xtream" | "stalker";
+export type ChannelContentType = "live" | "movie" | "series";
 
 export interface Provider {
   id: string;
@@ -28,8 +29,45 @@ export interface Channel {
   category: string;
   tvgId?: string;
   streamType?: string;
+  contentType?: ChannelContentType;
   nowPlaying?: string;
   nextPlaying?: string;
+}
+
+export interface M3UMovieItem {
+  id: string;
+  providerId: string;
+  name: string;
+  streamUrl: string;
+  logoUrl?: string;
+  category: string;
+  contentType: "movie";
+}
+
+export interface M3USeriesEpisode {
+  id: string;
+  providerId: string;
+  title: string;
+  streamUrl: string;
+  category: string;
+  season: number;
+  episode: number;
+  logoUrl?: string;
+}
+
+export interface M3USeriesGroup {
+  id: string;
+  providerId: string;
+  name: string;
+  category: string;
+  coverUrl?: string;
+  contentType: "series";
+  seasons: Record<string, M3USeriesEpisode[]>;
+}
+
+export interface M3UCatalog {
+  movieItems: M3UMovieItem[];
+  seriesGroups: M3USeriesGroup[];
 }
 
 export interface EpgProgram {
@@ -43,6 +81,9 @@ export interface EpgProgram {
 
 export interface ProviderLoadResult {
   channels: Channel[];
+  liveChannels?: Channel[];
+  movieItems?: M3UMovieItem[];
+  seriesGroups?: M3USeriesGroup[];
   epgUrl?: string;
 }
 
@@ -54,6 +95,13 @@ export interface ProviderForm {
   password?: string;
   mac?: string;
   epgUrl?: string;
+}
+
+const m3uCatalogByProvider = new Map<string, M3UCatalog>();
+
+export function getM3UCatalog(providerId?: string): M3UCatalog {
+  if (!providerId) return { movieItems: [], seriesGroups: [] };
+  return m3uCatalogByProvider.get(providerId) ?? { movieItems: [], seriesGroups: [] };
 }
 
 const decodeEntities = (value: string) =>
@@ -107,10 +155,121 @@ const parseAttributes = (line: string) => {
 const makeId = (providerId: string, index: number, value: string) =>
   `${providerId}:${index}:${value}`.replace(/[^a-zA-Z0-9:_-]/g, "-");
 
+const normalizeHint = (value: string) =>
+  value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toUpperCase();
+
+function inferM3UContentType(streamUrl: string, category: string): ChannelContentType {
+  const lowerUrl = streamUrl.toLowerCase();
+  const path = (() => {
+    try { return new URL(streamUrl).pathname.toLowerCase(); }
+    catch { return lowerUrl.split(/[?#]/, 1)[0]; }
+  })();
+
+  if (/(^|\/)movie\//i.test(path)) return "movie";
+  if (/(^|\/)series\//i.test(path)) return "series";
+  if (/(^|\/)live\//i.test(path)) return "live";
+
+  if (/\.(mp4|mkv|avi)$/i.test(path)) return "movie";
+  if (/\.(ts|m3u8)$/i.test(path)) return "live";
+
+  const group = normalizeHint(category);
+  if (/\b(VOD|MOVIE|MOVIES|FILM|FILMLER|SINEMA|CINEMA)\b/.test(group)) return "movie";
+  if (/\b(SERIES|SERIE|DIZI|DIZILER)\b/.test(group)) return "series";
+  return "live";
+}
+
+function parseSeriesIdentity(name: string) {
+  const patterns = [
+    /\bS(?:EASON)?\s*(\d{1,2})\s*E(?:P(?:ISODE)?)?\s*(\d{1,3})\b/i,
+    /\b(\d{1,2})\s*[xX]\s*(\d{1,3})\b/i,
+    /\b(?:SEZON|SEASON)\s*(\d{1,2})\s*(?:B[ÖO]L[ÜU]M|EPISODE|EP)\s*(\d{1,3})\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = name.match(pattern);
+    if (!match) continue;
+    const season = Number(match[1]);
+    const episode = Number(match[2]);
+    if (!Number.isFinite(season) || !Number.isFinite(episode)) continue;
+    const seriesName = name
+      .replace(match[0], " ")
+      .replace(/[._-]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+    return {
+      seriesName: seriesName || name.trim(),
+      season: Math.max(1, season),
+      episode: Math.max(1, episode),
+    };
+  }
+  return { seriesName: name.trim(), season: 1, episode: 1 };
+}
+
+function buildM3UCatalog(entries: Channel[], providerId: string): ProviderLoadResult {
+  const liveChannels = entries.filter((entry) => entry.contentType === "live");
+  const movieEntries = entries.filter((entry) => entry.contentType === "movie");
+  const seriesEntries = entries.filter((entry) => entry.contentType === "series");
+
+  const movieItems: M3UMovieItem[] = movieEntries.map((entry) => ({
+    id: entry.id,
+    providerId,
+    name: entry.name,
+    streamUrl: entry.streamUrl,
+    logoUrl: entry.logoUrl,
+    category: entry.category,
+    contentType: "movie",
+  }));
+
+  const grouped = new Map<string, M3USeriesGroup>();
+  for (const entry of seriesEntries) {
+    const identity = parseSeriesIdentity(entry.name);
+    const key = `${normalizeHint(identity.seriesName)}::${normalizeHint(entry.category)}`;
+    let group = grouped.get(key);
+    if (!group) {
+      group = {
+        id: makeId(providerId, grouped.size, identity.seriesName),
+        providerId,
+        name: identity.seriesName,
+        category: entry.category,
+        coverUrl: entry.logoUrl,
+        contentType: "series",
+        seasons: {},
+      };
+      grouped.set(key, group);
+    }
+    const seasonKey = String(identity.season);
+    const episodes = group.seasons[seasonKey] ?? (group.seasons[seasonKey] = []);
+    episodes.push({
+      id: entry.id,
+      providerId,
+      title: entry.name,
+      streamUrl: entry.streamUrl,
+      category: entry.category,
+      season: identity.season,
+      episode: identity.episode,
+      logoUrl: entry.logoUrl,
+    });
+  }
+  const seriesGroups = Array.from(grouped.values()).map((group) => ({
+    ...group,
+    seasons: Object.fromEntries(
+      Object.entries(group.seasons).map(([season, episodes]) => [
+        season,
+        episodes.sort((a, b) => a.episode - b.episode),
+      ]),
+    ),
+  }));
+
+  m3uCatalogByProvider.set(providerId, { movieItems, seriesGroups });
+  return { channels: liveChannels, liveChannels, movieItems, seriesGroups };
+}
+
 function parseM3ULine(
   line: string,
   providerId: string,
-  channels: Channel[],
+  entries: Channel[],
   state: {
     pending: { attributes: Record<string, string>; name: string; group?: string } | null;
     nextGroup?: string;
@@ -149,15 +308,18 @@ function parseM3ULine(
     state.pending.group ||
     "Uncategorized";
   const streamId = state.pending.attributes["tvg-id"] || state.pending.name;
-  channels.push({
-    id: makeId(providerId, channels.length, streamId),
+  const name = state.pending.attributes["tvg-name"] || state.pending.name;
+  const contentType = inferM3UContentType(line, category);
+  entries.push({
+    id: makeId(providerId, entries.length, streamId),
     providerId,
-    name: state.pending.attributes["tvg-name"] || state.pending.name,
+    name,
     streamUrl: line,
     logoUrl: state.pending.attributes["tvg-logo"] || undefined,
     category,
     tvgId: state.pending.attributes["tvg-id"] || undefined,
     streamType: state.pending.attributes["type"] || undefined,
+    contentType,
   });
   state.pending = null;
 }
@@ -167,7 +329,7 @@ export function parseM3U(
   providerId: string,
 ): ProviderLoadResult {
   const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
-  const channels: Channel[] = [];
+  const entries: Channel[] = [];
   const state: {
     pending: { attributes: Record<string, string>; name: string; group?: string } | null;
     nextGroup?: string;
@@ -176,13 +338,13 @@ export function parseM3U(
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    if (line) parseM3ULine(line, providerId, channels, state);
+    if (line) parseM3ULine(line, providerId, entries, state);
   }
 
-  if (!channels.length) {
+  if (!entries.length) {
     throw new Error("No playable channels were found in this M3U playlist.");
   }
-  return { channels, epgUrl: state.epgUrl };
+  return { ...buildM3UCatalog(entries, providerId), epgUrl: state.epgUrl };
 }
 
 async function parseM3UCooperatively(
@@ -190,7 +352,7 @@ async function parseM3UCooperatively(
   providerId: string,
 ): Promise<ProviderLoadResult> {
   const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
-  const channels: Channel[] = [];
+  const entries: Channel[] = [];
   const state: {
     pending: { attributes: Record<string, string>; name: string; group?: string } | null;
     nextGroup?: string;
@@ -202,15 +364,16 @@ async function parseM3UCooperatively(
     const end = Math.min(start + batchSize, lines.length);
     for (let index = start; index < end; index += 1) {
       const line = lines[index].trim();
-      if (line) parseM3ULine(line, providerId, channels, state);
+      if (line) parseM3ULine(line, providerId, entries, state);
     }
     if (end < lines.length) await yieldToUi();
   }
 
-  if (!channels.length) {
+  if (!entries.length) {
     throw new Error("No playable channels were found in this M3U playlist.");
   }
-  return { channels, epgUrl: state.epgUrl };
+  await yieldToUi();
+  return { ...buildM3UCatalog(entries, providerId), epgUrl: state.epgUrl };
 }
 
 export class ProviderLoadError extends Error {
@@ -235,9 +398,6 @@ export class ProviderLoadError extends Error {
 
 const asJson = async (response: Response) => {
   const text = await response.text();
-  // Give pending input/layout work a chance to run before a potentially large
-  // JSON.parse. React Native has no portable streaming JSON parser, so the
-  // expensive post-parse transformation is also cooperatively batched below.
   await yieldToUi();
   try {
     const parsed = JSON.parse(text) as any;
@@ -411,11 +571,12 @@ async function loadXtream(provider: Provider): Promise<ProviderLoadResult> {
         category: categoryMap.get(String(stream.category_id)) || "Live TV",
         tvgId: stream.epg_channel_id || undefined,
         streamType: "xtream",
+        contentType: "live",
       };
     },
     250,
   );
-  return { channels, epgUrl: provider.epgUrl };
+  return { channels, liveChannels: channels, epgUrl: provider.epgUrl };
 }
 
 async function loadXtreamDirect(
@@ -494,12 +655,13 @@ async function loadStalker(provider: Provider): Promise<ProviderLoadResult> {
         category: decodeEpgText(String(row.tv_genre_name || row.category_name || "Live TV")),
         tvgId: row.xmltv_id || undefined,
         streamType: "stalker",
+        contentType: "live",
       };
     },
     250,
   );
   if (!channels.length) throw new Error("The Stalker Portal returned no live channels.");
-  return { channels, epgUrl: provider.epgUrl };
+  return { channels, liveChannels: channels, epgUrl: provider.epgUrl };
 }
 
 export async function loadProvider(provider: Provider): Promise<ProviderLoadResult> {
@@ -589,8 +751,6 @@ export async function parseXmltvAsync(
   const programs: EpgProgram[] = [];
   const perChannel = new Map<string, number>();
   const programmePattern = /<programme\b([^>]*)>([\s\S]*?)<\/programme>/gi;
-  // The UI only needs current/next. Ignore stale multi-day history and remote
-  // future schedules before extracting title/description to keep memory bounded.
   const windowStart = nowMs - 2 * 60 * 60 * 1000;
   const windowEnd = nowMs + 18 * 60 * 60 * 1000;
   let match: RegExpExecArray | null;
