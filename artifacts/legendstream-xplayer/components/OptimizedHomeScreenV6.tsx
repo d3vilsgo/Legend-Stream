@@ -42,6 +42,7 @@ import {
   getSeriesInfo,
   getVodCategories,
   getVodStreams,
+  isXtreamCatalogFallbackError,
   registerLocalEpisodeQueue,
   registerLocalVodQueue,
   XtreamCategory,
@@ -76,6 +77,17 @@ const categoryRows = (names: string[]): XtreamCategory[] =>
     category_id: name,
     category_name: name,
   }));
+
+const isGetPhpM3UPlusProvider = (provider: ProviderConfig) => {
+  try {
+    const source = new URL(provider.url || provider.playlistUrl);
+    if (!/\/get\.php$/i.test(source.pathname)) return false;
+    const type = source.searchParams.get("type")?.toLowerCase();
+    return !type || type === "m3u_plus";
+  } catch {
+    return false;
+  }
+};
 
 export default function OptimizedHomeScreenV6() {
   const colors = useColors();
@@ -142,24 +154,72 @@ export default function OptimizedHomeScreenV6() {
     catalogCategoryMemory.series = "__all__";
   }, [provider?.id]);
 
+  const applyLocalVod = () => {
+    if (!provider) return;
+    const local = getM3UCatalog(provider.id);
+    const items: XtreamVodItem[] = local.movieItems.map((item) => ({
+      stream_id: item.id,
+      name: item.name,
+      stream_icon: item.logoUrl,
+      category_id: item.category,
+      direct_source: item.streamUrl,
+    }));
+    registerLocalVodQueue(items);
+    setVodCats(categoryRows(local.movieItems.map((item) => item.category)));
+    setVod(items);
+    setVodCache({ __m3u__: items });
+    setVodLoaded(true);
+  };
+
+  const applyLocalSeries = () => {
+    if (!provider) return;
+    const local = getM3UCatalog(provider.id);
+    const items: XtreamSeriesItem[] = local.seriesGroups.map((group) => ({
+      series_id: group.id,
+      name: group.name,
+      cover: group.coverUrl,
+      category_id: group.category,
+    }));
+    setSeriesCats(categoryRows(local.seriesGroups.map((group) => group.category)));
+    setSeries(items);
+    setSeriesCache({ __m3u__: items });
+    setSeriesLoaded(true);
+  };
+
+  const tryCatalogFallbackToM3U = async (caught: unknown, target: "movies" | "series") => {
+    if (
+      !provider ||
+      provider.type !== "xtream" ||
+      !isGetPhpM3UPlusProvider(provider) ||
+      !isXtreamCatalogFallbackError(caught)
+    ) {
+      return false;
+    }
+
+    const migrated = await connectProvider({
+      name: provider.name,
+      type: "m3u",
+      playlistUrl: provider.url || provider.playlistUrl,
+      username: provider.username,
+      password: provider.password,
+      mac: provider.mac,
+      epgUrl: provider.epgUrl,
+    });
+    if (!migrated) return false;
+
+    clearError();
+    setCatalogError(null);
+    if (target === "movies") applyLocalVod();
+    else applyLocalSeries();
+    return true;
+  };
+
   const loadVod = async (force = false) => {
     if (!provider || (vodLoaded && !force) || vodLoading) return;
     setVodLoading(true); setCatalogError(null);
     try {
       if (provider.type === "m3u") {
-        const local = getM3UCatalog(provider.id);
-        const items: XtreamVodItem[] = local.movieItems.map((item) => ({
-          stream_id: item.id,
-          name: item.name,
-          stream_icon: item.logoUrl,
-          category_id: item.category,
-          direct_source: item.streamUrl,
-        }));
-        registerLocalVodQueue(items);
-        setVodCats(categoryRows(local.movieItems.map((item) => item.category)));
-        setVod(items);
-        setVodCache({ __m3u__: items });
-        setVodLoaded(true);
+        applyLocalVod();
         return;
       }
       if (!credentials || provider.type !== "xtream") return;
@@ -171,6 +231,8 @@ export default function OptimizedHomeScreenV6() {
       setVodCats(cats);
       setVodLoaded(true);
     } catch (caught) {
+      if (await tryCatalogFallbackToM3U(caught, "movies")) return;
+      setVodLoaded(true);
       setCatalogError(caught instanceof Error ? caught.message : t("loadingMovies"));
     } finally { setVodLoading(false); }
   };
@@ -188,6 +250,8 @@ export default function OptimizedHomeScreenV6() {
         return next;
       });
     } catch (caught) {
+      if (await tryCatalogFallbackToM3U(caught, "movies")) return;
+      setVodLoaded(true);
       setCatalogError(caught instanceof Error ? caught.message : t("loadingMovies"));
     } finally { setVodLoading(false); }
   };
@@ -197,17 +261,7 @@ export default function OptimizedHomeScreenV6() {
     setSeriesLoading(true); setCatalogError(null);
     try {
       if (provider.type === "m3u") {
-        const local = getM3UCatalog(provider.id);
-        const items: XtreamSeriesItem[] = local.seriesGroups.map((group) => ({
-          series_id: group.id,
-          name: group.name,
-          cover: group.coverUrl,
-          category_id: group.category,
-        }));
-        setSeriesCats(categoryRows(local.seriesGroups.map((group) => group.category)));
-        setSeries(items);
-        setSeriesCache({ __m3u__: items });
-        setSeriesLoaded(true);
+        applyLocalSeries();
         return;
       }
       if (!credentials || provider.type !== "xtream") return;
@@ -219,6 +273,8 @@ export default function OptimizedHomeScreenV6() {
       setSeriesCats(cats);
       setSeriesLoaded(true);
     } catch (caught) {
+      if (await tryCatalogFallbackToM3U(caught, "series")) return;
+      setSeriesLoaded(true);
       setCatalogError(caught instanceof Error ? caught.message : t("loadingSeries"));
     } finally { setSeriesLoading(false); }
   };
@@ -236,6 +292,8 @@ export default function OptimizedHomeScreenV6() {
         return next;
       });
     } catch (caught) {
+      if (await tryCatalogFallbackToM3U(caught, "series")) return;
+      setSeriesLoaded(true);
       setCatalogError(caught instanceof Error ? caught.message : t("loadingSeries"));
     } finally { setSeriesLoading(false); }
   };
