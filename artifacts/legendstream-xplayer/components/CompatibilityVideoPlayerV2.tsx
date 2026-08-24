@@ -9,6 +9,7 @@ import {
   getPlayerChromeTimeoutSeconds,
 } from "@/lib/playerPreferences";
 import { getEpisodePlaybackQueue, getVodPlaybackQueue } from "@/lib/xtreamCatalog";
+import { isAndroidTV, useLegendTVEventHandler } from "@/lib/tvPlatform";
 import { usePlayerOrientation } from "@/hooks/usePlayerOrientation";
 import {
   enterPictureInPicture,
@@ -190,6 +191,14 @@ export function CompatibilityVideoPlayer({
     );
   }, [chromeTimeoutSeconds, clearInfoTimer]);
 
+  const hideChrome = useCallback(() => {
+    clearControlsTimer();
+    clearInfoTimer();
+    setPanel(null);
+    setControlsVisible(false);
+    setInfoVisible(false);
+  }, [clearControlsTimer, clearInfoTimer]);
+
   const onBackgroundPress = useCallback(() => {
     if (panel) {
       setPanel(null);
@@ -197,16 +206,13 @@ export function CompatibilityVideoPlayer({
       return;
     }
     if (controlsVisible) {
-      clearControlsTimer();
-      clearInfoTimer();
-      setControlsVisible(false);
-      setInfoVisible(false);
+      hideChrome();
       return;
     }
     setVolume(getMediaVolume());
     revealControls();
     revealMediaInfo();
-  }, [clearControlsTimer, clearInfoTimer, controlsVisible, panel, revealControls, revealMediaInfo]);
+  }, [controlsVisible, hideChrome, panel, revealControls, revealMediaInfo]);
 
   const togglePanel = useCallback((next: Exclude<PlayerPanel, null>) => {
     setPanel((current) => current === next ? null : next);
@@ -381,19 +387,6 @@ export function CompatibilityVideoPlayer({
     onFullscreenExit?.();
   }, [clearControlsTimer, clearInfoTimer, onFullscreenExit, orientation, persistProgress]);
 
-  useEffect(() => {
-    const back = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (panel) {
-        setPanel(null);
-        revealControls();
-        return true;
-      }
-      void exitPlayer();
-      return true;
-    });
-    return () => back.remove();
-  }, [exitPlayer, panel, revealControls]);
-
   const seekToRatio = useCallback((ratio: number) => {
     if (currentKind === "live") return;
     const safe = Math.max(0, Math.min(1, ratio));
@@ -415,6 +408,60 @@ export function CompatibilityVideoPlayer({
     setPosition(next);
     revealControls();
   }, [currentKind, revealControls]);
+
+  useLegendTVEventHandler((event) => {
+    if (!isAndroidTV || event.eventKeyAction === 1) return;
+    const type = event.eventType;
+
+    if (type === "select" || type === "enter") {
+      if (!controlsVisible) {
+        setVolume(getMediaVolume());
+        revealControls();
+        revealMediaInfo();
+      }
+      return;
+    }
+
+    if (type === "playPause" || type === "play" || type === "pause") {
+      setPaused((value) => !value);
+      revealControls();
+      revealMediaInfo();
+      return;
+    }
+
+    if (controlsVisible) return;
+    if (type === "up" || type === "down") {
+      revealControls();
+      revealMediaInfo();
+      return;
+    }
+    if (type === "left") {
+      if (currentKind === "live") moveRelative(-1);
+      else seekBy(-10);
+      return;
+    }
+    if (type === "right") {
+      if (currentKind === "live") moveRelative(1);
+      else seekBy(15);
+    }
+  });
+
+  useEffect(() => {
+    const back = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (panel) {
+        setPanel(null);
+        revealControls();
+        return true;
+      }
+      if (isAndroidTV && controlsVisible) {
+        hideChrome();
+        return true;
+      }
+      void exitPlayer();
+      return true;
+    });
+    return () => back.remove();
+  }, [controlsVisible, exitPlayer, hideChrome, panel, revealControls]);
 
   const cycleFit = useCallback(() => {
     const modes: PlayerFitMode[] = ["fit", "full", "original", "16:9", "4:3"];

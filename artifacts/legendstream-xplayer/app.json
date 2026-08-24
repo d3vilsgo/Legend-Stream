@@ -57,6 +57,7 @@
       ],
       "./plugins/withLegendStreamPip",
       "./plugins/withAndroidLargeHeap",
+      "./plugins/withAndroidTV",
       "./plugins/withAndroidAbiSplits",
       "expo-font",
       "expo-web-browser"

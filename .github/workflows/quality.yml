@@ -62,5 +62,14 @@ jobs:
           echo 'Replit cleanup verification passed.'
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
+      - name: Verify Android TV prebuild
+        working-directory: artifacts/legendstream-xplayer
+        env:
+          EXPO_NO_DOCTOR: "1"
+          NODE_ENV: production
+        run: |
+          pnpm exec expo prebuild --platform android --clean --no-install
+          node scripts/verify-tv-config.js
+          grep -q '@legendstream-tv-focus' android/app/src/main/java/com/legendstream/xplayer/MainActivity.kt
       - name: Typecheck API server and references
         run: pnpm exec tsc -b artifacts/api-server/tsconfig.json --pretty false

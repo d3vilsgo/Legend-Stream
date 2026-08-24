@@ -8,6 +8,7 @@ import {
   View,
   useWindowDimensions,
 } from "react-native";
+import { isAndroidTV } from "@/lib/tvPlatform";
 
 type Props = {
   volume: number;
@@ -38,8 +39,7 @@ const clampRange = (value: number, min: number, max: number) =>
  * - vertical swipe on RIGHT half => Android media volume,
  * - horizontal swipe => relative seek for VOD/episodes.
  *
- * A gesture is classified once after a movement threshold. This prevents a
- * diagonal horizontal seek from accidentally changing brightness or volume.
+ * TV devices intentionally skip this layer so D-pad/media keys own navigation.
  */
 export function PlayerGestureLayer({
   enabled = true,
@@ -54,6 +54,7 @@ export function PlayerGestureLayer({
 }: Props) {
   const { width, height } = useWindowDimensions();
   const [hud, setHud] = useState<HudState>(null);
+  const effectiveEnabled = enabled && !isAndroidTV;
 
   const brightnessRef = useRef(0.5);
   const volumeRef = useRef(clamp(volume));
@@ -71,6 +72,7 @@ export function PlayerGestureLayer({
   }, [volume]);
 
   useEffect(() => {
+    if (isAndroidTV) return;
     let active = true;
     Brightness.getBrightnessAsync()
       .then((value) => {
@@ -100,9 +102,9 @@ export function PlayerGestureLayer({
   };
 
   const panResponder = useMemo(() => PanResponder.create({
-    onStartShouldSetPanResponder: () => enabled,
+    onStartShouldSetPanResponder: () => effectiveEnabled,
     onMoveShouldSetPanResponder: (_event, gesture) =>
-      enabled && (Math.abs(gesture.dy) > 3 || Math.abs(gesture.dx) > 3),
+      effectiveEnabled && (Math.abs(gesture.dy) > 3 || Math.abs(gesture.dx) > 3),
     onPanResponderGrant: (_event, gesture) => {
       modeRef.current = null;
       verticalSideRef.current = gesture.x0 < width / 2 ? "brightness" : "volume";
@@ -188,7 +190,7 @@ export function PlayerGestureLayer({
     onPanResponderTerminationRequest: () => true,
   }), [
     duration,
-    enabled,
+    effectiveEnabled,
     height,
     onSeekBy,
     onTap,
@@ -199,7 +201,7 @@ export function PlayerGestureLayer({
     width,
   ]);
 
-  if (!enabled) return null;
+  if (!effectiveEnabled) return null;
 
   return (
     <View style={styles.layer} {...panResponder.panHandlers}>

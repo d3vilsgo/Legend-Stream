@@ -1,0 +1,6 @@
+- launcher exposes LAUNCHER + LEANBACK_LAUNCHER
+- touchscreen and leanback features are optional
+- phone gestures are disabled only when Platform reports TV
+- BACK hides player chrome first on TV
+- hidden LEFT/RIGHT switches live channel or seeks VOD
+- hidden UP/DOWN and SELECT reveal chrome

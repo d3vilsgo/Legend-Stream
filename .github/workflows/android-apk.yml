@@ -82,6 +82,7 @@ jobs:
         run: |
           set -o pipefail
           pnpm exec expo prebuild --platform android --clean --no-install 2>&1 | tee "$GITHUB_WORKSPACE/expo-prebuild.log"
+          node scripts/verify-tv-config.js
           grep '^reactNativeArchitectures=' android/gradle.properties || true
           sed -n '/@legendstream abi-splits:start/,/@legendstream abi-splits:end/p' android/app/build.gradle
 
@@ -91,10 +92,10 @@ jobs:
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "full_release=true" >> "$GITHUB_OUTPUT"
-            echo "Full release: arm64 + armv7 + AAB"
+            echo "Full release: arm64 + armv7 APKs + AAB"
           else
             echo "full_release=false" >> "$GITHUB_OUTPUT"
-            echo "Test build: arm64-v8a APK only"
+            echo "TV test build: arm64-v8a + armeabi-v7a APKs"
           fi
 
       - name: Build and stage production AAB
@@ -132,15 +133,10 @@ jobs:
         env:
           NODE_ENV: production
           GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
-          FULL_RELEASE: ${{ steps.mode.outputs.full_release }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$FULL_RELEASE" = "true" ]; then
-            ./gradlew assembleRelease -PabiSplit --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
-          else
-            ./gradlew assembleRelease -PabiSplit -PabiOnly=arm64-v8a -PreactNativeArchitectures=arm64-v8a --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
-          fi
+          ./gradlew assembleRelease -PabiSplit -PreactNativeArchitectures=arm64-v8a,armeabi-v7a --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
 
       - name: Verify and stage outputs
         id: package_android
@@ -154,12 +150,7 @@ jobs:
           mapfile -t APKS < <(find "$APK_DIR" -type f -name '*.apk' | sort)
           echo "APK outputs:"
           printf '%s\n' "${APKS[@]}"
-
-          if [ "$FULL_RELEASE" = "true" ]; then
-            test "${#APKS[@]}" -eq 2
-          else
-            test "${#APKS[@]}" -eq 1
-          fi
+          test "${#APKS[@]}" -eq 2
 
           ARM64_APK=""
           ARMV7_APK=""
@@ -176,33 +167,37 @@ jobs:
           done
 
           test -n "$ARM64_APK"
-          if [ "$FULL_RELEASE" = "true" ]; then test -n "$ARMV7_APK"; fi
+          test -n "$ARMV7_APK"
 
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           test -x "$AAPT"
           ARM64_CODE="$($AAPT dump badging "$ARM64_APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
+          ARMV7_CODE="$($AAPT dump badging "$ARMV7_APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
           echo "arm64-v8a versionCode=$ARM64_CODE"
+          echo "armeabi-v7a versionCode=$ARMV7_CODE"
           test -n "$ARM64_CODE"
+          test -n "$ARMV7_CODE"
+          test "$ARM64_CODE" != "$ARMV7_CODE"
 
-          if [ "$FULL_RELEASE" = "true" ]; then
-            ARMV7_CODE="$($AAPT dump badging "$ARMV7_APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
-            echo "armeabi-v7a versionCode=$ARMV7_CODE"
-            test -n "$ARMV7_CODE"
-            test "$ARM64_CODE" != "$ARMV7_CODE"
-          fi
+          BADGING="$($AAPT dump badging "$ARM64_APK")"
+          echo "$BADGING" | grep -q "android.intent.category.LEANBACK_LAUNCHER"
+          echo "$BADGING" | grep -q "android.intent.category.LAUNCHER"
 
           APP_VERSION="$(node -p "require('./artifacts/legendstream-xplayer/app.json').expo.version")"
           ARM64_NAME="LegendStream-XPlayer-v${APP_VERSION}-arm64-v8a.apk"
+          ARMV7_NAME="LegendStream-XPlayer-v${APP_VERSION}-armeabi-v7a.apk"
           cp "$ARM64_APK" "$STAGE_DIR/$ARM64_NAME"
+          cp "$ARMV7_APK" "$STAGE_DIR/$ARMV7_NAME"
           ARM64_BYTES="$(stat -c%s "$STAGE_DIR/$ARM64_NAME")"
+          ARMV7_BYTES="$(stat -c%s "$STAGE_DIR/$ARMV7_NAME")"
           echo "arm64 APK bytes=$ARM64_BYTES"
+          echo "armv7 APK bytes=$ARMV7_BYTES"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "arm64_bytes=$ARM64_BYTES" >> "$GITHUB_OUTPUT"
+          echo "armv7_bytes=$ARMV7_BYTES" >> "$GITHUB_OUTPUT"
 
           if [ "$FULL_RELEASE" = "true" ]; then
-            ARMV7_NAME="LegendStream-XPlayer-v${APP_VERSION}-armeabi-v7a.apk"
             AAB_NAME="LegendStream-XPlayer-v${APP_VERSION}-production.aab"
-            cp "$ARMV7_APK" "$STAGE_DIR/$ARMV7_NAME"
             mv "$STAGE_DIR/LegendStream-XPlayer-production.aab" "$STAGE_DIR/$AAB_NAME"
             unzip -Z1 "$STAGE_DIR/$AAB_NAME" | awk -F/ '/^base\/lib\// {print $3}' | sort -u
           fi
@@ -216,29 +211,31 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish arm64 artifact handoff
-        if: steps.mode.outputs.full_release != 'true'
-        uses: actions/github-script@v7
-        env:
-          ARTIFACT_URL: ${{ steps.upload_arm64.outputs.artifact-url }}
-          ARM64_BYTES: ${{ steps.package_android.outputs.arm64_bytes }}
-        with:
-          script: |
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: 12,
-              body: `ARM64_APK_READY\nrun_id=${context.runId}\nsha=${context.sha}\nbytes=${process.env.ARM64_BYTES}\nartifact=${process.env.ARTIFACT_URL}`,
-            });
-
       - name: Upload armeabi-v7a APK artifact
-        if: steps.mode.outputs.full_release == 'true'
+        id: upload_armv7
         uses: actions/upload-artifact@v4
         with:
           name: LegendStream-XPlayer-v${{ steps.package_android.outputs.app_version }}-armeabi-v7a
           path: release-staging/*-armeabi-v7a.apk
           if-no-files-found: error
           retention-days: 14
+
+      - name: Publish dual ABI artifact handoff
+        if: steps.mode.outputs.full_release != 'true'
+        uses: actions/github-script@v7
+        env:
+          ARM64_URL: ${{ steps.upload_arm64.outputs.artifact-url }}
+          ARMV7_URL: ${{ steps.upload_armv7.outputs.artifact-url }}
+          ARM64_BYTES: ${{ steps.package_android.outputs.arm64_bytes }}
+          ARMV7_BYTES: ${{ steps.package_android.outputs.armv7_bytes }}
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 12,
+              body: `DUAL_ABI_APKS_READY\nrun_id=${context.runId}\nsha=${context.sha}\narm64_bytes=${process.env.ARM64_BYTES}\narm64_artifact=${process.env.ARM64_URL}\narmv7_bytes=${process.env.ARMV7_BYTES}\narmv7_artifact=${process.env.ARMV7_URL}`,
+            });
 
       - name: Upload production AAB artifact
         if: steps.mode.outputs.full_release == 'true'
