@@ -1,3 +1,4 @@
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useState } from "react";
 import {
@@ -55,6 +56,7 @@ import {
 type ViewName = "home" | "live" | "movies" | "series" | "history" | "downloads" | "settings" | "player";
 type ContentView = Exclude<ViewName, "player">;
 type Credentials = { baseUrl: string; username: string; password: string };
+type CatalogSortMode = "default" | "alpha" | "added";
 type Playable = {
   title: string;
   url: string;
@@ -63,6 +65,7 @@ type Playable = {
   returnTo: ContentView;
 };
 
+const CATALOG_SORT_KEY = "@legendstream/catalog-sort-v1";
 const catalogCategoryMemory = {
   live: "__all__",
   movies: "__all__",
@@ -94,6 +97,31 @@ const exactCategoryTotal = (categories: XtreamCategory[]) => {
   return counts.every((value): value is number => value !== null)
     ? counts.reduce((sum, value) => sum + value, 0)
     : null;
+};
+
+const addedTime = (value?: string) => {
+  if (!value) return 0;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  }
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const sortCatalogRows = <T extends { name: string }>(
+  rows: T[],
+  mode: CatalogSortMode,
+  addedOf: (item: T) => string | undefined,
+) => {
+  if (mode === "default") return rows;
+  const sorted = [...rows];
+  if (mode === "alpha") {
+    sorted.sort((a, b) => a.name.localeCompare(b.name, "tr", { sensitivity: "base" }));
+  } else {
+    sorted.sort((a, b) => addedTime(addedOf(b)) - addedTime(addedOf(a)));
+  }
+  return sorted;
 };
 
 const isGetPhpM3UPlusProvider = (provider: ProviderConfig) => {
@@ -149,6 +177,7 @@ export default function OptimizedHomeScreenV6() {
   const [seriesCache, setSeriesCache] = useState<Record<string, XtreamSeriesItem[]>>({});
   const [homeVodCount, setHomeVodCount] = useState<number | null>(null);
   const [homeSeriesCount, setHomeSeriesCount] = useState<number | null>(null);
+  const [catalogSort, setCatalogSort] = useState<CatalogSortMode>("default");
   const [selectedSeries, setSelectedSeries] = useState<XtreamSeriesItem | null>(null);
   const [seriesInfo, setSeriesInfo] = useState<XtreamSeriesInfo | null>(null);
 
@@ -165,6 +194,28 @@ export default function OptimizedHomeScreenV6() {
       : [],
     [channels, provider],
   );
+
+  useEffect(() => {
+    let cancelled = false;
+    AsyncStorage.getItem(CATALOG_SORT_KEY)
+      .then((saved) => {
+        if (
+          !cancelled &&
+          (saved === "default" || saved === "alpha" || saved === "added")
+        ) {
+          setCatalogSort(saved);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const changeCatalogSort = (mode: CatalogSortMode) => {
+    setCatalogSort(mode);
+    void AsyncStorage.setItem(CATALOG_SORT_KEY, mode).catch(() => undefined);
+  };
 
   useEffect(() => {
     setVod([]); setVodCats([]); setVodCache({}); setVodLoaded(false); setVodLoading(false);
@@ -521,8 +572,8 @@ export default function OptimizedHomeScreenV6() {
       onFavorite={(id) => void toggleFavorite(id)}
     /> : <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
       {view === "home" ? <Home provider={provider} providers={providers} live={providerChannels.length} vod={homeVodCount} series={homeSeriesCount} loading={isLoading} onRefresh={() => void refreshProvider()} onNavigate={navigate} onSwitch={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} /> : null}
-      {view === "movies" ? <Movies items={vod} cats={vodCats} loading={vodLoading} loaded={vodLoaded} onCategory={(category) => void loadVodCategory(category)} onRefresh={(category) => category === "__all__" ? void loadVod(true) : void loadVodCategory(category, true)} onOpen={openMovie} /> : null}
-      {view === "series" ? <Series items={series} cats={seriesCats} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => category === "__all__" ? void loadSeries(true) : void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} /> : null}
+      {view === "movies" ? <Movies items={vod} cats={vodCats} providerType={provider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={vodLoading} loaded={vodLoaded} onCategory={(category) => void loadVodCategory(category)} onRefresh={(category) => category === "__all__" ? void loadVod(true) : void loadVodCategory(category, true)} onOpen={openMovie} /> : null}
+      {view === "series" ? <Series items={series} cats={seriesCats} providerType={provider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => category === "__all__" ? void loadSeries(true) : void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} /> : null}
       {view === "history" ? <HistoryView channels={providerChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
       {view === "settings" ? <Settings provider={provider} providers={providers} busy={isLoading} onEdit={() => setEditing(true)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
@@ -736,9 +787,12 @@ function Live({ channels, epgByChannel, favorites, providerType, loading, epgLoa
   />;
 }
 
-function Movies({ items, cats, loading, loaded, onCategory, onRefresh, onOpen }: {
+function Movies({ items, cats, providerType, sortMode, onSort, loading, loaded, onCategory, onRefresh, onOpen }: {
   items: XtreamVodItem[];
   cats: XtreamCategory[];
+  providerType: ProviderType;
+  sortMode: CatalogSortMode;
+  onSort: (mode: CatalogSortMode) => void;
   loading: boolean;
   loaded: boolean;
   onCategory: (categoryId: string) => void;
@@ -750,6 +804,7 @@ function Movies({ items, cats, loading, loaded, onCategory, onRefresh, onOpen }:
   const [category, setCategory] = useState(() => catalogCategoryMemory.movies);
   const [limit, setLimit] = useState(60);
   const categoryIds = useMemo(() => cats.map((item) => String(item.category_id)), [cats]);
+  const effectiveSort = providerType === "m3u" && sortMode === "added" ? "default" : sortMode;
 
   useEffect(() => {
     if (category !== "__all__" && cats.length > 0 && !categoryIds.includes(category)) {
@@ -758,17 +813,26 @@ function Movies({ items, cats, loading, loaded, onCategory, onRefresh, onOpen }:
     }
   }, [category, categoryIds, cats.length]);
 
-  const filtered = useMemo(() => { const query = search.trim().toLowerCase(); return items.filter((item) => (category === "__all__" || String(item.category_id) === category) && (!query || item.name.toLowerCase().includes(query))); }, [items, search, category]);
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const rows = items.filter((item) =>
+      (category === "__all__" || String(item.category_id) === category) &&
+      (!query || item.name.toLowerCase().includes(query)),
+    );
+    return sortCatalogRows(rows, effectiveSort, (item) => item.added);
+  }, [items, search, category, effectiveSort]);
+
   if (!loaded && loading) return <Loading text={t("loadingMovies")} />;
   return <Catalog title={t("movies")} detail={loaded ? t("titles", { count: items.length.toLocaleString() }) : t("loading")} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={() => onRefresh(category)}>
+    <SortControl selected={effectiveSort} supportsAdded={providerType === "xtream"} onSelect={(mode) => { setLimit(60); onSort(mode); }} />
     <Rail items={[{ id: "__all__", name: t("all") }, ...cats.map((item) => ({ id: String(item.category_id), name: item.category_name }))]} selected={category} onSelect={(value) => { catalogCategoryMemory.movies = value; setCategory(value); setLimit(60); onCategory(value); }} />
     <Grid items={filtered.slice(0, limit)} keyOf={(item) => String(item.stream_id)} titleOf={(item) => item.name} imageOf={(item) => item.stream_icon} onOpen={onOpen} />
     {limit < filtered.length ? <View style={s.more}><FocusButton label={t("loadMore")} onPress={() => setLimit((value) => value + 60)} /></View> : null}
   </Catalog>;
 }
 
-function Series({ items, cats, loading, loaded, selected, info, onCategory, onRefresh, onOpen, onBack, onEpisode }: {
-  items: XtreamSeriesItem[]; cats: XtreamCategory[]; loading: boolean; loaded: boolean; selected: XtreamSeriesItem | null; info: XtreamSeriesInfo | null;
+function Series({ items, cats, providerType, sortMode, onSort, loading, loaded, selected, info, onCategory, onRefresh, onOpen, onBack, onEpisode }: {
+  items: XtreamSeriesItem[]; cats: XtreamCategory[]; providerType: ProviderType; sortMode: CatalogSortMode; onSort: (mode: CatalogSortMode) => void; loading: boolean; loaded: boolean; selected: XtreamSeriesItem | null; info: XtreamSeriesInfo | null;
   onCategory: (categoryId: string) => void; onRefresh: (categoryId: string) => void; onOpen: (item: XtreamSeriesItem) => void; onBack: () => void; onEpisode: (episode: XtreamEpisode) => void;
 }) {
   const colors = useColors(); const { t } = useI18n();
@@ -776,6 +840,7 @@ function Series({ items, cats, loading, loaded, selected, info, onCategory, onRe
   const [category, setCategory] = useState(() => catalogCategoryMemory.series);
   const [limit, setLimit] = useState(60);
   const categoryIds = useMemo(() => cats.map((item) => String(item.category_id)), [cats]);
+  const effectiveSort = providerType === "m3u" && sortMode === "added" ? "default" : sortMode;
 
   useEffect(() => {
     if (category !== "__all__" && cats.length > 0 && !categoryIds.includes(category)) {
@@ -784,7 +849,18 @@ function Series({ items, cats, loading, loaded, selected, info, onCategory, onRe
     }
   }, [category, categoryIds, cats.length]);
 
-  const filtered = useMemo(() => { const query = search.trim().toLowerCase(); return items.filter((item) => (category === "__all__" || String(item.category_id) === category) && (!query || item.name.toLowerCase().includes(query))); }, [items, search, category]);
+  const filtered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    const rows = items.filter((item) =>
+      (category === "__all__" || String(item.category_id) === category) &&
+      (!query || item.name.toLowerCase().includes(query)),
+    );
+    return sortCatalogRows(
+      rows,
+      effectiveSort,
+      (item) => (item as XtreamSeriesItem & { added?: string }).added,
+    );
+  }, [items, search, category, effectiveSort]);
 
   if (selected) {
     const groups = Object.entries(info?.episodes || {});
@@ -803,6 +879,7 @@ function Series({ items, cats, loading, loaded, selected, info, onCategory, onRe
 
   if (!loaded && loading) return <Loading text={t("loadingSeries")} />;
   return <Catalog title={t("series")} detail={loaded ? t("seriesCount", { count: items.length.toLocaleString() }) : t("loading")} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={() => onRefresh(category)}>
+    <SortControl selected={effectiveSort} supportsAdded={providerType === "xtream"} onSelect={(mode) => { setLimit(60); onSort(mode); }} />
     <Rail items={[{ id: "__all__", name: t("all") }, ...cats.map((item) => ({ id: String(item.category_id), name: item.category_name }))]} selected={category} onSelect={(value) => { catalogCategoryMemory.series = value; setCategory(value); setLimit(60); onCategory(value); }} />
     <Grid items={filtered.slice(0, limit)} keyOf={(item) => String(item.series_id)} titleOf={(item) => item.name} imageOf={(item) => item.cover} onOpen={onOpen} />
     {limit < filtered.length ? <View style={s.more}><FocusButton label={t("loadMore")} onPress={() => setLimit((value) => value + 60)} /></View> : null}
@@ -863,6 +940,37 @@ function Catalog({ title, detail, search, onSearch, loading, onRefresh, children
 }) {
   const colors = useColors(); const { t } = useI18n();
   return <View><View style={s.catalogHead}><View><Text style={[s.title, { color: colors.foreground }]}>{title}</Text><Text style={{ color: colors.mutedForeground }}>{detail}</Text></View><FocusButton label={loading ? t("loading") : t("refresh")} icon="refresh-cw" variant="ghost" onPress={onRefresh} disabled={loading} /></View><View style={[s.search, { borderColor: colors.border, backgroundColor: colors.card }]}><Feather name="search" size={18} color={colors.mutedForeground} /><TextInput value={search} onChangeText={onSearch} placeholder={`${t("search")} ${title.toLowerCase()}`} placeholderTextColor={colors.mutedForeground} style={{ flex: 1, color: colors.foreground, minHeight: 44 }} /></View>{children}</View>;
+}
+
+function SortControl({ selected, supportsAdded, onSelect }: {
+  selected: CatalogSortMode;
+  supportsAdded: boolean;
+  onSelect: (mode: CatalogSortMode) => void;
+}) {
+  const colors = useColors();
+  const options: Array<{ id: CatalogSortMode; label: string }> = [
+    { id: "default", label: "Varsayılan" },
+    { id: "alpha", label: "Alfabetik (A-Z)" },
+    ...(supportsAdded ? [{ id: "added" as const, label: "Eklenme tarihi (yeni→eski)" }] : []),
+  ];
+  return <View style={s.sortRow}>
+    <Feather name="sliders" size={16} color={colors.mutedForeground} />
+    {options.map((option) => <Pressable
+      key={option.id}
+      onPress={() => onSelect(option.id)}
+      style={[
+        s.sortButton,
+        {
+          borderColor: selected === option.id ? colors.primary : colors.border,
+          backgroundColor: colors.card,
+        },
+      ]}
+    >
+      <Text style={{ color: selected === option.id ? colors.primary : colors.mutedForeground, fontWeight: "700", fontSize: 12 }}>
+        {option.label}
+      </Text>
+    </Pressable>)}
+  </View>;
 }
 
 function Rail({ items, selected, onSelect }: { items: Array<{ id: string; name: string }>; selected: string; onSelect: (id: string) => void }) {
@@ -930,6 +1038,8 @@ const s = StyleSheet.create({
   accountCard: { borderWidth: 1, borderRadius: 14, padding: 14, flexDirection: "row", alignItems: "center", gap: 10 },
   catalogHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 12 },
   search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
+  sortRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 7, paddingTop: 10 },
+  sortButton: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7 },
   rail: { gap: 6, paddingVertical: 14 },
   list: { gap: 8 },
   liveRow: { borderWidth: 1, borderRadius: 14, padding: 8, flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
