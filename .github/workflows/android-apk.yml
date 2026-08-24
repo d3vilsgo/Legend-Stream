@@ -2,6 +2,12 @@ name: Android APK
 
 on:
   workflow_dispatch:
+    inputs:
+      dual_abi:
+        description: "Build both arm64-v8a and armeabi-v7a test APKs"
+        required: false
+        default: false
+        type: boolean
   push:
     branches:
       - main
@@ -87,13 +93,21 @@ jobs:
 
       - name: Select package mode
         id: mode
+        env:
+          DISPATCH_DUAL_ABI: ${{ inputs.dual_abi || false }}
         shell: bash
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "full_release=true" >> "$GITHUB_OUTPUT"
+            echo "dual_abi=true" >> "$GITHUB_OUTPUT"
             echo "Full release: arm64 + armv7 + AAB"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$DISPATCH_DUAL_ABI" == "true" ]]; then
+            echo "full_release=false" >> "$GITHUB_OUTPUT"
+            echo "dual_abi=true" >> "$GITHUB_OUTPUT"
+            echo "Dual-ABI test build: arm64 + armv7 APKs"
           else
             echo "full_release=false" >> "$GITHUB_OUTPUT"
+            echo "dual_abi=false" >> "$GITHUB_OUTPUT"
             echo "Test build: arm64-v8a APK only"
           fi
 
@@ -133,10 +147,11 @@ jobs:
           NODE_ENV: production
           GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
           FULL_RELEASE: ${{ steps.mode.outputs.full_release }}
+          DUAL_ABI: ${{ steps.mode.outputs.dual_abi }}
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$FULL_RELEASE" = "true" ]; then
+          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
             ./gradlew assembleRelease -PabiSplit --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
           else
             ./gradlew assembleRelease -PabiSplit -PabiOnly=arm64-v8a -PreactNativeArchitectures=arm64-v8a --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
@@ -146,6 +161,7 @@ jobs:
         id: package_android
         env:
           FULL_RELEASE: ${{ steps.mode.outputs.full_release }}
+          DUAL_ABI: ${{ steps.mode.outputs.dual_abi }}
         shell: bash
         run: |
           set -euo pipefail
@@ -155,7 +171,7 @@ jobs:
           echo "APK outputs:"
           printf '%s\n' "${APKS[@]}"
 
-          if [ "$FULL_RELEASE" = "true" ]; then
+          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
             test "${#APKS[@]}" -eq 2
           else
             test "${#APKS[@]}" -eq 1
@@ -176,7 +192,7 @@ jobs:
           done
 
           test -n "$ARM64_APK"
-          if [ "$FULL_RELEASE" = "true" ]; then test -n "$ARMV7_APK"; fi
+          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then test -n "$ARMV7_APK"; fi
 
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
           test -x "$AAPT"
@@ -184,7 +200,7 @@ jobs:
           echo "arm64-v8a versionCode=$ARM64_CODE"
           test -n "$ARM64_CODE"
 
-          if [ "$FULL_RELEASE" = "true" ]; then
+          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
             ARMV7_CODE="$($AAPT dump badging "$ARMV7_APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
             echo "armeabi-v7a versionCode=$ARMV7_CODE"
             test -n "$ARMV7_CODE"
@@ -199,10 +215,13 @@ jobs:
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "arm64_bytes=$ARM64_BYTES" >> "$GITHUB_OUTPUT"
 
-          if [ "$FULL_RELEASE" = "true" ]; then
+          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
             ARMV7_NAME="LegendStream-XPlayer-v${APP_VERSION}-armeabi-v7a.apk"
-            AAB_NAME="LegendStream-XPlayer-v${APP_VERSION}-production.aab"
             cp "$ARMV7_APK" "$STAGE_DIR/$ARMV7_NAME"
+          fi
+
+          if [ "$FULL_RELEASE" = "true" ]; then
+            AAB_NAME="LegendStream-XPlayer-v${APP_VERSION}-production.aab"
             mv "$STAGE_DIR/LegendStream-XPlayer-production.aab" "$STAGE_DIR/$AAB_NAME"
             unzip -Z1 "$STAGE_DIR/$AAB_NAME" | awk -F/ '/^base\/lib\// {print $3}' | sort -u
           fi
@@ -232,7 +251,7 @@ jobs:
             });
 
       - name: Upload armeabi-v7a APK artifact
-        if: steps.mode.outputs.full_release == 'true'
+        if: steps.mode.outputs.dual_abi == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: LegendStream-XPlayer-v${{ steps.package_android.outputs.app_version }}-armeabi-v7a
