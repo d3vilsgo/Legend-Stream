@@ -395,6 +395,7 @@ export async function getSeriesInfo(
 ) {
   const data = (await requestXtream(credentials, "get_series_info", {
     series_id: seriesId,
+    series: seriesId,
   })) as XtreamSeriesInfo;
   const info = (data ?? {}) as XtreamSeriesInfo;
   registerEpisodeQueue(credentials, info);
