@@ -1,10 +1,13 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Animated,
   FlatList,
   Image,
   KeyboardAvoidingView,
+  Modal,
+  PanResponder,
   Platform,
   Pressable,
   ScrollView,
@@ -57,6 +60,7 @@ type ViewName = "home" | "live" | "movies" | "series" | "history" | "downloads" 
 type ContentView = Exclude<ViewName, "player">;
 type Credentials = { baseUrl: string; username: string; password: string };
 type CatalogSortMode = "default" | "alpha" | "added";
+type CategoryOption = { id: string; name: string };
 type Playable = {
   title: string;
   url: string;
@@ -682,6 +686,21 @@ function Home({ provider, providers, live, vod, series, loading, onRefresh, onNa
   </View>;
 }
 
+function useCategoryDrawerSwipe(onOpen: () => void) {
+  return useMemo(
+    () => PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) =>
+        gesture.dx > 18 &&
+        Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.35,
+      onPanResponderRelease: (_event, gesture) => {
+        if (gesture.dx > 55) onOpen();
+      },
+      onPanResponderTerminate: () => undefined,
+    }),
+    [onOpen],
+  );
+}
+
 function Live({ channels, epgByChannel, favorites, providerType, loading, epgLoading, onRefresh, onOpen, onFavorite }: {
   channels: Channel[];
   epgByChannel: ReadonlyMap<string, readonly EpgProgram[]>;
@@ -696,9 +715,15 @@ function Live({ channels, epgByChannel, favorites, providerType, loading, epgLoa
   const colors = useColors(); const { t } = useI18n();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState(() => catalogCategoryMemory.live);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [epgClock, setEpgClock] = useState(() => Date.now());
   const categoryNames = useMemo(() => Array.from(new Set(channels.map((channel) => channel.category).filter(Boolean))), [channels]);
   const hasMeaningfulGroups = categoryNames.some((name) => name !== "Uncategorized" && name !== "Live TV");
+  const drawerItems = useMemo<CategoryOption[]>(
+    () => [{ id: "__all__", name: t("all") }, ...categoryNames.map((name) => ({ id: name, name }))],
+    [categoryNames, t],
+  );
+  const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true));
 
   useEffect(() => {
     const timer = setInterval(() => setEpgClock(Date.now()), 60_000);
@@ -741,50 +766,57 @@ function Live({ channels, epgByChannel, favorites, providerType, loading, epgLoa
         style={{ flex: 1, color: colors.foreground, minHeight: 44 }}
       />
     </View>
-    <Rail
-      items={[{ id: "__all__", name: t("all") }, ...categoryNames.map((name) => ({ id: name, name }))]}
-      selected={category}
-      onSelect={(value) => { catalogCategoryMemory.live = value; setCategory(value); }}
-    />
-    {providerType === "m3u" && !hasMeaningfulGroups ? <Text style={[s.hint, { color: colors.mutedForeground }]}>{t("m3uNoGroups")}</Text> : null}
+    {providerType === "m3u" && !hasMeaningfulGroups ? <Text style={[s.hint, { color: colors.mutedForeground, marginTop: 12 }]}>{t("m3uNoGroups")}</Text> : null}
   </View>;
 
-  return <FlatList
-    style={{ flex: 1 }}
-    contentContainerStyle={s.liveListContent}
-    data={filtered}
-    keyExtractor={(channel) => channel.id}
-    ListHeaderComponent={header}
-    ListEmptyComponent={<Text style={{ color: colors.mutedForeground, textAlign: "center", paddingVertical: 30 }}>—</Text>}
-    renderItem={({ item: channel }) => {
-      const current = selectProgramsAt(epgByChannel.get(channel.id), epgClock).now;
-      const endLabel = current
-        ? new Date(current.end).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })
-        : undefined;
-      return <View style={[s.liveRow, { borderColor: colors.border, backgroundColor: colors.card }]}>
-        <Pressable style={s.liveMain} onPress={() => onOpen(channel)}>
-          <Poster uri={channel.logoUrl} title={channel.name} />
-          <View style={{ flex: 1 }}>
-            <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700" }}>{channel.name}</Text>
-            <Text numberOfLines={1} style={[s.liveProgram, { color: current ? colors.foreground : colors.mutedForeground }]}>
-              {current ? `Şu an: ${current.title}${endLabel ? ` · ${endLabel}` : ""}` : "—"}
-            </Text>
-          </View>
-        </Pressable>
-        <Pressable onPress={() => onFavorite(channel.id)} style={s.iconButton}>
-          <Feather name="star" size={20} color={favorites.includes(channel.id) ? colors.primary : colors.mutedForeground} />
-        </Pressable>
-      </View>;
-    }}
-    extraData={{ favorites, epgByChannel, epgClock }}
-    initialNumToRender={16}
-    maxToRenderPerBatch={12}
-    windowSize={9}
-    updateCellsBatchingPeriod={50}
-    removeClippedSubviews={Platform.OS !== "web"}
-    keyboardShouldPersistTaps="handled"
-    showsVerticalScrollIndicator={false}
-  />;
+  return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
+    <FlatList
+      style={{ flex: 1 }}
+      contentContainerStyle={s.liveListContent}
+      data={filtered}
+      keyExtractor={(channel) => channel.id}
+      ListHeaderComponent={header}
+      ListEmptyComponent={<Text style={{ color: colors.mutedForeground, textAlign: "center", paddingVertical: 30 }}>—</Text>}
+      renderItem={({ item: channel }) => {
+        const current = selectProgramsAt(epgByChannel.get(channel.id), epgClock).now;
+        const endLabel = current
+          ? new Date(current.end).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })
+          : undefined;
+        return <View style={[s.liveRow, { borderColor: colors.border, backgroundColor: colors.card }]}>
+          <Pressable style={s.liveMain} onPress={() => onOpen(channel)}>
+            <Poster uri={channel.logoUrl} title={channel.name} />
+            <View style={{ flex: 1 }}>
+              <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700" }}>{channel.name}</Text>
+              <Text numberOfLines={1} style={[s.liveProgram, { color: current ? colors.foreground : colors.mutedForeground }]}>
+                {current ? `Şu an: ${current.title}${endLabel ? ` · ${endLabel}` : ""}` : "—"}
+              </Text>
+            </View>
+          </Pressable>
+          <Pressable onPress={() => onFavorite(channel.id)} style={s.iconButton}>
+            <Feather name="star" size={20} color={favorites.includes(channel.id) ? colors.primary : colors.mutedForeground} />
+          </Pressable>
+        </View>;
+      }}
+      extraData={{ favorites, epgByChannel, epgClock }}
+      initialNumToRender={16}
+      maxToRenderPerBatch={12}
+      windowSize={9}
+      updateCellsBatchingPeriod={50}
+      removeClippedSubviews={Platform.OS !== "web"}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    />
+    <CategoryDrawer
+      visible={drawerOpen}
+      items={drawerItems}
+      selected={category}
+      onClose={() => setDrawerOpen(false)}
+      onSelect={(value) => {
+        catalogCategoryMemory.live = value;
+        setCategory(value);
+      }}
+    />
+  </View>;
 }
 
 function Movies({ items, cats, providerType, sortMode, onSort, loading, loaded, onCategory, onRefresh, onOpen }: {
@@ -802,8 +834,14 @@ function Movies({ items, cats, providerType, sortMode, onSort, loading, loaded, 
   const { t } = useI18n();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState(() => catalogCategoryMemory.movies);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [limit, setLimit] = useState(60);
   const categoryIds = useMemo(() => cats.map((item) => String(item.category_id)), [cats]);
+  const drawerItems = useMemo<CategoryOption[]>(
+    () => [{ id: "__all__", name: t("all") }, ...cats.map((item) => ({ id: String(item.category_id), name: item.category_name }))],
+    [cats, t],
+  );
+  const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true));
   const effectiveSort = providerType === "m3u" && sortMode === "added" ? "default" : sortMode;
 
   useEffect(() => {
@@ -823,12 +861,25 @@ function Movies({ items, cats, providerType, sortMode, onSort, loading, loaded, 
   }, [items, search, category, effectiveSort]);
 
   if (!loaded && loading) return <Loading text={t("loadingMovies")} />;
-  return <Catalog title={t("movies")} detail={loaded ? t("titles", { count: items.length.toLocaleString() }) : t("loading")} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={() => onRefresh(category)}>
-    <SortControl selected={effectiveSort} supportsAdded={providerType === "xtream"} onSelect={(mode) => { setLimit(60); onSort(mode); }} />
-    <Rail items={[{ id: "__all__", name: t("all") }, ...cats.map((item) => ({ id: String(item.category_id), name: item.category_name }))]} selected={category} onSelect={(value) => { catalogCategoryMemory.movies = value; setCategory(value); setLimit(60); onCategory(value); }} />
-    <Grid items={filtered.slice(0, limit)} keyOf={(item) => String(item.stream_id)} titleOf={(item) => item.name} imageOf={(item) => item.stream_icon} onOpen={onOpen} />
-    {limit < filtered.length ? <View style={s.more}><FocusButton label={t("loadMore")} onPress={() => setLimit((value) => value + 60)} /></View> : null}
-  </Catalog>;
+  return <View {...drawerSwipe.panHandlers}>
+    <Catalog title={t("movies")} detail={loaded ? t("titles", { count: items.length.toLocaleString() }) : t("loading")} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={() => onRefresh(category)}>
+      <SortControl selected={effectiveSort} supportsAdded={providerType === "xtream"} onSelect={(mode) => { setLimit(60); onSort(mode); }} />
+      <Grid items={filtered.slice(0, limit)} keyOf={(item) => String(item.stream_id)} titleOf={(item) => item.name} imageOf={(item) => item.stream_icon} onOpen={onOpen} />
+      {limit < filtered.length ? <View style={s.more}><FocusButton label={t("loadMore")} onPress={() => setLimit((value) => value + 60)} /></View> : null}
+    </Catalog>
+    <CategoryDrawer
+      visible={drawerOpen}
+      items={drawerItems}
+      selected={category}
+      onClose={() => setDrawerOpen(false)}
+      onSelect={(value) => {
+        catalogCategoryMemory.movies = value;
+        setCategory(value);
+        setLimit(60);
+        onCategory(value);
+      }}
+    />
+  </View>;
 }
 
 function Series({ items, cats, providerType, sortMode, onSort, loading, loaded, selected, info, onCategory, onRefresh, onOpen, onBack, onEpisode }: {
@@ -838,8 +889,14 @@ function Series({ items, cats, providerType, sortMode, onSort, loading, loaded, 
   const colors = useColors(); const { t } = useI18n();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState(() => catalogCategoryMemory.series);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [limit, setLimit] = useState(60);
   const categoryIds = useMemo(() => cats.map((item) => String(item.category_id)), [cats]);
+  const drawerItems = useMemo<CategoryOption[]>(
+    () => [{ id: "__all__", name: t("all") }, ...cats.map((item) => ({ id: String(item.category_id), name: item.category_name }))],
+    [cats, t],
+  );
+  const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true));
   const effectiveSort = providerType === "m3u" && sortMode === "added" ? "default" : sortMode;
 
   useEffect(() => {
@@ -878,12 +935,138 @@ function Series({ items, cats, providerType, sortMode, onSort, loading, loaded, 
   }
 
   if (!loaded && loading) return <Loading text={t("loadingSeries")} />;
-  return <Catalog title={t("series")} detail={loaded ? t("seriesCount", { count: items.length.toLocaleString() }) : t("loading")} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={() => onRefresh(category)}>
-    <SortControl selected={effectiveSort} supportsAdded={providerType === "xtream"} onSelect={(mode) => { setLimit(60); onSort(mode); }} />
-    <Rail items={[{ id: "__all__", name: t("all") }, ...cats.map((item) => ({ id: String(item.category_id), name: item.category_name }))]} selected={category} onSelect={(value) => { catalogCategoryMemory.series = value; setCategory(value); setLimit(60); onCategory(value); }} />
-    <Grid items={filtered.slice(0, limit)} keyOf={(item) => String(item.series_id)} titleOf={(item) => item.name} imageOf={(item) => item.cover} onOpen={onOpen} />
-    {limit < filtered.length ? <View style={s.more}><FocusButton label={t("loadMore")} onPress={() => setLimit((value) => value + 60)} /></View> : null}
-  </Catalog>;
+  return <View {...drawerSwipe.panHandlers}>
+    <Catalog title={t("series")} detail={loaded ? t("seriesCount", { count: items.length.toLocaleString() }) : t("loading")} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={() => onRefresh(category)}>
+      <SortControl selected={effectiveSort} supportsAdded={providerType === "xtream"} onSelect={(mode) => { setLimit(60); onSort(mode); }} />
+      <Grid items={filtered.slice(0, limit)} keyOf={(item) => String(item.series_id)} titleOf={(item) => item.name} imageOf={(item) => item.cover} onOpen={onOpen} />
+      {limit < filtered.length ? <View style={s.more}><FocusButton label={t("loadMore")} onPress={() => setLimit((value) => value + 60)} /></View> : null}
+    </Catalog>
+    <CategoryDrawer
+      visible={drawerOpen}
+      items={drawerItems}
+      selected={category}
+      onClose={() => setDrawerOpen(false)}
+      onSelect={(value) => {
+        catalogCategoryMemory.series = value;
+        setCategory(value);
+        setLimit(60);
+        onCategory(value);
+      }}
+    />
+  </View>;
+}
+
+function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
+  visible: boolean;
+  items: CategoryOption[];
+  selected: string;
+  onSelect: (id: string) => void;
+  onClose: () => void;
+}) {
+  const colors = useColors();
+  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
+  const drawerWidth = Math.min(width * 0.78, 560);
+  const translateX = useRef(new Animated.Value(-drawerWidth)).current;
+  const closingRef = useRef(false);
+
+  useEffect(() => {
+    if (!visible) return;
+    closingRef.current = false;
+    translateX.setValue(-drawerWidth);
+    Animated.timing(translateX, {
+      toValue: 0,
+      duration: 190,
+      useNativeDriver: true,
+    }).start();
+  }, [drawerWidth, translateX, visible]);
+
+  const closeAnimated = () => {
+    if (closingRef.current) return;
+    closingRef.current = true;
+    Animated.timing(translateX, {
+      toValue: -drawerWidth,
+      duration: 170,
+      useNativeDriver: true,
+    }).start(() => {
+      closingRef.current = false;
+      onClose();
+    });
+  };
+
+  const closeSwipe = useMemo(
+    () => PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) =>
+        gesture.dx < -18 &&
+        Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.35,
+      onPanResponderRelease: (_event, gesture) => {
+        if (gesture.dx < -45) closeAnimated();
+      },
+    }),
+    [drawerWidth, translateX],
+  );
+
+  return <Modal
+    visible={visible}
+    transparent
+    statusBarTranslucent
+    animationType="fade"
+    onRequestClose={closeAnimated}
+  >
+    <View style={s.drawerBackdrop} {...closeSwipe.panHandlers}>
+      <Animated.View
+        style={[
+          s.drawerPanel,
+          {
+            width: drawerWidth,
+            paddingTop: Math.max(insets.top, 16),
+            paddingBottom: Math.max(insets.bottom, 16),
+            backgroundColor: colors.background,
+            borderColor: colors.border,
+            transform: [{ translateX }],
+          },
+        ]}
+      >
+        <View style={s.drawerHeader}>
+          <Text style={[s.drawerTitle, { color: colors.foreground }]}>Kategoriler</Text>
+          <Pressable onPress={closeAnimated} style={s.iconButton}>
+            <Feather name="x" size={22} color={colors.mutedForeground} />
+          </Pressable>
+        </View>
+        <ScrollView
+          style={{ flex: 1 }}
+          contentContainerStyle={s.drawerList}
+          showsVerticalScrollIndicator={false}
+          keyboardShouldPersistTaps="handled"
+        >
+          {items.map((item) => {
+            const active = selected === item.id;
+            return <Pressable
+              key={item.id}
+              onPress={() => {
+                onSelect(item.id);
+                closeAnimated();
+              }}
+              style={[
+                s.drawerItem,
+                {
+                  borderColor: active ? colors.primary : colors.border,
+                  backgroundColor: colors.card,
+                },
+              ]}
+            >
+              <View style={[s.drawerDot, { backgroundColor: active ? colors.primary : "transparent", borderColor: active ? colors.primary : colors.mutedForeground }]} />
+              <Text numberOfLines={2} style={{ flex: 1, color: active ? colors.primary : colors.foreground, fontWeight: active ? "800" : "600" }}>
+                {item.name || "—"}
+              </Text>
+              {active ? <Feather name="check" size={18} color={colors.primary} /> : null}
+            </Pressable>;
+          })}
+        </ScrollView>
+      </Animated.View>
+      <Pressable style={s.drawerDismiss} onPress={closeAnimated} />
+    </View>
+  </Modal>;
 }
 
 function HistoryView({ channels, favorites, history, onOpen, onOpenMedia }: {
@@ -973,10 +1156,6 @@ function SortControl({ selected, supportsAdded, onSelect }: {
   </View>;
 }
 
-function Rail({ items, selected, onSelect }: { items: Array<{ id: string; name: string }>; selected: string; onSelect: (id: string) => void }) {
-  return <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.rail}>{items.map((item) => <FocusButton key={item.id} label={item.name || "—"} variant={selected === item.id ? "secondary" : "ghost"} onPress={() => onSelect(item.id)} />)}</ScrollView>;
-}
-
 function Grid<T>({ items, keyOf, titleOf, imageOf, onOpen }: { items: T[]; keyOf: (item: T) => string; titleOf: (item: T) => string; imageOf: (item: T) => string | undefined; onOpen: (item: T) => void }) {
   const colors = useColors(); const { width } = useWindowDimensions();
   const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
@@ -1038,7 +1217,7 @@ const s = StyleSheet.create({
   accountCard: { borderWidth: 1, borderRadius: 14, padding: 14, flexDirection: "row", alignItems: "center", gap: 10 },
   catalogHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 12 },
   search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
-  sortRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 7, paddingTop: 10 },
+  sortRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 7, paddingTop: 10, paddingBottom: 10 },
   sortButton: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7 },
   rail: { gap: 6, paddingVertical: 14 },
   list: { gap: 8 },
@@ -1054,4 +1233,12 @@ const s = StyleSheet.create({
   posterBig: { width: "100%", aspectRatio: 2 / 3 },
   episode: { borderWidth: 1, borderRadius: 12, padding: 14, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
   settings: { borderWidth: 1, borderRadius: 16, padding: 18, gap: 8 },
+  drawerBackdrop: { flex: 1, flexDirection: "row", backgroundColor: "rgba(0,0,0,0.52)" },
+  drawerPanel: { height: "100%", borderRightWidth: StyleSheet.hairlineWidth, elevation: 18, shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 18, shadowOffset: { width: 7, height: 0 } },
+  drawerDismiss: { flex: 1 },
+  drawerHeader: { minHeight: 58, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: StyleSheet.hairlineWidth },
+  drawerTitle: { fontSize: 22, fontWeight: "900" },
+  drawerList: { padding: 12, gap: 7 },
+  drawerItem: { minHeight: 48, borderWidth: 1, borderRadius: 12, paddingHorizontal: 13, paddingVertical: 10, flexDirection: "row", alignItems: "center", gap: 10 },
+  drawerDot: { width: 8, height: 8, borderRadius: 8, borderWidth: 1 },
 });
