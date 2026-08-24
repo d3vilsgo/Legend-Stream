@@ -20,14 +20,6 @@ import {
   ProviderType,
 } from "@/lib/iptv";
 import { mapInBatches, yieldToUi } from "@/lib/cooperative";
-import {
-  appendConnectionDiagnostic,
-  beginConnectionDiagnostics,
-  currentConnectionDiagnostics,
-  formatConnectionDiagnostics,
-  markConnectionDiagnosticsComplete,
-  readConnectionDiagnostics,
-} from "@/lib/connectionDiagnostics";
 
 export { ProviderType };
 export type { Channel, EpgProgram };
@@ -468,7 +460,6 @@ function withProviderConnectDeadline<T>(promise: Promise<T>): Promise<T> {
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      appendConnectionDiagnostic("deadline:fire", `limitMs=${PROVIDER_CONNECT_TIMEOUT_MS}`);
       reject(
         new ProviderLoadError(
           "The provider connection timed out. Check the URL, server response time, and try again.",
@@ -516,11 +507,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         stateRef.current = saved;
         setState(saved);
         setIsHydrating(false);
-        void readConnectionDiagnostics().then((snapshot) => {
-          if (snapshot && !snapshot.complete && snapshot.entries.length) {
-            setError(formatConnectionDiagnostics(snapshot));
-          }
-        });
       })
       .catch(() => setIsHydrating(false));
   }, []);
@@ -545,7 +531,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const connectProvider = async (config: ProviderInput) => {
-    beginConnectionDiagnostics(`type=${config.type}`);
     setIsLoading(true);
     setError(null);
 
@@ -568,10 +553,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         ? { ...candidate, id: duplicate.id, createdAt: duplicate.createdAt }
         : candidate;
       const smart = await withProviderConnectDeadline(loadProviderSmart(providerToLoad));
-      appendConnectionDiagnostic(
-        "loadProviderSmart:return",
-        `type=${smart.provider.type} channels=${smart.loaded.channels.length}`,
-      );
       const savedProvider = toProvider({
         ...smart.provider,
         lastLoadedAt: Date.now(),
@@ -596,21 +577,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           ...smart.loaded.channels,
         ],
       });
-      appendConnectionDiagnostic("connect:success");
       return true;
     } catch (caught) {
-      const message =
-        caught instanceof Error ? caught.message : "The provider could not be loaded.";
-      appendConnectionDiagnostic(
-        "connect:error",
-        caught instanceof ProviderLoadError ? `code=${caught.code}` : `name=${caught instanceof Error ? caught.name : "unknown"}`,
+      setError(
+        caught instanceof Error ? caught.message : "The provider could not be loaded.",
       );
-      const diagnosticText = formatConnectionDiagnostics(currentConnectionDiagnostics());
-      setError(diagnosticText ? `${message}\n\n${diagnosticText}` : message);
       return false;
     } finally {
-      appendConnectionDiagnostic("connect:finally");
-      markConnectionDiagnosticsComplete();
       setIsLoading(false);
     }
   };
