@@ -16,6 +16,7 @@ import {
   loadProvider,
   normalizeXtreamBaseUrl,
   Provider,
+  ProviderLoadError,
   ProviderType,
 } from "@/lib/iptv";
 import { mapInBatches, yieldToUi } from "@/lib/cooperative";
@@ -47,6 +48,7 @@ const EPG_START_DELAY_MS = 1_200;
 const LARGE_PROVIDER_CHANNEL_THRESHOLD = 1_000;
 const LARGE_PROVIDER_INITIAL_EPG_CHANNELS = 48;
 const XTREAM_PROBE_TIMEOUT_MS = 7_000;
+const PROVIDER_CONNECT_TIMEOUT_MS = 30_000;
 const STORAGE_KEY = "@legendstream/player-state-v3";
 const LEGACY_STORAGE_KEY = "@legendstream/player-state-v2";
 const LOGGED_OUT = "__logged_out__";
@@ -452,6 +454,37 @@ async function loadBulkProviderEpg(
   return normalizeProgramText(programs);
 }
 
+function withProviderConnectDeadline<T>(promise: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      reject(
+        new ProviderLoadError(
+          "The provider connection timed out. Check the URL, server response time, and try again.",
+          "PROVIDER_TIMEOUT",
+        ),
+      );
+    }, PROVIDER_CONNECT_TIMEOUT_MS);
+
+    promise.then(
+      (value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
+
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<PlayerState>(emptyState);
   const [isHydrating, setIsHydrating] = useState(true);
@@ -519,7 +552,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const providerToLoad = duplicate
         ? { ...candidate, id: duplicate.id, createdAt: duplicate.createdAt }
         : candidate;
-      const smart = await loadProviderSmart(providerToLoad);
+      const smart = await withProviderConnectDeadline(loadProviderSmart(providerToLoad));
       const savedProvider = toProvider({
         ...smart.provider,
         lastLoadedAt: Date.now(),

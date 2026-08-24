@@ -467,25 +467,37 @@ async function fetchProviderJson(url: string, init?: RequestInit) {
 }
 
 async function fetchProviderText(url: string, init?: RequestInit) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
   let response: Response;
   try {
     response = await fetch(url, {
       ...init,
-      signal: init?.signal ?? AbortSignal.timeout(20_000),
+      signal: init?.signal ?? controller.signal,
     });
-  } catch {
+    if (!response.ok) {
+      throw new ProviderLoadError(
+        `The provider returned HTTP ${response.status}.`,
+        "PROVIDER_HTTP_ERROR",
+      );
+    }
+    return await response.text();
+  } catch (caught) {
+    if (caught instanceof ProviderLoadError) throw caught;
+    const name = caught instanceof Error ? caught.name : "";
+    if (name === "AbortError" || name === "TimeoutError" || controller.signal.aborted) {
+      throw new ProviderLoadError(
+        "The provider request timed out. The playlist may be too large or the server is responding too slowly.",
+        "PROVIDER_TIMEOUT",
+      );
+    }
     throw new ProviderLoadError(
       "The provider could not be reached. Check the URL, port, and network.",
       "PROVIDER_UNREACHABLE",
     );
+  } finally {
+    clearTimeout(timeout);
   }
-  if (!response.ok) {
-    throw new ProviderLoadError(
-      `The provider returned HTTP ${response.status}.`,
-      "PROVIDER_HTTP_ERROR",
-    );
-  }
-  return response.text();
 }
 
 async function loadXtreamInBrowser(
