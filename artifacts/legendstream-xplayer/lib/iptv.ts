@@ -1,5 +1,6 @@
 import { Platform } from "react-native";
 import { mapInBatches, yieldToUi } from "./cooperative";
+import { appendConnectionDiagnostic } from "./connectionDiagnostics";
 
 export type ProviderType = "m3u" | "xtream" | "stalker";
 export type ChannelContentType = "live" | "movie" | "series";
@@ -208,6 +209,7 @@ function parseSeriesIdentity(name: string) {
 }
 
 function buildM3UCatalog(entries: Channel[], providerId: string): ProviderLoadResult {
+  appendConnectionDiagnostic("catalog:start", `entries=${entries.length}`);
   const liveChannels = entries.filter((entry) => entry.contentType === "live");
   const movieEntries = entries.filter((entry) => entry.contentType === "movie");
   const seriesEntries = entries.filter((entry) => entry.contentType === "series");
@@ -263,6 +265,10 @@ function buildM3UCatalog(entries: Channel[], providerId: string): ProviderLoadRe
   }));
 
   m3uCatalogByProvider.set(providerId, { movieItems, seriesGroups });
+  appendConnectionDiagnostic(
+    "catalog:end",
+    `live=${liveChannels.length} movies=${movieItems.length} series=${seriesGroups.length}`,
+  );
   return { channels: liveChannels, liveChannels, movieItems, seriesGroups };
 }
 
@@ -351,7 +357,11 @@ async function parseM3UCooperatively(
   content: string,
   providerId: string,
 ): Promise<ProviderLoadResult> {
+  appendConnectionDiagnostic("split:start", `chars=${content.length}`);
   const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
+  appendConnectionDiagnostic("split:end", `lines=${lines.length}`);
+  appendConnectionDiagnostic("parse:start", `lines=${lines.length}`);
+
   const entries: Channel[] = [];
   const state: {
     pending: { attributes: Record<string, string>; name: string; group?: string } | null;
@@ -359,6 +369,7 @@ async function parseM3UCooperatively(
     epgUrl?: string;
   } = { pending: null };
   const batchSize = 500;
+  const progressEvery = 5_000;
 
   for (let start = 0; start < lines.length; start += batchSize) {
     const end = Math.min(start + batchSize, lines.length);
@@ -366,12 +377,19 @@ async function parseM3UCooperatively(
       const line = lines[index].trim();
       if (line) parseM3ULine(line, providerId, entries, state);
     }
+    if (end === lines.length || end % progressEvery === 0) {
+      appendConnectionDiagnostic(
+        "parse:batch",
+        `lines=${end}/${lines.length} entries=${entries.length}`,
+      );
+    }
     if (end < lines.length) await yieldToUi();
   }
 
   if (!entries.length) {
     throw new Error("No playable channels were found in this M3U playlist.");
   }
+  appendConnectionDiagnostic("parse:end", `entries=${entries.length}`);
   await yieldToUi();
   return { ...buildM3UCatalog(entries, providerId), epgUrl: state.epgUrl };
 }
@@ -470,18 +488,26 @@ async function fetchProviderText(url: string, init?: RequestInit) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 20_000);
   let response: Response;
+  appendConnectionDiagnostic("fetch:start");
   try {
     response = await fetch(url, {
       ...init,
       signal: init?.signal ?? controller.signal,
     });
+    appendConnectionDiagnostic(
+      "headers",
+      `status=${response.status} length=${response.headers.get("content-length") ?? "?"} type=${response.headers.get("content-type") ?? "?"}`,
+    );
     if (!response.ok) {
       throw new ProviderLoadError(
         `The provider returned HTTP ${response.status}.`,
         "PROVIDER_HTTP_ERROR",
       );
     }
-    return await response.text();
+    appendConnectionDiagnostic("response.text:start");
+    const text = await response.text();
+    appendConnectionDiagnostic("response.text:end", `chars=${text.length}`);
+    return text;
   } catch (caught) {
     if (caught instanceof ProviderLoadError) throw caught;
     const name = caught instanceof Error ? caught.name : "";
