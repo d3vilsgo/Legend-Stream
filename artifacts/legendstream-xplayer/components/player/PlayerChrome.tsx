@@ -86,10 +86,35 @@ const formatTime = (seconds: number) => {
     : `${m}:${String(s).padStart(2, "0")}`;
 };
 
-const formatFps = (fps: number) => {
-  const rounded = Math.round(fps);
-  if (Math.abs(fps - rounded) < 0.015) return String(rounded);
-  return fps.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+const formatFps = (fps?: number) => {
+  const value = Number(fps);
+  if (!Number.isFinite(value) || value <= 0) return undefined;
+  return `${Math.max(1, Math.round(value))}fps`;
+};
+
+const normalizeCodec = (value?: string) => {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return undefined;
+  const upper = raw.toUpperCase();
+  if (upper === "AVC" || upper === "AVC1") return "H264";
+  if (upper === "HEVC" || upper === "HVC1" || upper === "HEV1") return "H265";
+  return upper.replace(/[^A-Z0-9._+-]/g, "");
+};
+
+const normalizeResolution = (value?: string) => {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return undefined;
+  if (/^\d{3,4}p$/i.test(raw)) return raw.toLowerCase();
+  const match = raw.match(/(\d{2,5})\s*[x×]\s*(\d{2,5})/i);
+  if (!match) return raw;
+  const height = Number(match[2]);
+  if (!Number.isFinite(height) || height <= 0) return undefined;
+  if (height >= 2000) return "2160p";
+  if (height >= 1000) return "1080p";
+  if (height >= 700) return "720p";
+  if (height >= 460) return "480p";
+  if (height >= 340) return "360p";
+  return `${Math.round(height)}p`;
 };
 
 const safeTimestamp = (value?: number) =>
@@ -114,7 +139,7 @@ const formatRemaining = (end?: number) => {
   const safe = safeTimestamp(end);
   if (!safe) return "";
   const minutes = Math.max(0, Math.ceil((safe - Date.now()) / 60_000));
-  return minutes > 0 ? `${minutes} dk kaldı` : `bitiş ${formatClock(safe)}`;
+  return minutes > 0 ? `${minutes} dk kaldı` : "";
 };
 
 export function PlayerChrome(props: Props) {
@@ -141,7 +166,6 @@ export function PlayerChrome(props: Props) {
     ...chrome
   } = props;
   const controlsOpacity = useRef(new Animated.Value(chrome.controlsVisible ? 1 : 0)).current;
-  const infoOpacity = useRef(new Animated.Value(chrome.infoVisible ? 1 : 0)).current;
 
   useEffect(() => {
     Animated.timing(controlsOpacity, {
@@ -151,22 +175,17 @@ export function PlayerChrome(props: Props) {
     }).start();
   }, [chrome.controlsVisible, controlsOpacity]);
 
-  useEffect(() => {
-    Animated.timing(infoOpacity, {
-      toValue: chrome.infoVisible ? 1 : 0,
-      duration: chrome.infoVisible ? 160 : 220,
-      useNativeDriver: true,
-    }).start();
-  }, [chrome.infoVisible, infoOpacity]);
-
-  const resolution = resolutionOverride ?? runtime.resolution;
-  const fps = fpsOverride ?? runtime.fps;
-  const streamCodec = codecOverride ?? runtime.codec;
-  const technicalParts = [resolution, streamCodec, fps ? `${formatFps(fps)} FPS` : undefined].filter(Boolean);
+  const resolution = normalizeResolution(resolutionOverride ?? runtime.resolution);
+  const fps = formatFps(fpsOverride ?? runtime.fps);
+  const streamCodec = normalizeCodec(codecOverride ?? runtime.codec);
+  const technicalParts = [streamCodec, resolution, fps].filter((part): part is string => Boolean(part));
   const technicalLabel = technicalParts.length ? technicalParts.join(" · ") : undefined;
+  const safeMeta = typeof chrome.meta === "string" && chrome.meta.trim() ? chrome.meta.trim() : undefined;
+  const bottomInfo = [technicalLabel, safeMeta].filter((part): part is string => Boolean(part)).join("   ·   ") || undefined;
   const progress = chrome.duration > 0 ? clamp(chrome.position / chrome.duration, 0, 1) : 0;
   const hasBlockingStatus = typeof chrome.errorText === "string" && chrome.errorText.trim().length > 0;
-  const showCenter = chrome.controlsVisible && !chrome.panel && !hasBlockingStatus;
+  const showChrome = chrome.controlsVisible && !chrome.panel;
+  const showCenter = showChrome && !hasBlockingStatus;
 
   const actions: Action[] = [
     ...(chrome.selectableItems.length ? [{
@@ -240,9 +259,12 @@ export function PlayerChrome(props: Props) {
   const progressScale = clamp(width / (portrait ? 390 : 840), 0.82, 1.12);
   const timeWidth = clamp(Math.round(50 * progressScale), 42, 58);
   const timeFontSize = clamp(Math.round(10 * progressScale), 9, 12);
-
   const topY = Math.max(insets.top + Math.round((portrait ? 5 : 4) * uiScale), portrait ? 8 : 6);
-  const infoLeft = Math.max(insets.left + Math.round((portrait ? 62 : 82) * uiScale), portrait ? 68 : 86);
+  const logoSafeLeft = portrait ? width * 0.2 : width * 0.16;
+  const infoLeft = Math.max(
+    logoSafeLeft,
+    insets.left + Math.round((portrait ? 96 : 142) * uiScale),
+  );
   const infoRight = portrait
     ? Math.max(insets.right + 12, 12)
     : Math.max(insets.right + Math.round(164 * uiScale), 158);
@@ -252,27 +274,25 @@ export function PlayerChrome(props: Props) {
     <>
       <PlayerChromeV2 {...chrome} controlsVisible={false} infoVisible={false} />
 
-      {chrome.infoVisible ? (
+      {showChrome ? (
         <InfoCard
-          opacity={infoOpacity}
+          opacity={controlsOpacity}
           portrait={portrait}
           scale={uiScale}
           top={topY}
           left={infoLeft}
           right={infoRight}
           title={chrome.title}
-          meta={chrome.meta}
           live={chrome.mediaKind === "live"}
-          tech={technicalLabel}
           epgNow={epgNow}
           epgNext={epgNext}
           epgLoading={epgLoading}
         />
       ) : null}
 
-      {chrome.infoVisible && !portrait ? (
+      {showChrome && !portrait ? (
         <TopModeCluster
-          opacity={infoOpacity}
+          opacity={controlsOpacity}
           top={topY + 1}
           right={modeRight}
           scale={uiScale}
@@ -376,7 +396,7 @@ export function PlayerChrome(props: Props) {
         </Animated.View>
       ) : null}
 
-      {chrome.controlsVisible && !chrome.panel ? (
+      {showChrome ? (
         <Animated.View
           style={[
             styles.bottom,
@@ -407,6 +427,13 @@ export function PlayerChrome(props: Props) {
             </View>
           ) : null}
 
+          {bottomInfo ? (
+            <VideoInfoBand
+              text={bottomInfo}
+              scale={uiScale}
+            />
+          ) : null}
+
           <View style={[styles.dockRow, { gap }]}>
             {actions.map((action) => (
               <AdaptiveDockButton
@@ -423,7 +450,7 @@ export function PlayerChrome(props: Props) {
   );
 }
 
-function InfoCard({ opacity, portrait, scale, top, left, right, title, meta, live, tech, epgNow, epgNext, epgLoading }: {
+function InfoCard({ opacity, portrait, scale, top, left, right, title, live, epgNow, epgNext, epgLoading }: {
   opacity: Animated.Value;
   portrait: boolean;
   scale: number;
@@ -431,15 +458,12 @@ function InfoCard({ opacity, portrait, scale, top, left, right, title, meta, liv
   left: number;
   right: number;
   title: string;
-  meta?: string;
   live: boolean;
-  tech?: string;
   epgNow?: PlayerProgramInfo;
   epgNext?: PlayerProgramInfo;
   epgLoading?: boolean;
 }) {
-  const safeTitle = typeof title === "string" && title.trim() ? title.trim() : "Canlı yayın";
-  const safeMeta = typeof meta === "string" && meta.trim() ? meta.trim() : undefined;
+  const safeTitle = typeof title === "string" && title.trim() ? title.trim() : live ? "Canlı yayın" : "İçerik";
   const nowTitle = safeProgramTitle(epgNow?.title);
   const nowEnd = safeTimestamp(epgNow?.end);
   const nextTitle = safeProgramTitle(epgNext?.title);
@@ -474,26 +498,23 @@ function InfoCard({ opacity, portrait, scale, top, left, right, title, meta, liv
               <Text numberOfLines={1} style={[styles.epgMuted, { fontSize: Math.round(9.5 * scale) }]}>Program bilgisi yükleniyor…</Text>
             ) : epgNow ? (
               <>
-                <Text numberOfLines={1} style={[styles.epgNow, { fontSize: Math.round((portrait ? 10.5 : 11) * scale) }]}>Şimdi: {nowTitle} · {formatClock(nowEnd)}{remaining ? ` · ${remaining}` : ""}</Text>
+                <Text numberOfLines={1} style={[styles.epgNow, { fontSize: Math.round((portrait ? 10.5 : 11) * scale) }]}>Şimdi: {nowTitle}{remaining ? ` · ${remaining}` : ""}</Text>
                 {epgNext ? <Text numberOfLines={1} style={[styles.epgNext, { fontSize: Math.round((portrait ? 9.5 : 10) * scale) }]}>Sıradaki: {nextTitle} · {formatClock(nextStart)}</Text> : null}
               </>
             ) : null}
           </View>
         ) : null}
-
-        {(safeMeta || tech) ? (
-          <View style={[styles.metaRow, { marginTop: Math.round(3 * scale), gap: Math.round(8 * scale) }]}>
-            {safeMeta ? <Text numberOfLines={1} style={[styles.meta, { fontSize: Math.round(9.5 * scale) }]}>{safeMeta}</Text> : null}
-            {tech ? (
-              <View style={[styles.techInline, { gap: Math.round(4 * scale) }]}>
-                <EmbossedIcon name="monitor" size={Math.round(11 * scale)} accent compact />
-                <Text numberOfLines={1} style={[styles.techText, { fontSize: Math.round(9 * scale) }]}>{tech}</Text>
-              </View>
-            ) : null}
-          </View>
-        ) : null}
       </View>
     </Animated.View>
+  );
+}
+
+function VideoInfoBand({ text, scale }: { text: string; scale: number }) {
+  return (
+    <View pointerEvents="none" style={[styles.videoInfoBand, { marginBottom: Math.max(3, Math.round(5 * scale)) }]}>
+      <EmbossedIcon name="monitor" size={Math.round(11 * scale)} accent compact />
+      <Text numberOfLines={1} style={[styles.videoInfoText, { fontSize: Math.round(9.5 * scale) }]}>{text}</Text>
+    </View>
   );
 }
 
@@ -663,10 +684,6 @@ const styles = StyleSheet.create({
   epgNow: { color: "#fff", fontWeight: "800", ...TEXT_SHADOW },
   epgNext: { marginTop: 1, color: "#f1f5f9", fontWeight: "700", ...TEXT_SHADOW },
   epgMuted: { color: "#e2e8f0", fontWeight: "700", ...TEXT_SHADOW },
-  metaRow: { flexDirection: "row", alignItems: "center", minWidth: 0 },
-  meta: { flexShrink: 1, color: "#fff", fontWeight: "800", ...TEXT_SHADOW },
-  techInline: { flexShrink: 0, maxWidth: "56%", flexDirection: "row", alignItems: "center" },
-  techText: { color: "#dffcff", fontWeight: "900", ...TEXT_SHADOW },
 
   topModes: {
     position: "absolute",
@@ -724,6 +741,22 @@ const styles = StyleSheet.create({
   seekTrack: { height: 8, justifyContent: "center", backgroundColor: "transparent" },
   seekFill: { position: "absolute", left: 0, top: 3, height: 2, borderTopWidth: 2, borderColor: "#22d3ee", backgroundColor: "transparent" },
   seekThumb: { position: "absolute", top: 0, marginLeft: -5, width: 10, height: 10, borderRadius: 5, borderWidth: 2, borderColor: "#bff8ff", backgroundColor: "transparent" },
+  videoInfoBand: {
+    width: "100%",
+    minHeight: 18,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 5,
+    backgroundColor: "transparent",
+  },
+  videoInfoText: {
+    maxWidth: "88%",
+    color: "#e8fbff",
+    fontWeight: "800",
+    textAlign: "center",
+    ...TEXT_SHADOW,
+  },
   dockRow: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "transparent" },
   dockButton: { alignItems: "center", justifyContent: "center", backgroundColor: "transparent" },
   actionSubLabel: {
