@@ -1,6 +1,4 @@
 import { Feather } from "@expo/vector-icons";
-import { BlurView } from "expo-blur";
-import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Animated,
@@ -56,8 +54,17 @@ type Action = {
   onPress: () => void;
 };
 
-const GLASS_INTENSITY = 32;
-const BUTTON_GLASS_INTENSITY = 24;
+const TEXT_SHADOW = {
+  textShadowColor: "rgba(0,0,0,.95)",
+  textShadowOffset: { width: 0, height: 2 },
+  textShadowRadius: 6,
+} as const;
+
+const ICON_SHADOW = {
+  textShadowColor: "rgba(0,0,0,.95)",
+  textShadowOffset: { width: 0, height: 2 },
+  textShadowRadius: 7,
+} as const;
 
 const fitLabel = (mode: PlayerFitMode) =>
   mode === "full"
@@ -115,28 +122,6 @@ const formatRemaining = (end?: number) => {
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(max, value));
 
-function GlassLayer({ intensity = GLASS_INTENSITY, accent = false }: { intensity?: number; accent?: boolean }) {
-  return (
-    <View pointerEvents="none" style={StyleSheet.absoluteFillObject}>
-      <BlurView
-        pointerEvents="none"
-        intensity={intensity}
-        tint="dark"
-        experimentalBlurMethod="dimezisBlurView"
-        style={StyleSheet.absoluteFillObject}
-      />
-      <View pointerEvents="none" style={styles.glassTint} />
-      <LinearGradient
-        pointerEvents="none"
-        colors={accent
-          ? ["rgba(103,232,249,.16)", "rgba(255,255,255,.035)", "rgba(8,15,25,.06)"]
-          : ["rgba(255,255,255,.085)", "rgba(255,255,255,.018)", "rgba(8,15,25,.055)"]}
-        style={StyleSheet.absoluteFillObject}
-      />
-    </View>
-  );
-}
-
 export function PlayerChrome(props: Props) {
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
@@ -162,7 +147,7 @@ export function PlayerChrome(props: Props) {
   useEffect(() => {
     Animated.timing(controlsOpacity, {
       toValue: chrome.controlsVisible ? 1 : 0,
-      duration: chrome.controlsVisible ? 170 : 220,
+      duration: chrome.controlsVisible ? 150 : 210,
       useNativeDriver: true,
     }).start();
   }, [chrome.controlsVisible, controlsOpacity]);
@@ -170,7 +155,7 @@ export function PlayerChrome(props: Props) {
   useEffect(() => {
     Animated.timing(infoOpacity, {
       toValue: chrome.infoVisible ? 1 : 0,
-      duration: chrome.infoVisible ? 180 : 230,
+      duration: chrome.infoVisible ? 160 : 220,
       useNativeDriver: true,
     }).start();
   }, [chrome.infoVisible, infoOpacity]);
@@ -206,16 +191,15 @@ export function PlayerChrome(props: Props) {
     }] : []),
   ];
 
-  const gap = portrait ? 2 : 5;
-  const outerPadding = portrait ? 8 : 20;
-  const availableWidth = Math.max(1, width - insets.left - insets.right - outerPadding * 2 - 12);
+  const gap = portrait ? 5 : 12;
+  const outerPadding = portrait ? 10 : 24;
+  const availableWidth = Math.max(1, width - insets.left - insets.right - outerPadding * 2);
   const buttonSize = clamp(
     Math.floor((availableWidth - gap * Math.max(0, actions.length - 1)) / Math.max(1, actions.length)),
-    30,
-    portrait ? 46 : 54,
+    34,
+    portrait ? 48 : 58,
   );
-  const iconSize = clamp(Math.round(buttonSize * 0.46), 15, 24);
-  const dockHeight = buttonSize + (portrait ? 10 : 14);
+  const iconSize = clamp(Math.round(buttonSize * 0.5), 17, 27);
   const progressScale = clamp(width / (portrait ? 390 : 840), 0.82, 1.2);
   const timeWidth = clamp(Math.round(54 * progressScale), 44, 64);
   const timeFontSize = clamp(Math.round(11 * progressScale), 9, 13);
@@ -245,11 +229,19 @@ export function PlayerChrome(props: Props) {
           accessibilityRole="button"
           accessibilityLabel="Oynatıcıdan çık"
           onPress={chrome.onExit}
-          style={({ pressed }) => [styles.back, portrait ? styles.backPortrait : styles.backLandscape, pressed && styles.pressed]}
-          hitSlop={10}
+          hitSlop={14}
+          style={({ pressed }) => [
+            styles.back,
+            portrait ? styles.backPortrait : styles.backLandscape,
+            pressed && styles.pressed,
+          ]}
         >
-          <GlassLayer intensity={BUTTON_GLASS_INTENSITY} />
-          <Feather name="arrow-left" size={portrait ? 24 : 27} color="#fff" />
+          <Feather
+            name="arrow-left"
+            size={portrait ? 30 : 34}
+            color="#fff"
+            style={styles.iconShadow}
+          />
         </Pressable>
       ) : null}
 
@@ -259,26 +251,30 @@ export function PlayerChrome(props: Props) {
           pointerEvents={showCenter ? "box-none" : "none"}
         >
           {chrome.mediaKind !== "live" ? (
-            <RoundButton compact={portrait} icon="rotate-ccw" badge="10" label="10 saniye geri" onPress={() => chrome.onSeekBy(-10)} visible={chrome.controlsVisible} />
+            <RoundButton compact={portrait} icon="rotate-ccw" badge="10" label="10 saniye geri" onPress={() => chrome.onSeekBy(-10)} />
           ) : chrome.canNavigate ? (
-            <RoundButton compact={portrait} icon="skip-back" label="Önceki kanal" onPress={() => chrome.onMoveRelative(-1)} visible={chrome.controlsVisible} />
+            <RoundButton compact={portrait} icon="skip-back" label="Önceki kanal" onPress={() => chrome.onMoveRelative(-1)} />
           ) : null}
 
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={chrome.paused ? "Oynat" : "Duraklat"}
             onPress={chrome.onTogglePause}
+            hitSlop={12}
             style={({ pressed }) => [styles.playShell, portrait && styles.playShellPortrait, pressed && styles.pressed]}
           >
-            <LinearGradient pointerEvents="none" colors={["rgba(199,251,255,.96)", "rgba(34,211,238,.9)", "rgba(14,165,233,.92)"]} style={styles.playInner}>
-              <Feather name={chrome.paused ? "play" : "pause"} size={portrait ? 31 : 36} color="#02131b" />
-            </LinearGradient>
+            <Feather
+              name={chrome.paused ? "play" : "pause"}
+              size={portrait ? 39 : 46}
+              color="#67e8f9"
+              style={styles.playIcon}
+            />
           </Pressable>
 
           {chrome.mediaKind !== "live" ? (
-            <RoundButton compact={portrait} icon="rotate-cw" badge="15" label="15 saniye ileri" onPress={() => chrome.onSeekBy(15)} visible={chrome.controlsVisible} />
+            <RoundButton compact={portrait} icon="rotate-cw" badge="15" label="15 saniye ileri" onPress={() => chrome.onSeekBy(15)} />
           ) : chrome.canNavigate ? (
-            <RoundButton compact={portrait} icon="skip-forward" label="Sonraki kanal" onPress={() => chrome.onMoveRelative(1)} visible={chrome.controlsVisible} />
+            <RoundButton compact={portrait} icon="skip-forward" label="Sonraki kanal" onPress={() => chrome.onMoveRelative(1)} />
           ) : null}
         </Animated.View>
       ) : null}
@@ -289,9 +285,9 @@ export function PlayerChrome(props: Props) {
             styles.bottom,
             {
               opacity: controlsOpacity,
-              bottom: Math.max(insets.bottom, portrait ? 8 : 12),
-              paddingLeft: Math.max(outerPadding, insets.left + 8),
-              paddingRight: Math.max(outerPadding, insets.right + 8),
+              bottom: Math.max(insets.bottom, portrait ? 10 : 14),
+              paddingLeft: Math.max(outerPadding, insets.left + 10),
+              paddingRight: Math.max(outerPadding, insets.right + 10),
             },
           ]}
           pointerEvents="box-none"
@@ -303,7 +299,7 @@ export function PlayerChrome(props: Props) {
                 onLayout={(event: LayoutChangeEvent) => setSeekWidth(Math.max(1, event.nativeEvent.layout.width))}
                 onPress={(event) => chrome.onSeekRatio(clamp(event.nativeEvent.locationX / seekWidth, 0, 1))}
                 style={styles.seekTouch}
-                hitSlop={{ top: 12, bottom: 12, left: 0, right: 0 }}
+                hitSlop={{ top: 14, bottom: 14, left: 0, right: 0 }}
               >
                 <View style={styles.seekTrack}>
                   <View style={[styles.seekFill, { width: `${progress * 100}%` }]} />
@@ -314,14 +310,10 @@ export function PlayerChrome(props: Props) {
             </View>
           ) : null}
 
-          <View style={[styles.dockShell, { minHeight: dockHeight }]}>
-            <GlassLayer />
-            <View pointerEvents="none" style={styles.glassHighlight} />
-            <View style={[styles.dockRow, { gap }]}>
-              {actions.map((action) => (
-                <AdaptiveDockButton key={action.key} action={action} size={buttonSize} iconSize={iconSize} />
-              ))}
-            </View>
+          <View style={[styles.dockRow, { gap }]}>
+            {actions.map((action) => (
+              <AdaptiveDockButton key={action.key} action={action} size={buttonSize} iconSize={iconSize} />
+            ))}
           </View>
         </Animated.View>
       ) : null}
@@ -342,32 +334,31 @@ function InfoCard({ opacity, portrait, title, meta, live, tech, fit, codec, epgN
   epgNext?: PlayerProgramInfo;
   epgLoading?: boolean;
 }) {
+  const safeTitle = typeof title === "string" && title.trim() ? title.trim() : "Canlı yayın";
+  const safeMeta = typeof meta === "string" && meta.trim() ? meta.trim() : undefined;
   const nowTitle = safeProgramTitle(epgNow?.title);
   const nowEnd = safeTimestamp(epgNow?.end);
   const nextTitle = safeProgramTitle(epgNext?.title);
   const nextStart = safeTimestamp(epgNext?.start);
   const remaining = formatRemaining(nowEnd);
   const hasEpg = Boolean(epgNow || epgNext || epgLoading);
-  const hasSecondary = Boolean((typeof meta === "string" && meta.trim()) || tech || hasEpg);
 
   return (
     <Animated.View
       pointerEvents="none"
-      style={[
-        styles.info,
-        portrait ? styles.infoPortrait : styles.infoLandscape,
-        !hasSecondary && styles.infoCompact,
-        { opacity },
-      ]}
+      style={[styles.info, portrait ? styles.infoPortrait : styles.infoLandscape, { opacity }]}
     >
-      <GlassLayer />
-      <View pointerEvents="none" style={styles.glassHighlight} />
-      <View pointerEvents="none" style={styles.infoRail} />
       <View style={styles.infoMain}>
         <View style={styles.titleRow}>
-          {live ? <View style={styles.livePill}><View style={styles.liveDot} /><Text style={styles.liveText}>CANLI</Text></View> : null}
-          <Text numberOfLines={1} style={[styles.title, portrait && styles.titlePortrait]}>{title || "Canlı yayın"}</Text>
+          {live ? (
+            <View style={styles.liveInline}>
+              <Feather name="circle" size={9} color="#22d3ee" style={styles.cyanIconShadow} />
+              <Text style={styles.liveText}>CANLI</Text>
+            </View>
+          ) : null}
+          <Text numberOfLines={1} style={[styles.title, portrait && styles.titlePortrait]}>{safeTitle}</Text>
         </View>
+
         {live && hasEpg ? (
           <View style={styles.epgBlock}>
             {epgLoading && !epgNow ? (
@@ -380,18 +371,20 @@ function InfoCard({ opacity, portrait, title, meta, live, tech, fit, codec, epgN
             ) : null}
           </View>
         ) : null}
-        {(meta || tech) ? (
+
+        {(safeMeta || tech) ? (
           <View style={styles.metaRow}>
-            {meta ? <Text numberOfLines={1} style={styles.meta}>{meta}</Text> : null}
+            {safeMeta ? <Text numberOfLines={1} style={styles.meta}>{safeMeta}</Text> : null}
             {tech ? (
-              <View style={styles.techPill}>
-                <Feather name="monitor" size={11} color="#67e8f9" />
+              <View style={styles.techInline}>
+                <Feather name="monitor" size={12} color="#67e8f9" style={styles.cyanIconShadow} />
                 <Text numberOfLines={1} style={styles.techText}>{tech}</Text>
               </View>
             ) : null}
           </View>
         ) : null}
       </View>
+
       {!portrait ? (
         <View style={styles.modeCluster}>
           <ModeChip icon="maximize-2" text={fitLabel(fit)} />
@@ -404,30 +397,39 @@ function InfoCard({ opacity, portrait, title, meta, live, tech, fit, codec, epgN
 
 function ModeChip({ icon, text, accent }: { icon: FeatherName; text: string; accent?: boolean }) {
   return (
-    <View style={[styles.modeChip, accent && styles.modeChipAccent]}>
-      <Feather name={icon} size={11} color={accent ? "#67e8f9" : "#e2e8f0"} />
+    <View style={styles.modeChip}>
+      <Feather
+        name={icon}
+        size={13}
+        color={accent ? "#67e8f9" : "#fff"}
+        style={accent ? styles.cyanIconShadow : styles.iconShadow}
+      />
       <Text style={[styles.modeText, accent && styles.modeTextAccent]}>{text}</Text>
     </View>
   );
 }
 
-function RoundButton({ icon, badge, compact, label, onPress, visible }: {
+function RoundButton({ icon, badge, compact, label, onPress }: {
   icon: FeatherName;
   badge?: string;
   compact?: boolean;
   label: string;
   onPress: () => void;
-  visible: boolean;
 }) {
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
+      hitSlop={14}
       style={({ pressed }) => [styles.roundButton, compact && styles.roundButtonPortrait, pressed && styles.pressed]}
     >
-      {visible ? <GlassLayer intensity={BUTTON_GLASS_INTENSITY} /> : null}
-      <Feather name={icon} size={compact ? 24 : 29} color="#fff" />
+      <Feather
+        name={icon}
+        size={compact ? 31 : 37}
+        color="#fff"
+        style={styles.iconShadow}
+      />
       {badge ? <Text style={styles.roundBadge}>{badge}</Text> : null}
     </Pressable>
   );
@@ -435,89 +437,133 @@ function RoundButton({ icon, badge, compact, label, onPress, visible }: {
 
 function AdaptiveDockButton({ action, size, iconSize }: { action: Action; size: number; iconSize: number }) {
   const highlighted = Boolean(action.active || action.accent);
+  const iconColor = highlighted ? "#67e8f9" : "#fff";
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={action.label}
       onPress={action.onPress}
-      hitSlop={Math.max(3, Math.ceil((44 - size) / 2))}
+      hitSlop={Math.max(7, Math.ceil((48 - size) / 2))}
       style={({ pressed }) => [
         styles.dockButton,
-        { width: size, height: size, borderRadius: Math.max(13, Math.round(size * 0.34)) },
-        highlighted && styles.dockButtonHighlighted,
-        action.active && styles.dockButtonActive,
+        { width: size, height: size },
         pressed && styles.pressed,
       ]}
     >
-      <GlassLayer intensity={BUTTON_GLASS_INTENSITY} accent={highlighted} />
-      {action.icon
-        ? <Feather name={action.icon} size={iconSize} color={highlighted ? "#8beeff" : "#f8fafc"} />
-        : <Text style={[styles.glyph, highlighted && styles.glyphAccent]}>{action.glyph}</Text>}
-      {action.badge ? (
-        <View style={styles.microBadge} pointerEvents="none">
-          <Text numberOfLines={1} style={styles.microBadgeText}>{action.badge}</Text>
-        </View>
-      ) : null}
+      {action.icon ? (
+        <Feather
+          name={action.icon}
+          size={highlighted ? iconSize + 1 : iconSize}
+          color={iconColor}
+          style={highlighted ? styles.cyanIconShadow : styles.iconShadow}
+        />
+      ) : (
+        <Text style={[styles.glyph, highlighted && styles.glyphAccent]}>{action.glyph}</Text>
+      )}
+      {action.badge ? <Text numberOfLines={1} style={styles.microBadgeText}>{action.badge}</Text> : null}
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  glassTint: { ...StyleSheet.absoluteFillObject, backgroundColor: "rgba(10,15,25,.24)" },
-  glassHighlight: { position: "absolute", left: 16, right: 16, top: 0, height: StyleSheet.hairlineWidth, backgroundColor: "rgba(255,255,255,.48)" },
-  info: { position: "absolute", zIndex: 52, top: 18, overflow: "hidden", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,.24)", backgroundColor: "transparent", elevation: 4, shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, flexDirection: "row", alignItems: "center" },
-  infoLandscape: { left: 94, right: 24, minHeight: 72, borderRadius: 20, paddingLeft: 18, paddingRight: 12 },
-  infoPortrait: { left: 72, right: 14, minHeight: 76, borderRadius: 20, paddingLeft: 14, paddingRight: 9 },
-  infoCompact: { minHeight: 54 },
-  infoRail: { position: "absolute", left: 0, top: 8, bottom: 8, width: 2, borderRadius: 1, backgroundColor: "rgba(34,211,238,.82)" },
-  infoMain: { flex: 1, minWidth: 0, paddingVertical: 7 },
-  titleRow: { flexDirection: "row", alignItems: "center", gap: 8, minWidth: 0 },
-  title: { flex: 1, color: "#f8fafc", fontSize: 18, fontWeight: "900" },
-  titlePortrait: { fontSize: 15 },
-  livePill: { height: 22, paddingHorizontal: 8, borderRadius: 11, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(207,250,254,.44)", backgroundColor: "rgba(8,145,178,.13)" },
-  liveDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#22d3ee" },
-  liveText: { color: "#c9fbff", fontSize: 10, fontWeight: "900" },
-  epgBlock: { marginTop: 3, minWidth: 0 },
-  epgNow: { color: "#f1f5f9", fontSize: 11, fontWeight: "800" },
-  epgNext: { marginTop: 1, color: "#cbd5e1", fontSize: 10, fontWeight: "700" },
-  epgMuted: { color: "#cbd5e1", fontSize: 10, fontWeight: "700" },
-  metaRow: { marginTop: 4, flexDirection: "row", alignItems: "center", gap: 7, minWidth: 0 },
-  meta: { flexShrink: 1, color: "#e2e8f0", fontSize: 11, fontWeight: "700" },
-  techPill: { flexShrink: 0, minHeight: 21, maxWidth: "62%", paddingHorizontal: 7, borderRadius: 11, flexDirection: "row", alignItems: "center", gap: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(165,243,252,.34)", backgroundColor: "rgba(8,145,178,.08)" },
-  techText: { color: "#e7fcff", fontSize: 10, fontWeight: "900" },
-  modeCluster: { marginLeft: 8, flexDirection: "row", gap: 5 },
-  modeChip: { height: 28, minWidth: 60, paddingHorizontal: 9, borderRadius: 14, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 5, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,.2)", backgroundColor: "rgba(255,255,255,.045)" },
-  modeChipAccent: { borderColor: "rgba(103,232,249,.42)", backgroundColor: "rgba(8,145,178,.08)" },
-  modeText: { color: "#f1f5f9", fontSize: 10, fontWeight: "900" },
-  modeTextAccent: { color: "#a5f3fc" },
-  back: { position: "absolute", zIndex: 65, alignItems: "center", justifyContent: "center", overflow: "hidden", backgroundColor: "transparent", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,.24)", elevation: 5, shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 10, shadowOffset: { width: 0, height: 5 } },
-  backLandscape: { left: 22, top: 20, width: 56, height: 56, borderRadius: 28 },
-  backPortrait: { left: 16, top: 20, width: 48, height: 48, borderRadius: 24 },
-  center: { position: "absolute", zIndex: 60, left: 0, right: 0, flexDirection: "row", alignItems: "center", justifyContent: "center" },
-  centerLandscape: { top: "50%", transform: [{ translateY: -44 }], gap: 54 },
-  centerPortrait: { top: "48%", transform: [{ translateY: -38 }], gap: 28 },
-  roundButton: { width: 66, height: 66, borderRadius: 33, overflow: "hidden", alignItems: "center", justifyContent: "center", backgroundColor: "transparent", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,.24)", elevation: 4, shadowColor: "#000", shadowOpacity: 0.16, shadowRadius: 10, shadowOffset: { width: 0, height: 5 } },
-  roundButtonPortrait: { width: 54, height: 54, borderRadius: 27 },
-  roundBadge: { position: "absolute", color: "#fff", fontSize: 9, fontWeight: "900" },
-  playShell: { width: 86, height: 86, borderRadius: 43, padding: 5, backgroundColor: "rgba(34,211,238,.08)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(207,250,254,.6)", elevation: 9, shadowColor: "#22d3ee", shadowOpacity: 0.14, shadowRadius: 13, shadowOffset: { width: 0, height: 6 } },
-  playShellPortrait: { width: 74, height: 74, borderRadius: 37 },
-  playInner: { flex: 1, borderRadius: 999, alignItems: "center", justifyContent: "center", overflow: "hidden" },
-  bottom: { position: "absolute", zIndex: 62, left: 0, right: 0 },
-  seekRow: { width: "100%", height: 32, marginBottom: 6, flexDirection: "row", alignItems: "center", gap: 8 },
-  time: { width: 54, color: "#fff", fontSize: 11, fontWeight: "800", fontVariant: ["tabular-nums"] },
+  info: {
+    position: "absolute",
+    zIndex: 52,
+    top: 20,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    backgroundColor: "transparent",
+  },
+  infoLandscape: { left: 104, right: 28, paddingTop: 4 },
+  infoPortrait: { left: 76, right: 16, paddingTop: 2 },
+  infoMain: { flex: 1, minWidth: 0 },
+  titleRow: { flexDirection: "row", alignItems: "center", gap: 9, minWidth: 0 },
+  title: { flex: 1, color: "#fff", fontSize: 20, fontWeight: "900", ...TEXT_SHADOW },
+  titlePortrait: { fontSize: 16 },
+  liveInline: { flexDirection: "row", alignItems: "center", gap: 5 },
+  liveText: { color: "#bff8ff", fontSize: 11, fontWeight: "900", ...TEXT_SHADOW },
+  epgBlock: { marginTop: 4, minWidth: 0 },
+  epgNow: { color: "#fff", fontSize: 12, fontWeight: "800", ...TEXT_SHADOW },
+  epgNext: { marginTop: 1, color: "#f1f5f9", fontSize: 11, fontWeight: "700", ...TEXT_SHADOW },
+  epgMuted: { color: "#e2e8f0", fontSize: 11, fontWeight: "700", ...TEXT_SHADOW },
+  metaRow: { marginTop: 5, flexDirection: "row", alignItems: "center", gap: 10, minWidth: 0 },
+  meta: { flexShrink: 1, color: "#fff", fontSize: 11, fontWeight: "800", ...TEXT_SHADOW },
+  techInline: { flexShrink: 0, maxWidth: "62%", flexDirection: "row", alignItems: "center", gap: 5 },
+  techText: { color: "#dffcff", fontSize: 10, fontWeight: "900", ...TEXT_SHADOW },
+  modeCluster: { marginLeft: 14, flexDirection: "row", alignItems: "center", gap: 14, paddingTop: 2 },
+  modeChip: { flexDirection: "row", alignItems: "center", gap: 5 },
+  modeText: { color: "#fff", fontSize: 11, fontWeight: "900", ...TEXT_SHADOW },
+  modeTextAccent: { color: "#9af4ff" },
+
+  back: {
+    position: "absolute",
+    zIndex: 65,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+  backLandscape: { left: 24, top: 22, width: 62, height: 62 },
+  backPortrait: { left: 14, top: 18, width: 54, height: 54 },
+
+  center: {
+    position: "absolute",
+    zIndex: 60,
+    left: 0,
+    right: 0,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  centerLandscape: { top: "50%", transform: [{ translateY: -46 }], gap: 64 },
+  centerPortrait: { top: "48%", transform: [{ translateY: -40 }], gap: 34 },
+  roundButton: {
+    width: 70,
+    height: 70,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+  roundButtonPortrait: { width: 58, height: 58 },
+  roundBadge: { position: "absolute", color: "#fff", fontSize: 9, fontWeight: "900", ...TEXT_SHADOW },
+  playShell: {
+    width: 92,
+    height: 92,
+    borderRadius: 46,
+    borderWidth: 1.5,
+    borderColor: "rgba(103,232,249,.78)",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+    shadowColor: "#22d3ee",
+    shadowOpacity: 0.5,
+    shadowRadius: 13,
+    shadowOffset: { width: 0, height: 0 },
+  },
+  playShellPortrait: { width: 80, height: 80, borderRadius: 40 },
+  playIcon: {
+    textShadowColor: "rgba(34,211,238,.9)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 12,
+  },
+
+  bottom: { position: "absolute", zIndex: 62, left: 0, right: 0, backgroundColor: "transparent" },
+  seekRow: { width: "100%", marginBottom: 8, flexDirection: "row", alignItems: "center", gap: 8 },
+  time: { width: 54, color: "#fff", fontSize: 11, fontWeight: "800", fontVariant: ["tabular-nums"], ...TEXT_SHADOW },
   timeRight: { textAlign: "right" },
   seekTouch: { flex: 1, height: 28, justifyContent: "center" },
-  seekTrack: { height: 4, borderRadius: 2, backgroundColor: "rgba(226,232,240,.26)", overflow: "visible" },
-  seekFill: { position: "absolute", left: 0, top: 0, bottom: 0, borderRadius: 2, backgroundColor: "#22d3ee" },
-  seekThumb: { position: "absolute", top: -4, marginLeft: -6, width: 12, height: 12, borderRadius: 6, backgroundColor: "#67e8f9", borderWidth: 2, borderColor: "#e6fcff" },
-  dockShell: { width: "100%", alignSelf: "center", overflow: "hidden", borderRadius: 24, borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,.24)", backgroundColor: "transparent", elevation: 5, shadowColor: "#000", shadowOpacity: 0.18, shadowRadius: 14, shadowOffset: { width: 0, height: 6 }, justifyContent: "center" },
-  dockRow: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", paddingHorizontal: 5, paddingVertical: 5 },
-  dockButton: { alignItems: "center", justifyContent: "center", overflow: "hidden", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(255,255,255,.16)", backgroundColor: "transparent" },
-  dockButtonHighlighted: { borderColor: "rgba(103,232,249,.38)" },
-  dockButtonActive: { borderColor: "rgba(165,243,252,.72)" },
-  glyph: { color: "#fff", fontSize: 15, fontWeight: "900" },
-  glyphAccent: { color: "#8beeff" },
-  microBadge: { position: "absolute", right: 2, bottom: 2, minWidth: 23, maxWidth: 42, height: 15, paddingHorizontal: 3, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(8,47,73,.58)", borderWidth: StyleSheet.hairlineWidth, borderColor: "rgba(103,232,249,.56)" },
-  microBadgeText: { color: "#a5f3fc", fontSize: 7, fontWeight: "900" },
-  pressed: { opacity: 0.76, transform: [{ scale: 0.96 }] },
+  seekTrack: { height: 8, justifyContent: "center", backgroundColor: "transparent" },
+  seekFill: { position: "absolute", left: 0, top: 3, height: 2, borderTopWidth: 2, borderColor: "#22d3ee", backgroundColor: "transparent" },
+  seekThumb: { position: "absolute", top: 0, marginLeft: -5, width: 10, height: 10, borderRadius: 5, borderWidth: 2, borderColor: "#bff8ff", backgroundColor: "transparent" },
+  dockRow: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "transparent" },
+  dockButton: { alignItems: "center", justifyContent: "center", backgroundColor: "transparent" },
+  glyph: { color: "#fff", fontSize: 18, fontWeight: "900", ...TEXT_SHADOW },
+  glyphAccent: { color: "#67e8f9", textShadowColor: "rgba(34,211,238,.85)", textShadowRadius: 8 },
+  microBadgeText: { position: "absolute", bottom: -1, color: "#9af4ff", fontSize: 8, fontWeight: "900", ...TEXT_SHADOW },
+  iconShadow: ICON_SHADOW,
+  cyanIconShadow: {
+    textShadowColor: "rgba(34,211,238,.95)",
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 8,
+  },
+  pressed: { opacity: 0.62, transform: [{ scale: 0.94 }] },
 });
