@@ -1,1 +1,0 @@
-Temporary diagnostic marker: Xtream catalog request URL/response logging investigation. Credentials must remain redacted.
