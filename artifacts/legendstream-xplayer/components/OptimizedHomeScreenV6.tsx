@@ -32,6 +32,8 @@ import { MediaProgress } from "@/context/MediaLibraryContext";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { DownloadedMedia } from "@/lib/downloads";
+import { getM3UCatalog } from "@/lib/iptv";
+import { yieldToUi } from "@/lib/cooperative";
 import {
   buildEpisodeStreamUrl,
   buildVodStreamUrl,
@@ -40,6 +42,8 @@ import {
   getSeriesInfo,
   getVodCategories,
   getVodStreams,
+  registerLocalEpisodeQueue,
+  registerLocalVodQueue,
   XtreamCategory,
   XtreamEpisode,
   XtreamSeriesInfo,
@@ -63,6 +67,15 @@ const catalogCategoryMemory = {
   movies: "__all__",
   series: "__all__",
 };
+
+const flattenCatalogCache = <T,>(cache: Record<string, T[]>) =>
+  Object.values(cache).flat();
+
+const categoryRows = (names: string[]): XtreamCategory[] =>
+  Array.from(new Set(names.filter(Boolean))).map((name) => ({
+    category_id: name,
+    category_name: name,
+  }));
 
 export default function OptimizedHomeScreenV6() {
   const colors = useColors();
@@ -100,8 +113,10 @@ export default function OptimizedHomeScreenV6() {
   const [seriesLoaded, setSeriesLoaded] = useState(false);
   const [vodCats, setVodCats] = useState<XtreamCategory[]>([]);
   const [vod, setVod] = useState<XtreamVodItem[]>([]);
+  const [vodCache, setVodCache] = useState<Record<string, XtreamVodItem[]>>({});
   const [seriesCats, setSeriesCats] = useState<XtreamCategory[]>([]);
   const [series, setSeries] = useState<XtreamSeriesItem[]>([]);
+  const [seriesCache, setSeriesCache] = useState<Record<string, XtreamSeriesItem[]>>({});
   const [selectedSeries, setSelectedSeries] = useState<XtreamSeriesItem | null>(null);
   const [seriesInfo, setSeriesInfo] = useState<XtreamSeriesInfo | null>(null);
 
@@ -111,33 +126,115 @@ export default function OptimizedHomeScreenV6() {
   }, [provider]);
 
   const providerChannels = useMemo(
-    () => provider ? channels.filter((channel) => channel.providerId === provider.id) : [],
+    () => provider
+      ? channels.filter(
+          (channel) => channel.providerId === provider.id && (channel.contentType ?? "live") === "live",
+        )
+      : [],
     [channels, provider],
   );
 
   useEffect(() => {
-    setVod([]); setVodCats([]); setVodLoaded(false); setVodLoading(false);
-    setSeries([]); setSeriesCats([]); setSeriesLoaded(false); setSeriesLoading(false);
+    setVod([]); setVodCats([]); setVodCache({}); setVodLoaded(false); setVodLoading(false);
+    setSeries([]); setSeriesCats([]); setSeriesCache({}); setSeriesLoaded(false); setSeriesLoading(false);
     setSelectedSeries(null); setSeriesInfo(null); setCatalogError(null);
+    catalogCategoryMemory.movies = "__all__";
+    catalogCategoryMemory.series = "__all__";
   }, [provider?.id]);
 
   const loadVod = async (force = false) => {
-    if (!credentials || (vodLoaded && !force) || vodLoading) return;
+    if (!provider || (vodLoaded && !force) || vodLoading) return;
     setVodLoading(true); setCatalogError(null);
     try {
-      const [cats, items] = await Promise.all([getVodCategories(credentials), getVodStreams(credentials)]);
-      setVodCats(cats); setVod(items); setVodLoaded(true);
+      if (provider.type === "m3u") {
+        const local = getM3UCatalog(provider.id);
+        const items: XtreamVodItem[] = local.movieItems.map((item) => ({
+          stream_id: item.id,
+          name: item.name,
+          stream_icon: item.logoUrl,
+          category_id: item.category,
+          direct_source: item.streamUrl,
+        }));
+        registerLocalVodQueue(items);
+        setVodCats(categoryRows(local.movieItems.map((item) => item.category)));
+        setVod(items);
+        setVodCache({ __m3u__: items });
+        setVodLoaded(true);
+        return;
+      }
+      if (!credentials || provider.type !== "xtream") return;
+      if (force) {
+        setVod([]);
+        setVodCache({});
+      }
+      const cats = await getVodCategories(credentials);
+      setVodCats(cats);
+      setVodLoaded(true);
+    } catch (caught) {
+      setCatalogError(caught instanceof Error ? caught.message : t("loadingMovies"));
+    } finally { setVodLoading(false); }
+  };
+
+  const loadVodCategory = async (categoryId: string, force = false) => {
+    if (!provider || provider.type !== "xtream" || !credentials || categoryId === "__all__") return;
+    if (vodCache[categoryId] && !force) return;
+    setVodLoading(true); setCatalogError(null);
+    try {
+      const items = await getVodStreams(credentials, categoryId);
+      await yieldToUi();
+      setVodCache((previous) => {
+        const next = { ...previous, [categoryId]: items };
+        setVod(flattenCatalogCache(next));
+        return next;
+      });
     } catch (caught) {
       setCatalogError(caught instanceof Error ? caught.message : t("loadingMovies"));
     } finally { setVodLoading(false); }
   };
 
   const loadSeries = async (force = false) => {
-    if (!credentials || (seriesLoaded && !force) || seriesLoading) return;
+    if (!provider || (seriesLoaded && !force) || seriesLoading) return;
     setSeriesLoading(true); setCatalogError(null);
     try {
-      const [cats, items] = await Promise.all([getSeriesCategories(credentials), getSeries(credentials)]);
-      setSeriesCats(cats); setSeries(items); setSeriesLoaded(true);
+      if (provider.type === "m3u") {
+        const local = getM3UCatalog(provider.id);
+        const items: XtreamSeriesItem[] = local.seriesGroups.map((group) => ({
+          series_id: group.id,
+          name: group.name,
+          cover: group.coverUrl,
+          category_id: group.category,
+        }));
+        setSeriesCats(categoryRows(local.seriesGroups.map((group) => group.category)));
+        setSeries(items);
+        setSeriesCache({ __m3u__: items });
+        setSeriesLoaded(true);
+        return;
+      }
+      if (!credentials || provider.type !== "xtream") return;
+      if (force) {
+        setSeries([]);
+        setSeriesCache({});
+      }
+      const cats = await getSeriesCategories(credentials);
+      setSeriesCats(cats);
+      setSeriesLoaded(true);
+    } catch (caught) {
+      setCatalogError(caught instanceof Error ? caught.message : t("loadingSeries"));
+    } finally { setSeriesLoading(false); }
+  };
+
+  const loadSeriesCategory = async (categoryId: string, force = false) => {
+    if (!provider || provider.type !== "xtream" || !credentials || categoryId === "__all__") return;
+    if (seriesCache[categoryId] && !force) return;
+    setSeriesLoading(true); setCatalogError(null);
+    try {
+      const items = await getSeries(credentials, categoryId);
+      await yieldToUi();
+      setSeriesCache((previous) => {
+        const next = { ...previous, [categoryId]: items };
+        setSeries(flattenCatalogCache(next));
+        return next;
+      });
     } catch (caught) {
       setCatalogError(caught instanceof Error ? caught.message : t("loadingSeries"));
     } finally { setSeriesLoading(false); }
@@ -185,34 +282,64 @@ export default function OptimizedHomeScreenV6() {
   };
 
   const openMovie = (item: XtreamVodItem) => {
-    if (!credentials) return;
-    setPlayable({
-      title: item.name,
-      subtitle: item.genre || t("movies"),
-      url: buildVodStreamUrl(credentials, item),
-      kind: "movie",
-      returnTo: "movies",
-    });
-    setView("player");
+    try {
+      setPlayable({
+        title: item.name,
+        subtitle: item.genre || t("movies"),
+        url: buildVodStreamUrl(credentials, item),
+        kind: "movie",
+        returnTo: "movies",
+      });
+      setView("player");
+    } catch (caught) {
+      setCatalogError(caught instanceof Error ? caught.message : t("loadingMovies"));
+    }
   };
 
   const openSeries = async (item: XtreamSeriesItem) => {
-    if (!credentials) return;
     setSelectedSeries(item); setSeriesInfo(null); setCatalogError(null);
+    if (provider.type === "m3u") {
+      const group = getM3UCatalog(provider.id).seriesGroups.find(
+        (candidate) => candidate.id === String(item.series_id),
+      );
+      if (!group) return;
+      const info: XtreamSeriesInfo = {
+        info: item,
+        episodes: Object.fromEntries(
+          Object.entries(group.seasons).map(([season, episodes]) => [
+            season,
+            episodes.map((episode) => ({
+              id: episode.id,
+              episode_num: episode.episode,
+              title: episode.title,
+              direct_source: episode.streamUrl,
+            })),
+          ]),
+        ),
+      };
+      registerLocalEpisodeQueue(info);
+      setSeriesInfo(info);
+      return;
+    }
+    if (!credentials) return;
     try { setSeriesInfo(await getSeriesInfo(credentials, item.series_id)); }
     catch (caught) { setCatalogError(caught instanceof Error ? caught.message : t("loadingEpisodes")); }
   };
 
   const playEpisode = (episode: XtreamEpisode) => {
-    if (!credentials || !selectedSeries) return;
-    setPlayable({
-      title: episode.title || selectedSeries.name,
-      subtitle: selectedSeries.name,
-      url: buildEpisodeStreamUrl(credentials, episode),
-      kind: "episode",
-      returnTo: "series",
-    });
-    setView("player");
+    if (!selectedSeries) return;
+    try {
+      setPlayable({
+        title: episode.title || selectedSeries.name,
+        subtitle: selectedSeries.name,
+        url: buildEpisodeStreamUrl(credentials, episode),
+        kind: "episode",
+        returnTo: "series",
+      });
+      setView("player");
+    } catch (caught) {
+      setCatalogError(caught instanceof Error ? caught.message : t("loadingEpisodes"));
+    }
   };
 
   const openDownload = (item: DownloadedMedia) => {
@@ -247,6 +374,8 @@ export default function OptimizedHomeScreenV6() {
     { key: "settings" as const, label: t("settings"), icon: "settings" as const },
   ];
 
+  const hasLoadedVodCategory = provider.type === "m3u" || Object.keys(vodCache).length > 0;
+  const hasLoadedSeriesCategory = provider.type === "m3u" || Object.keys(seriesCache).length > 0;
   const top = Math.max(insets.top, Platform.OS === "web" ? 20 : 0);
   return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
     <View style={[s.header, { borderColor: colors.border }]}>
@@ -275,9 +404,9 @@ export default function OptimizedHomeScreenV6() {
       onOpen={openLive}
       onFavorite={(id) => void toggleFavorite(id)}
     /> : <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-      {view === "home" ? <Home provider={provider} providers={providers} live={providerChannels.length} vod={vodLoaded ? vod.length : null} series={seriesLoaded ? series.length : null} loading={isLoading} onRefresh={() => void refreshProvider()} onNavigate={navigate} onSwitch={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} /> : null}
-      {view === "movies" ? <Movies items={vod} cats={vodCats} loading={vodLoading} loaded={vodLoaded} onRefresh={() => void loadVod(true)} onOpen={openMovie} /> : null}
-      {view === "series" ? <Series items={series} cats={seriesCats} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onRefresh={() => void loadSeries(true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} /> : null}
+      {view === "home" ? <Home provider={provider} providers={providers} live={providerChannels.length} vod={vodLoaded && hasLoadedVodCategory ? vod.length : null} series={seriesLoaded && hasLoadedSeriesCategory ? series.length : null} loading={isLoading} onRefresh={() => void refreshProvider()} onNavigate={navigate} onSwitch={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} /> : null}
+      {view === "movies" ? <Movies items={vod} cats={vodCats} loading={vodLoading} loaded={vodLoaded} onCategory={(category) => void loadVodCategory(category)} onRefresh={(category) => category === "__all__" ? void loadVod(true) : void loadVodCategory(category, true)} onOpen={openMovie} /> : null}
+      {view === "series" ? <Series items={series} cats={seriesCats} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => category === "__all__" ? void loadSeries(true) : void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} /> : null}
       {view === "history" ? <HistoryView channels={providerChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
       {view === "settings" ? <Settings provider={provider} providers={providers} busy={isLoading} onEdit={() => setEditing(true)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
@@ -491,7 +620,15 @@ function Live({ channels, epgByChannel, favorites, providerType, loading, epgLoa
   />;
 }
 
-function Movies({ items, cats, loading, loaded, onRefresh, onOpen }: { items: XtreamVodItem[]; cats: XtreamCategory[]; loading: boolean; loaded: boolean; onRefresh: () => void; onOpen: (item: XtreamVodItem) => void }) {
+function Movies({ items, cats, loading, loaded, onCategory, onRefresh, onOpen }: {
+  items: XtreamVodItem[];
+  cats: XtreamCategory[];
+  loading: boolean;
+  loaded: boolean;
+  onCategory: (categoryId: string) => void;
+  onRefresh: (categoryId: string) => void;
+  onOpen: (item: XtreamVodItem) => void;
+}) {
   const { t } = useI18n();
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState(() => catalogCategoryMemory.movies);
@@ -507,16 +644,16 @@ function Movies({ items, cats, loading, loaded, onRefresh, onOpen }: { items: Xt
 
   const filtered = useMemo(() => { const query = search.trim().toLowerCase(); return items.filter((item) => (category === "__all__" || String(item.category_id) === category) && (!query || item.name.toLowerCase().includes(query))); }, [items, search, category]);
   if (!loaded && loading) return <Loading text={t("loadingMovies")} />;
-  return <Catalog title={t("movies")} detail={loaded ? t("titles", { count: items.length.toLocaleString() }) : t("loading")} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={onRefresh}>
-    <Rail items={[{ id: "__all__", name: t("all") }, ...cats.map((item) => ({ id: String(item.category_id), name: item.category_name }))]} selected={category} onSelect={(value) => { catalogCategoryMemory.movies = value; setCategory(value); setLimit(60); }} />
+  return <Catalog title={t("movies")} detail={loaded ? t("titles", { count: items.length.toLocaleString() }) : t("loading")} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={() => onRefresh(category)}>
+    <Rail items={[{ id: "__all__", name: t("all") }, ...cats.map((item) => ({ id: String(item.category_id), name: item.category_name }))]} selected={category} onSelect={(value) => { catalogCategoryMemory.movies = value; setCategory(value); setLimit(60); onCategory(value); }} />
     <Grid items={filtered.slice(0, limit)} keyOf={(item) => String(item.stream_id)} titleOf={(item) => item.name} imageOf={(item) => item.stream_icon} onOpen={onOpen} />
     {limit < filtered.length ? <View style={s.more}><FocusButton label={t("loadMore")} onPress={() => setLimit((value) => value + 60)} /></View> : null}
   </Catalog>;
 }
 
-function Series({ items, cats, loading, loaded, selected, info, onRefresh, onOpen, onBack, onEpisode }: {
+function Series({ items, cats, loading, loaded, selected, info, onCategory, onRefresh, onOpen, onBack, onEpisode }: {
   items: XtreamSeriesItem[]; cats: XtreamCategory[]; loading: boolean; loaded: boolean; selected: XtreamSeriesItem | null; info: XtreamSeriesInfo | null;
-  onRefresh: () => void; onOpen: (item: XtreamSeriesItem) => void; onBack: () => void; onEpisode: (episode: XtreamEpisode) => void;
+  onCategory: (categoryId: string) => void; onRefresh: (categoryId: string) => void; onOpen: (item: XtreamSeriesItem) => void; onBack: () => void; onEpisode: (episode: XtreamEpisode) => void;
 }) {
   const colors = useColors(); const { t } = useI18n();
   const [search, setSearch] = useState("");
@@ -549,8 +686,8 @@ function Series({ items, cats, loading, loaded, selected, info, onRefresh, onOpe
   }
 
   if (!loaded && loading) return <Loading text={t("loadingSeries")} />;
-  return <Catalog title={t("series")} detail={loaded ? t("seriesCount", { count: items.length.toLocaleString() }) : t("loading")} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={onRefresh}>
-    <Rail items={[{ id: "__all__", name: t("all") }, ...cats.map((item) => ({ id: String(item.category_id), name: item.category_name }))]} selected={category} onSelect={(value) => { catalogCategoryMemory.series = value; setCategory(value); setLimit(60); }} />
+  return <Catalog title={t("series")} detail={loaded ? t("seriesCount", { count: items.length.toLocaleString() }) : t("loading")} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={() => onRefresh(category)}>
+    <Rail items={[{ id: "__all__", name: t("all") }, ...cats.map((item) => ({ id: String(item.category_id), name: item.category_name }))]} selected={category} onSelect={(value) => { catalogCategoryMemory.series = value; setCategory(value); setLimit(60); onCategory(value); }} />
     <Grid items={filtered.slice(0, limit)} keyOf={(item) => String(item.series_id)} titleOf={(item) => item.name} imageOf={(item) => item.cover} onOpen={onOpen} />
     {limit < filtered.length ? <View style={s.more}><FocusButton label={t("loadMore")} onPress={() => setLimit((value) => value + 60)} /></View> : null}
   </Catalog>;

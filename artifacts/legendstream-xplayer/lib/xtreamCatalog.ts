@@ -1,5 +1,6 @@
 import { Platform } from "react-native";
 import { normalizeXtreamBaseUrl } from "./iptv";
+import { yieldToUi } from "./cooperative";
 
 export type XtreamCategory = {
   category_id: string | number;
@@ -16,6 +17,7 @@ export type XtreamVodItem = {
   added?: string;
   category_id?: string | number;
   container_extension?: string;
+  direct_source?: string;
   plot?: string;
   cast?: string;
   director?: string;
@@ -77,6 +79,7 @@ export type XtreamEpisode = {
   episode_num?: number;
   title?: string;
   container_extension?: string;
+  direct_source?: string;
   info?: {
     movie_image?: string;
     plot?: string;
@@ -101,7 +104,7 @@ export type XtreamSeriesInfo = {
   episodes?: Record<string, XtreamEpisode[]>;
 };
 
-type XtreamCredentials = {
+export type XtreamCredentials = {
   baseUrl: string;
   username: string;
   password: string;
@@ -144,6 +147,7 @@ const encodeCredentials = (credentials: XtreamCredentials) => ({
 
 async function parseResponse(response: Response) {
   const text = await response.text();
+  await yieldToUi();
   let data: unknown;
   try {
     data = JSON.parse(text);
@@ -220,7 +224,7 @@ export async function getVodCategories(credentials: XtreamCredentials) {
   return Array.isArray(data) ? (data as XtreamCategory[]) : [];
 }
 
-function registerVodQueue(credentials: XtreamCredentials, rows: XtreamVodItem[]) {
+function registerVodQueue(credentials: XtreamCredentials | null | undefined, rows: XtreamVodItem[]) {
   const items: VodPlaybackItem[] = rows.map((item) => ({
     id: String(item.stream_id),
     title: item.name,
@@ -246,7 +250,12 @@ export async function getVodStreams(
   });
   const rows = Array.isArray(data) ? (data as XtreamVodItem[]) : [];
   registerVodQueue(credentials, rows);
+  await yieldToUi();
   return rows;
+}
+
+export function registerLocalVodQueue(rows: XtreamVodItem[]) {
+  registerVodQueue(undefined, rows);
 }
 
 export async function getVodInfo(
@@ -271,10 +280,11 @@ export async function getSeries(
   const data = await requestXtream(credentials, "get_series", {
     category_id: categoryId,
   });
+  await yieldToUi();
   return Array.isArray(data) ? (data as XtreamSeriesItem[]) : [];
 }
 
-function registerEpisodeQueue(credentials: XtreamCredentials, info: XtreamSeriesInfo) {
+function registerEpisodeQueue(credentials: XtreamCredentials | null | undefined, info: XtreamSeriesInfo) {
   const items: EpisodePlaybackItem[] = [];
   Object.entries(info.episodes ?? {}).forEach(([season, episodes]) => {
     episodes.forEach((episode) => {
@@ -290,6 +300,10 @@ function registerEpisodeQueue(credentials: XtreamCredentials, info: XtreamSeries
   items.forEach((item, index) => {
     episodeQueueByUrl.set(item.url, { items, index });
   });
+}
+
+export function registerLocalEpisodeQueue(info: XtreamSeriesInfo) {
+  registerEpisodeQueue(undefined, info);
 }
 
 export function getEpisodePlaybackQueue(source: string): EpisodePlaybackQueue | undefined {
@@ -309,9 +323,11 @@ export async function getSeriesInfo(
 }
 
 export function buildVodStreamUrl(
-  credentials: XtreamCredentials,
+  credentials: XtreamCredentials | null | undefined,
   item: XtreamVodItem,
 ) {
+  if (item.direct_source) return item.direct_source;
+  if (!credentials) throw new Error("Xtream credentials are required for this VOD stream.");
   const baseUrl = normalizeXtreamBaseUrl(credentials.baseUrl);
   const extension = item.container_extension || "mp4";
   return `${baseUrl}/movie/${encodeURIComponent(credentials.username)}/${encodeURIComponent(
@@ -320,9 +336,11 @@ export function buildVodStreamUrl(
 }
 
 export function buildEpisodeStreamUrl(
-  credentials: XtreamCredentials,
+  credentials: XtreamCredentials | null | undefined,
   episode: XtreamEpisode,
 ) {
+  if (episode.direct_source) return episode.direct_source;
+  if (!credentials) throw new Error("Xtream credentials are required for this episode stream.");
   const baseUrl = normalizeXtreamBaseUrl(credentials.baseUrl);
   const extension = episode.container_extension || "mp4";
   return `${baseUrl}/series/${encodeURIComponent(credentials.username)}/${encodeURIComponent(
