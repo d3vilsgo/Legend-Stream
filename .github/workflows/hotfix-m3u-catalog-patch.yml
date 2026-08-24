@@ -1,0 +1,84 @@
+name: Hotfix M3U catalog patch
+
+on:
+  push:
+    branches:
+      - hotfix/m3u-local-catalog
+
+permissions:
+  contents: write
+
+jobs:
+  patch-home:
+    if: ${{ !contains(github.event.head_commit.message, '[generated]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: hotfix/m3u-local-catalog
+          fetch-depth: 0
+      - name: Apply catalog fallback integration
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('artifacts/legendstream-xplayer/components/OptimizedHomeScreenV6.tsx')
+          text = path.read_text()
+
+          text = text.replace(
+            '  getVodStreams,\n  registerLocalEpisodeQueue,',
+            '  getVodStreams,\n  isXtreamCatalogFallbackError,\n  registerLocalEpisodeQueue,'
+          )
+
+          marker = '''const categoryRows = (names: string[]): XtreamCategory[] =>\n  Array.from(new Set(names.filter(Boolean))).map((name) => ({\n    category_id: name,\n    category_name: name,\n  }));\n'''
+          helper = marker + '''\nconst isGetPhpM3UPlusProvider = (provider: ProviderConfig) => {\n  try {\n    const source = new URL(provider.url || provider.playlistUrl);\n    if (!/\\/get\\.php$/i.test(source.pathname)) return false;\n    const type = source.searchParams.get("type")?.toLowerCase();\n    return !type || type === "m3u_plus";\n  } catch {\n    return false;\n  }\n};\n'''
+          if marker not in text:
+            raise SystemExit('categoryRows marker not found')
+          text = text.replace(marker, helper, 1)
+
+          insertion_marker = '''  useEffect(() => {\n    setVod([]); setVodCats([]); setVodCache({}); setVodLoaded(false); setVodLoading(false);\n    setSeries([]); setSeriesCats([]); setSeriesCache({}); setSeriesLoaded(false); setSeriesLoading(false);\n    setSelectedSeries(null); setSeriesInfo(null); setCatalogError(null);\n    catalogCategoryMemory.movies = "__all__";\n    catalogCategoryMemory.series = "__all__";\n  }, [provider?.id]);\n\n'''
+          insertion = insertion_marker + '''  const applyLocalVod = () => {\n    if (!provider) return;\n    const local = getM3UCatalog(provider.id);\n    const items: XtreamVodItem[] = local.movieItems.map((item) => ({\n      stream_id: item.id,\n      name: item.name,\n      stream_icon: item.logoUrl,\n      category_id: item.category,\n      direct_source: item.streamUrl,\n    }));\n    registerLocalVodQueue(items);\n    setVodCats(categoryRows(local.movieItems.map((item) => item.category)));\n    setVod(items);\n    setVodCache({ __m3u__: items });\n    setVodLoaded(true);\n  };\n\n  const applyLocalSeries = () => {\n    if (!provider) return;\n    const local = getM3UCatalog(provider.id);\n    const items: XtreamSeriesItem[] = local.seriesGroups.map((group) => ({\n      series_id: group.id,\n      name: group.name,\n      cover: group.coverUrl,\n      category_id: group.category,\n    }));\n    setSeriesCats(categoryRows(local.seriesGroups.map((group) => group.category)));\n    setSeries(items);\n    setSeriesCache({ __m3u__: items });\n    setSeriesLoaded(true);\n  };\n\n  const tryCatalogFallbackToM3U = async (caught: unknown, target: "movies" | "series") => {\n    if (\n      !provider ||\n      provider.type !== "xtream" ||\n      !isGetPhpM3UPlusProvider(provider) ||\n      !isXtreamCatalogFallbackError(caught)\n    ) {\n      return false;\n    }\n\n    const migrated = await connectProvider({\n      name: provider.name,\n      type: "m3u",\n      playlistUrl: provider.url || provider.playlistUrl,\n      username: provider.username,\n      password: provider.password,\n      mac: provider.mac,\n      epgUrl: provider.epgUrl,\n    });\n    if (!migrated) return false;\n\n    clearError();\n    setCatalogError(null);\n    if (target === "movies") applyLocalVod();\n    else applyLocalSeries();\n    return true;\n  };\n\n'''
+          if insertion_marker not in text:
+            raise SystemExit('provider reset marker not found')
+          text = text.replace(insertion_marker, insertion, 1)
+
+          old_vod_local = '''      if (provider.type === "m3u") {\n        const local = getM3UCatalog(provider.id);\n        const items: XtreamVodItem[] = local.movieItems.map((item) => ({\n          stream_id: item.id,\n          name: item.name,\n          stream_icon: item.logoUrl,\n          category_id: item.category,\n          direct_source: item.streamUrl,\n        }));\n        registerLocalVodQueue(items);\n        setVodCats(categoryRows(local.movieItems.map((item) => item.category)));\n        setVod(items);\n        setVodCache({ __m3u__: items });\n        setVodLoaded(true);\n        return;\n      }\n'''
+          new_vod_local = '''      if (provider.type === "m3u") {\n        applyLocalVod();\n        return;\n      }\n'''
+          if old_vod_local not in text:
+            raise SystemExit('vod local block not found')
+          text = text.replace(old_vod_local, new_vod_local, 1)
+
+          old_series_local = '''      if (provider.type === "m3u") {\n        const local = getM3UCatalog(provider.id);\n        const items: XtreamSeriesItem[] = local.seriesGroups.map((group) => ({\n          series_id: group.id,\n          name: group.name,\n          cover: group.coverUrl,\n          category_id: group.category,\n        }));\n        setSeriesCats(categoryRows(local.seriesGroups.map((group) => group.category)));\n        setSeries(items);\n        setSeriesCache({ __m3u__: items });\n        setSeriesLoaded(true);\n        return;\n      }\n'''
+          new_series_local = '''      if (provider.type === "m3u") {\n        applyLocalSeries();\n        return;\n      }\n'''
+          if old_series_local not in text:
+            raise SystemExit('series local block not found')
+          text = text.replace(old_series_local, new_series_local, 1)
+
+          old_movie_catch = '''    } catch (caught) {\n      setCatalogError(caught instanceof Error ? caught.message : t("loadingMovies"));\n    } finally { setVodLoading(false); }\n'''
+          new_movie_catch = '''    } catch (caught) {\n      if (await tryCatalogFallbackToM3U(caught, "movies")) return;\n      setVodLoaded(true);\n      setCatalogError(caught instanceof Error ? caught.message : t("loadingMovies"));\n    } finally { setVodLoading(false); }\n'''
+          if text.count(old_movie_catch) < 2:
+            raise SystemExit(f'expected 2 movie catches, found {text.count(old_movie_catch)}')
+          text = text.replace(old_movie_catch, new_movie_catch, 2)
+
+          old_series_catch = '''    } catch (caught) {\n      setCatalogError(caught instanceof Error ? caught.message : t("loadingSeries"));\n    } finally { setSeriesLoading(false); }\n'''
+          new_series_catch = '''    } catch (caught) {\n      if (await tryCatalogFallbackToM3U(caught, "series")) return;\n      setSeriesLoaded(true);\n      setCatalogError(caught instanceof Error ? caught.message : t("loadingSeries"));\n    } finally { setSeriesLoading(false); }\n'''
+          if text.count(old_series_catch) < 2:
+            raise SystemExit(f'expected 2 series catches, found {text.count(old_series_catch)}')
+          text = text.replace(old_series_catch, new_series_catch, 2)
+
+          path.write_text(text)
+          PY
+
+      - name: Commit generated Home integration
+        shell: bash
+        run: |
+          if git diff --quiet; then
+            echo "No Home changes required"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add artifacts/legendstream-xplayer/components/OptimizedHomeScreenV6.tsx
+          git commit -m "[generated] fix(home): fall back get.php catalogs to M3U"
+          git push origin HEAD:hotfix/m3u-local-catalog
