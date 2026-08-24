@@ -168,8 +168,22 @@ export function isXtreamCatalogFallbackError(error: unknown) {
 const episodeQueueByUrl = new Map<string, EpisodePlaybackQueue>();
 const vodQueueByUrl = new Map<string, VodPlaybackQueue>();
 
+const normalizeCatalogBaseUrl = (value: string) => {
+  const normalized = normalizeXtreamBaseUrl(value);
+  try {
+    const url = new URL(normalized);
+    if (/\/get\.php$/i.test(url.pathname)) {
+      url.pathname = url.pathname.replace(/\/get\.php$/i, "") || "/";
+      return url.toString().replace(/\/+$/, "");
+    }
+  } catch {
+    // normalizeXtreamBaseUrl already validates URL inputs.
+  }
+  return normalized;
+};
+
 const encodeCredentials = (credentials: XtreamCredentials) => ({
-  baseUrl: normalizeXtreamBaseUrl(credentials.baseUrl),
+  baseUrl: normalizeCatalogBaseUrl(credentials.baseUrl),
   username: credentials.username.trim(),
   password: credentials.password,
 });
@@ -408,7 +422,7 @@ export function buildVodStreamUrl(
 ) {
   if (item.direct_source) return item.direct_source;
   if (!credentials) throw new Error("Xtream credentials are required for this VOD stream.");
-  const baseUrl = normalizeXtreamBaseUrl(credentials.baseUrl);
+  const baseUrl = normalizeCatalogBaseUrl(credentials.baseUrl);
   const extension = item.container_extension || "mp4";
   return `${baseUrl}/movie/${encodeURIComponent(credentials.username)}/${encodeURIComponent(
     credentials.password,
@@ -421,7 +435,7 @@ export function buildEpisodeStreamUrl(
 ) {
   if (episode.direct_source) return episode.direct_source;
   if (!credentials) throw new Error("Xtream credentials are required for this episode stream.");
-  const baseUrl = normalizeXtreamBaseUrl(credentials.baseUrl);
+  const baseUrl = normalizeCatalogBaseUrl(credentials.baseUrl);
   const extension = episode.container_extension || "mp4";
   return `${baseUrl}/series/${encodeURIComponent(credentials.username)}/${encodeURIComponent(
     credentials.password,
