@@ -64,6 +64,7 @@ type CatalogSyncContextValue = {
   syncState: CatalogSyncState | null;
   snapshot: CatalogSnapshot;
   cacheReady: boolean;
+  isRefreshing: boolean;
   refreshSnapshot: () => Promise<void>;
   refreshCatalog: () => Promise<void>;
   cancelInitialSync: () => void;
@@ -82,6 +83,7 @@ const EMPTY_SNAPSHOT: CatalogSnapshot = {
 };
 const HOME_SAMPLE_LIMIT = 48;
 const NEW_SAMPLE_LIMIT = 24;
+const BACKGROUND_SYNC_DELAY_MS = 1_250;
 
 const Context = createContext<CatalogSyncContextValue | null>(null);
 
@@ -118,9 +120,11 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
   const [syncState, setSyncStateLocal] = useState<CatalogSyncState | null>(null);
   const [snapshot, setSnapshot] = useState<CatalogSnapshot>(EMPTY_SNAPSHOT);
   const [cacheReady, setCacheReady] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const cancelRef = useRef(false);
   const runningRef = useRef<Promise<void> | null>(null);
   const generationRef = useRef(0);
+  const backgroundStartedRef = useRef<string | null>(null);
 
   const refreshSnapshot = useCallback(async () => {
     const active = provider;
@@ -185,13 +189,15 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     if (runningRef.current) return runningRef.current;
 
     const generation = ++generationRef.current;
+    const isInitial = mode === "initial";
+    const markNew = mode !== "initial";
     cancelRef.current = false;
     const isCancelled = () => cancelRef.current || generationRef.current !== generation;
 
     const task = (async () => {
+      if (!isInitial) setIsRefreshing(true);
       try {
         await initCatalogCache();
-        const isInitial = mode === "initial";
         await publishState(
           provider.id,
           isInitial ? "preparing" : "syncing",
@@ -201,18 +207,12 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         );
 
         const vodCategories = await getVodCategories(credentials);
-        if (isCancelled()) {
-          await publishState(provider.id, "cancelled", 0, 1, "Catalog preparation cancelled");
-          return;
-        }
+        if (isCancelled()) return;
         await replaceCatalogCategories(provider.id, "vod", vodCategories);
         await yieldToUi();
 
         const seriesCategories = await getSeriesCategories(credentials);
-        if (isCancelled()) {
-          await publishState(provider.id, "cancelled", 0, 1, "Catalog preparation cancelled");
-          return;
-        }
+        if (isCancelled()) return;
         await replaceCatalogCategories(provider.id, "series", seriesCategories);
         await yieldToUi();
 
@@ -220,16 +220,16 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         let completed = 0;
         await publishState(provider.id, "syncing", completed, total, "Live TV");
 
+        // Initial preparation can reuse the just-loaded PlayerContext list. Background/manual
+        // refreshes deliberately hit the provider again so newly-added live channels can be found.
         const currentLive = channels.filter(
           (channel) => channel.providerId === provider.id && (channel.contentType ?? "live") === "live",
         );
-        const liveRows = currentLive.length
+        const liveRows = isInitial && currentLive.length
           ? currentLive
           : (await loadProvider(asLoadProvider(provider))).channels;
-        await upsertCatalogItems(provider.id, "live", liveRows, {
-          markNew: mode === "background",
-          isCancelled,
-        });
+        if (isCancelled()) return;
+        await upsertCatalogItems(provider.id, "live", liveRows, { markNew, isCancelled });
         completed += 1;
         await publishState(provider.id, "syncing", completed, total, "Movies");
 
@@ -238,28 +238,15 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
             if (isCancelled()) break;
             const rows = await getVodStreams(credentials, category.category_id);
             if (isCancelled()) break;
-            await upsertCatalogItems(provider.id, "vod", rows, {
-              markNew: mode === "background",
-              isCancelled,
-            });
+            await upsertCatalogItems(provider.id, "vod", rows, { markNew, isCancelled });
             completed += 1;
-            await publishState(
-              provider.id,
-              "syncing",
-              completed,
-              total,
-              `Movies · ${category.category_name}`,
-            );
+            await publishState(provider.id, "syncing", completed, total, `Movies · ${category.category_name}`);
             await yieldToUi();
           }
         } else if (!isCancelled()) {
           const rows = await getVodStreams(credentials);
-          await upsertCatalogItems(provider.id, "vod", rows, {
-            markNew: mode === "background",
-            isCancelled,
-          });
+          await upsertCatalogItems(provider.id, "vod", rows, { markNew, isCancelled });
           completed += 1;
-          await publishState(provider.id, "syncing", completed, total, "Movies");
         }
 
         if (isCancelled()) {
@@ -273,28 +260,15 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
             if (isCancelled()) break;
             const rows = await getSeries(credentials, category.category_id);
             if (isCancelled()) break;
-            await upsertCatalogItems(provider.id, "series", rows, {
-              markNew: mode === "background",
-              isCancelled,
-            });
+            await upsertCatalogItems(provider.id, "series", rows, { markNew, isCancelled });
             completed += 1;
-            await publishState(
-              provider.id,
-              "syncing",
-              completed,
-              total,
-              `Series · ${category.category_name}`,
-            );
+            await publishState(provider.id, "syncing", completed, total, `Series · ${category.category_name}`);
             await yieldToUi();
           }
         } else if (!isCancelled()) {
           const rows = await getSeries(credentials);
-          await upsertCatalogItems(provider.id, "series", rows, {
-            markNew: mode === "background",
-            isCancelled,
-          });
+          await upsertCatalogItems(provider.id, "series", rows, { markNew, isCancelled });
           completed += 1;
-          await publishState(provider.id, "syncing", completed, total, "Series");
         }
 
         if (isCancelled()) {
@@ -314,8 +288,15 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         await refreshSnapshot();
       } catch (caught) {
         const message = caught instanceof Error ? caught.message : "Catalog synchronization failed";
-        await publishState(provider.id, "error", 0, 1, message);
+        // A silent update failure must not invalidate an already-good local catalog.
+        if (isInitial || !cacheReady) {
+          await publishState(provider.id, "error", 0, 1, message);
+        } else {
+          await publishState(provider.id, "ready", 0, 0, message);
+        }
         await refreshSnapshot();
+      } finally {
+        if (!isInitial) setIsRefreshing(false);
       }
     })().finally(() => {
       runningRef.current = null;
@@ -323,7 +304,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
 
     runningRef.current = task;
     return task;
-  }, [channels, provider, publishState, refreshSnapshot]);
+  }, [cacheReady, channels, provider, publishState, refreshSnapshot]);
 
   const refreshCatalog = useCallback(async () => {
     await runSync("manual");
@@ -337,6 +318,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     generationRef.current += 1;
     cancelRef.current = true;
     runningRef.current = null;
+    backgroundStartedRef.current = null;
     setSnapshot(EMPTY_SNAPSHOT);
     setCacheReady(false);
     setSyncStateLocal(null);
@@ -344,6 +326,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     const active = provider;
     if (!active) return;
     let disposed = false;
+    let backgroundTimer: ReturnType<typeof setTimeout> | undefined;
     cancelRef.current = false;
 
     void (async () => {
@@ -354,33 +337,44 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           getCatalogSyncState(active.id),
         ]);
         if (disposed) return;
+
+        // Cache-first: publish local rows before doing any update request.
         await refreshSnapshot();
-        if (
-          active.type === "xtream" &&
-          (!hasCache || state?.phase !== "ready") &&
-          !disposed
-        ) {
+        if (disposed || active.type !== "xtream") return;
+
+        if (!hasCache || state?.phase !== "ready") {
           await runSync("initial");
+          return;
+        }
+
+        // TiviMate-style stale-while-revalidate: render cache now, check server later.
+        if (backgroundStartedRef.current !== active.id) {
+          backgroundStartedRef.current = active.id;
+          backgroundTimer = setTimeout(() => {
+            if (!disposed) void runSync("background");
+          }, BACKGROUND_SYNC_DELAY_MS);
         }
       } catch {
-        // The legacy lazy-loading path remains available if SQLite cannot initialize.
+        // SQLite/provider failures leave the legacy on-demand catalog path intact.
       }
     })();
 
     return () => {
       disposed = true;
       cancelRef.current = true;
+      if (backgroundTimer) clearTimeout(backgroundTimer);
     };
-  }, [provider?.id]); // provider switch is the lifecycle boundary; avoid restarting on progress/channel updates.
+  }, [provider?.id]); // provider switch is the lifecycle boundary.
 
   const value = useMemo<CatalogSyncContextValue>(() => ({
     syncState,
     snapshot,
     cacheReady,
+    isRefreshing,
     refreshSnapshot,
     refreshCatalog,
     cancelInitialSync,
-  }), [cacheReady, cancelInitialSync, refreshCatalog, refreshSnapshot, snapshot, syncState]);
+  }), [cacheReady, cancelInitialSync, isRefreshing, refreshCatalog, refreshSnapshot, snapshot, syncState]);
 
   const isInitialBlocking =
     provider?.type === "xtream" &&
@@ -417,10 +411,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           </Text>
           <Pressable
             onPress={cancelInitialSync}
-            style={({ pressed }) => [
-              styles.cancelButton,
-              { borderColor: colors.border, opacity: pressed ? 0.7 : 1 },
-            ]}
+            style={({ pressed }) => [styles.cancelButton, { borderColor: colors.border, opacity: pressed ? 0.7 : 1 }]}
           >
             <Text style={{ color: colors.foreground, fontWeight: "700" }}>
               {tr ? "Vazgeç" : "Cancel"}
