@@ -24,13 +24,13 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
+      - name: Install workspace dependencies
+        run: pnpm install --no-frozen-lockfile
       - name: Install SecureStore
         working-directory: artifacts/legendstream-xplayer
         run: pnpm exec expo install expo-secure-store
       - name: Apply source patch
         run: python scripts/tmp_securestore_patch.py
-      - name: Install workspace dependencies
-        run: pnpm install --no-frozen-lockfile
       - name: Verify no credential logging
         shell: bash
         run: |
