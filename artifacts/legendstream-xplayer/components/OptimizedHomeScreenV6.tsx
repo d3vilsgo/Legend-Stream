@@ -214,7 +214,7 @@ export default function OptimizedHomeScreenV6() {
     disconnectProvider,
     clearError,
   } = usePlayer();
-  const { snapshot, cacheReady, refreshCatalog, isRefreshing } = useCatalogSync();
+  const { snapshot, cacheReady, refreshCatalog } = useCatalogSync();
 
   const [view, setView] = useState<ViewName>("home");
   const [editing, setEditing] = useState(false);
@@ -783,8 +783,8 @@ getCachedItems<XtreamSeriesItem>(provider.id, "series"),
         onOpenMedia={openProgress}
         onRemoveLive={(id) => void removeWatched(id)}
       /> : null}
-      {view === "movies" ? <Movies items={vod} cats={vodCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={vodLoading || isRefreshing} loaded={vodLoaded} onCategory={(category) => void loadVodCategory(category)} onRefresh={(category) => category === "__all__" ? void loadVod(true) : void loadVodCategory(category, true)} onOpen={openMovie} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
-      {view === "series" ? <Series items={series} cats={seriesCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={seriesLoading || isRefreshing} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => category === "__all__" ? void loadSeries(true) : void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
+      {view === "movies" ? <Movies items={vod} cats={vodCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={vodLoading} loaded={vodLoaded} onCategory={(category) => void loadVodCategory(category)} onRefresh={(category) => category === "__all__" ? void loadVod(true) : void loadVodCategory(category, true)} onOpen={openMovie} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
+      {view === "series" ? <Series items={series} cats={seriesCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => category === "__all__" ? void loadSeries(true) : void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
       {view === "history" ? <HistoryView channels={providerChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
       {view === "settings" ? <Settings provider={shownProvider} providers={providers} busy={isLoading} onEdit={() => setEditing(true)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
