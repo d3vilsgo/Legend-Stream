@@ -257,10 +257,10 @@ export async function upsertCatalogItems(
   providerId: string,
   kind: CatalogKind,
   items: Array<Channel | XtreamVodItem | XtreamSeriesItem>,
-  options: { markNew?: boolean; onProgress?: (written: number) => void; isCancelled?: () => boolean } = {},
+  options: { markNew?: boolean; seenAt?: number; onProgress?: (written: number) => void; isCancelled?: () => boolean } = {},
 ) {
   const db = await database();
-  const now = Date.now();
+  const now = options.seenAt ?? Date.now();
   let written = 0;
 
   for (let start = 0; start < items.length; start += WRITE_BATCH_SIZE) {
@@ -316,6 +316,18 @@ export async function replaceCatalogKind(
     ...options,
     markNew: false,
   });
+}
+
+export async function pruneCatalogKind(providerId: string, kind: CatalogKind, seenAt: number) {
+  const db = await database();
+  const result = await db.runAsync(
+    `DELETE FROM catalog_items
+     WHERE provider_id = ? AND kind = ? AND last_seen_at < ?`,
+    providerId,
+    kind,
+    seenAt,
+  );
+  return result.changes;
 }
 
 export async function getCachedItems<T>(

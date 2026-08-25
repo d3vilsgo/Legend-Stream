@@ -29,6 +29,7 @@ import {
   getNewCachedItems,
   hasCatalogCache,
   initCatalogCache,
+  pruneCatalogKind,
   replaceCatalogCategories,
   setCatalogSyncState,
   upsertCatalogItems,
@@ -191,6 +192,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     const generation = ++generationRef.current;
     const isInitial = mode === "initial";
     const markNew = mode !== "initial";
+    const syncStartedAt = Date.now();
     cancelRef.current = false;
     const isCancelled = () => cancelRef.current || generationRef.current !== generation;
 
@@ -229,7 +231,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           ? currentLive
           : (await loadProvider(asLoadProvider(provider))).channels;
         if (isCancelled()) return;
-        await upsertCatalogItems(provider.id, "live", liveRows, { markNew, isCancelled });
+        await upsertCatalogItems(provider.id, "live", liveRows, { markNew, seenAt: syncStartedAt, isCancelled });
         completed += 1;
         await publishState(provider.id, "syncing", completed, total, "Movies");
 
@@ -238,14 +240,14 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
             if (isCancelled()) break;
             const rows = await getVodStreams(credentials, category.category_id);
             if (isCancelled()) break;
-            await upsertCatalogItems(provider.id, "vod", rows, { markNew, isCancelled });
+            await upsertCatalogItems(provider.id, "vod", rows, { markNew, seenAt: syncStartedAt, isCancelled });
             completed += 1;
             await publishState(provider.id, "syncing", completed, total, `Movies · ${category.category_name}`);
             await yieldToUi();
           }
         } else if (!isCancelled()) {
           const rows = await getVodStreams(credentials);
-          await upsertCatalogItems(provider.id, "vod", rows, { markNew, isCancelled });
+          await upsertCatalogItems(provider.id, "vod", rows, { markNew, seenAt: syncStartedAt, isCancelled });
           completed += 1;
         }
 
@@ -260,14 +262,14 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
             if (isCancelled()) break;
             const rows = await getSeries(credentials, category.category_id);
             if (isCancelled()) break;
-            await upsertCatalogItems(provider.id, "series", rows, { markNew, isCancelled });
+            await upsertCatalogItems(provider.id, "series", rows, { markNew, seenAt: syncStartedAt, isCancelled });
             completed += 1;
             await publishState(provider.id, "syncing", completed, total, `Series · ${category.category_name}`);
             await yieldToUi();
           }
         } else if (!isCancelled()) {
           const rows = await getSeries(credentials);
-          await upsertCatalogItems(provider.id, "series", rows, { markNew, isCancelled });
+          await upsertCatalogItems(provider.id, "series", rows, { markNew, seenAt: syncStartedAt, isCancelled });
           completed += 1;
         }
 
@@ -276,6 +278,15 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           await refreshSnapshot();
           return;
         }
+
+        // Prune only after every requested category completed successfully.
+        // Cancellation/network failure therefore never deletes a valid old cache.
+        await Promise.all([
+          pruneCatalogKind(provider.id, "live", syncStartedAt),
+          pruneCatalogKind(provider.id, "vod", syncStartedAt),
+          pruneCatalogKind(provider.id, "series", syncStartedAt),
+        ]);
+        await yieldToUi();
 
         await publishState(
           provider.id,
