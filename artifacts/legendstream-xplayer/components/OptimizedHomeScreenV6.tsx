@@ -828,7 +828,7 @@ function Home({ provider, live, vod, series, vodCategories, seriesCategories, ca
 }) {
   const colors = useColors();
   const { t, language } = useI18n();
-  const { entries, removeProgress } = useMediaLibrary();
+  const { entries, loaded: mediaLibraryLoaded, removeProgress } = useMediaLibrary();
   const copy = language === "tr"
     ? {
         continue: "İzlemeye Devam Et",
@@ -986,7 +986,7 @@ function Home({ provider, live, vod, series, vodCategories, seriesCategories, ca
       <HomeCountCard icon="tv" label={t("series")} value={seriesValue} accent="#8C8CFF" onPress={() => onNavigate("series")} />
     </View>
 
-    {continueShelf.length ? <HomeShelf title={copy.continue} seeAll={copy.seeAll} items={continueShelf} onSeeAll={() => onNavigate("history")} /> : null}
+    {continueShelf.length || !mediaLibraryLoaded ? <HomeShelf title={copy.continue} seeAll={copy.seeAll} items={continueShelf} onSeeAll={() => onNavigate("history")} loading={!mediaLibraryLoaded} /> : null}
     {recentShelf.length ? <HomeShelf title={copy.recent} seeAll={copy.seeAll} items={recentShelf} onSeeAll={() => onNavigate("history")} compact /> : null}
     <HomeShelf title={t("liveTv")} seeAll={copy.seeAll} items={liveShelf} onSeeAll={() => onNavigate("live")} compact />
     <HomeShelf title={t("movies")} seeAll={copy.seeAll} items={movieShelf} onSeeAll={() => onNavigate("movies")} emptyLabel={copy.discover} loading={catalogLoading} />
