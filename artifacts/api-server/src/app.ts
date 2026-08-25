@@ -25,9 +25,30 @@ app.use(
     },
   }),
 );
-app.use(cors());
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+const corsAllowlist = new Set(
+  (process.env.CORS_ALLOWLIST ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+
+app.use((req, res, next) => {
+  const origin = req.get("Origin");
+  if (origin && !corsAllowlist.has(origin)) {
+    res.status(403).json({
+      error: { code: "CORS_ORIGIN_DENIED", message: "This web origin is not allowed." },
+    });
+    return;
+  }
+  next();
+});
+app.use(cors({
+  origin(origin, callback) {
+    callback(null, !origin || corsAllowlist.has(origin));
+  },
+}));
+app.use(express.json({ limit: "32kb" }));
+app.use(express.urlencoded({ extended: true, limit: "32kb" }));
 
 app.use("/api", router);
 

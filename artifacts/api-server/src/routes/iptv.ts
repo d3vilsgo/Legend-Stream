@@ -1,6 +1,10 @@
 import { Router, type IRouter } from "express";
+import { SafeHttpError, safeGetText } from "../lib/safeHttp";
+import { xtreamRateLimit } from "../middlewares/xtreamRateLimit";
 
 const router: IRouter = Router();
+
+router.use("/xtream", xtreamRateLimit);
 
 type XtreamRequest = {
   baseUrl?: unknown;
@@ -92,15 +96,18 @@ async function providerJson(
 ) {
   url.searchParams.set("username", credentials.username);
   url.searchParams.set("password", credentials.password);
-  let response: Response;
+  let response: { status: number; text: string };
   try {
-    response = await fetch(url, {
-      headers: providerHeaders,
-      redirect: "follow",
-      signal: AbortSignal.timeout(20_000),
-    });
+    response = await safeGetText(url, providerHeaders, 20_000);
   } catch (error) {
-    if (error instanceof Error && error.name === "TimeoutError") {
+    if (error instanceof SafeHttpError && error.code === "SSRF_BLOCKED") {
+      throw new UpstreamError(
+        "Local, private, link-local, and reserved provider addresses are not allowed.",
+        403,
+        "BLOCKED_UPSTREAM_ADDRESS",
+      );
+    }
+    if (error instanceof SafeHttpError && error.code === "TIMEOUT") {
       throw new UpstreamError(
         "The Xtream server took too long to respond.",
         504,
@@ -114,10 +121,9 @@ async function providerJson(
     );
   }
 
-  const text = await response.text();
   let data: unknown;
   try {
-    data = JSON.parse(text);
+    data = JSON.parse(response.text);
   } catch {
     throw new UpstreamError(
       "The Xtream server returned an invalid response instead of JSON.",
@@ -125,7 +131,7 @@ async function providerJson(
       "INVALID_PROVIDER_RESPONSE",
     );
   }
-  if (!response.ok) {
+  if (response.status < 200 || response.status >= 300) {
     throw new UpstreamError(
       `The Xtream server returned HTTP ${response.status}.`,
       response.status >= 400 && response.status < 500 ? 401 : 502,
