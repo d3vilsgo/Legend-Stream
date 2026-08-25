@@ -28,13 +28,13 @@ type SafeResponse = { status: number; text: string };
 const MAX_REDIRECTS = 4;
 const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
 
-function ipv4Number(address: string) {
+function ipv4Number(address: string): number | null {
   const parts = address.split(".").map(Number);
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return null;
   return (((parts[0] * 256 + parts[1]) * 256 + parts[2]) * 256 + parts[3]) >>> 0;
 }
 
-function inV4Cidr(address: string, network: string, prefix: number) {
+function inV4Cidr(address: string, network: string, prefix: number): boolean {
   const ip = ipv4Number(address);
   const base = ipv4Number(network);
   if (ip === null || base === null) return false;
@@ -59,11 +59,11 @@ const blockedV4: Array<[string, number]> = [
   ["240.0.0.0", 4],
 ];
 
-function normalizeIpv6(address: string) {
+function normalizeIpv6(address: string): string {
   return address.toLowerCase().split("%")[0];
 }
 
-function blockedIpv6(address: string) {
+function blockedIpv6(address: string): boolean {
   const value = normalizeIpv6(address);
   if (value === "::" || value === "::1") return true;
   const mapped = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
@@ -79,7 +79,7 @@ function blockedIpv6(address: string) {
   return false;
 }
 
-export function isBlockedAddress(address: string) {
+export function isBlockedAddress(address: string): boolean {
   const family = isIP(address);
   if (family === 4) return blockedV4.some(([network, prefix]) => inV4Cidr(address, network, prefix));
   if (family === 6) return blockedIpv6(address);
