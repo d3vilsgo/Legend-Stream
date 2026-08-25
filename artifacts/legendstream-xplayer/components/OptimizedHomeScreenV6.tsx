@@ -326,8 +326,8 @@ export default function OptimizedHomeScreenV6() {
       setVodCats(movieCategories);
       setSeriesCats(showCategories);
       setCachedLive(liveRows);
-      setVodLoaded(true);
-      setSeriesLoaded(true);
+      // Category metadata being ready does not mean the full __all__ item list is hydrated.
+      // Keep loaded=false until loadVodCategory/loadSeriesCategory publishes actual rows.
     }).catch(() => undefined);
     return () => { cancelled = true; };
   }, [provider?.id, snapshot.providerId, snapshot.ready, snapshot.counts.live, snapshot.counts.vod, snapshot.counts.series]);
@@ -608,8 +608,10 @@ getCachedItems<XtreamSeriesItem>(provider.id, "series"),
 
   const navigate = (target: ContentView) => {
     setView(target);
-    if (target === "movies") void loadVod();
-    if (target === "series") void loadSeries();
+    // __all__ is a real cache query, not an implicit/no-op initial state.
+    // This guarantees the first Movies/Series render hydrates the complete local catalog.
+    if (target === "movies") void loadVodCategory("__all__");
+    if (target === "series") void loadSeriesCategory("__all__");
     if (target !== "series") { setSelectedSeries(null); setSeriesInfo(null); }
   };
 
@@ -784,8 +786,8 @@ getCachedItems<XtreamSeriesItem>(provider.id, "series"),
         onOpenMedia={openProgress}
         onRemoveLive={(id) => void removeWatched(id)}
       /> : null}
-      {view === "movies" ? <Movies items={vod} cats={vodCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={vodLoading} loaded={vodLoaded} onCategory={(category) => void loadVodCategory(category)} onRefresh={(category) => category === "__all__" ? void loadVod(true) : void loadVodCategory(category, true)} onOpen={openMovie} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
-      {view === "series" ? <Series items={series} cats={seriesCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => category === "__all__" ? void loadSeries(true) : void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
+      {view === "movies" ? <Movies items={vod} cats={vodCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={vodLoading} loaded={vodLoaded} onCategory={(category) => void loadVodCategory(category)} onRefresh={(category) => void loadVodCategory(category, true)} onOpen={openMovie} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
+      {view === "series" ? <Series items={series} cats={seriesCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
       {view === "history" ? <HistoryView channels={providerChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
       {view === "settings" ? <Settings provider={shownProvider} providers={providers} busy={isLoading} onEdit={() => setEditing(true)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
