@@ -52,6 +52,7 @@ import {
   isXtreamCatalogFallbackError,
   registerLocalEpisodeQueue,
   registerLocalVodQueue,
+  registerVodPlaybackQueue,
   XtreamCategory,
   XtreamEpisode,
   XtreamSeriesInfo,
@@ -496,7 +497,7 @@ getCachedItems<XtreamVodItem>(provider.id, "vod"),
         setVod(items);
         setVodCache({ __all__: items });
         setHomeVodCount(items.length);
-        registerLocalVodQueue(items);
+        registerVodPlaybackQueue(credentials, items);
         setVodLoaded(true);
         return;
       }
@@ -519,7 +520,7 @@ getCachedItems<XtreamVodItem>(provider.id, "vod"),
       if (cacheReady && snapshot.providerId === provider.id) {
         if (force) await refreshCatalog();
         const items = await getCachedItems<XtreamVodItem>(provider.id, "vod", categoryId);
-        if (categoryId === "__all__") registerLocalVodQueue(items);
+        if (categoryId === "__all__") registerVodPlaybackQueue(credentials, items);
         setVod(items);
         setVodCache((previous) => ({ ...previous, [categoryId]: items }));
         setHomeVodCount(snapshot.counts.vod || items.length);

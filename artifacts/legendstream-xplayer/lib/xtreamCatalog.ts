@@ -351,6 +351,10 @@ export function registerLocalVodQueue(rows: XtreamVodItem[]) {
   registerVodQueue(undefined, rows);
 }
 
+export function registerVodPlaybackQueue(credentials: XtreamCredentials, rows: XtreamVodItem[]) {
+  registerVodQueue(credentials, rows);
+}
+
 export async function getVodInfo(
   credentials: XtreamCredentials,
   vodId: string | number,
