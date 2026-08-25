@@ -115,6 +115,7 @@ interface PlayerContextValue extends PlayerState {
   setActiveProvider: (providerId: string) => Promise<boolean>;
   toggleFavorite: (channelId: string) => Promise<void>;
   recordWatched: (channelId: string) => Promise<void>;
+  removeWatched: (channelId: string) => Promise<void>;
   clearError: () => void;
 }
 
@@ -872,6 +873,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
   };
 
+  const removeWatched = async (channelId: string) => {
+    const current = stateRef.current;
+    await persist({
+      ...current,
+      history: current.history.filter((id) => id !== channelId),
+    });
+  };
+
   const epgByChannel = useMemo(() => {
     const map = new Map<string, EpgProgram[]>();
     for (const program of state.epg) {
@@ -900,6 +909,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setActiveProvider,
       toggleFavorite,
       recordWatched,
+      removeWatched,
       clearError: () => setError(null),
     }),
     [
