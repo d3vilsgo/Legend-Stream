@@ -1,49 +1,10 @@
-name: Apply catalog sort dropdown source patch
+name: Retired category drawer isolation helper
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "scripts/apply-catalog-sort-dropdown.py"
-      - ".github/workflows/apply-drawer-isolation-fix.yml"
-
-permissions:
-  contents: write
+  workflow_dispatch:
 
 jobs:
-  apply:
+  retired:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-          run_install: false
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Apply source patch
-        run: python3 scripts/apply-catalog-sort-dropdown.py
-
-      - name: Install dependencies
-        run: pnpm --filter @workspace/legendstream-xplayer... install --no-frozen-lockfile
-
-      - name: Typecheck
-        run: pnpm --filter @workspace/legendstream-xplayer typecheck
-
-      - name: Commit source change
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add artifacts/legendstream-xplayer/components/OptimizedHomeScreenV6.tsx
-          git diff --cached --check
-          git commit -m "feat(catalog): expand sorting to six-mode dropdown"
-          git push origin HEAD:main
+      - run: echo "One-off drawer isolation migration completed; workflow retired."
