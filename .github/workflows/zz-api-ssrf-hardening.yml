@@ -28,8 +28,8 @@ jobs:
         run: pnpm install --no-frozen-lockfile
       - name: Apply source patch
         run: python scripts/tmp_api_ssrf_patch.py
-      - name: Typecheck api-server
-        run: pnpm --dir artifacts/api-server typecheck
+      - name: Typecheck api-server and references
+        run: pnpm exec tsc -b artifacts/api-server/tsconfig.json --pretty false
       - name: Build api-server
         run: pnpm --dir artifacts/api-server build
       - name: SSRF and HTTP boundary smoke tests
