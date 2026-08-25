@@ -645,7 +645,7 @@ export default function OptimizedHomeScreenV6() {
       onOpen={openLive}
       onFavorite={(id) => void toggleFavorite(id)}
     /> : <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-      {view === "home" ? <Home provider={shownProvider} providers={providers} live={providerChannels.length} vod={homeVodCount} series={homeSeriesCount} loading={isLoading} onRefresh={() => void refreshProvider()} onNavigate={navigate} onSwitch={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} /> : null}
+      {view === "home" ? <Home provider={shownProvider} providers={providers} live={providerChannels.length} vod={homeVodCount} series={homeSeriesCount} vodCategories={vodCats.length} seriesCategories={seriesCats.length} loading={isLoading} onRefresh={() => void refreshProvider()} onNavigate={navigate} onSwitch={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} /> : null}
       {view === "movies" ? <Movies items={vod} cats={vodCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={vodLoading} loaded={vodLoaded} onCategory={(category) => void loadVodCategory(category)} onRefresh={(category) => category === "__all__" ? void loadVod(true) : void loadVodCategory(category, true)} onOpen={openMovie} /> : null}
       {view === "series" ? <Series items={series} cats={seriesCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => category === "__all__" ? void loadSeries(true) : void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} /> : null}
       {view === "history" ? <HistoryView channels={providerChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
@@ -726,8 +726,8 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   </KeyboardAvoidingView>;
 }
 
-function Home({ provider, providers, live, vod, series, loading, onRefresh, onNavigate, onSwitch, onAdd }: {
-  provider: ProviderConfig; providers: ProviderConfig[]; live: number; vod: number | null; series: number | null; loading: boolean;
+function Home({ provider, providers, live, vod, series, vodCategories, seriesCategories, loading, onRefresh, onNavigate, onSwitch, onAdd }: {
+  provider: ProviderConfig; providers: ProviderConfig[]; live: number; vod: number | null; series: number | null; vodCategories: number; seriesCategories: number; loading: boolean;
   onRefresh: () => void; onNavigate: (view: ContentView) => void; onSwitch: (id: string) => void; onAdd: () => void;
 }) {
   const colors = useColors(); const { t } = useI18n();
@@ -736,8 +736,8 @@ function Home({ provider, providers, live, vod, series, loading, onRefresh, onNa
     <Text style={[s.hero, { color: colors.foreground }]}>{t("liveTv")}, {t("movies").toLowerCase()} & {t("series").toLowerCase()}.</Text>
     <View style={s.stats}>
       <Stat label={t("liveTv")} value={live.toLocaleString()} onPress={() => onNavigate("live")} />
-      <Stat label={t("movies")} value={vod === null ? t("tapToLoad") : vod.toLocaleString()} onPress={() => onNavigate("movies")} />
-      <Stat label={t("series")} value={series === null ? t("tapToLoad") : series.toLocaleString()} onPress={() => onNavigate("series")} />
+      <Stat label={t("movies")} value={vod === null ? (vodCategories > 0 ? t("categoryCount", { count: vodCategories.toLocaleString() }) : t("tapToLoad")) : vod.toLocaleString()} onPress={() => onNavigate("movies")} />
+      <Stat label={t("series")} value={series === null ? (seriesCategories > 0 ? t("categoryCount", { count: seriesCategories.toLocaleString() }) : t("tapToLoad")) : series.toLocaleString()} onPress={() => onNavigate("series")} />
       <Stat label={t("download")} value="Offline" onPress={() => onNavigate("downloads")} />
     </View>
     <FocusButton label={loading ? t("refreshingLive") : t("refreshLive")} icon="refresh-cw" variant="primary" onPress={onRefresh} disabled={loading} />
@@ -921,6 +921,15 @@ function Movies({ items, cats, providerType, sortMode, onSort, loading, loaded, 
     }
   }, [category, categoryIds, cats.length]);
 
+  useEffect(() => {
+    if (providerType !== "xtream" || category !== "__all__" || !cats.length || items.length || loading) return;
+    const first = String(cats[0].category_id);
+    catalogCategoryMemory.movies = first;
+    setCategory(first);
+    setLimit(60);
+    onCategory(first);
+  }, [providerType, category, cats, items.length, loading]);
+
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     const rows = items.filter((item) =>
@@ -975,6 +984,15 @@ function Series({ items, cats, providerType, sortMode, onSort, loading, loaded, 
       setCategory("__all__");
     }
   }, [category, categoryIds, cats.length]);
+
+  useEffect(() => {
+    if (providerType !== "xtream" || category !== "__all__" || !cats.length || items.length || loading) return;
+    const first = String(cats[0].category_id);
+    catalogCategoryMemory.series = first;
+    setCategory(first);
+    setLimit(60);
+    onCategory(first);
+  }, [providerType, category, cats, items.length, loading]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
@@ -1110,7 +1128,6 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
   >
     <View style={s.drawerBackdrop}>
       <Animated.View
-        {...closeSwipe.panHandlers}
         style={[
           s.drawerPanel,
           {
@@ -1123,7 +1140,7 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
           },
         ]}
       >
-        <View style={s.drawerHeader}>
+        <View style={s.drawerHeader} {...closeSwipe.panHandlers}>
           <Text style={[s.drawerTitle, { color: colors.foreground }]}>Kategoriler</Text>
           <Pressable onPress={closeAnimated} style={s.iconButton}>
             <Feather name="x" size={22} color={colors.mutedForeground} />
