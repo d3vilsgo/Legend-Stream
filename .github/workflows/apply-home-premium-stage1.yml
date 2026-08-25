@@ -1,0 +1,33 @@
+name: Apply Home Premium Stage 1
+
+on:
+  push:
+    branches:
+      - feature/home-premium-stage1
+    paths:
+      - scripts/apply-home-premium-stage1.py
+      - .github/workflows/apply-home-premium-stage1.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/home-premium-stage1
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply premium Home patch
+        run: python scripts/apply-home-premium-stage1.py
+      - name: Commit source-only result
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add artifacts/legendstream-xplayer/components/OptimizedHomeScreenV6.tsx
+          git rm scripts/apply-home-premium-stage1.py .github/workflows/apply-home-premium-stage1.yml
+          git commit -m "feat(home): introduce premium cinematic home design"
+          git push origin HEAD:feature/home-premium-stage1
