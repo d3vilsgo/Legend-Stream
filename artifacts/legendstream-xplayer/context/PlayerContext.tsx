@@ -20,6 +20,7 @@ import {
   ProviderType,
 } from "@/lib/iptv";
 import { mapInBatches, yieldToUi } from "@/lib/cooperative";
+import { deleteCredentials, getCredentials, saveCredentials, type ProviderSecrets } from "@/lib/secureCredentials";
 
 export { ProviderType };
 export type { Channel, EpgProgram };
@@ -51,6 +52,7 @@ const XTREAM_PROBE_TIMEOUT_MS = 7_000;
 const PROVIDER_CONNECT_TIMEOUT_MS = 30_000;
 const STORAGE_KEY = "@legendstream/player-state-v3";
 const LEGACY_STORAGE_KEY = "@legendstream/player-state-v2";
+const SECURE_MIGRATION_KEY = "@legendstream/secure-credentials-v1";
 const LOGGED_OUT = "__logged_out__";
 
 export function selectProgramsAt(
@@ -289,26 +291,110 @@ const sameAccount = (a: ProviderConfig, b: Provider) =>
   (a.username || "") === (b.username || "") &&
   (a.mac || "").toLowerCase() === (b.mac || "").toLowerCase();
 
+type StoredProviderConfig = Omit<
+  ProviderConfig,
+  "url" | "playlistUrl" | "epgUrl" | "username" | "password" | "mac"
+>;
+
+function providerSecretsFrom(provider: Partial<ProviderConfig>): ProviderSecrets {
+  return {
+    url: typeof provider.url === "string" ? provider.url : undefined,
+    playlistUrl: typeof provider.playlistUrl === "string" ? provider.playlistUrl : undefined,
+    epgUrl: typeof provider.epgUrl === "string" ? provider.epgUrl : undefined,
+    username: typeof provider.username === "string" ? provider.username : undefined,
+    password: typeof provider.password === "string" ? provider.password : undefined,
+    mac: typeof provider.mac === "string" ? provider.mac : undefined,
+  };
+}
+
+function hasProviderSecrets(secrets: ProviderSecrets) {
+  return Object.values(secrets).some((value) => typeof value === "string" && value.length > 0);
+}
+
+function storedProviderFrom(provider: ProviderConfig): StoredProviderConfig {
+  const {
+    url: _url,
+    playlistUrl: _playlistUrl,
+    epgUrl: _epgUrl,
+    username: _username,
+    password: _password,
+    mac: _mac,
+    ...metadata
+  } = provider;
+  return metadata;
+}
+
+function serializedPlayerState(next: PlayerState) {
+  return JSON.stringify({
+    providers: next.providers.map(storedProviderFrom),
+    provider: next.provider ? storedProviderFrom(next.provider) : null,
+    activeProviderId: next.activeProviderId,
+    favorites: next.favorites.slice(0, 500),
+    history: next.history.slice(0, 50),
+  });
+}
+
+async function hydrateStoredProvider(
+  stored: ProviderConfig | StoredProviderConfig,
+  legacySecrets?: ProviderSecrets,
+): Promise<ProviderConfig> {
+  const secure = await getCredentials(stored.id).catch(() => null);
+  const secrets = secure ?? legacySecrets ?? providerSecretsFrom(stored as ProviderConfig);
+  const url = secrets.url || secrets.playlistUrl || "";
+  return {
+    ...stored,
+    url,
+    playlistUrl: secrets.playlistUrl || secrets.url || "",
+    epgUrl: secrets.epgUrl,
+    username: secrets.username,
+    password: secrets.password,
+    mac: secrets.mac,
+  } as ProviderConfig;
+}
+
+async function saveProviderSecrets(provider: ProviderConfig) {
+  await saveCredentials(provider.id, providerSecretsFrom(provider));
+}
+
 const readState = async (): Promise<PlayerState> => {
   let raw = await AsyncStorage.getItem(STORAGE_KEY);
-  if (!raw) {
-    raw = await AsyncStorage.getItem(LEGACY_STORAGE_KEY);
-    if (raw) {
-      try {
-        await AsyncStorage.setItem(STORAGE_KEY, raw);
-      } catch {
-        // best effort
-      }
-    }
-  }
+  if (!raw) raw = await AsyncStorage.getItem(LEGACY_STORAGE_KEY);
   if (!raw) return emptyState;
+
   try {
     const saved = JSON.parse(raw) as Partial<PlayerState>;
-    const providers = (saved.providers ?? []).map((item) => ({
-      ...item,
-      url: item.url || item.playlistUrl,
-      playlistUrl: item.playlistUrl || item.url,
-    })) as ProviderConfig[];
+    const storedProviders = (saved.providers ?? []) as ProviderConfig[];
+    let migrationSucceeded = true;
+    const legacyById = new Map<string, ProviderSecrets>();
+
+    for (const item of storedProviders) {
+      const legacySecrets = providerSecretsFrom(item);
+      legacyById.set(item.id, legacySecrets);
+      if (!hasProviderSecrets(legacySecrets)) continue;
+      try {
+        await saveCredentials(item.id, legacySecrets);
+      } catch {
+        migrationSucceeded = false;
+      }
+    }
+
+    if (saved.provider?.id) {
+      const activeLegacy = providerSecretsFrom(saved.provider);
+      const existing = legacyById.get(saved.provider.id) ?? {};
+      const merged = { ...existing, ...activeLegacy };
+      legacyById.set(saved.provider.id, merged);
+      if (hasProviderSecrets(activeLegacy)) {
+        try {
+          await saveCredentials(saved.provider.id, merged);
+        } catch {
+          migrationSucceeded = false;
+        }
+      }
+    }
+
+    const providers = await Promise.all(
+      storedProviders.map((item) => hydrateStoredProvider(item, legacyById.get(item.id))),
+    );
     const activeProviderId = saved.activeProviderId;
     const provider =
       activeProviderId === LOGGED_OUT
@@ -317,7 +403,7 @@ const readState = async (): Promise<PlayerState> => {
           (saved.provider
             ? providers.find((item) => item.id === saved.provider?.id) ?? null
             : providers[0] ?? null);
-    return {
+    const next: PlayerState = {
       providers,
       provider,
       channels: [],
@@ -326,6 +412,17 @@ const readState = async (): Promise<PlayerState> => {
       history: Array.isArray(saved.history) ? saved.history.slice(0, 50) : [],
       activeProviderId: activeProviderId ?? provider?.id,
     };
+
+    if (migrationSucceeded) {
+      try {
+        await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
+        await AsyncStorage.setItem(SECURE_MIGRATION_KEY, "1");
+        await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
+      } catch {
+        // SecureStore already owns the secrets. A later persist will retry metadata cleanup.
+      }
+    }
+    return next;
   } catch {
     return emptyState;
   }
@@ -516,16 +613,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     stateRef.current = next;
     setState(next);
     try {
-      await AsyncStorage.setItem(
-        STORAGE_KEY,
-        JSON.stringify({
-          providers: next.providers,
-          provider: next.provider,
-          activeProviderId: next.activeProviderId,
-          favorites: next.favorites.slice(0, 500),
-          history: next.history.slice(0, 50),
-        }),
-      );
+      await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
+      await AsyncStorage.setItem(SECURE_MIGRATION_KEY, "1");
+      await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
     } catch {
       // keep in-memory session usable
     }
@@ -560,6 +650,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         channelCount: smart.loaded.channels.length,
         epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
       });
+      await saveProviderSecrets(savedProvider);
       const providers = duplicate
         ? current.providers.map((item) =>
             item.id === duplicate.id ? savedProvider : item,
@@ -605,6 +696,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
         loadError: undefined,
       });
+      await saveProviderSecrets(updated);
       epgCacheRef.current.delete(providerId);
       await persist({
         ...stateRef.current,
@@ -656,6 +748,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
         loadError: undefined,
       });
+      await saveProviderSecrets(updated);
       epgCacheRef.current.delete(providerId);
       await persist({
         ...stateRef.current,
@@ -715,6 +808,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       history: current.history.filter((id) => channelIds.has(id)),
       epg: current.epg.filter((program) => channelIds.has(program.channelId)),
     });
+    await deleteCredentials(providerId).catch(() => undefined);
   };
 
   const refreshEpg = useCallback(
