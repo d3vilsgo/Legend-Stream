@@ -1,6 +1,6 @@
 import { Feather } from "@expo/vector-icons";
-import React, { useCallback, useEffect, useMemo, useState } from "react";
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Animated, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { ProviderConfig } from "@/context/PlayerContext";
 import { useColors } from "@/hooks/useColors";
 import {
@@ -80,6 +80,20 @@ export function ProviderSubscriptionChip({ provider }: Props) {
   const [info, setInfo] = useState<XtreamAccountInfo | undefined>();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [focused, setFocused] = useState(false);
+  const focusScale = useRef(new Animated.Value(1)).current;
+
+  const setTvFocus = (next: boolean) => {
+    setFocused(next);
+    if (!Platform.isTV) return;
+    Animated.spring(focusScale, {
+      toValue: next ? 1.055 : 1,
+      damping: 18,
+      stiffness: 210,
+      mass: 0.45,
+      useNativeDriver: true,
+    }).start();
+  };
 
   const canQuery = provider.type === "xtream" && Boolean(provider.username && provider.password);
 
@@ -119,14 +133,26 @@ export function ProviderSubscriptionChip({ provider }: Props) {
 
   return (
     <>
+      <Animated.View style={[Platform.isTV && focused ? styles.tvFocusGlow : null, { transform: [{ scale: focusScale }] }]}>
       <Pressable
         accessibilityRole="button"
         accessibilityLabel="Abonelik bilgilerini aç"
+        focusable
+        onFocus={() => setTvFocus(true)}
+        onBlur={() => setTvFocus(false)}
         onPress={() => {
           setOpen(true);
           if (canQuery && !loading) void refresh();
         }}
-        style={[styles.chip, { borderColor: colors.border, backgroundColor: colors.card }]}
+        style={[
+          styles.chip,
+          {
+            borderColor: Platform.isTV && focused ? colors.primary : colors.border,
+            borderWidth: Platform.isTV && focused ? 2 : 1,
+            backgroundColor: colors.card,
+            shadowColor: Platform.isTV && focused ? colors.primary : undefined,
+          },
+        ]}
       >
         <View style={[styles.dot, { backgroundColor: canQuery && !info ? colors.primary : statusColor }]} />
         <View style={styles.chipCopy}>
@@ -141,6 +167,7 @@ export function ProviderSubscriptionChip({ provider }: Props) {
         </View>
         <Feather name="chevron-down" size={15} color={colors.mutedForeground} />
       </Pressable>
+      </Animated.View>
 
       <Modal
         visible={open}
@@ -247,6 +274,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     gap: 7,
   },
+  tvFocusGlow: { borderRadius: 999, shadowOpacity: 0.55, shadowRadius: 15, shadowOffset: { width: 0, height: 0 }, elevation: 10 },
   dot: { width: 8, height: 8, borderRadius: 4 },
   chipCopy: { minWidth: 0, flexShrink: 1 },
   providerName: { fontWeight: "800", fontSize: 12.5 },

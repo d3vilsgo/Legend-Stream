@@ -777,7 +777,7 @@ function Home({ provider, providers, live, vod, series, vodCategories, seriesCat
     </View>
 
     <View style={s.homeStatsPremium}>
-      <Stat icon="radio" label={t("liveTv")} value={live.toLocaleString()} accent={colors.primary} onPress={() => onNavigate("live")} />
+      <Stat icon="radio" label={t("liveTv")} value={live.toLocaleString()} accent={colors.primary} preferredFocus onPress={() => onNavigate("live")} />
       <Stat icon="film" label={t("movies")} value={movieValue} accent="#49B9FF" onPress={() => onNavigate("movies")} />
       <Stat icon="tv" label={t("series")} value={seriesValue} accent="#8C8CFF" onPress={() => onNavigate("series")} />
       <Stat icon="download-cloud" label={t("download")} value="Offline" accent="#4ED6B7" onPress={() => onNavigate("downloads")} />
@@ -796,45 +796,16 @@ function Home({ provider, providers, live, vod, series, vodCategories, seriesCat
         <View style={[s.homeSectionRule, { backgroundColor: colors.primary }]} />
       </View>
       <View style={s.accountGridPremium}>
-        {providers.map((item) => {
-          const active = item.id === provider.id;
-          return <Pressable
+        {providers.map((item) => (
+          <HomeAccountTile
             key={item.id}
+            item={item}
+            active={item.id === provider.id}
             disabled={loading}
             onPress={() => onSwitch(item.id)}
-            style={({ pressed }) => [
-              s.accountTilePremium,
-              {
-                borderColor: active ? colors.primary : "rgba(255,255,255,0.08)",
-                backgroundColor: colors.card,
-                opacity: pressed ? 0.78 : 1,
-                transform: [{ scale: pressed ? 0.985 : 1 }],
-              },
-              active ? s.accountTileActive : null,
-            ]}
-          >
-            <View style={s.accountTileTop}>
-              <View style={[s.accountAvatar, { backgroundColor: active ? `${colors.primary}22` : "rgba(255,255,255,0.05)" }]}>
-                <Feather name={item.type === "xtream" ? "radio" : item.type === "m3u" ? "list" : "server"} size={18} color={active ? colors.primary : colors.mutedForeground} />
-              </View>
-              {active ? <View style={[s.accountActivePill, { backgroundColor: `${colors.primary}1C` }]}><View style={[s.dot, { backgroundColor: colors.primary }]} /><Text style={{ color: colors.primary, fontSize: 11, fontWeight: "600" }}>{t("active")}</Text></View> : null}
-            </View>
-            <Text numberOfLines={1} style={[s.accountNamePremium, { color: colors.foreground }]}>{item.name}</Text>
-            <Text numberOfLines={1} style={[s.accountMetaPremium, { color: colors.mutedForeground }]}>{item.username || item.type.toUpperCase()}</Text>
-          </Pressable>;
-        })}
-        <Pressable
-          onPress={onAdd}
-          style={({ pressed }) => [
-            s.accountTilePremium,
-            s.addAccountTilePremium,
-            { borderColor: "rgba(255,255,255,0.08)", backgroundColor: colors.card, opacity: pressed ? 0.76 : 1, transform: [{ scale: pressed ? 0.985 : 1 }] },
-          ]}
-        >
-          <View style={[s.accountAvatar, { backgroundColor: `${colors.primary}18` }]}><Feather name="plus" size={20} color={colors.primary} /></View>
-          <Text style={[s.accountNamePremium, { color: colors.foreground }]}>{t("addAccount")}</Text>
-          <Text style={[s.accountMetaPremium, { color: colors.mutedForeground }]}>{t("savedConnections")}</Text>
-        </Pressable>
+          />
+        ))}
+        <HomeAccountTile add disabled={loading} onPress={onAdd} />
       </View>
     </View>
   </View>;
@@ -1367,32 +1338,122 @@ function Grid<T>({ items, keyOf, titleOf, imageOf, onOpen }: { items: T[]; keyOf
   </Pressable>)}</View>;
 }
 
-function Stat({ icon, label, value, accent, onPress }: {
+function Stat({ icon, label, value, accent, onPress, preferredFocus = false }: {
   icon: React.ComponentProps<typeof Feather>["name"];
   label: string;
   value: string;
   accent: string;
   onPress: () => void;
+  preferredFocus?: boolean;
 }) {
   const colors = useColors();
-  return <Pressable
-    onPress={onPress}
-    style={({ pressed }) => [s.statPremiumPress, { opacity: pressed ? 0.82 : 1, transform: [{ scale: pressed ? 0.982 : 1 }] }]}
-  >
-    <LinearGradient
-      colors={["rgba(255,255,255,0.075)", "rgba(255,255,255,0.018)"]}
-      start={{ x: 0, y: 0 }}
-      end={{ x: 1, y: 1 }}
-      style={[s.statPremium, { borderColor: "rgba(255,255,255,0.08)" }]}
+  const [focused, setFocused] = useState(false);
+  const scale = useRef(new Animated.Value(1)).current;
+  const tvFocused = Platform.isTV && focused;
+  const animateFocus = (next: boolean) => {
+    setFocused(next);
+    if (!Platform.isTV) return;
+    Animated.spring(scale, {
+      toValue: next ? 1.055 : 1,
+      damping: 18,
+      stiffness: 210,
+      mass: 0.45,
+      useNativeDriver: true,
+    }).start();
+  };
+  return <Animated.View style={[s.statPremiumPress, tvFocused ? s.homeTvGlow : null, tvFocused ? { shadowColor: colors.primary } : null, { transform: [{ scale }] }]}>
+    <Pressable
+      focusable
+      hasTVPreferredFocus={Platform.isTV && preferredFocus}
+      onFocus={() => animateFocus(true)}
+      onBlur={() => animateFocus(false)}
+      onPress={onPress}
+      style={({ pressed }) => [{ flex: 1, opacity: pressed ? 0.82 : 1 }]}
     >
-      <View style={s.statTopRow}>
-        <View style={[s.statIconShell, { backgroundColor: `${accent}18` }]}><Feather name={icon} size={19} color={accent} /></View>
-        <View style={[s.statAccent, { backgroundColor: accent }]} />
-      </View>
-      <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72} style={[s.statValuePremium, { color: colors.foreground }]}>{value}</Text>
-      <Text style={[s.statLabelPremium, { color: colors.mutedForeground }]}>{label}</Text>
-    </LinearGradient>
-  </Pressable>;
+      <LinearGradient
+        colors={[`${accent}1A`, "rgba(255,255,255,0.055)", "rgba(255,255,255,0.014)"]}
+        locations={[0, 0.42, 1]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={[
+          s.statPremium,
+          {
+            borderColor: tvFocused ? colors.primary : "rgba(255,255,255,0.08)",
+            borderWidth: tvFocused ? 2 : StyleSheet.hairlineWidth,
+          },
+        ]}
+      >
+        <View style={[s.statMotif, { borderColor: accent }]} />
+        <View style={s.statTopRow}>
+          <View style={[s.statIconShell, { backgroundColor: `${accent}18` }]}><Feather name={icon} size={19} color={accent} /></View>
+          <View style={[s.statAccent, { backgroundColor: accent }]} />
+        </View>
+        <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.72} style={[s.statValuePremium, { color: colors.foreground }]}>{value}</Text>
+        <Text style={[s.statLabelPremium, { color: colors.mutedForeground }]}>{label}</Text>
+      </LinearGradient>
+    </Pressable>
+  </Animated.View>;
+}
+
+function HomeAccountTile({ item, active = false, add = false, disabled = false, onPress }: {
+  item?: ProviderConfig;
+  active?: boolean;
+  add?: boolean;
+  disabled?: boolean;
+  onPress: () => void;
+}) {
+  const colors = useColors();
+  const { t } = useI18n();
+  const [focused, setFocused] = useState(false);
+  const scale = useRef(new Animated.Value(1)).current;
+  const tvFocused = Platform.isTV && focused;
+  const animateFocus = (next: boolean) => {
+    setFocused(next);
+    if (!Platform.isTV) return;
+    Animated.spring(scale, {
+      toValue: next ? 1.05 : 1,
+      damping: 18,
+      stiffness: 210,
+      mass: 0.45,
+      useNativeDriver: true,
+    }).start();
+  };
+  const icon = add ? "plus" : item?.type === "xtream" ? "radio" : item?.type === "m3u" ? "list" : "server";
+  return <Animated.View style={[s.accountTileAnimationWrap, tvFocused ? s.homeTvGlow : null, tvFocused ? { shadowColor: colors.primary } : null, { transform: [{ scale }] }]}>
+    <Pressable
+      focusable={!disabled}
+      disabled={disabled}
+      onFocus={() => animateFocus(true)}
+      onBlur={() => animateFocus(false)}
+      onPress={onPress}
+      style={({ pressed }) => [
+        s.accountTilePremium,
+        add ? s.addAccountTilePremium : null,
+        {
+          borderColor: tvFocused || active ? colors.primary : "rgba(255,255,255,0.08)",
+          borderWidth: tvFocused ? 2 : StyleSheet.hairlineWidth,
+          backgroundColor: colors.card,
+          opacity: disabled ? 0.5 : pressed ? 0.78 : 1,
+        },
+        active ? s.accountTileActive : null,
+      ]}
+    >
+      {add ? <>
+        <View style={[s.accountAvatar, { backgroundColor: `${colors.primary}18` }]}><Feather name="plus" size={20} color={colors.primary} /></View>
+        <Text style={[s.accountNamePremium, { color: colors.foreground }]}>{t("addAccount")}</Text>
+        <Text style={[s.accountMetaPremium, { color: colors.mutedForeground }]}>{t("savedConnections")}</Text>
+      </> : <>
+        <View style={s.accountTileTop}>
+          <View style={[s.accountAvatar, { backgroundColor: active ? `${colors.primary}22` : "rgba(255,255,255,0.05)" }]}>
+            <Feather name={icon as React.ComponentProps<typeof Feather>["name"]} size={18} color={active || tvFocused ? colors.primary : colors.mutedForeground} />
+          </View>
+          {active ? <View style={[s.accountActivePill, { backgroundColor: `${colors.primary}1C` }]}><View style={[s.dot, { backgroundColor: colors.primary }]} /><Text style={{ color: colors.primary, fontSize: 11, fontWeight: "600" }}>{t("active")}</Text></View> : null}
+        </View>
+        <Text numberOfLines={1} style={[s.accountNamePremium, { color: colors.foreground }]}>{item?.name}</Text>
+        <Text numberOfLines={1} style={[s.accountMetaPremium, { color: colors.mutedForeground }]}>{item?.username || item?.type.toUpperCase()}</Text>
+      </>}
+    </Pressable>
+  </Animated.View>;
 }
 
 function Loading({ text }: { text: string }) {
@@ -1448,8 +1509,10 @@ const s = StyleSheet.create({
   stat: { flexGrow: 1, minWidth: 145, borderWidth: 1, borderRadius: 16, padding: 18, gap: 8 },
   statValue: { fontSize: 28, fontWeight: "900" },
   homeStatsPremium: { flexDirection: "row", flexWrap: "wrap", gap: 14, marginTop: 24, marginBottom: 20 },
-  statPremiumPress: { flexGrow: 1, flexBasis: 156, minWidth: 150 },
+  statPremiumPress: { flexGrow: 1, flexBasis: 156, minWidth: 150, borderRadius: 24 },
+  homeTvGlow: { shadowOpacity: 0.48, shadowRadius: 18, shadowOffset: { width: 0, height: 0 }, elevation: 10 },
   statPremium: { minHeight: 154, borderWidth: StyleSheet.hairlineWidth, borderRadius: 22, paddingHorizontal: 18, paddingVertical: 17, overflow: "hidden" },
+  statMotif: { position: "absolute", width: 118, height: 118, borderRadius: 59, borderWidth: 1, opacity: 0.10, right: -34, top: -36 },
   statTopRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 19 },
   statIconShell: { width: 38, height: 38, borderRadius: 14, alignItems: "center", justifyContent: "center" },
   statAccent: { width: 26, height: 2, borderRadius: 2, opacity: 0.75 },
@@ -1464,7 +1527,8 @@ const s = StyleSheet.create({
   homeSectionSub: { fontSize: 12, lineHeight: 18, fontWeight: "400", marginTop: 3 },
   homeSectionRule: { width: 34, height: 2, borderRadius: 2, opacity: 0.65, marginBottom: 5 },
   accountGridPremium: { flexDirection: "row", flexWrap: "wrap", gap: 12 },
-  accountTilePremium: { minWidth: 165, flexGrow: 1, flexBasis: 190, minHeight: 124, borderWidth: StyleSheet.hairlineWidth, borderRadius: 20, padding: 15, justifyContent: "flex-end" },
+  accountTileAnimationWrap: { minWidth: 165, flexGrow: 1, flexBasis: 190, borderRadius: 22 },
+  accountTilePremium: { width: "100%", minHeight: 124, borderWidth: StyleSheet.hairlineWidth, borderRadius: 20, padding: 15, justifyContent: "flex-end" },
   accountTileActive: { shadowColor: "#00D4FF", shadowOpacity: 0.14, shadowRadius: 12, shadowOffset: { width: 0, height: 4 }, elevation: 2 },
   accountTileTop: { position: "absolute", top: 14, left: 14, right: 14, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   accountAvatar: { width: 38, height: 38, borderRadius: 14, alignItems: "center", justifyContent: "center" },
