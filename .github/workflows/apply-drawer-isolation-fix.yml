@@ -46,3 +46,5 @@ jobs:
           git diff --cached --check
           git commit -m "fix: isolate category drawer scrolling"
           git push origin HEAD:main
+
+# rerun after sequential replacement fix
