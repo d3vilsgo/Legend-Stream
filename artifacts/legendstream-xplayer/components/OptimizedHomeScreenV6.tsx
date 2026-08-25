@@ -70,6 +70,7 @@ type Playable = {
 };
 
 const CATALOG_SORT_KEY = "@legendstream/catalog-sort-v1";
+const PLAYER_STATE_STORAGE_KEY = "@legendstream/player-state-v3";
 const catalogCategoryMemory = {
   live: "__all__",
   movies: "__all__",
@@ -139,6 +140,34 @@ const isGetPhpM3UPlusProvider = (provider: ProviderConfig) => {
   }
 };
 
+async function persistProviderAsM3U(providerId: string) {
+  try {
+    const raw = await AsyncStorage.getItem(PLAYER_STATE_STORAGE_KEY);
+    if (!raw) return;
+    const saved = JSON.parse(raw) as {
+      providers?: ProviderConfig[];
+      provider?: ProviderConfig | null;
+      [key: string]: unknown;
+    };
+    const rewrite = (item: ProviderConfig): ProviderConfig =>
+      item.id === providerId
+        ? {
+            ...item,
+            type: "m3u",
+            username: undefined,
+            password: undefined,
+            loadError: undefined,
+          }
+        : item;
+    if (Array.isArray(saved.providers)) saved.providers = saved.providers.map(rewrite);
+    if (saved.provider?.id === providerId) saved.provider = rewrite(saved.provider);
+    await AsyncStorage.setItem(PLAYER_STATE_STORAGE_KEY, JSON.stringify(saved));
+  } catch {
+    // Best effort migration. The normal connectProvider path will persist again
+    // after the M3U parse succeeds.
+  }
+}
+
 export default function OptimizedHomeScreenV6() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -182,13 +211,24 @@ export default function OptimizedHomeScreenV6() {
   const [homeVodCount, setHomeVodCount] = useState<number | null>(null);
   const [homeSeriesCount, setHomeSeriesCount] = useState<number | null>(null);
   const [catalogSort, setCatalogSort] = useState<CatalogSortMode>("default");
+  const [providerTypeOverride, setProviderTypeOverride] = useState<ProviderType | null>(null);
   const [selectedSeries, setSelectedSeries] = useState<XtreamSeriesItem | null>(null);
   const [seriesInfo, setSeriesInfo] = useState<XtreamSeriesInfo | null>(null);
 
+  const effectiveProvider = useMemo<ProviderConfig | null>(() => {
+    if (!provider || !providerTypeOverride) return provider;
+    return {
+      ...provider,
+      type: providerTypeOverride,
+      username: providerTypeOverride === "m3u" ? undefined : provider.username,
+      password: providerTypeOverride === "m3u" ? undefined : provider.password,
+    };
+  }, [provider, providerTypeOverride]);
+
   const credentials = useMemo<Credentials | null>(() => {
-    if (!provider || provider.type !== "xtream" || !provider.username || !provider.password) return null;
-    return { baseUrl: provider.url || provider.playlistUrl, username: provider.username, password: provider.password };
-  }, [provider]);
+    if (!effectiveProvider || effectiveProvider.type !== "xtream" || !effectiveProvider.username || !effectiveProvider.password) return null;
+    return { baseUrl: effectiveProvider.url || effectiveProvider.playlistUrl, username: effectiveProvider.username, password: effectiveProvider.password };
+  }, [effectiveProvider]);
 
   const providerChannels = useMemo(
     () => provider
@@ -225,20 +265,28 @@ export default function OptimizedHomeScreenV6() {
     setVod([]); setVodCats([]); setVodCache({}); setVodLoaded(false); setVodLoading(false);
     setSeries([]); setSeriesCats([]); setSeriesCache({}); setSeriesLoaded(false); setSeriesLoading(false);
     setHomeVodCount(null); setHomeSeriesCount(null);
+    setProviderTypeOverride(null);
     setSelectedSeries(null); setSeriesInfo(null); setCatalogError(null);
     catalogCategoryMemory.movies = "__all__";
     catalogCategoryMemory.series = "__all__";
   }, [provider?.id]);
 
   useEffect(() => {
-    if (!provider) return;
-    if (provider.type === "m3u") {
-      const local = getM3UCatalog(provider.id);
+    if (!effectiveProvider) return;
+    if (effectiveProvider.type === "m3u") {
+      const local = getM3UCatalog(effectiveProvider.id);
       setHomeVodCount(local.movieItems.length);
       setHomeSeriesCount(local.seriesGroups.length);
       return;
     }
-    if (provider.type !== "xtream" || !credentials) return;
+    if (effectiveProvider.type !== "xtream" || !credentials) return;
+
+    // A get.php/m3u_plus URL can be either a real Xtream account or a playlist
+    // source that was explicitly saved as M3U. Early Home counts are read-only:
+    // never probe these ambiguous legacy records in the background. The normal
+    // Movies/Series path still performs its existing category request and can
+    // migrate on a typed catalog-format failure.
+    if (isGetPhpM3UPlusProvider(effectiveProvider)) return;
 
     let cancelled = false;
     void (async () => {
@@ -263,7 +311,7 @@ export default function OptimizedHomeScreenV6() {
     return () => {
       cancelled = true;
     };
-  }, [provider?.id, provider?.type, credentials]);
+  }, [effectiveProvider, credentials]);
 
   const applyLocalVod = () => {
     if (!provider) return;
@@ -302,12 +350,20 @@ export default function OptimizedHomeScreenV6() {
   const tryCatalogFallbackToM3U = async (caught: unknown, target: "movies" | "series") => {
     if (
       !provider ||
-      provider.type !== "xtream" ||
+      effectiveProvider?.type !== "xtream" ||
       !isGetPhpM3UPlusProvider(provider) ||
       !isXtreamCatalogFallbackError(caught)
     ) {
       return false;
     }
+
+    // Persist the resolved type before parsing the potentially huge playlist.
+    // This prevents a slow/blocked M3U parse from leaving the account stored as
+    // Xtream and re-triggering the same catalog request after restart.
+    await persistProviderAsM3U(provider.id);
+    setProviderTypeOverride("m3u");
+    clearError();
+    setCatalogError(null);
 
     const migrated = await connectProvider({
       name: provider.name,
@@ -318,12 +374,25 @@ export default function OptimizedHomeScreenV6() {
       mac: provider.mac,
       epgUrl: provider.epgUrl,
     });
-    if (!migrated) return false;
 
-    clearError();
-    setCatalogError(null);
-    if (target === "movies") applyLocalVod();
-    else applyLocalSeries();
+    if (migrated) {
+      clearError();
+      setCatalogError(null);
+      if (target === "movies") applyLocalVod();
+      else applyLocalSeries();
+      return true;
+    }
+
+    // The storage migration is already durable even if parsing failed/timed
+    // out. Do not surface the stale Xtream JSON error or leave catalog loading
+    // permanently pending.
+    if (target === "movies") {
+      applyLocalVod();
+      setVodLoaded(true);
+    } else {
+      applyLocalSeries();
+      setSeriesLoaded(true);
+    }
     return true;
   };
 
@@ -331,11 +400,11 @@ export default function OptimizedHomeScreenV6() {
     if (!provider || (vodLoaded && !force) || vodLoading) return;
     setVodLoading(true); setCatalogError(null);
     try {
-      if (provider.type === "m3u") {
+      if (effectiveProvider?.type === "m3u") {
         applyLocalVod();
         return;
       }
-      if (!credentials || provider.type !== "xtream") return;
+      if (!credentials || effectiveProvider?.type !== "xtream") return;
       if (force) {
         setVod([]);
         setVodCache({});
@@ -352,7 +421,7 @@ export default function OptimizedHomeScreenV6() {
   };
 
   const loadVodCategory = async (categoryId: string, force = false) => {
-    if (!provider || provider.type !== "xtream" || !credentials || categoryId === "__all__") return;
+    if (!provider || effectiveProvider?.type !== "xtream" || !credentials || categoryId === "__all__") return;
     if (vodCache[categoryId] && !force) return;
     setVodLoading(true); setCatalogError(null);
     try {
@@ -374,11 +443,11 @@ export default function OptimizedHomeScreenV6() {
     if (!provider || (seriesLoaded && !force) || seriesLoading) return;
     setSeriesLoading(true); setCatalogError(null);
     try {
-      if (provider.type === "m3u") {
+      if (effectiveProvider?.type === "m3u") {
         applyLocalSeries();
         return;
       }
-      if (!credentials || provider.type !== "xtream") return;
+      if (!credentials || effectiveProvider?.type !== "xtream") return;
       if (force) {
         setSeries([]);
         setSeriesCache({});
@@ -395,7 +464,7 @@ export default function OptimizedHomeScreenV6() {
   };
 
   const loadSeriesCategory = async (categoryId: string, force = false) => {
-    if (!provider || provider.type !== "xtream" || !credentials || categoryId === "__all__") return;
+    if (!provider || effectiveProvider?.type !== "xtream" || !credentials || categoryId === "__all__") return;
     if (seriesCache[categoryId] && !force) return;
     setSeriesLoading(true); setCatalogError(null);
     try {
@@ -436,7 +505,7 @@ export default function OptimizedHomeScreenV6() {
 
   if (adding || editing || !provider) {
     return <ProviderSetup
-      existing={editing ? provider : null}
+      existing={editing ? effectiveProvider : null}
       busy={isLoading}
       error={error}
       onCancel={providers.length ? () => { setAdding(false); setEditing(false); } : undefined}
@@ -471,7 +540,7 @@ export default function OptimizedHomeScreenV6() {
 
   const openSeries = async (item: XtreamSeriesItem) => {
     setSelectedSeries(item); setSeriesInfo(null); setCatalogError(null);
-    if (provider.type === "m3u") {
+    if (effectiveProvider?.type === "m3u") {
       const group = getM3UCatalog(provider.id).seriesGroups.find(
         (candidate) => candidate.id === String(item.series_id),
       );
@@ -547,12 +616,13 @@ export default function OptimizedHomeScreenV6() {
     { key: "settings" as const, label: t("settings"), icon: "settings" as const },
   ];
 
+  const shownProvider = effectiveProvider ?? provider;
   const top = Math.max(insets.top, Platform.OS === "web" ? 20 : 0);
   return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
     <View style={[s.header, { borderColor: colors.border }]}>
       <View style={s.headerTop}>
         <Text style={[s.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text>
-        <ProviderSubscriptionChip provider={provider} />
+        <ProviderSubscriptionChip provider={shownProvider} />
       </View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.nav}>
         {nav.map((item) => <FocusButton key={item.key} label={item.label} icon={item.icon} variant={view === item.key ? "secondary" : "ghost"} onPress={() => navigate(item.key)} />)}
@@ -568,19 +638,19 @@ export default function OptimizedHomeScreenV6() {
       channels={providerChannels}
       epgByChannel={epgByChannel}
       favorites={favorites}
-      providerType={provider.type}
+      providerType={shownProvider.type}
       loading={isLoading}
       epgLoading={isEpgLoading}
       onRefresh={() => void refreshProvider()}
       onOpen={openLive}
       onFavorite={(id) => void toggleFavorite(id)}
     /> : <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
-      {view === "home" ? <Home provider={provider} providers={providers} live={providerChannels.length} vod={homeVodCount} series={homeSeriesCount} loading={isLoading} onRefresh={() => void refreshProvider()} onNavigate={navigate} onSwitch={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} /> : null}
-      {view === "movies" ? <Movies items={vod} cats={vodCats} providerType={provider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={vodLoading} loaded={vodLoaded} onCategory={(category) => void loadVodCategory(category)} onRefresh={(category) => category === "__all__" ? void loadVod(true) : void loadVodCategory(category, true)} onOpen={openMovie} /> : null}
-      {view === "series" ? <Series items={series} cats={seriesCats} providerType={provider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => category === "__all__" ? void loadSeries(true) : void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} /> : null}
+      {view === "home" ? <Home provider={shownProvider} providers={providers} live={providerChannels.length} vod={homeVodCount} series={homeSeriesCount} loading={isLoading} onRefresh={() => void refreshProvider()} onNavigate={navigate} onSwitch={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} /> : null}
+      {view === "movies" ? <Movies items={vod} cats={vodCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={vodLoading} loaded={vodLoaded} onCategory={(category) => void loadVodCategory(category)} onRefresh={(category) => category === "__all__" ? void loadVod(true) : void loadVodCategory(category, true)} onOpen={openMovie} /> : null}
+      {view === "series" ? <Series items={series} cats={seriesCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => category === "__all__" ? void loadSeries(true) : void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} /> : null}
       {view === "history" ? <HistoryView channels={providerChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
-      {view === "settings" ? <Settings provider={provider} providers={providers} busy={isLoading} onEdit={() => setEditing(true)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
+      {view === "settings" ? <Settings provider={shownProvider} providers={providers} busy={isLoading} onEdit={() => setEditing(true)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
     </ScrollView>}
   </View>;
 }
