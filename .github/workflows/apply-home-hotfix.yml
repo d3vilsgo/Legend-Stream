@@ -24,8 +24,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 scripts/apply-home-counter-loading-hotfix.py
-          rm scripts/apply-home-counter-loading-hotfix.py
+          python3 scripts/apply-home-media-loading-hotfix.py
+          rm scripts/apply-home-media-loading-hotfix.py
           git diff --check
 
       - name: Commit and push source hotfix
@@ -34,6 +34,6 @@ jobs:
           set -euo pipefail
           git config user.name "d3vilsgo"
           git config user.email "80721458+d3vilsgo@users.noreply.github.com"
-          git add artifacts/legendstream-xplayer/components/OptimizedHomeScreenV6.tsx scripts/apply-home-counter-loading-hotfix.py
-          git commit -m "fix(home): fit counters and surface catalog loading"
+          git add artifacts/legendstream-xplayer/components/OptimizedHomeScreenV6.tsx scripts/apply-home-media-loading-hotfix.py
+          git commit -m "fix(home): show continue shelf hydration state"
           git push origin HEAD:hotfix/home-counters-fast-content
