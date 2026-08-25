@@ -15,6 +15,7 @@ import * as SplashScreen from "expo-splash-screen";
 import { PlayerProvider } from "@/context/PlayerContext";
 import { I18nProvider } from "@/context/I18nContext";
 import { MediaLibraryProvider } from "@/context/MediaLibraryContext";
+import { CatalogSyncProvider } from "@/context/CatalogSyncContext";
 
 const abortSignalCtor = globalThis.AbortSignal as typeof AbortSignal & {
   timeout?: (milliseconds: number) => AbortSignal;
@@ -67,9 +68,11 @@ export default function RootLayout() {
           <GestureHandlerRootView style={{ flex: 1 }}>
             <I18nProvider>
               <PlayerProvider>
-                <MediaLibraryProvider>
-                  <RootLayoutNav />
-                </MediaLibraryProvider>
+                <CatalogSyncProvider>
+                  <MediaLibraryProvider>
+                    <RootLayoutNav />
+                  </MediaLibraryProvider>
+                </CatalogSyncProvider>
               </PlayerProvider>
             </I18nProvider>
           </GestureHandlerRootView>

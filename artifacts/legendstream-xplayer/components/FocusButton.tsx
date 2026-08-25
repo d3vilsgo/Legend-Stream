@@ -64,8 +64,8 @@ export function FocusButton({
           styles.button,
           {
             backgroundColor,
-            borderColor: tvFocused ? colors.primary : focused ? colors.primary : colors.border,
-            borderWidth: tvFocused ? 2 : 1,
+            borderColor: tvFocused ? colors.primary : colors.border,
+            borderWidth: tvFocused ? 3 : 1,
             opacity: disabled ? 0.45 : 1,
           },
           tvFocused ? { shadowColor: colors.primary } : null,

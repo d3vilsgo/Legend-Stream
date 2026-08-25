@@ -34,6 +34,8 @@ import {
   usePlayer,
 } from "@/context/PlayerContext";
 import { MediaProgress, useMediaLibrary } from "@/context/MediaLibraryContext";
+import { useCatalogSync } from "@/context/CatalogSyncContext";
+import { getCachedCategories, getCachedItems } from "@/lib/catalogCache";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { DownloadedMedia } from "@/lib/downloads";
@@ -212,6 +214,7 @@ export default function OptimizedHomeScreenV6() {
     disconnectProvider,
     clearError,
   } = usePlayer();
+  const { snapshot, cacheReady, refreshCatalog } = useCatalogSync();
 
   const [view, setView] = useState<ViewName>("home");
   const [editing, setEditing] = useState(false);
@@ -236,6 +239,7 @@ export default function OptimizedHomeScreenV6() {
   const [selectedSeries, setSelectedSeries] = useState<XtreamSeriesItem | null>(null);
   const [seriesInfo, setSeriesInfo] = useState<XtreamSeriesInfo | null>(null);
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
+  const [cachedLive, setCachedLive] = useState<Channel[]>([]);
 
   const effectiveProvider = useMemo<ProviderConfig | null>(() => {
     if (!provider || !providerTypeOverride) return provider;
@@ -252,13 +256,20 @@ export default function OptimizedHomeScreenV6() {
     return { baseUrl: effectiveProvider.url || effectiveProvider.playlistUrl, username: effectiveProvider.username, password: effectiveProvider.password };
   }, [effectiveProvider]);
 
-  const providerChannels = useMemo(
+  const playerLiveChannels = useMemo(
     () => provider
       ? channels.filter(
           (channel) => channel.providerId === provider.id && (channel.contentType ?? "live") === "live",
         )
       : [],
     [channels, provider],
+  );
+
+  const providerChannels = useMemo(
+    () => provider && cacheReady && snapshot.providerId === provider.id && cachedLive.length
+      ? cachedLive
+      : playerLiveChannels,
+    [cacheReady, cachedLive, playerLiveChannels, provider, snapshot.providerId],
   );
 
   useEffect(() => {
@@ -294,12 +305,40 @@ export default function OptimizedHomeScreenV6() {
     setHomeVodCount(null); setHomeSeriesCount(null); setHomeCatalogLoading(false);
     setProviderTypeOverride(null);
     setSelectedSeries(null); setSeriesInfo(null); setCatalogError(null);
+    setCachedLive([]);
     catalogCategoryMemory.movies = "__all__";
     catalogCategoryMemory.series = "__all__";
   }, [provider?.id]);
 
   useEffect(() => {
+    if (!provider || provider.type !== "xtream" || snapshot.providerId !== provider.id || !snapshot.ready) return;
+    let cancelled = false;
+    setHomeVodCount(snapshot.counts.vod);
+    setHomeSeriesCount(snapshot.counts.series);
+    setHomeCatalogLoading(false);
+    void Promise.all([
+      getCachedCategories(provider.id, "vod"),
+      getCachedCategories(provider.id, "series"),
+      getCachedItems<Channel>(provider.id, "live"),
+    ]).then(([movieCategories, showCategories, liveRows]) => {
+      if (cancelled) return;
+      setVodCats(movieCategories);
+      setSeriesCats(showCategories);
+      setCachedLive(liveRows);
+      setVodLoaded(true);
+      setSeriesLoaded(true);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [provider?.id, snapshot.providerId, snapshot.ready, snapshot.counts.live, snapshot.counts.vod, snapshot.counts.series]);
+
+  useEffect(() => {
     if (!effectiveProvider) {
+      setHomeCatalogLoading(false);
+      return;
+    }
+    if (effectiveProvider.type === "xtream" && cacheReady && snapshot.providerId === effectiveProvider.id) {
+      setHomeVodCount(snapshot.counts.vod);
+      setHomeSeriesCount(snapshot.counts.series);
       setHomeCatalogLoading(false);
       return;
     }
@@ -439,7 +478,7 @@ export default function OptimizedHomeScreenV6() {
   };
 
   const loadVod = async (force = false) => {
-    if (!provider || (vodLoaded && !force) || vodLoading) return;
+    if (!provider || (vodLoaded && !force && vod.length > 0) || vodLoading) return;
     setVodLoading(true); setCatalogError(null);
     try {
       if (effectiveProvider?.type === "m3u") {
@@ -447,10 +486,21 @@ export default function OptimizedHomeScreenV6() {
         return;
       }
       if (!credentials || effectiveProvider?.type !== "xtream") return;
-      if (force) {
-        setVod([]);
-        setVodCache({});
+      if (cacheReady && snapshot.providerId === provider.id) {
+        if (force) await refreshCatalog();
+        const [cats, items] = await Promise.all([
+getCachedCategories(provider.id, "vod"),
+getCachedItems<XtreamVodItem>(provider.id, "vod"),
+        ]);
+        setVodCats(cats);
+        setVod(items);
+        setVodCache({ __all__: items });
+        setHomeVodCount(items.length);
+        registerLocalVodQueue(items);
+        setVodLoaded(true);
+        return;
       }
+      if (force) { setVod([]); setVodCache({}); }
       const cats = await getVodCategories(credentials);
       setVodCats(cats);
       setHomeVodCount(exactCategoryTotal(cats));
@@ -463,17 +513,25 @@ export default function OptimizedHomeScreenV6() {
   };
 
   const loadVodCategory = async (categoryId: string, force = false) => {
-    if (!provider || effectiveProvider?.type !== "xtream" || !credentials || categoryId === "__all__") return;
-    if (vodCache[categoryId] && !force) return;
+    if (!provider || effectiveProvider?.type !== "xtream" || !credentials) return;
     setVodLoading(true); setCatalogError(null);
     try {
+      if (cacheReady && snapshot.providerId === provider.id) {
+        if (force) await refreshCatalog();
+        const items = await getCachedItems<XtreamVodItem>(provider.id, "vod", categoryId);
+        if (categoryId === "__all__") registerLocalVodQueue(items);
+        setVod(items);
+        setVodCache((previous) => ({ ...previous, [categoryId]: items }));
+        setHomeVodCount(snapshot.counts.vod || items.length);
+        setVodLoaded(true);
+        return;
+      }
+      if (categoryId === "__all__") return;
+      if (vodCache[categoryId] && !force) { setVod(vodCache[categoryId]); return; }
       const items = await getVodStreams(credentials, categoryId);
       await yieldToUi();
-      setVodCache((previous) => {
-        const next = { ...previous, [categoryId]: items };
-        setVod(flattenCatalogCache(next));
-        return next;
-      });
+      setVodCache((previous) => ({ ...previous, [categoryId]: items }));
+      setVod(items);
     } catch (caught) {
       if (await tryCatalogFallbackToM3U(caught, "movies")) return;
       setVodLoaded(true);
@@ -482,7 +540,7 @@ export default function OptimizedHomeScreenV6() {
   };
 
   const loadSeries = async (force = false) => {
-    if (!provider || (seriesLoaded && !force) || seriesLoading) return;
+    if (!provider || (seriesLoaded && !force && series.length > 0) || seriesLoading) return;
     setSeriesLoading(true); setCatalogError(null);
     try {
       if (effectiveProvider?.type === "m3u") {
@@ -490,10 +548,20 @@ export default function OptimizedHomeScreenV6() {
         return;
       }
       if (!credentials || effectiveProvider?.type !== "xtream") return;
-      if (force) {
-        setSeries([]);
-        setSeriesCache({});
+      if (cacheReady && snapshot.providerId === provider.id) {
+        if (force) await refreshCatalog();
+        const [cats, items] = await Promise.all([
+getCachedCategories(provider.id, "series"),
+getCachedItems<XtreamSeriesItem>(provider.id, "series"),
+        ]);
+        setSeriesCats(cats);
+        setSeries(items);
+        setSeriesCache({ __all__: items });
+        setHomeSeriesCount(items.length);
+        setSeriesLoaded(true);
+        return;
       }
+      if (force) { setSeries([]); setSeriesCache({}); }
       const cats = await getSeriesCategories(credentials);
       setSeriesCats(cats);
       setHomeSeriesCount(exactCategoryTotal(cats));
@@ -506,17 +574,24 @@ export default function OptimizedHomeScreenV6() {
   };
 
   const loadSeriesCategory = async (categoryId: string, force = false) => {
-    if (!provider || effectiveProvider?.type !== "xtream" || !credentials || categoryId === "__all__") return;
-    if (seriesCache[categoryId] && !force) return;
+    if (!provider || effectiveProvider?.type !== "xtream" || !credentials) return;
     setSeriesLoading(true); setCatalogError(null);
     try {
+      if (cacheReady && snapshot.providerId === provider.id) {
+        if (force) await refreshCatalog();
+        const items = await getCachedItems<XtreamSeriesItem>(provider.id, "series", categoryId);
+        setSeries(items);
+        setSeriesCache((previous) => ({ ...previous, [categoryId]: items }));
+        setHomeSeriesCount(snapshot.counts.series || items.length);
+        setSeriesLoaded(true);
+        return;
+      }
+      if (categoryId === "__all__") return;
+      if (seriesCache[categoryId] && !force) { setSeries(seriesCache[categoryId]); return; }
       const items = await getSeries(credentials, categoryId);
       await yieldToUi();
-      setSeriesCache((previous) => {
-        const next = { ...previous, [categoryId]: items };
-        setSeries(flattenCatalogCache(next));
-        return next;
-      });
+      setSeriesCache((previous) => ({ ...previous, [categoryId]: items }));
+      setSeries(items);
     } catch (caught) {
       if (await tryCatalogFallbackToM3U(caught, "series")) return;
       setSeriesLoaded(true);
@@ -685,7 +760,7 @@ export default function OptimizedHomeScreenV6() {
       providerType={shownProvider.type}
       loading={isLoading}
       epgLoading={isEpgLoading}
-      onRefresh={() => void refreshProvider()}
+      onRefresh={() => { void refreshProvider(); void refreshCatalog(); }}
       onOpen={openLive}
       onFavorite={(id) => void toggleFavorite(id)}
     /> : <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEnabled={!catalogDrawerOpen} pointerEvents={catalogDrawerOpen ? "none" : "auto"}>
@@ -829,6 +904,8 @@ function Home({ provider, live, vod, series, vodCategories, seriesCategories, ca
   const colors = useColors();
   const { t, language } = useI18n();
   const { entries, loaded: mediaLibraryLoaded, removeProgress } = useMediaLibrary();
+  const { snapshot, cacheReady } = useCatalogSync();
+  const cached = provider.type === "xtream" && snapshot.providerId === provider.id && snapshot.ready ? snapshot : null;
   const copy = language === "tr"
     ? {
         continue: "İzlemeye Devam Et",
@@ -836,6 +913,9 @@ function Home({ provider, live, vod, series, vodCategories, seriesCategories, ca
         seeAll: "Hepsini Gör",
         discover: "Keşfetmek için dokunun",
         featured: "Öne çıkan içerikler",
+        newMovies: "Yeni Filmler",
+        newSeries: "Yeni Diziler",
+        newChannels: "Yeni Kanallar",
       }
     : {
         continue: "Continue Watching",
@@ -843,50 +923,37 @@ function Home({ provider, live, vod, series, vodCategories, seriesCategories, ca
         seeAll: "See All",
         discover: "Tap to discover",
         featured: "Featured picks",
+        newMovies: "New Movies",
+        newSeries: "New Series",
+        newChannels: "New Channels",
       };
 
-  // getM3UCatalog is an in-memory provider cache that is populated by the
-  // M3U loader. Read it on every Home render instead of memoising the first
-  // (possibly empty) snapshot; provider/channel state changes already trigger
-  // the render once parsing completes.
   const localCatalog = provider.type === "m3u" ? getM3UCatalog(provider.id) : null;
-
   const homeMovies = useMemo<XtreamVodItem[]>(() => {
+    if (cached) return cached.movies;
     if (!localCatalog) return movies.slice(0, 48);
     return localCatalog.movieItems.slice(0, 48).map((item) => ({
-      stream_id: item.id,
-      name: item.name,
-      stream_icon: item.logoUrl,
-      category_id: item.category,
-      direct_source: item.streamUrl,
+      stream_id: item.id, name: item.name, stream_icon: item.logoUrl,
+      category_id: item.category, direct_source: item.streamUrl,
     }));
-  }, [localCatalog, movies]);
-
+  }, [cached, localCatalog, movies]);
   const homeSeries = useMemo<XtreamSeriesItem[]>(() => {
+    if (cached) return cached.series;
     if (!localCatalog) return seriesItems.slice(0, 48);
     return localCatalog.seriesGroups.slice(0, 48).map((item) => ({
-      series_id: item.id,
-      name: item.name,
-      cover: item.coverUrl,
-      category_id: item.category,
+      series_id: item.id, name: item.name, cover: item.coverUrl, category_id: item.category,
     }));
-  }, [localCatalog, seriesItems]);
+  }, [cached, localCatalog, seriesItems]);
+  const homeChannels = cached?.live.length ? cached.live : channels;
 
   const recentChannels = useMemo(
-    () => history
-      .map((id) => channels.find((channel) => channel.id === id))
-      .filter((item): item is Channel => Boolean(item))
-      .slice(0, 14),
+    () => history.map((id) => channels.find((channel) => channel.id === id)).filter((item): item is Channel => Boolean(item)).slice(0, 14),
     [channels, history],
   );
-
   const continueEntries = useMemo(
-    () => entries
-      .filter((item) => item.position > 0 && (item.duration <= 0 || item.position < Math.max(0, item.duration - 30)))
-      .slice(0, 14),
+    () => entries.filter((item) => item.position > 0 && (item.duration <= 0 || item.position < Math.max(0, item.duration - 30))).slice(0, 14),
     [entries],
   );
-
   const artworkForProgress = (entry: MediaProgress) => {
     const title = entry.title.trim().toLocaleLowerCase("tr");
     const subtitle = entry.subtitle?.trim().toLocaleLowerCase("tr");
@@ -902,95 +969,69 @@ function Home({ provider, live, vod, series, vodCategories, seriesCategories, ca
   const heroItems = useMemo<HomeHeroEntry[]>(() => {
     const movieRows = homeMovies
       .filter((item) => Boolean(item.stream_icon && /^https?:\/\//i.test(item.stream_icon)))
-      .map((item) => ({
-        id: `movie-${item.stream_id}`,
-        title: item.name,
-        subtitle: item.genre || t("movies"),
-        image: item.stream_icon as string,
-        movie: item,
-      }));
+      .map((item) => ({ id: `movie-${item.stream_id}`, title: item.name, subtitle: item.genre || t("movies"), image: item.stream_icon as string, movie: item }));
     const seriesRows = homeSeries
       .filter((item) => Boolean(item.cover && /^https?:\/\//i.test(item.cover)))
-      .map((item) => ({
-        id: `series-${item.series_id}`,
-        title: item.name,
-        subtitle: t("series"),
-        image: item.cover as string,
-        series: item,
-      }));
+      .map((item) => ({ id: `series-${item.series_id}`, title: item.name, subtitle: t("series"), image: item.cover as string, series: item }));
     return [...movieRows, ...seriesRows].slice(0, 6);
   }, [homeMovies, homeSeries, t]);
 
-  const movieValue = vod === null
+  const effectiveLiveCount = cached ? cached.counts.live : live;
+  const effectiveVodCount = cached ? cached.counts.vod : vod;
+  const effectiveSeriesCount = cached ? cached.counts.series : series;
+  const movieValue = effectiveVodCount === null
     ? (vodCategories > 0 ? t("categoryCount", { count: vodCategories.toLocaleString() }) : "—")
-    : vod.toLocaleString();
-  const seriesValue = series === null
+    : effectiveVodCount.toLocaleString();
+  const seriesValue = effectiveSeriesCount === null
     ? (seriesCategories > 0 ? t("categoryCount", { count: seriesCategories.toLocaleString() }) : "—")
-    : series.toLocaleString();
+    : effectiveSeriesCount.toLocaleString();
 
   const continueShelf = continueEntries.map<HomeShelfEntry>((item) => ({
-    id: item.id,
-    title: item.title,
-    subtitle: item.subtitle,
-    image: artworkForProgress(item),
+    id: item.id, title: item.title, subtitle: item.subtitle, image: artworkForProgress(item),
     progress: item.duration > 0 ? Math.max(0, Math.min(1, item.position / item.duration)) : undefined,
-    onPress: () => onOpenMedia(item),
-    onRemove: () => void removeProgress(item.source),
+    onPress: () => onOpenMedia(item), onRemove: () => void removeProgress(item.source),
   }));
-
   const recentShelf = recentChannels.map<HomeShelfEntry>((channel) => ({
-    id: channel.id,
-    title: channel.name,
-    subtitle: channel.category,
-    image: channel.logoUrl,
-    onPress: () => onOpenLive(channel),
-    onRemove: () => onRemoveLive(channel.id),
+    id: channel.id, title: channel.name, subtitle: channel.category, image: channel.logoUrl,
+    onPress: () => onOpenLive(channel), onRemove: () => onRemoveLive(channel.id),
   }));
-
-  const liveShelf = channels.slice(0, 18).map<HomeShelfEntry>((channel) => ({
-    id: `live-${channel.id}`,
-    title: channel.name,
-    subtitle: channel.category,
-    image: channel.logoUrl,
-    onPress: () => onOpenLive(channel),
+  const liveShelf = homeChannels.slice(0, 18).map<HomeShelfEntry>((channel) => ({
+    id: `live-${channel.id}`, title: channel.name, subtitle: channel.category, image: channel.logoUrl, onPress: () => onOpenLive(channel),
   }));
   const movieShelf = homeMovies.slice(0, 18).map<HomeShelfEntry>((item) => ({
-    id: `movie-${item.stream_id}`,
-    title: item.name,
-    subtitle: item.genre || t("movies"),
-    image: item.stream_icon,
-    onPress: () => onOpenMovie(item),
+    id: `movie-${item.stream_id}`, title: item.name, subtitle: item.genre || t("movies"), image: item.stream_icon, onPress: () => onOpenMovie(item),
   }));
   const seriesShelf = homeSeries.slice(0, 18).map<HomeShelfEntry>((item) => ({
-    id: `series-${item.series_id}`,
-    title: item.name,
-    subtitle: t("series"),
-    image: item.cover,
-    onPress: () => onOpenSeries(item),
+    id: `series-${item.series_id}`, title: item.name, subtitle: t("series"), image: item.cover, onPress: () => onOpenSeries(item),
   }));
+  const newMovieShelf = (cached?.newMovies ?? []).map<HomeShelfEntry>((item) => ({
+    id: `new-movie-${item.stream_id}`, title: item.name, subtitle: item.genre || t("movies"), image: item.stream_icon, onPress: () => onOpenMovie(item),
+  }));
+  const newSeriesShelf = (cached?.newSeries ?? []).map<HomeShelfEntry>((item) => ({
+    id: `new-series-${item.series_id}`, title: item.name, subtitle: t("series"), image: item.cover, onPress: () => onOpenSeries(item),
+  }));
+  const newChannelShelf = (cached?.newChannels ?? []).map<HomeShelfEntry>((channel) => ({
+    id: `new-channel-${channel.id}`, title: channel.name, subtitle: channel.category, image: channel.logoUrl, onPress: () => onOpenLive(channel),
+  }));
+  const effectiveLoading = catalogLoading && !cacheReady;
 
   return <View style={s.homeDiscoveryShell}>
-    <HomeHeroCarousel
-      items={heroItems}
-      eyebrow={copy.featured}
-      providerName={provider.name}
+    <HomeHeroCarousel items={heroItems} eyebrow={copy.featured} providerName={provider.name}
       onOpen={(item) => item.movie ? onOpenMovie(item.movie) : item.series ? onOpenSeries(item.series) : undefined}
-      onDiscover={() => onNavigate("movies")}
-      discoverLabel={copy.discover}
-      loading={catalogLoading}
-    />
-
+      onDiscover={() => onNavigate("movies")} discoverLabel={copy.discover} loading={effectiveLoading} />
     <View style={s.homeCompactStats}>
-      <HomeCountCard icon="radio" label={t("liveTv")} value={live.toLocaleString()} accent={colors.primary} preferredFocus={!heroItems.length} onPress={() => onNavigate("live")} />
+      <HomeCountCard icon="radio" label={t("liveTv")} value={effectiveLiveCount.toLocaleString()} accent={colors.primary} preferredFocus={!heroItems.length} onPress={() => onNavigate("live")} />
       <HomeCountCard icon="film" label={t("movies")} value={movieValue} accent="#49B9FF" onPress={() => onNavigate("movies")} />
       <HomeCountCard icon="tv" label={t("series")} value={seriesValue} accent="#8C8CFF" onPress={() => onNavigate("series")} />
     </View>
-
     {continueShelf.length || !mediaLibraryLoaded ? <HomeShelf title={copy.continue} seeAll={copy.seeAll} items={continueShelf} onSeeAll={() => onNavigate("history")} loading={!mediaLibraryLoaded} /> : null}
     {recentShelf.length ? <HomeShelf title={copy.recent} seeAll={copy.seeAll} items={recentShelf} onSeeAll={() => onNavigate("history")} compact /> : null}
     <HomeShelf title={t("liveTv")} seeAll={copy.seeAll} items={liveShelf} onSeeAll={() => onNavigate("live")} compact />
-    <HomeShelf title={t("movies")} seeAll={copy.seeAll} items={movieShelf} onSeeAll={() => onNavigate("movies")} emptyLabel={copy.discover} loading={catalogLoading} />
-    <HomeShelf title={t("series")} seeAll={copy.seeAll} items={seriesShelf} onSeeAll={() => onNavigate("series")} emptyLabel={copy.discover} loading={catalogLoading} />
+    <HomeShelf title={t("movies")} seeAll={copy.seeAll} items={movieShelf} onSeeAll={() => onNavigate("movies")} emptyLabel={copy.discover} loading={effectiveLoading} />
+    <HomeShelf title={t("series")} seeAll={copy.seeAll} items={seriesShelf} onSeeAll={() => onNavigate("series")} emptyLabel={copy.discover} loading={effectiveLoading} />
+    {newMovieShelf.length ? <HomeShelf title={copy.newMovies} seeAll={copy.seeAll} items={newMovieShelf} onSeeAll={() => onNavigate("movies")} /> : null}
+    {newSeriesShelf.length ? <HomeShelf title={copy.newSeries} seeAll={copy.seeAll} items={newSeriesShelf} onSeeAll={() => onNavigate("series")} /> : null}
+    {newChannelShelf.length ? <HomeShelf title={copy.newChannels} seeAll={copy.seeAll} items={newChannelShelf} onSeeAll={() => onNavigate("live")} compact /> : null}
   </View>;
 }
 
@@ -1338,15 +1379,6 @@ function Movies({ items, cats, providerType, sortMode, onSort, loading, loaded, 
     }
   }, [category, categoryIds, cats.length]);
 
-  useEffect(() => {
-    if (providerType !== "xtream" || category !== "__all__" || !cats.length || items.length || loading) return;
-    const first = String(cats[0].category_id);
-    catalogCategoryMemory.movies = first;
-    setCategory(first);
-    setLimit(60);
-    onCategory(first);
-  }, [providerType, category, cats, items.length, loading]);
-
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     const rows = items.filter((item) =>
@@ -1407,15 +1439,6 @@ function Series({ items, cats, providerType, sortMode, onSort, loading, loaded, 
       setCategory("__all__");
     }
   }, [category, categoryIds, cats.length]);
-
-  useEffect(() => {
-    if (providerType !== "xtream" || category !== "__all__" || !cats.length || items.length || loading) return;
-    const first = String(cats[0].category_id);
-    catalogCategoryMemory.series = first;
-    setCategory(first);
-    setLimit(60);
-    onCategory(first);
-  }, [providerType, category, cats, items.length, loading]);
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
