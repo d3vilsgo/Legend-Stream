@@ -1,0 +1,45 @@
+name: Apply Opus Home Redesign
+
+on:
+  push:
+    branches: [feat/opus-home-redesign]
+    paths:
+      - scripts/apply-opus-home-redesign.py
+      - .github/workflows/apply-opus-home-redesign.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: ${{ !contains(github.event.head_commit.message, '[skip ci]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/opus-home-redesign
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Apply Home redesign
+        run: python scripts/apply-opus-home-redesign.py
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+      - name: Typecheck mobile app
+        run: pnpm --filter @workspace/legendstream-xplayer typecheck
+      - name: Typecheck API references
+        run: pnpm exec tsc -b artifacts/api-server/tsconfig.json --pretty false
+      - name: Commit final source and retire helper
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm scripts/apply-opus-home-redesign.py .github/workflows/apply-opus-home-redesign.yml
+          git add artifacts/legendstream-xplayer/components/OptimizedHomeScreenV6.tsx artifacts/legendstream-xplayer/context/PlayerContext.tsx pnpm-lock.yaml
+          git commit -m "feat(home): add Opus-style discovery dashboard [skip ci]"
+          git push origin HEAD:feat/opus-home-redesign
