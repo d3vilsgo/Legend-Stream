@@ -59,7 +59,7 @@ import {
 type ViewName = "home" | "live" | "movies" | "series" | "history" | "downloads" | "settings" | "player";
 type ContentView = Exclude<ViewName, "player">;
 type Credentials = { baseUrl: string; username: string; password: string };
-type CatalogSortMode = "default" | "alpha" | "added";
+type CatalogSortMode = "default" | "alphaAsc" | "alphaDesc" | "idAsc" | "idDesc" | "added";
 type CategoryOption = { id: string; name: string };
 type Playable = {
   title: string;
@@ -114,15 +114,33 @@ const addedTime = (value?: string) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
+const catalogNumericId = (value: unknown) => {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  const text = String(value ?? "");
+  const direct = Number(text);
+  if (Number.isFinite(direct)) return direct;
+  const embeddedIndex = text.match(/:(\d+):/);
+  if (embeddedIndex) return Number(embeddedIndex[1]);
+  return Number.MAX_SAFE_INTEGER;
+};
+
 const sortCatalogRows = <T extends { name: string }>(
   rows: T[],
   mode: CatalogSortMode,
   addedOf: (item: T) => string | undefined,
+  idOf: (item: T) => unknown,
 ) => {
   if (mode === "default") return rows;
   const sorted = [...rows];
-  if (mode === "alpha") {
-    sorted.sort((a, b) => a.name.localeCompare(b.name, "tr", { sensitivity: "base" }));
+  if (mode === "alphaAsc" || mode === "alphaDesc") {
+    const direction = mode === "alphaAsc" ? 1 : -1;
+    sorted.sort((a, b) => direction * a.name.localeCompare(b.name, "tr", { sensitivity: "base" }));
+  } else if (mode === "idAsc" || mode === "idDesc") {
+    const direction = mode === "idAsc" ? 1 : -1;
+    sorted.sort((a, b) => {
+      const delta = catalogNumericId(idOf(a)) - catalogNumericId(idOf(b));
+      return delta !== 0 ? direction * delta : a.name.localeCompare(b.name, "tr", { sensitivity: "base" });
+    });
   } else {
     sorted.sort((a, b) => addedTime(addedOf(b)) - addedTime(addedOf(a)));
   }
@@ -244,9 +262,14 @@ export default function OptimizedHomeScreenV6() {
     let cancelled = false;
     AsyncStorage.getItem(CATALOG_SORT_KEY)
       .then((saved) => {
+        if (cancelled) return;
+        if (saved === "alpha") {
+          setCatalogSort("alphaAsc");
+          return;
+        }
         if (
-          !cancelled &&
-          (saved === "default" || saved === "alpha" || saved === "added")
+          saved === "default" || saved === "alphaAsc" || saved === "alphaDesc" ||
+          saved === "idAsc" || saved === "idDesc" || saved === "added"
         ) {
           setCatalogSort(saved);
         }
@@ -945,7 +968,7 @@ function Movies({ items, cats, providerType, sortMode, onSort, loading, loaded, 
       (category === "__all__" || String(item.category_id) === category) &&
       (!query || item.name.toLowerCase().includes(query)),
     );
-    return sortCatalogRows(rows, effectiveSort, (item) => item.added);
+    return sortCatalogRows(rows, effectiveSort, (item) => item.added, (item) => item.stream_id);
   }, [items, search, category, effectiveSort]);
 
   if (!loaded && loading) return <Loading text={t("loadingMovies")} />;
@@ -1019,6 +1042,7 @@ function Series({ items, cats, providerType, sortMode, onSort, loading, loaded, 
       rows,
       effectiveSort,
       (item) => (item as XtreamSeriesItem & { added?: string }).added,
+      (item) => item.series_id,
     );
   }, [items, search, category, effectiveSort]);
 
@@ -1242,28 +1266,33 @@ function SortControl({ selected, supportsAdded, onSelect }: {
   onSelect: (mode: CatalogSortMode) => void;
 }) {
   const colors = useColors();
-  const options: Array<{ id: CatalogSortMode; label: string }> = [
-    { id: "default", label: "Varsayılan" },
-    { id: "alpha", label: "Alfabetik (A-Z)" },
-    ...(supportsAdded ? [{ id: "added" as const, label: "Eklenme tarihi (yeni→eski)" }] : []),
+  const { t, language } = useI18n();
+  const [open, setOpen] = useState(false);
+  const options: Array<{ id: CatalogSortMode; label: string; short: string }> = [
+    { id: "default", label: t("providerOrder"), short: language === "tr" ? "Varsayılan" : "Default" },
+    { id: "alphaAsc", label: language === "tr" ? "Alfabetik — Artan (A-Z)" : "Alphabetical — Ascending (A-Z)", short: "A-Z ↑" },
+    { id: "alphaDesc", label: language === "tr" ? "Alfabetik — Azalan (Z-A)" : "Alphabetical — Descending (Z-A)", short: "Z-A ↓" },
+    { id: "idAsc", label: language === "tr" ? "ID — Artan" : "ID — Ascending", short: "ID ↑" },
+    { id: "idDesc", label: language === "tr" ? "ID — Azalan" : "ID — Descending", short: "ID ↓" },
+    ...(supportsAdded ? [{ id: "added" as const, label: language === "tr" ? "Son eklenen (yeni → eski)" : "Newest added", short: language === "tr" ? "Son eklenen" : "Newest" }] : []),
   ];
-  return <View style={s.sortRow}>
-    <Feather name="sliders" size={16} color={colors.mutedForeground} />
-    {options.map((option) => <Pressable
-      key={option.id}
-      onPress={() => onSelect(option.id)}
-      style={[
-        s.sortButton,
-        {
-          borderColor: selected === option.id ? colors.primary : colors.border,
-          backgroundColor: colors.card,
-        },
-      ]}
-    >
-      <Text style={{ color: selected === option.id ? colors.primary : colors.mutedForeground, fontWeight: "700", fontSize: 12 }}>
-        {option.label}
-      </Text>
-    </Pressable>)}
+  const active = options.find((option) => option.id === selected) ?? options[0];
+  return <View style={s.sortDropdownWrap}>
+    <Pressable onPress={() => setOpen((value) => !value)} style={[s.sortDropdownButton, { borderColor: open ? colors.primary : colors.border, backgroundColor: colors.card }]}>
+      <Feather name="sliders" size={16} color={open ? colors.primary : colors.mutedForeground} />
+      <Text style={{ flex: 1, color: colors.foreground, fontWeight: "700", fontSize: 13 }} numberOfLines={1}>{language === "tr" ? "Sırala" : "Sort"}: {active.short}</Text>
+      <Feather name={open ? "chevron-up" : "chevron-down"} size={17} color={colors.mutedForeground} />
+    </Pressable>
+    {open ? <View style={[s.sortDropdownMenu, { borderColor: colors.border, backgroundColor: colors.card }]}>
+      {options.map((option) => {
+        const activeOption = option.id === selected;
+        return <Pressable key={option.id} onPress={() => { onSelect(option.id); setOpen(false); }} style={[s.sortDropdownItem, { borderColor: activeOption ? colors.primary : "transparent" }]}>
+          <View style={[s.drawerDot, { backgroundColor: activeOption ? colors.primary : "transparent", borderColor: activeOption ? colors.primary : colors.mutedForeground }]} />
+          <Text style={{ flex: 1, color: activeOption ? colors.primary : colors.foreground, fontWeight: activeOption ? "800" : "600" }}>{option.label}</Text>
+          {activeOption ? <Feather name="check" size={17} color={colors.primary} /> : null}
+        </Pressable>;
+      })}
+    </View> : null}
   </View>;
 }
 
@@ -1328,8 +1357,10 @@ const s = StyleSheet.create({
   accountCard: { borderWidth: 1, borderRadius: 14, padding: 14, flexDirection: "row", alignItems: "center", gap: 10 },
   catalogHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 12 },
   search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
-  sortRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 7, paddingTop: 10, paddingBottom: 10 },
-  sortButton: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 11, paddingVertical: 7 },
+  sortDropdownWrap: { paddingTop: 10, paddingBottom: 10, alignSelf: "stretch" },
+  sortDropdownButton: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
+  sortDropdownMenu: { marginTop: 6, borderWidth: 1, borderRadius: 12, padding: 6, gap: 3 },
+  sortDropdownItem: { minHeight: 42, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 9 },
   rail: { gap: 6, paddingVertical: 14 },
   list: { gap: 8 },
   liveRow: { borderWidth: 1, borderRadius: 14, padding: 8, flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
