@@ -1066,15 +1066,40 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
 
   const closeSwipe = useMemo(
     () => PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
       onMoveShouldSetPanResponder: (_event, gesture) =>
         gesture.dx < -18 &&
-        Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.35,
+        Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
       onPanResponderRelease: (_event, gesture) => {
         if (gesture.dx < -45) closeAnimated();
       },
+      onPanResponderTerminationRequest: () => true,
     }),
     [drawerWidth, translateX],
   );
+
+  const renderCategory = ({ item }: { item: CategoryOption }) => {
+    const active = selected === item.id;
+    return <Pressable
+      onPress={() => {
+        onSelect(item.id);
+        closeAnimated();
+      }}
+      style={[
+        s.drawerItem,
+        {
+          borderColor: active ? colors.primary : colors.border,
+          backgroundColor: colors.card,
+        },
+      ]}
+    >
+      <View style={[s.drawerDot, { backgroundColor: active ? colors.primary : "transparent", borderColor: active ? colors.primary : colors.mutedForeground }]} />
+      <Text numberOfLines={2} style={{ flex: 1, color: active ? colors.primary : colors.foreground, fontWeight: active ? "800" : "600" }}>
+        {item.name || "—"}
+      </Text>
+      {active ? <Feather name="check" size={18} color={colors.primary} /> : null}
+    </Pressable>;
+  };
 
   return <Modal
     visible={visible}
@@ -1083,8 +1108,9 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
     animationType="fade"
     onRequestClose={closeAnimated}
   >
-    <View style={s.drawerBackdrop} {...closeSwipe.panHandlers}>
+    <View style={s.drawerBackdrop}>
       <Animated.View
+        {...closeSwipe.panHandlers}
         style={[
           s.drawerPanel,
           {
@@ -1103,36 +1129,19 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
             <Feather name="x" size={22} color={colors.mutedForeground} />
           </Pressable>
         </View>
-        <ScrollView
-          style={{ flex: 1 }}
+        <FlatList
+          style={s.drawerScroll}
           contentContainerStyle={s.drawerList}
-          showsVerticalScrollIndicator={false}
+          data={items}
+          keyExtractor={(item) => item.id}
+          renderItem={renderCategory}
+          nestedScrollEnabled
+          showsVerticalScrollIndicator
           keyboardShouldPersistTaps="handled"
-        >
-          {items.map((item) => {
-            const active = selected === item.id;
-            return <Pressable
-              key={item.id}
-              onPress={() => {
-                onSelect(item.id);
-                closeAnimated();
-              }}
-              style={[
-                s.drawerItem,
-                {
-                  borderColor: active ? colors.primary : colors.border,
-                  backgroundColor: colors.card,
-                },
-              ]}
-            >
-              <View style={[s.drawerDot, { backgroundColor: active ? colors.primary : "transparent", borderColor: active ? colors.primary : colors.mutedForeground }]} />
-              <Text numberOfLines={2} style={{ flex: 1, color: active ? colors.primary : colors.foreground, fontWeight: active ? "800" : "600" }}>
-                {item.name || "—"}
-              </Text>
-              {active ? <Feather name="check" size={18} color={colors.primary} /> : null}
-            </Pressable>;
-          })}
-        </ScrollView>
+          initialNumToRender={16}
+          maxToRenderPerBatch={20}
+          windowSize={7}
+        />
       </Animated.View>
       <Pressable style={s.drawerDismiss} onPress={closeAnimated} />
     </View>
@@ -1304,11 +1313,12 @@ const s = StyleSheet.create({
   episode: { borderWidth: 1, borderRadius: 12, padding: 14, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
   settings: { borderWidth: 1, borderRadius: 16, padding: 18, gap: 8 },
   drawerBackdrop: { flex: 1, flexDirection: "row", backgroundColor: "rgba(0,0,0,0.52)" },
-  drawerPanel: { height: "100%", borderRightWidth: StyleSheet.hairlineWidth, elevation: 18, shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 18, shadowOffset: { width: 7, height: 0 } },
+  drawerPanel: { height: "100%", minHeight: 0, borderRightWidth: StyleSheet.hairlineWidth, elevation: 18, shadowColor: "#000", shadowOpacity: 0.28, shadowRadius: 18, shadowOffset: { width: 7, height: 0 } },
+  drawerScroll: { flex: 1, minHeight: 0 },
   drawerDismiss: { flex: 1 },
   drawerHeader: { minHeight: 58, paddingHorizontal: 18, flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderBottomWidth: StyleSheet.hairlineWidth },
   drawerTitle: { fontSize: 22, fontWeight: "900" },
-  drawerList: { padding: 12, gap: 7 },
+  drawerList: { padding: 12, gap: 7, paddingBottom: 24 },
   drawerItem: { minHeight: 48, borderWidth: 1, borderRadius: 12, paddingHorizontal: 13, paddingVertical: 10, flexDirection: "row", alignItems: "center", gap: 10 },
   drawerDot: { width: 8, height: 8, borderRadius: 8, borderWidth: 1 },
 });
