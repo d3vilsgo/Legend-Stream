@@ -242,7 +242,7 @@ export async function getCachedCategories(
     `SELECT category_id, category_name, parent_id
      FROM catalog_categories
      WHERE provider_id = ? AND kind = ?
-     ORDER BY category_name COLLATE NOCASE`,
+     ORDER BY rowid ASC`,
     providerId,
     kind,
   );
@@ -343,7 +343,9 @@ export async function getCachedItems<T>(
     sql += " AND category_id = ?";
     args.push(categoryId);
   }
-  sql += " ORDER BY CASE WHEN added_at > 0 THEN added_at ELSE first_seen_at END DESC, name COLLATE NOCASE";
+  sql += kind === "live"
+    ? " ORDER BY rowid ASC"
+    : " ORDER BY CASE WHEN added_at > 0 THEN added_at ELSE first_seen_at END DESC, name COLLATE NOCASE";
   if (limit && limit > 0) {
     sql += " LIMIT ?";
     args.push(limit);
