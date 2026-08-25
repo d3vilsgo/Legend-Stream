@@ -122,6 +122,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<CatalogSnapshot>(EMPTY_SNAPSHOT);
   const [cacheReady, setCacheReady] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isInitialSyncRunning, setIsInitialSyncRunning] = useState(false);
   const cancelRef = useRef(false);
   const runningRef = useRef<Promise<void> | null>(null);
   const generationRef = useRef(0);
@@ -197,7 +198,8 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     const isCancelled = () => cancelRef.current || generationRef.current !== generation;
 
     const task = (async () => {
-      if (!isInitial) setIsRefreshing(true);
+      if (isInitial) setIsInitialSyncRunning(true);
+      else setIsRefreshing(true);
       try {
         await initCatalogCache();
         await publishState(
@@ -307,7 +309,8 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         }
         await refreshSnapshot();
       } finally {
-        if (!isInitial) setIsRefreshing(false);
+        if (isInitial) setIsInitialSyncRunning(false);
+        else setIsRefreshing(false);
       }
     })().finally(() => {
       runningRef.current = null;
@@ -333,6 +336,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     setSnapshot(EMPTY_SNAPSHOT);
     setCacheReady(false);
     setSyncStateLocal(null);
+    setIsInitialSyncRunning(false);
 
     const active = provider;
     if (!active) return;
@@ -389,8 +393,8 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
 
   const isInitialBlocking =
     provider?.type === "xtream" &&
-    !cacheReady &&
-    (syncState?.phase === "preparing" || syncState?.phase === "syncing");
+    isInitialSyncRunning &&
+    !cacheReady;
   const progress = syncState && syncState.total > 0
     ? Math.max(0, Math.min(1, syncState.completed / syncState.total))
     : 0;
