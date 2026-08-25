@@ -1,50 +1,10 @@
-name: Apply category drawer isolation fix
+name: Retired category drawer isolation helper
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/workflows/apply-drawer-isolation-fix.yml"
-
-permissions:
-  contents: write
+  workflow_dispatch:
 
 jobs:
-  apply-fix:
+  retired:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 10
-          run_install: false
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Apply drawer isolation patch
-        run: python3 scripts/apply-drawer-isolation.py
-
-      - name: Install dependencies
-        run: pnpm --filter @workspace/legendstream-xplayer... install --no-frozen-lockfile
-
-      - name: Typecheck
-        run: pnpm --filter @workspace/legendstream-xplayer typecheck
-
-      - name: Commit fix
-        shell: bash
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add artifacts/legendstream-xplayer/components/OptimizedHomeScreenV6.tsx
-          git diff --cached --check
-          git commit -m "fix: isolate category drawer scrolling"
-          git push origin HEAD:main
-
-# rerun after sequential replacement fix
+      - run: echo "One-off drawer isolation migration completed; workflow retired."
