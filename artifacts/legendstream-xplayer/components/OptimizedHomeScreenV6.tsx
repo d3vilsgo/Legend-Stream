@@ -176,8 +176,6 @@ async function persistProviderAsM3U(providerId: string) {
         ? {
             ...item,
             type: "m3u",
-            username: undefined,
-            password: undefined,
             loadError: undefined,
           }
         : item;
