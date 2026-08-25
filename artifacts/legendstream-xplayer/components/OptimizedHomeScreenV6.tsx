@@ -230,6 +230,7 @@ export default function OptimizedHomeScreenV6() {
   const [seriesCache, setSeriesCache] = useState<Record<string, XtreamSeriesItem[]>>({});
   const [homeVodCount, setHomeVodCount] = useState<number | null>(null);
   const [homeSeriesCount, setHomeSeriesCount] = useState<number | null>(null);
+  const [homeCatalogLoading, setHomeCatalogLoading] = useState(false);
   const [catalogSort, setCatalogSort] = useState<CatalogSortMode>("default");
   const [providerTypeOverride, setProviderTypeOverride] = useState<ProviderType | null>(null);
   const [selectedSeries, setSelectedSeries] = useState<XtreamSeriesItem | null>(null);
@@ -290,7 +291,7 @@ export default function OptimizedHomeScreenV6() {
   useEffect(() => {
     setVod([]); setVodCats([]); setVodCache({}); setVodLoaded(false); setVodLoading(false);
     setSeries([]); setSeriesCats([]); setSeriesCache({}); setSeriesLoaded(false); setSeriesLoading(false);
-    setHomeVodCount(null); setHomeSeriesCount(null);
+    setHomeVodCount(null); setHomeSeriesCount(null); setHomeCatalogLoading(false);
     setProviderTypeOverride(null);
     setSelectedSeries(null); setSeriesInfo(null); setCatalogError(null);
     catalogCategoryMemory.movies = "__all__";
@@ -298,39 +299,54 @@ export default function OptimizedHomeScreenV6() {
   }, [provider?.id]);
 
   useEffect(() => {
-    if (!effectiveProvider) return;
+    if (!effectiveProvider) {
+      setHomeCatalogLoading(false);
+      return;
+    }
     if (effectiveProvider.type === "m3u") {
       const local = getM3UCatalog(effectiveProvider.id);
       setHomeVodCount(local.movieItems.length);
       setHomeSeriesCount(local.seriesGroups.length);
+      setHomeCatalogLoading(false);
       return;
     }
-    if (effectiveProvider.type !== "xtream" || !credentials) return;
+    if (effectiveProvider.type !== "xtream" || !credentials) {
+      setHomeCatalogLoading(false);
+      return;
+    }
 
     // A get.php/m3u_plus URL can be either a real Xtream account or a playlist
     // source that was explicitly saved as M3U. Early Home counts are read-only:
     // never probe these ambiguous legacy records in the background. The normal
     // Movies/Series path still performs its existing category request and can
     // migrate on a typed catalog-format failure.
-    if (isGetPhpM3UPlusProvider(effectiveProvider)) return;
+    if (isGetPhpM3UPlusProvider(effectiveProvider)) {
+      setHomeCatalogLoading(false);
+      return;
+    }
 
     let cancelled = false;
+    setHomeCatalogLoading(true);
     void (async () => {
-      const [vodResult, seriesResult] = await Promise.allSettled([
-        getVodCategories(credentials),
-        getSeriesCategories(credentials),
-      ]);
-      if (cancelled) return;
+      try {
+        const [vodResult, seriesResult] = await Promise.allSettled([
+          getVodCategories(credentials),
+          getSeriesCategories(credentials),
+        ]);
+        if (cancelled) return;
 
-      if (vodResult.status === "fulfilled") {
-        setVodCats(vodResult.value);
-        setVodLoaded(true);
-        setHomeVodCount(exactCategoryTotal(vodResult.value));
-      }
-      if (seriesResult.status === "fulfilled") {
-        setSeriesCats(seriesResult.value);
-        setSeriesLoaded(true);
-        setHomeSeriesCount(exactCategoryTotal(seriesResult.value));
+        if (vodResult.status === "fulfilled") {
+          setVodCats(vodResult.value);
+          setVodLoaded(true);
+          setHomeVodCount(exactCategoryTotal(vodResult.value));
+        }
+        if (seriesResult.status === "fulfilled") {
+          setSeriesCats(seriesResult.value);
+          setSeriesLoaded(true);
+          setHomeSeriesCount(exactCategoryTotal(seriesResult.value));
+        }
+      } finally {
+        if (!cancelled) setHomeCatalogLoading(false);
       }
     })();
 
@@ -680,6 +696,7 @@ export default function OptimizedHomeScreenV6() {
         series={homeSeriesCount}
         vodCategories={vodCats.length}
         seriesCategories={seriesCats.length}
+        catalogLoading={homeCatalogLoading}
         channels={providerChannels}
         history={history}
         movies={vod}
@@ -790,13 +807,14 @@ type HomeShelfEntry = {
   onRemove?: () => void;
 };
 
-function Home({ provider, live, vod, series, vodCategories, seriesCategories, channels, history, movies, seriesItems, onNavigate, onOpenLive, onOpenMovie, onOpenSeries, onOpenMedia, onRemoveLive }: {
+function Home({ provider, live, vod, series, vodCategories, seriesCategories, catalogLoading, channels, history, movies, seriesItems, onNavigate, onOpenLive, onOpenMovie, onOpenSeries, onOpenMedia, onRemoveLive }: {
   provider: ProviderConfig;
   live: number;
   vod: number | null;
   series: number | null;
   vodCategories: number;
   seriesCategories: number;
+  catalogLoading: boolean;
   channels: Channel[];
   history: string[];
   movies: XtreamVodItem[];
@@ -827,10 +845,11 @@ function Home({ provider, live, vod, series, vodCategories, seriesCategories, ch
         featured: "Featured picks",
       };
 
-  const localCatalog = useMemo(
-    () => provider.type === "m3u" ? getM3UCatalog(provider.id) : null,
-    [provider.id, provider.type],
-  );
+  // getM3UCatalog is an in-memory provider cache that is populated by the
+  // M3U loader. Read it on every Home render instead of memoising the first
+  // (possibly empty) snapshot; provider/channel state changes already trigger
+  // the render once parsing completes.
+  const localCatalog = provider.type === "m3u" ? getM3UCatalog(provider.id) : null;
 
   const homeMovies = useMemo<XtreamVodItem[]>(() => {
     if (!localCatalog) return movies.slice(0, 48);
@@ -958,6 +977,7 @@ function Home({ provider, live, vod, series, vodCategories, seriesCategories, ch
       onOpen={(item) => item.movie ? onOpenMovie(item.movie) : item.series ? onOpenSeries(item.series) : undefined}
       onDiscover={() => onNavigate("movies")}
       discoverLabel={copy.discover}
+      loading={catalogLoading}
     />
 
     <View style={s.homeCompactStats}>
@@ -969,8 +989,8 @@ function Home({ provider, live, vod, series, vodCategories, seriesCategories, ch
     {continueShelf.length ? <HomeShelf title={copy.continue} seeAll={copy.seeAll} items={continueShelf} onSeeAll={() => onNavigate("history")} /> : null}
     {recentShelf.length ? <HomeShelf title={copy.recent} seeAll={copy.seeAll} items={recentShelf} onSeeAll={() => onNavigate("history")} compact /> : null}
     <HomeShelf title={t("liveTv")} seeAll={copy.seeAll} items={liveShelf} onSeeAll={() => onNavigate("live")} compact />
-    <HomeShelf title={t("movies")} seeAll={copy.seeAll} items={movieShelf} onSeeAll={() => onNavigate("movies")} emptyLabel={copy.discover} />
-    <HomeShelf title={t("series")} seeAll={copy.seeAll} items={seriesShelf} onSeeAll={() => onNavigate("series")} emptyLabel={copy.discover} />
+    <HomeShelf title={t("movies")} seeAll={copy.seeAll} items={movieShelf} onSeeAll={() => onNavigate("movies")} emptyLabel={copy.discover} loading={catalogLoading} />
+    <HomeShelf title={t("series")} seeAll={copy.seeAll} items={seriesShelf} onSeeAll={() => onNavigate("series")} emptyLabel={copy.discover} loading={catalogLoading} />
   </View>;
 }
 
@@ -1002,13 +1022,14 @@ function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = fal
   >{children}</Pressable>;
 }
 
-function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, discoverLabel }: {
+function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, discoverLabel, loading = false }: {
   items: HomeHeroEntry[];
   eyebrow: string;
   providerName: string;
   onOpen: (item: HomeHeroEntry) => void;
   onDiscover: () => void;
   discoverLabel: string;
+  loading?: boolean;
 }) {
   const colors = useColors();
   const { width } = useWindowDimensions();
@@ -1029,6 +1050,16 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
   }, [items.length]);
 
   if (!items.length) {
+    if (loading) {
+      return <View style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}>
+        <LinearGradient colors={["rgba(0,212,255,0.10)", "rgba(5,9,20,0.02)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
+        <View style={{ flex: 1, justifyContent: "flex-end", gap: 10 }}>
+          <View style={[s.homeSkeletonLine, { width: "28%", backgroundColor: colors.muted }]} />
+          <View style={[s.homeSkeletonLine, { width: "68%", height: 24, backgroundColor: colors.muted }]} />
+          <View style={[s.homeSkeletonLine, { width: "42%", backgroundColor: colors.muted }]} />
+        </View>
+      </View>;
+    }
     return <TvFocusPressable preferredFocus onPress={onDiscover} style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <LinearGradient colors={["rgba(0,212,255,0.12)", "rgba(5,9,20,0.02)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
       <View style={{ flex: 1, justifyContent: "flex-end" }}>
@@ -1082,18 +1113,19 @@ function HomeCountCard({ icon, label, value, accent, onPress, preferredFocus = f
     <View style={[s.homeCompactStatIcon, { backgroundColor: `${accent}18` }]}><Feather name={icon} size={18} color={accent} /></View>
     <View style={{ flex: 1, minWidth: 0 }}>
       <Text style={[s.homeCompactStatLabel, { color: colors.mutedForeground }]}>{label}</Text>
-      <Text numberOfLines={1} style={[s.homeCompactStatValue, { color: colors.foreground }]}>{value}</Text>
+      <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.45} style={[s.homeCompactStatValue, { color: colors.foreground }]}>{value}</Text>
     </View>
   </TvFocusPressable>;
 }
 
-function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel }: {
+function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel, loading = false }: {
   title: string;
   seeAll: string;
   items: HomeShelfEntry[];
   onSeeAll: () => void;
   compact?: boolean;
   emptyLabel?: string;
+  loading?: boolean;
 }) {
   const colors = useColors();
   const listRef = useRef<FlatList<HomeShelfEntry>>(null);
@@ -1129,7 +1161,7 @@ function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel
         {item.subtitle ? <Text numberOfLines={1} style={[s.homeShelfCardMeta, { color: colors.mutedForeground }]}>{item.subtitle}</Text> : null}
         {item.progress !== undefined ? <View style={[s.homeProgressTrack, { backgroundColor: colors.muted }]}><View style={[s.homeProgressFill, { width: `${Math.round(item.progress * 100)}%`, backgroundColor: colors.primary }]} /></View> : null}
       </TvFocusPressable>}
-    /> : <TvFocusPressable onPress={onSeeAll} style={[s.homeShelfEmpty, { borderColor: colors.border }]}><Text style={{ color: colors.mutedForeground }}>{emptyLabel || "—"}</Text><Feather name="arrow-right" size={17} color={colors.primary} /></TvFocusPressable>}
+    /> : loading ? <View style={s.homeShelfSkeletonRow}>{[0, 1, 2].map((index) => <View key={index} style={[s.homeShelfSkeletonCard, { borderColor: colors.border, backgroundColor: colors.card }]}><View style={[s.homeShelfSkeletonImage, { backgroundColor: colors.muted }]} /><View style={[s.homeSkeletonLine, { width: "72%", backgroundColor: colors.muted }]} /></View>)}</View> : <TvFocusPressable onPress={onSeeAll} style={[s.homeShelfEmpty, { borderColor: colors.border }]}><Text style={{ color: colors.mutedForeground }}>{emptyLabel || "—"}</Text><Feather name="arrow-right" size={17} color={colors.primary} /></TvFocusPressable>}
   </View>;
 }
 
@@ -1891,10 +1923,10 @@ const s = StyleSheet.create({
   homeHeroDots: { flexDirection: "row", justifyContent: "center", gap: 6, paddingTop: 10 },
   homeHeroDot: { width: 6, height: 6, borderRadius: 6 },
   homeCompactStats: { flexDirection: "row", gap: 10, marginTop: 18, marginBottom: 14 },
-  homeCompactStatCard: { flex: 1, minWidth: 0, minHeight: 76, borderWidth: 1, borderRadius: 16, paddingHorizontal: 13, paddingVertical: 12, flexDirection: "row", alignItems: "center", gap: 10, overflow: "hidden" },
-  homeCompactStatIcon: { width: 34, height: 34, borderRadius: 11, alignItems: "center", justifyContent: "center" },
-  homeCompactStatLabel: { fontSize: 11, fontWeight: "600" },
-  homeCompactStatValue: { fontSize: 18, lineHeight: 23, fontWeight: "800", marginTop: 1 },
+  homeCompactStatCard: { flex: 1, minWidth: 0, minHeight: 76, borderWidth: 1, borderRadius: 16, paddingHorizontal: 9, paddingVertical: 10, flexDirection: "row", alignItems: "center", gap: 7, overflow: "hidden" },
+  homeCompactStatIcon: { width: 30, height: 30, borderRadius: 10, alignItems: "center", justifyContent: "center", flexShrink: 0 },
+  homeCompactStatLabel: { fontSize: 10, lineHeight: 13, fontWeight: "600" },
+  homeCompactStatValue: { fontSize: 17, lineHeight: 21, fontWeight: "800", marginTop: 1, flexShrink: 1 },
   homeShelfSection: { marginTop: 24 },
   homeShelfHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 },
   homeShelfTitle: { fontSize: 20, lineHeight: 26, fontWeight: "700", letterSpacing: -0.25 },
@@ -1912,6 +1944,10 @@ const s = StyleSheet.create({
   homeProgressTrack: { height: 3, borderRadius: 3, overflow: "hidden", marginTop: 7 },
   homeProgressFill: { height: "100%", borderRadius: 3 },
   homeShelfEmpty: { minHeight: 58, borderWidth: 1, borderRadius: 14, borderStyle: "dashed", paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  homeSkeletonLine: { height: 12, borderRadius: 8, opacity: 0.72 },
+  homeShelfSkeletonRow: { flexDirection: "row", gap: 11, paddingVertical: 3 },
+  homeShelfSkeletonCard: { width: 142, borderWidth: 1, borderRadius: 16, padding: 7, gap: 9 },
+  homeShelfSkeletonImage: { width: "100%", aspectRatio: 2 / 3, borderRadius: 11, opacity: 0.72 },
   homeTvFocusBase: { borderWidth: 2, borderColor: "transparent" },
   homeTvFocusActive: { borderWidth: 3, shadowOpacity: 0.78, shadowRadius: 12, shadowOffset: { width: 0, height: 0 }, elevation: 8, transform: [{ scale: 1.025 }] },
   drawerBackdrop: { flex: 1, flexDirection: "row", backgroundColor: "rgba(0,0,0,0.52)" },
