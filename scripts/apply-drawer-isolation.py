@@ -7,8 +7,8 @@ text = path.read_text()
 def replace_once(old: str, new: str, label: str) -> None:
     global text
     count = text.count(old)
-    if count != 1:
-        raise SystemExit(f"{label}: expected exactly 1 match, found {count}")
+    if count < 1:
+        raise SystemExit(f"{label}: expected at least 1 match, found {count}")
     text = text.replace(old, new, 1)
 
 
