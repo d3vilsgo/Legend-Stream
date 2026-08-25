@@ -214,6 +214,7 @@ export default function OptimizedHomeScreenV6() {
   const [providerTypeOverride, setProviderTypeOverride] = useState<ProviderType | null>(null);
   const [selectedSeries, setSelectedSeries] = useState<XtreamSeriesItem | null>(null);
   const [seriesInfo, setSeriesInfo] = useState<XtreamSeriesInfo | null>(null);
+  const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
 
   const effectiveProvider = useMemo<ProviderConfig | null>(() => {
     if (!provider || !providerTypeOverride) return provider;
@@ -644,10 +645,10 @@ export default function OptimizedHomeScreenV6() {
       onRefresh={() => void refreshProvider()}
       onOpen={openLive}
       onFavorite={(id) => void toggleFavorite(id)}
-    /> : <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}>
+    /> : <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEnabled={!catalogDrawerOpen} pointerEvents={catalogDrawerOpen ? "none" : "auto"}>
       {view === "home" ? <Home provider={shownProvider} providers={providers} live={providerChannels.length} vod={homeVodCount} series={homeSeriesCount} vodCategories={vodCats.length} seriesCategories={seriesCats.length} loading={isLoading} onRefresh={() => void refreshProvider()} onNavigate={navigate} onSwitch={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} /> : null}
-      {view === "movies" ? <Movies items={vod} cats={vodCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={vodLoading} loaded={vodLoaded} onCategory={(category) => void loadVodCategory(category)} onRefresh={(category) => category === "__all__" ? void loadVod(true) : void loadVodCategory(category, true)} onOpen={openMovie} /> : null}
-      {view === "series" ? <Series items={series} cats={seriesCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => category === "__all__" ? void loadSeries(true) : void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} /> : null}
+      {view === "movies" ? <Movies items={vod} cats={vodCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={vodLoading} loaded={vodLoaded} onCategory={(category) => void loadVodCategory(category)} onRefresh={(category) => category === "__all__" ? void loadVod(true) : void loadVodCategory(category, true)} onOpen={openMovie} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
+      {view === "series" ? <Series items={series} cats={seriesCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => category === "__all__" ? void loadSeries(true) : void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
       {view === "history" ? <HistoryView channels={providerChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
       {view === "settings" ? <Settings provider={shownProvider} providers={providers} busy={isLoading} onEdit={() => setEditing(true)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
@@ -756,18 +757,19 @@ function Home({ provider, providers, live, vod, series, vodCategories, seriesCat
   </View>;
 }
 
-function useCategoryDrawerSwipe(onOpen: () => void) {
+function useCategoryDrawerSwipe(onOpen: () => void, disabled = false) {
   return useMemo(
     () => PanResponder.create({
       onMoveShouldSetPanResponder: (_event, gesture) =>
+        !disabled &&
         gesture.dx > 18 &&
         Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.35,
       onPanResponderRelease: (_event, gesture) => {
-        if (gesture.dx > 55) onOpen();
+        if (!disabled && gesture.dx > 55) onOpen();
       },
       onPanResponderTerminate: () => undefined,
     }),
-    [onOpen],
+    [disabled, onOpen],
   );
 }
 
@@ -793,7 +795,7 @@ function Live({ channels, epgByChannel, favorites, providerType, loading, epgLoa
     () => [{ id: "__all__", name: t("all") }, ...categoryNames.map((name) => ({ id: name, name }))],
     [categoryNames, t],
   );
-  const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true));
+  const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
 
   useEffect(() => {
     const timer = setInterval(() => setEpgClock(Date.now()), 60_000);
@@ -889,7 +891,7 @@ function Live({ channels, epgByChannel, favorites, providerType, loading, epgLoa
   </View>;
 }
 
-function Movies({ items, cats, providerType, sortMode, onSort, loading, loaded, onCategory, onRefresh, onOpen }: {
+function Movies({ items, cats, providerType, sortMode, onSort, loading, loaded, onCategory, onRefresh, onOpen, onDrawerVisibilityChange }: {
   items: XtreamVodItem[];
   cats: XtreamCategory[];
   providerType: ProviderType;
@@ -900,6 +902,7 @@ function Movies({ items, cats, providerType, sortMode, onSort, loading, loaded, 
   onCategory: (categoryId: string) => void;
   onRefresh: (categoryId: string) => void;
   onOpen: (item: XtreamVodItem) => void;
+  onDrawerVisibilityChange: (visible: boolean) => void;
 }) {
   const { t } = useI18n();
   const [search, setSearch] = useState("");
@@ -911,8 +914,14 @@ function Movies({ items, cats, providerType, sortMode, onSort, loading, loaded, 
     () => [{ id: "__all__", name: t("all") }, ...cats.map((item) => ({ id: String(item.category_id), name: item.category_name }))],
     [cats, t],
   );
-  const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true));
+  const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
   const effectiveSort = providerType === "m3u" && sortMode === "added" ? "default" : sortMode;
+
+  useEffect(() => {
+    onDrawerVisibilityChange(drawerOpen);
+  }, [drawerOpen, onDrawerVisibilityChange]);
+
+  useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
 
   useEffect(() => {
     if (category !== "__all__" && cats.length > 0 && !categoryIds.includes(category)) {
@@ -961,9 +970,9 @@ function Movies({ items, cats, providerType, sortMode, onSort, loading, loaded, 
   </View>;
 }
 
-function Series({ items, cats, providerType, sortMode, onSort, loading, loaded, selected, info, onCategory, onRefresh, onOpen, onBack, onEpisode }: {
+function Series({ items, cats, providerType, sortMode, onSort, loading, loaded, selected, info, onCategory, onRefresh, onOpen, onBack, onEpisode, onDrawerVisibilityChange }: {
   items: XtreamSeriesItem[]; cats: XtreamCategory[]; providerType: ProviderType; sortMode: CatalogSortMode; onSort: (mode: CatalogSortMode) => void; loading: boolean; loaded: boolean; selected: XtreamSeriesItem | null; info: XtreamSeriesInfo | null;
-  onCategory: (categoryId: string) => void; onRefresh: (categoryId: string) => void; onOpen: (item: XtreamSeriesItem) => void; onBack: () => void; onEpisode: (episode: XtreamEpisode) => void;
+  onCategory: (categoryId: string) => void; onRefresh: (categoryId: string) => void; onOpen: (item: XtreamSeriesItem) => void; onBack: () => void; onEpisode: (episode: XtreamEpisode) => void; onDrawerVisibilityChange: (visible: boolean) => void;
 }) {
   const colors = useColors(); const { t } = useI18n();
   const [search, setSearch] = useState("");
@@ -975,8 +984,14 @@ function Series({ items, cats, providerType, sortMode, onSort, loading, loaded, 
     () => [{ id: "__all__", name: t("all") }, ...cats.map((item) => ({ id: String(item.category_id), name: item.category_name }))],
     [cats, t],
   );
-  const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true));
+  const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
   const effectiveSort = providerType === "m3u" && sortMode === "added" ? "default" : sortMode;
+
+  useEffect(() => {
+    onDrawerVisibilityChange(drawerOpen);
+  }, [drawerOpen, onDrawerVisibilityChange]);
+
+  useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
 
   useEffect(() => {
     if (category !== "__all__" && cats.length > 0 && !categoryIds.includes(category)) {
