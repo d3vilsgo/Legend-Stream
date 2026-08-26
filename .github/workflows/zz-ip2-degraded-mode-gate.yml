@@ -1,0 +1,121 @@
+name: IP2 Degraded Crypto Mode Gate
+
+on:
+  push:
+    branches:
+      - feat/provider-backup
+    paths:
+      - '.github/workflows/zz-ip2-degraded-mode-gate.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/provider-backup
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Add fail-closed degraded-mode test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          path = Path('artifacts/legendstream-xplayer/tests/providerBackupScenarios.ts')
+          text = path.read_text()
+
+          import_anchor = 'import assert from "node:assert/strict";\n'
+          imports = 'import { spawnSync } from "node:child_process";\nimport { resolve } from "node:path";\n'
+          if imports not in text:
+              if import_anchor not in text:
+                  raise SystemExit('test import anchor missing')
+              text = text.replace(import_anchor, import_anchor + imports, 1)
+
+          if 'security: 6,' not in text:
+              raise SystemExit('expected security counter anchor missing')
+          text = text.replace('security: 6,', 'security: 7,', 1)
+
+          anchor = '''test("security", "generated recovery phrase format is constrained", () => {\n'''
+          degraded = '''test("security", "degraded Noble runtime loads without throw and blocks crypto before writes", () => {\n  const loader = resolve(process.cwd(), "tests/providerBackupDegradedLoader.mjs");\n  const scenario = resolve(process.cwd(), "tests/providerBackupDegradedMode.ts");\n  const child = spawnSync(\n    process.execPath,\n    ["--no-warnings", "--import", "tsx", "--experimental-loader", loader, scenario],\n    { cwd: process.cwd(), encoding: "utf8", env: { ...process.env } },\n  );\n\n  assert.equal(\n    child.status,\n    0,\n    `degraded-mode child failed (status=${String(child.status)})\\nstdout:\\n${child.stdout}\\nstderr:\\n${child.stderr}`,\n  );\n  assert.match(\n    child.stdout,\n    /degraded-mode: module-load=pass cryptoAvailable=false secureStoreWrites=0 asyncStorageWrites=0/u,\n  );\n});\n\n'''
+          if degraded not in text:
+              if anchor not in text:
+                  raise SystemExit('degraded test insertion anchor missing')
+              text = text.replace(anchor, degraded + anchor, 1)
+
+          path.write_text(text)
+          PY
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Existing credential scenarios
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(pnpm --filter @workspace/legendstream-xplayer test:credentials 2>&1 | tee /dev/stderr)"
+          grep -F 'credential storage scenarios: 6/6 passed' <<<"$output"
+
+      - name: Provider backup scenarios
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(pnpm --filter @workspace/legendstream-xplayer test:backup 2>&1 | tee /dev/stderr)"
+          grep -F 'provider backup acceptance: 7/7 passed' <<<"$output"
+          grep -F 'negative crypto: 2/2 passed' <<<"$output"
+          grep -F 'credential round-trip: 1/1 passed' <<<"$output"
+          grep -F 'security regressions: 7/7 passed' <<<"$output"
+          grep -F 'provider backup tests: 17/17 passed' <<<"$output"
+          grep -F 'degraded-mode: module-load=pass cryptoAvailable=false secureStoreWrites=0 asyncStorageWrites=0' <<<"$output"
+
+      - name: Mobile typecheck
+        run: pnpm --filter @workspace/legendstream-xplayer typecheck
+
+      - name: Storage and crypto invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT='artifacts/legendstream-xplayer'
+          CORE="$ROOT/lib/providerBackupCore.ts"
+          TEST="$ROOT/tests/providerBackupScenarios.ts"
+          LOADER="$ROOT/tests/providerBackupDegradedLoader.mjs"
+          SCENARIO="$ROOT/tests/providerBackupDegradedMode.ts"
+
+          ! grep -R --line-number -E 'Math\.random\(' "$ROOT/lib/providerBackup"* "$ROOT/lib/cryptoBootstrap.ts"
+          ! grep -R --line-number -F 'removeItem(LEGACY_STORAGE_KEY)' "$ROOT/lib/providerBackup"* "$ROOT/components/ProviderBackupPanel.tsx"
+          grep -F 'export const cryptoAvailable' "$CORE"
+          test "$(grep -Fc 'assertNobleCryptoRuntime();' "$CORE")" -eq 2
+          ! sed -n '1,70p' "$CORE" | grep -F 'assertNobleCryptoRuntime();'
+          grep -F 'security: 7,' "$TEST"
+          grep -F 'providerBackupDegradedLoader.mjs' "$TEST"
+          grep -F '@noble/hashes/hmac.js' "$LOADER"
+          grep -F 'cryptoAvailable, false' "$SCENARIO"
+          grep -F 'secureStoreWrites, 0' "$SCENARIO"
+          grep -F 'asyncStorageWrites, 0' "$SCENARIO"
+          ! grep -R --line-number -E 'providerBackupDegraded(Loader|Mode)' "$ROOT/app" "$ROOT/components" "$ROOT/context" "$ROOT/lib"
+          echo 'IP2_DEGRADED_MODE_INVARIANTS=pass'
+
+      - name: Commit verified test and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'd3vilsgo'
+          git config user.email '80721458+d3vilsgo@users.noreply.github.com'
+          git rm .github/workflows/zz-ip2-degraded-mode-gate.yml
+          git add artifacts/legendstream-xplayer/tests/providerBackupScenarios.ts \
+                  artifacts/legendstream-xplayer/tests/providerBackupDegradedLoader.mjs \
+                  artifacts/legendstream-xplayer/tests/providerBackupDegradedMode.ts
+          git diff --cached --check
+          git commit -m 'test(backup): cover degraded crypto runtime'
+          git push origin HEAD:feat/provider-backup
