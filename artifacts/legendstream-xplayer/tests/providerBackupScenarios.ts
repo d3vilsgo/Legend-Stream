@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { resolve } from "node:path";
 import {
   assertSecureRecordFits,
   base64UrlDecode,
@@ -23,7 +25,7 @@ const EXPECTED: Record<Category, number> = {
   acceptance: 7,
   negativeCrypto: 2,
   roundTrip: 1,
-  security: 6,
+  security: 7,
 };
 const EXPECTED_TESTS = Object.values(EXPECTED).reduce((sum, count) => sum + count, 0);
 const tests: TestCase[] = [];
@@ -244,6 +246,26 @@ test("security", "all Noble crypto runtime exports are callable", () => {
     scryptAsync: "function",
     sha256: "function",
   });
+});
+
+test("security", "degraded Noble runtime loads without throw and blocks crypto before writes", () => {
+  const loader = resolve(process.cwd(), "tests/providerBackupDegradedLoader.cjs");
+  const scenario = resolve(process.cwd(), "tests/providerBackupDegradedMode.ts");
+  const child = spawnSync(
+    process.execPath,
+    ["--no-warnings", "--require", loader, "--import", "tsx", scenario],
+    { cwd: process.cwd(), encoding: "utf8", env: { ...process.env } },
+  );
+
+  assert.equal(
+    child.status,
+    0,
+    `degraded-mode child failed (status=${String(child.status)})\nstdout:\n${child.stdout}\nstderr:\n${child.stderr}`,
+  );
+  assert.match(
+    child.stdout,
+    /degraded-mode: module-load=pass cryptoAvailable=false secureStoreWrites=0 asyncStorageWrites=0/u,
+  );
 });
 
 test("security", "generated recovery phrase format is constrained", () => {
