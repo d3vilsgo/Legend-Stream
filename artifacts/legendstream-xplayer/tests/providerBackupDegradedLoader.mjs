@@ -1,3 +1,4 @@
+// Test-only ESM override. Production code never imports this module.
 export async function resolve(specifier, context, nextResolve) {
   if (specifier === "@noble/hashes/hmac.js") {
     return {
