@@ -28,6 +28,7 @@ concurrency:
 
 jobs:
   build-apk:
+    name: APK build + artifact verification (authoritative)
     runs-on: ubuntu-latest
     timeout-minutes: 50
 
@@ -65,11 +66,11 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install mobile dependencies
+      - name: Install mobile dependencies from committed lockfile
         shell: bash
         run: |
           set -o pipefail
-          pnpm --filter @workspace/legendstream-xplayer... install --no-frozen-lockfile 2>&1 | tee "$GITHUB_WORKSPACE/dependency-install.log"
+          pnpm --filter @workspace/legendstream-xplayer... install --frozen-lockfile 2>&1 | tee "$GITHUB_WORKSPACE/dependency-install.log"
 
       - name: Patch VLC for Android compatibility and runtime metrics
         shell: bash
@@ -236,8 +237,9 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Publish arm64 artifact handoff
+      - name: Publish optional arm64 artifact notification
         if: steps.mode.outputs.full_release != 'true'
+        continue-on-error: true
         uses: actions/github-script@v7
         env:
           ARTIFACT_URL: ${{ steps.upload_arm64.outputs.artifact-url }}
