@@ -1,0 +1,245 @@
+name: IP-2 validation candidate APK
+
+on:
+  push:
+    branches:
+      - build/ip2-validation-candidate
+    paths:
+      - ".github/workflows/zz-approved-ip2-validation-candidate.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ip2-validation-candidate
+  cancel-in-progress: false
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Assert app source equals approved main merge
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_MAIN_SHA='32df35f48212d28e9ce41ff0e5879969896437e0'
+          git cat-file -e "$EXPECTED_MAIN_SHA^{commit}"
+          git diff --exit-code "$EXPECTED_MAIN_SHA" -- artifacts/legendstream-xplayer pnpm-lock.yaml
+          echo "APP_SOURCE_MATCHES_APPROVED_MAIN=yes"
+
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /usr/share/swift || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL /opt/hostedtoolcache/Ruby /opt/hostedtoolcache/go || true
+          docker system prune -af --volumes || true
+          sudo apt-get clean || true
+          df -h /
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install mobile dependencies
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm --filter @workspace/legendstream-xplayer... install --no-frozen-lockfile 2>&1 | tee "$GITHUB_WORKSPACE/dependency-install.log"
+
+      - name: Patch VLC for Android compatibility and runtime metrics
+        shell: bash
+        run: |
+          set -o pipefail
+          VLC_DIR="$(cd artifacts/legendstream-xplayer && node -p "require('path').dirname(require.resolve('react-native-vlc-media-player/package.json'))")"
+          python3 artifacts/legendstream-xplayer/scripts/patch-vlc-android.py "$VLC_DIR" 2>&1 | tee "$GITHUB_WORKSPACE/vlc-patch.log"
+          python3 artifacts/legendstream-xplayer/scripts/patch-vlc-progress-metrics.py "$VLC_DIR" 2>&1 | tee -a "$GITHUB_WORKSPACE/vlc-patch.log"
+
+      - name: Generate Android project
+        working-directory: artifacts/legendstream-xplayer
+        env:
+          EXPO_NO_DOCTOR: "1"
+          NODE_ENV: production
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm exec expo prebuild --platform android --clean --no-install 2>&1 | tee "$GITHUB_WORKSPACE/expo-prebuild.log"
+          grep '^reactNativeArchitectures=' android/gradle.properties || true
+          sed -n '/@legendstream abi-splits:start/,/@legendstream abi-splits:end/p' android/app/build.gradle
+
+      - name: Set validation-only generated versionCode base
+        working-directory: artifacts/legendstream-xplayer
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          path = Path('android/app/build.gradle')
+          text = path.read_text()
+          old = 'versionCode 42'
+          new = 'versionCode 43'
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'Expected exactly one generated {old!r}, found {count}')
+          path.write_text(text.replace(old, new, 1))
+          print('VALIDATION_VERSION_CODE_BASE=43')
+          PY
+
+      - name: Assert #312 package and signing identity before build
+        working-directory: artifacts/legendstream-xplayer
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_PACKAGE='com.legendstream.xplayer'
+          EXPECTED_CERT_SHA256='FAC61745DC0903786FB9EDE62A962B399F7348F0BB6F899B8332667591033B9C'
+
+          PACKAGE="$(node -p "require('./app.json').expo.android.package")"
+          echo "applicationId=$PACKAGE"
+          test "$PACKAGE" = "$EXPECTED_PACKAGE"
+
+          grep -Fq 'signingConfig signingConfigs.debug' android/app/build.gradle
+          test -f android/app/debug.keystore
+
+          CERT_SHA256="$(keytool -list -v -keystore android/app/debug.keystore -alias androiddebugkey -storepass android -keypass android 2>/dev/null | sed -n 's/^[[:space:]]*SHA256: //p' | tr -d ':' | tr '[:lower:]' '[:upper:]' | head -n 1)"
+          echo "generated signing certificate SHA-256=$CERT_SHA256"
+          test -n "$CERT_SHA256"
+          test "$CERT_SHA256" = "$EXPECTED_CERT_SHA256"
+          echo 'SIGNING_IDENTITY_MATCHES_312=yes'
+
+      - name: Build dual-ABI validation APKs
+        working-directory: artifacts/legendstream-xplayer/android
+        env:
+          NODE_ENV: production
+          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew assembleRelease -PabiSplit --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
+
+      - name: Verify package, ABI, versionCode and final APK certificates
+        id: verify
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXPECTED_PACKAGE='com.legendstream.xplayer'
+          EXPECTED_CERT_SHA256='FAC61745DC0903786FB9EDE62A962B399F7348F0BB6F899B8332667591033B9C'
+          EXPECTED_MIN_VERSION_CODE='42002'
+          APK_DIR='artifacts/legendstream-xplayer/android/app/build/outputs/apk/release'
+          STAGE_DIR="$GITHUB_WORKSPACE/release-staging"
+          rm -rf "$STAGE_DIR"
+          mkdir -p "$STAGE_DIR"
+
+          mapfile -t APKS < <(find "$APK_DIR" -type f -name '*.apk' | sort)
+          echo "APK outputs:"
+          printf '%s\n' "${APKS[@]}"
+          test "${#APKS[@]}" -eq 2
+
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$AAPT"
+          test -x "$APKSIGNER"
+
+          ARM64_APK=''
+          ARMV7_APK=''
+          ARM64_CODE=''
+          ARMV7_CODE=''
+
+          for apk in "${APKS[@]}"; do
+            if unzip -Z1 "$apk" | grep -Eq '^lib/(x86|x86_64)/'; then
+              echo "::error::Unexpected x86/x86_64 native library in $apk"
+              exit 1
+            fi
+
+            HAS_ARM64=0; HAS_ARMV7=0
+            unzip -Z1 "$apk" | grep -q '^lib/arm64-v8a/' && HAS_ARM64=1 || true
+            unzip -Z1 "$apk" | grep -q '^lib/armeabi-v7a/' && HAS_ARMV7=1 || true
+            if [ "$HAS_ARM64" -eq 1 ] && [ "$HAS_ARMV7" -eq 0 ]; then
+              ABI='arm64-v8a'
+              ARM64_APK="$apk"
+            elif [ "$HAS_ARMV7" -eq 1 ] && [ "$HAS_ARM64" -eq 0 ]; then
+              ABI='armeabi-v7a'
+              ARMV7_APK="$apk"
+            else
+              echo "::error::APK must contain exactly one approved ABI: $apk"
+              exit 1
+            fi
+
+            BADGING="$($AAPT dump badging "$apk" | head -n 1)"
+            echo "$ABI $BADGING"
+            PACKAGE="$(printf '%s\n' "$BADGING" | sed -n "s/.*package: name='\([^']*\)'.*/\1/p")"
+            VERSION_CODE="$(printf '%s\n' "$BADGING" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p")"
+            test "$PACKAGE" = "$EXPECTED_PACKAGE"
+            if ! [[ "$VERSION_CODE" =~ ^[0-9]+$ ]]; then
+              echo "::error::$ABI versionCode is not numeric: $VERSION_CODE"
+              exit 1
+            fi
+            if (( VERSION_CODE < EXPECTED_MIN_VERSION_CODE )); then
+              echo "::error::$ABI versionCode $VERSION_CODE would downgrade installed #312 versionCode $EXPECTED_MIN_VERSION_CODE"
+              exit 1
+            fi
+
+            CERT_OUTPUT="$($APKSIGNER verify --print-certs "$apk" 2>&1)"
+            CERT_LINE="$(printf '%s\n' "$CERT_OUTPUT" | grep -i 'certificate SHA-256' | head -n 1 || true)"
+            CERT_SHA256="$(printf '%s\n' "$CERT_LINE" | sed -E 's/.*:[[:space:]]*//' | tr -d ':' | tr '[:lower:]' '[:upper:]' | tr -d '[:space:]')"
+            echo "$ABI final APK certificate SHA-256=$CERT_SHA256"
+            test -n "$CERT_SHA256"
+            test "$CERT_SHA256" = "$EXPECTED_CERT_SHA256"
+
+            if [ "$ABI" = 'arm64-v8a' ]; then ARM64_CODE="$VERSION_CODE"; fi
+            if [ "$ABI" = 'armeabi-v7a' ]; then ARMV7_CODE="$VERSION_CODE"; fi
+          done
+
+          test -n "$ARM64_APK"
+          test -n "$ARMV7_APK"
+          test -n "$ARM64_CODE"
+          test -n "$ARMV7_CODE"
+
+          APP_VERSION="$(node -p "require('./artifacts/legendstream-xplayer/app.json').expo.version")"
+          ARM64_NAME="LegendStream-XPlayer-v${APP_VERSION}-IP2-validation-candidate-arm64-v8a.apk"
+          ARMV7_NAME="LegendStream-XPlayer-v${APP_VERSION}-IP2-validation-candidate-armeabi-v7a.apk"
+          cp "$ARM64_APK" "$STAGE_DIR/$ARM64_NAME"
+          cp "$ARMV7_APK" "$STAGE_DIR/$ARMV7_NAME"
+
+          echo "arm64_version_code=$ARM64_CODE" >> "$GITHUB_OUTPUT"
+          echo "armv7_version_code=$ARMV7_CODE" >> "$GITHUB_OUTPUT"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo 'PACKAGE_MATCHES=yes'
+          echo 'DUAL_ABI_MATCHES=yes'
+          echo 'VERSION_CODE_NOT_DOWNGRADE_FROM_312=yes'
+          echo 'FINAL_CERT_MATCHES_312=yes'
+
+      - name: Upload arm64 IP-2 validation candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: LegendStream-XPlayer-IP2-Validation-Candidate-arm64-v8a
+          path: release-staging/*-IP2-validation-candidate-arm64-v8a.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload armeabi-v7a IP-2 validation candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: LegendStream-XPlayer-IP2-Validation-Candidate-armeabi-v7a
+          path: release-staging/*-IP2-validation-candidate-armeabi-v7a.apk
+          if-no-files-found: error
+          retention-days: 14
