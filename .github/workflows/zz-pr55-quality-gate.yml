@@ -1,0 +1,58 @@
+name: PR55 Quality Storage Gate Verify
+
+on:
+  push:
+    branches:
+      - test/quality-storage-gates
+    paths:
+      - '.github/workflows/zz-pr55-quality-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Frozen install
+        run: pnpm install --frozen-lockfile
+      - name: Lockfile unchanged
+        run: git diff --exit-code -- pnpm-lock.yaml
+      - name: Credential storage gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(pnpm --filter @workspace/legendstream-xplayer test:credentials 2>&1 | tee /dev/stderr)"
+          grep -F 'credential storage scenarios: 6/6 passed' <<<"$output"
+      - name: Provider backup gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(pnpm --filter @workspace/legendstream-xplayer test:backup 2>&1 | tee /dev/stderr)"
+          grep -F 'provider backup acceptance: 7/7 passed' <<<"$output"
+          grep -F 'negative crypto: 2/2 passed' <<<"$output"
+          grep -F 'credential round-trip: 1/1 passed' <<<"$output"
+          grep -F 'security regressions: 14/14 passed' <<<"$output"
+          grep -F 'provider backup tests: 24/24 passed' <<<"$output"
+      - name: Mobile typecheck
+        run: pnpm --filter @workspace/legendstream-xplayer typecheck
+      - name: API typecheck
+        run: pnpm exec tsc -b artifacts/api-server/tsconfig.json --pretty false
+      - name: Quality source assertions
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'Credential storage invariants (6/6 required)' .github/workflows/quality.yml
+          grep -F 'Provider backup invariants (24/24 required)' .github/workflows/quality.yml
+          grep -F "credential storage scenarios: 6/6 passed" .github/workflows/quality.yml
+          grep -F "provider backup tests: 24/24 passed" .github/workflows/quality.yml
+          echo 'PR55_QUALITY_STORAGE_GATE=pass'
