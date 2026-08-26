@@ -61,7 +61,7 @@ jobs:
               raise SystemExit('security counter anchor missing')
 
           anchor = '''test("security", "generated recovery phrase format is constrained", () => {\n'''
-          degraded = '''test("security", "degraded Noble runtime loads without throw and blocks crypto before writes", () => {\n  const loader = resolve(process.cwd(), "tests/providerBackupDegradedLoader.mjs");\n  const scenario = resolve(process.cwd(), "tests/providerBackupDegradedMode.ts");\n  const child = spawnSync(\n    process.execPath,\n    ["--no-warnings", "--import", "tsx", "--experimental-loader", loader, scenario],\n    { cwd: process.cwd(), encoding: "utf8", env: { ...process.env } },\n  );\n\n  assert.equal(\n    child.status,\n    0,\n    `degraded-mode child failed (status=${String(child.status)})\\nstdout:\\n${child.stdout}\\nstderr:\\n${child.stderr}`,\n  );\n  assert.match(\n    child.stdout,\n    /degraded-mode: module-load=pass cryptoAvailable=false secureStoreWrites=0 asyncStorageWrites=0/u,\n  );\n});\n\n'''
+          degraded = '''test("security", "degraded Noble runtime loads without throw and blocks crypto before writes", () => {\n  const loader = resolve(process.cwd(), "tests/providerBackupDegradedLoader.cjs");\n  const scenario = resolve(process.cwd(), "tests/providerBackupDegradedMode.ts");\n  const child = spawnSync(\n    process.execPath,\n    ["--no-warnings", "--require", loader, "--import", "tsx", scenario],\n    { cwd: process.cwd(), encoding: "utf8", env: { ...process.env } },\n  );\n\n  assert.equal(\n    child.status,\n    0,\n    `degraded-mode child failed (status=${String(child.status)})\\nstdout:\\n${child.stdout}\\nstderr:\\n${child.stderr}`,\n  );\n  assert.match(\n    child.stdout,\n    /degraded-mode: module-load=pass cryptoAvailable=false secureStoreWrites=0 asyncStorageWrites=0/u,\n  );\n});\n\n'''
           if degraded not in text:
               if anchor not in text:
                   raise SystemExit('degraded test insertion anchor missing')
@@ -111,6 +111,7 @@ jobs:
           grep -F 'credential round-trip: 1/1 passed' <<<"$output"
           grep -F 'security regressions: 7/7 passed' <<<"$output"
           grep -F 'provider backup tests: 17/17 passed' <<<"$output"
+          grep -F 'degraded-mode: module-load=pass cryptoAvailable=false secureStoreWrites=0 asyncStorageWrites=0' <<<"$output"
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references
@@ -123,7 +124,7 @@ jobs:
           ROOT='artifacts/legendstream-xplayer'
           CORE="$ROOT/lib/providerBackupCore.ts"
           TEST="$ROOT/tests/providerBackupScenarios.ts"
-          LOADER="$ROOT/tests/providerBackupDegradedLoader.mjs"
+          LOADER="$ROOT/tests/providerBackupDegradedLoader.cjs"
           SCENARIO="$ROOT/tests/providerBackupDegradedMode.ts"
           ! grep -R --line-number -E 'Math\.random\(' "$ROOT/lib/providerBackup"* "$ROOT/lib/cryptoBootstrap.ts"
           ! grep -R --line-number -F 'removeItem(LEGACY_STORAGE_KEY)' "$ROOT/lib/providerBackup"* "$ROOT/components/ProviderBackupPanel.tsx"
@@ -131,7 +132,7 @@ jobs:
           test "$(grep -Fc 'assertNobleCryptoRuntime();' "$CORE")" -eq 2
           ! sed -n '1,70p' "$CORE" | grep -F 'assertNobleCryptoRuntime();'
           grep -F 'security: 7,' "$TEST"
-          grep -F 'providerBackupDegradedLoader.mjs' "$TEST"
+          grep -F 'providerBackupDegradedLoader.cjs' "$TEST"
           grep -F '@noble/hashes/hmac.js' "$LOADER"
           grep -F 'cryptoAvailable, false' "$SCENARIO"
           grep -F 'secureStoreWrites, 0' "$SCENARIO"
@@ -149,7 +150,7 @@ jobs:
           git show origin/main:.github/workflows/quality.yml > .github/workflows/quality.yml
           git add .github/workflows/quality.yml \
                   artifacts/legendstream-xplayer/tests/providerBackupScenarios.ts \
-                  artifacts/legendstream-xplayer/tests/providerBackupDegradedLoader.mjs \
+                  artifacts/legendstream-xplayer/tests/providerBackupDegradedLoader.cjs \
                   artifacts/legendstream-xplayer/tests/providerBackupDegradedMode.ts
           git diff --cached --check
           if git diff --cached --quiet; then
