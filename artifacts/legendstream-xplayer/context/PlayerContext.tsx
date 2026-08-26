@@ -52,7 +52,7 @@ const XTREAM_PROBE_TIMEOUT_MS = 7_000;
 const PROVIDER_CONNECT_TIMEOUT_MS = 30_000;
 const STORAGE_KEY = "@legendstream/player-state-v3";
 const LEGACY_STORAGE_KEY = "@legendstream/player-state-v2";
-const SECURE_MIGRATION_KEY = "@legendstream/secure-credentials-v2";
+const SECURE_MIGRATION_KEY = "@legendstream/secure-credentials-v3";
 const LOGGED_OUT = "__logged_out__";
 
 export function selectProgramsAt(
@@ -311,6 +311,31 @@ function hasProviderSecrets(secrets: ProviderSecrets) {
   return Object.values(secrets).some((value) => typeof value === "string" && value.length > 0);
 }
 
+function mergeProviderSecrets(...sources: Array<ProviderSecrets | null | undefined>): ProviderSecrets {
+  const merged: ProviderSecrets = {};
+  for (const source of sources) {
+    if (!source) continue;
+    for (const [key, value] of Object.entries(source) as Array<[
+      keyof ProviderSecrets,
+      string | undefined,
+    ]>) {
+      if (typeof value === "string" && value.length > 0) merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+function hasRequiredProviderSecrets(type: ProviderType, secrets: ProviderSecrets) {
+  const url = secrets.url || secrets.playlistUrl || "";
+  if (!url) return false;
+  if (type === "xtream") {
+    const parsed = parseXtreamGetPhp(url);
+    return Boolean((secrets.username && secrets.password) || (parsed?.username && parsed.password));
+  }
+  if (type === "stalker") return Boolean(secrets.mac);
+  return true;
+}
+
 function storedProviderFrom(provider: ProviderConfig): StoredProviderConfig {
   const {
     url: _url,
@@ -339,7 +364,11 @@ async function hydrateStoredProvider(
   legacySecrets?: ProviderSecrets,
 ): Promise<ProviderConfig> {
   const secure = await getCredentials(stored.id).catch(() => null);
-  const secrets = secure ?? legacySecrets ?? providerSecretsFrom(stored as ProviderConfig);
+  const secrets = mergeProviderSecrets(
+    legacySecrets,
+    providerSecretsFrom(stored as ProviderConfig),
+    secure,
+  );
   const url = secrets.url || secrets.playlistUrl || "";
   return {
     ...stored,
@@ -357,44 +386,59 @@ async function saveProviderSecrets(provider: ProviderConfig) {
 }
 
 const readState = async (): Promise<PlayerState> => {
-  let raw = await AsyncStorage.getItem(STORAGE_KEY);
-  if (!raw) raw = await AsyncStorage.getItem(LEGACY_STORAGE_KEY);
+  const primaryRaw = await AsyncStorage.getItem(STORAGE_KEY);
+  const legacyRaw = await AsyncStorage.getItem(LEGACY_STORAGE_KEY);
+  const raw = primaryRaw ?? legacyRaw;
   if (!raw) return emptyState;
 
   try {
     const saved = JSON.parse(raw) as Partial<PlayerState>;
+    const legacySaved = legacyRaw ? (JSON.parse(legacyRaw) as Partial<PlayerState>) : undefined;
     const storedProviders = (saved.providers ?? []) as ProviderConfig[];
-    let migrationSucceeded = true;
-    const legacyById = new Map<string, ProviderSecrets>();
+    const recoveryById = new Map<string, ProviderSecrets>();
 
-    for (const item of storedProviders) {
-      const legacySecrets = providerSecretsFrom(item);
-      legacyById.set(item.id, legacySecrets);
-      if (!hasProviderSecrets(legacySecrets)) continue;
-      try {
-        await saveCredentials(item.id, legacySecrets);
-      } catch {
-        migrationSucceeded = false;
+    const collectRecovery = (candidate?: Partial<PlayerState>) => {
+      for (const item of (candidate?.providers ?? []) as ProviderConfig[]) {
+        recoveryById.set(
+          item.id,
+          mergeProviderSecrets(recoveryById.get(item.id), providerSecretsFrom(item)),
+        );
       }
-    }
+      if (candidate?.provider?.id) {
+        recoveryById.set(
+          candidate.provider.id,
+          mergeProviderSecrets(
+            recoveryById.get(candidate.provider.id),
+            providerSecretsFrom(candidate.provider),
+          ),
+        );
+      }
+    };
 
-    if (saved.provider?.id) {
-      const activeLegacy = providerSecretsFrom(saved.provider);
-      const existing = legacyById.get(saved.provider.id) ?? {};
-      const merged = { ...existing, ...activeLegacy };
-      legacyById.set(saved.provider.id, merged);
-      if (hasProviderSecrets(activeLegacy)) {
+    // v2 may still contain the plaintext credentials that an earlier broken
+    // v3 migration failed to secure. Read both stores, not only v2-as-fallback.
+    collectRecovery(legacySaved);
+    collectRecovery(saved);
+
+    let migrationSucceeded = true;
+    const providers = await Promise.all(
+      storedProviders.map(async (item) => {
+        const recovered = recoveryById.get(item.id);
+        const hydrated = await hydrateStoredProvider(item, recovered);
+        const secrets = providerSecretsFrom(hydrated);
+        if (!hasRequiredProviderSecrets(hydrated.type, secrets)) {
+          migrationSucceeded = false;
+          return hydrated;
+        }
         try {
-          await saveCredentials(saved.provider.id, merged);
+          await saveCredentials(item.id, secrets);
         } catch {
           migrationSucceeded = false;
         }
-      }
-    }
-
-    const providers = await Promise.all(
-      storedProviders.map((item) => hydrateStoredProvider(item, legacyById.get(item.id))),
+        return hydrated;
+      }),
     );
+
     const activeProviderId = saved.activeProviderId;
     const provider =
       activeProviderId === LOGGED_OUT
@@ -613,24 +657,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     stateRef.current = next;
     setState(next);
     try {
-      // Never strip plaintext provider secrets from AsyncStorage until every
-      // in-memory provider secret has been durably written to SecureStore.
-      // This is especially important while recovering from a failed migration.
+      // Do not sanitize metadata or delete the legacy recovery store unless
+      // every remaining provider has a complete credential set secured first.
       const providersToSecure = new Map<string, ProviderConfig>();
       for (const item of next.providers) providersToSecure.set(item.id, item);
       if (next.provider) providersToSecure.set(next.provider.id, next.provider);
       for (const item of providersToSecure.values()) {
-        if (hasProviderSecrets(providerSecretsFrom(item))) {
-          await saveProviderSecrets(item);
+        const secrets = providerSecretsFrom(item);
+        if (!hasRequiredProviderSecrets(item.type, secrets)) {
+          throw new Error("Provider credentials are incomplete; preserving recovery storage.");
         }
+        await saveProviderSecrets(item);
       }
 
       await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
       await AsyncStorage.setItem(SECURE_MIGRATION_KEY, "1");
       await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
     } catch {
-      // Keep the in-memory session usable and, critically, leave the previous
-      // on-disk state untouched so credentials are not lost on storage failure.
+      // Keep the in-memory session usable and preserve previous on-disk state.
     }
   };
 
