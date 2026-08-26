@@ -6,6 +6,7 @@ on:
   push:
     branches: [main]
 
+# Deterministic, read-only CI: dependency resolution must match pnpm-lock.yaml exactly.
 permissions:
   contents: read
 
