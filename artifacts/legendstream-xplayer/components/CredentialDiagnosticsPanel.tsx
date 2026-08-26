@@ -17,7 +17,7 @@ export function useCredentialDiagnosticsStartup() {
     void runCredentialDiagnostics()
       .then((report) => {
         if (!active) return;
-        console.log("LS_DIAG", JSON.stringify(report));
+        console.log("LS_DIAG", formatCredentialDiagnostics(report));
       })
       .catch((error) => {
         if (!active) return;
@@ -41,7 +41,7 @@ export function CredentialDiagnosticsPanel() {
     try {
       const next = await runCredentialDiagnostics();
       setReport(next);
-      console.log("LS_DIAG", JSON.stringify(next));
+      console.log("LS_DIAG", formatCredentialDiagnostics(next));
     } catch (error) {
       const message = errorMessage(error);
       setFatalError(message);
