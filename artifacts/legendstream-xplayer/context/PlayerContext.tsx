@@ -52,7 +52,7 @@ const XTREAM_PROBE_TIMEOUT_MS = 7_000;
 const PROVIDER_CONNECT_TIMEOUT_MS = 30_000;
 const STORAGE_KEY = "@legendstream/player-state-v3";
 const LEGACY_STORAGE_KEY = "@legendstream/player-state-v2";
-const SECURE_MIGRATION_KEY = "@legendstream/secure-credentials-v1";
+const SECURE_MIGRATION_KEY = "@legendstream/secure-credentials-v2";
 const LOGGED_OUT = "__logged_out__";
 
 export function selectProgramsAt(
@@ -613,11 +613,24 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     stateRef.current = next;
     setState(next);
     try {
+      // Never strip plaintext provider secrets from AsyncStorage until every
+      // in-memory provider secret has been durably written to SecureStore.
+      // This is especially important while recovering from a failed migration.
+      const providersToSecure = new Map<string, ProviderConfig>();
+      for (const item of next.providers) providersToSecure.set(item.id, item);
+      if (next.provider) providersToSecure.set(next.provider.id, next.provider);
+      for (const item of providersToSecure.values()) {
+        if (hasProviderSecrets(providerSecretsFrom(item))) {
+          await saveProviderSecrets(item);
+        }
+      }
+
       await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
       await AsyncStorage.setItem(SECURE_MIGRATION_KEY, "1");
       await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
     } catch {
-      // keep in-memory session usable
+      // Keep the in-memory session usable and, critically, leave the previous
+      // on-disk state untouched so credentials are not lost on storage failure.
     }
   };
 
