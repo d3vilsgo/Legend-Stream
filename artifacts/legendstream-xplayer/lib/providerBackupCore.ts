@@ -231,19 +231,48 @@ export function validateCustomBackupPassword(password: string): {
   return { normalized, warnings };
 }
 
-const RECOVERY_ONSETS = ["b", "c", "d", "f", "g", "h", "k", "m"] as const;
-const RECOVERY_VOWELS = ["a", "e", "i", "o"] as const;
-const RECOVERY_CODAS = ["n", "r"] as const;
+// EFF Large Wordlist for Passphrases (2016-07-18), mirrored by
+// diceware-wordlist-en-eff@1.0.1. The upstream list has 7,776 unique words.
+const EFF_DICEWARE_WORDS = require("diceware-wordlist-en-eff") as Record<string, string>;
+const RECOVERY_WORDS = Object.keys(EFF_DICEWARE_WORDS)
+  .sort()
+  .map((key) => EFF_DICEWARE_WORDS[key]);
+const RECOVERY_WORD_PATTERN = /^[a-z]+(?:-[a-z]+)*$/u;
 
-function recoverySyllable(index: number) {
-  return `${RECOVERY_ONSETS[(index >>> 3) & 7]}${RECOVERY_VOWELS[(index >>> 1) & 3]}${RECOVERY_CODAS[index & 1]}`;
+export const RECOVERY_WORD_COUNT = 6;
+export const RECOVERY_WORDLIST_SIZE = 7776;
+export const RECOVERY_ENTROPY_BITS = Math.log2(RECOVERY_WORDLIST_SIZE) * RECOVERY_WORD_COUNT;
+const RECOVERY_SAMPLE_SPACE = 0x10000;
+export const RECOVERY_REJECTION_LIMIT = Math.floor(RECOVERY_SAMPLE_SPACE / RECOVERY_WORDLIST_SIZE) * RECOVERY_WORDLIST_SIZE;
+const RECOVERY_REJECTION_RETRY_LIMIT = 1024;
+
+export function recoveryWordlistStats() {
+  const uniqueWords = new Set(RECOVERY_WORDS);
+  return {
+    source: "EFF Large Wordlist for Passphrases (2016-07-18)",
+    actualWordCount: RECOVERY_WORDS.length,
+    uniqueWordCount: uniqueWords.size,
+    asciiLowercase: RECOVERY_WORDS.every((word) => RECOVERY_WORD_PATTERN.test(word)),
+  };
+}
+
+function assertRecoveryWordlist(): void {
+  const stats = recoveryWordlistStats();
+  if (
+    stats.actualWordCount !== RECOVERY_WORDLIST_SIZE ||
+    stats.uniqueWordCount !== RECOVERY_WORDLIST_SIZE ||
+    !stats.asciiLowercase
+  ) {
+    throw new ProviderBackupError("entropy_unavailable", "Recovery wordlist validation failed.");
+  }
 }
 
 export function recoveryWordAt(index: number): string {
-  if (!Number.isInteger(index) || index < 0 || index >= 4096) {
-    throw new RangeError("Recovery word index must be 0..4095.");
+  assertRecoveryWordlist();
+  if (!Number.isInteger(index) || index < 0 || index >= RECOVERY_WORDLIST_SIZE) {
+    throw new RangeError(`Recovery word index must be 0..${RECOVERY_WORDLIST_SIZE - 1}.`);
   }
-  return `${recoverySyllable(index >>> 6)}${recoverySyllable(index & 63)}`;
+  return RECOVERY_WORDS[index];
 }
 
 export function requireEntropy(randomBytes?: SecureRandomBytes): SecureRandomBytes {
@@ -259,15 +288,27 @@ export function requireEntropy(randomBytes?: SecureRandomBytes): SecureRandomByt
   };
 }
 
+export function sampleRecoveryWordIndex(randomBytes?: SecureRandomBytes): number {
+  const random = requireEntropy(randomBytes);
+  assertRecoveryWordlist();
+  for (let attempt = 0; attempt < RECOVERY_REJECTION_RETRY_LIMIT; attempt += 1) {
+    const bytes = random(2);
+    const candidate = ((bytes[0] << 8) | bytes[1]) >>> 0;
+    if (candidate < RECOVERY_REJECTION_LIMIT) {
+      return candidate % RECOVERY_WORDLIST_SIZE;
+    }
+  }
+  throw new ProviderBackupError("entropy_unavailable", "Secure random entropy could not produce an unbiased recovery word index.");
+}
+
 export function generateRecoveryPhrase(randomBytes?: SecureRandomBytes): string {
   const random = requireEntropy(randomBytes);
-  const bytes = random(12);
+  assertRecoveryWordlist();
   const words: string[] = [];
-  for (let i = 0; i < 12; i += 2) {
-    const index = (((bytes[i] << 8) | bytes[i + 1]) & 0x0fff) >>> 0;
-    words.push(recoveryWordAt(index));
+  for (let index = 0; index < RECOVERY_WORD_COUNT; index += 1) {
+    words.push(recoveryWordAt(sampleRecoveryWordIndex(random)));
   }
-  return words.join("-");
+  return words.join(" ");
 }
 
 function parseJsonObject(text: string, errorCode: ProviderBackupErrorCode, message: string) {
