@@ -4,6 +4,25 @@ import { hmac } from "@noble/hashes/hmac.js";
 import { scryptAsync } from "@noble/hashes/scrypt.js";
 import { sha256 } from "@noble/hashes/sha2.js";
 
+const NOBLE_CRYPTO_RUNTIME = { gcm, hkdf, hmac, scryptAsync, sha256 } as const;
+
+export function nobleCryptoRuntimeTypes(): Record<keyof typeof NOBLE_CRYPTO_RUNTIME, string> {
+  return Object.fromEntries(
+    Object.entries(NOBLE_CRYPTO_RUNTIME).map(([name, value]) => [name, typeof value]),
+  ) as Record<keyof typeof NOBLE_CRYPTO_RUNTIME, string>;
+}
+
+export function assertNobleCryptoRuntime(): void {
+  const unavailable = Object.entries(NOBLE_CRYPTO_RUNTIME)
+    .filter(([, value]) => typeof value !== "function")
+    .map(([name, value]) => `${name}:${typeof value}`);
+  if (unavailable.length) {
+    throw new Error(`Noble crypto runtime exports unavailable: ${unavailable.join(", ")}`);
+  }
+}
+
+assertNobleCryptoRuntime();
+
 export const BACKUP_FORMAT = "legendstream_provider_backup" as const;
 export const BACKUP_FORMAT_VERSION = 1 as const;
 export const BACKUP_SCHEMA_VERSION = 1 as const;
@@ -126,10 +145,9 @@ function concatBytes(...parts: Uint8Array[]) {
 }
 
 function equalBytesConstantTime(left: Uint8Array, right: Uint8Array): boolean {
-  if (left.length !== right.length) return false;
-  let difference = 0;
+  let difference = left.length ^ right.length;
   for (let index = 0; index < left.length; index += 1) {
-    difference |= left[index] ^ right[index];
+    difference |= left[index] ^ (right[index] ?? 0);
   }
   return difference === 0;
 }

@@ -7,6 +7,7 @@ import {
   encryptBackupPayload,
   generateRecoveryPhrase,
   MAX_SECURE_RECORD_BYTES,
+  nobleCryptoRuntimeTypes,
   normalizeBackupPassword,
   ProviderBackupError,
   secureRecordByteLength,
@@ -22,7 +23,7 @@ const EXPECTED: Record<Category, number> = {
   acceptance: 7,
   negativeCrypto: 2,
   roundTrip: 1,
-  security: 5,
+  security: 6,
 };
 const EXPECTED_TESTS = Object.values(EXPECTED).reduce((sum, count) => sum + count, 0);
 const tests: TestCase[] = [];
@@ -231,6 +232,18 @@ test("roundTrip", "real credential export-import is byte-for-byte value identica
   assert.deepEqual(imported.payload.providers[0].credentials, credentials);
   assert.equal(imported.payload.providers[0].credentials.password, credentials.password);
   assert.equal(new TextEncoder().encode(imported.payload.providers[0].credentials.password as string).join(","), new TextEncoder().encode(credentials.password).join(","));
+});
+
+test("security", "all Noble crypto runtime exports are callable", () => {
+  const types = nobleCryptoRuntimeTypes();
+  console.log(`noble runtime types: ${JSON.stringify(types)}`);
+  assert.deepEqual(types, {
+    gcm: "function",
+    hkdf: "function",
+    hmac: "function",
+    scryptAsync: "function",
+    sha256: "function",
+  });
 });
 
 test("security", "generated recovery phrase format is constrained", () => {
