@@ -25,7 +25,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Apply D1 and D2
+      - name: Apply D1
         shell: bash
         run: |
           set -euo pipefail
@@ -48,8 +48,7 @@ jobs:
           new_decrypt = '''): Promise<DecryptedBackupResult> {\n  assertNobleCryptoRuntime();\n  if (!bytes.length || bytes.length > MAX_BACKUP_FILE_BYTES'''
           if old_decrypt not in text:
               raise SystemExit('decrypt entry not found')
-          text = text.replace(old_decrypt, new_decrypt, 1)
-          core.write_text(text)
+          core.write_text(text.replace(old_decrypt, new_decrypt, 1))
 
           panel = Path('artifacts/legendstream-xplayer/components/ProviderBackupPanel.tsx')
           text = panel.read_text()
@@ -73,27 +72,6 @@ jobs:
           if old_actions not in text:
               raise SystemExit('backup action block not found')
           panel.write_text(text.replace(old_actions, new_actions, 1))
-
-          diag = Path('artifacts/legendstream-xplayer/components/CredentialDiagnosticsPanel.tsx')
-          text = diag.read_text()
-          marker = '''} from "@/lib/credentialDiagnostics";\n\nconst errorMessage'''
-          replacement = '''} from "@/lib/credentialDiagnostics";\nimport { cryptoAvailable, nobleCryptoRuntimeTypes } from "@/lib/providerBackupCore";\n\nconst formatDiagnosticsWithCryptoRuntime = (report: CredentialDiagnosticsReport) =>\n  `${formatCredentialDiagnostics(report)}\\ncryptoAvailable=${cryptoAvailable}\\nnobleCryptoRuntimeTypes=${JSON.stringify(nobleCryptoRuntimeTypes())}`;\n\nconst errorMessage'''
-          if marker not in text:
-              raise SystemExit('diagnostics import marker not found')
-          text = text.replace(marker, replacement, 1)
-          text = text.replace('formatCredentialDiagnostics(report)', 'formatDiagnosticsWithCryptoRuntime(report)')
-          text = text.replace('formatCredentialDiagnostics(next)', 'formatDiagnosticsWithCryptoRuntime(next)')
-          old_fatal = '''JSON.stringify({ fatalError: errorMessage(error) })'''
-          new_fatal = '''JSON.stringify({\n          fatalError: errorMessage(error),\n          cryptoAvailable,\n          nobleCryptoRuntimeTypes: nobleCryptoRuntimeTypes(),\n        })'''
-          if old_fatal not in text:
-              raise SystemExit('startup fatal diagnostics block not found')
-          text = text.replace(old_fatal, new_fatal, 1)
-          old_run_fatal = '''JSON.stringify({ fatalError: message })'''
-          new_run_fatal = '''JSON.stringify({\n        fatalError: message,\n        cryptoAvailable,\n        nobleCryptoRuntimeTypes: nobleCryptoRuntimeTypes(),\n      })'''
-          if old_run_fatal not in text:
-              raise SystemExit('manual fatal diagnostics block not found')
-          text = text.replace(old_run_fatal, new_run_fatal, 1)
-          diag.write_text(text)
           PY
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
@@ -127,11 +105,11 @@ jobs:
           grep -F 'export const cryptoAvailable' "$CORE"
           grep -F 'CRYPTO_UNAVAILABLE_MESSAGE = "Bu cihazda şifreleme bileşenleri yüklenemedi"' "$CORE"
           test "$(grep -Fc 'assertNobleCryptoRuntime();' "$CORE")" -eq 2
-          ! grep -A2 -F 'export function assertNobleCryptoRuntime' "$CORE" | grep -F 'assertNobleCryptoRuntime();'
           test "$(grep -Fc 'disabled={busy || !cryptoAvailable}' "$PANEL")" -eq 2
           grep -F '{CRYPTO_UNAVAILABLE_MESSAGE}' "$PANEL"
           grep -F 'nobleCryptoRuntimeTypes=${JSON.stringify(nobleCryptoRuntimeTypes())}' "$DIAG"
           grep -F 'cryptoAvailable=${cryptoAvailable}' "$DIAG"
+          ! grep -F 'assertNobleCryptoRuntime();' <(sed -n '1,45p' "$CORE")
           echo 'IP2_D1_D2_GATE=pass'
       - name: Commit verified D1 D2 and remove temporary workflow
         shell: bash
