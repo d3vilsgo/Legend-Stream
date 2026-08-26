@@ -1,0 +1,148 @@
+name: IP2 D1 D2 Gate
+
+on:
+  push:
+    branches:
+      - feat/provider-backup
+    paths:
+      - '.github/workflows/zz-ip2-d1-d2-gate.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/provider-backup
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Apply D1 and D2
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+
+          core = Path('artifacts/legendstream-xplayer/lib/providerBackupCore.ts')
+          text = core.read_text()
+          old = '''const NOBLE_CRYPTO_RUNTIME = { gcm, hkdf, hmac, scryptAsync, sha256 } as const;\n\nexport function nobleCryptoRuntimeTypes(): Record<keyof typeof NOBLE_CRYPTO_RUNTIME, string> {\n  return Object.fromEntries(\n    Object.entries(NOBLE_CRYPTO_RUNTIME).map(([name, value]) => [name, typeof value]),\n  ) as Record<keyof typeof NOBLE_CRYPTO_RUNTIME, string>;\n}\n\nexport function assertNobleCryptoRuntime(): void {\n  const unavailable = Object.entries(NOBLE_CRYPTO_RUNTIME)\n    .filter(([, value]) => typeof value !== "function")\n    .map(([name, value]) => `${name}:${typeof value}`);\n  if (unavailable.length) {\n    throw new Error(`Noble crypto runtime exports unavailable: ${unavailable.join(", ")}`);\n  }\n}\n\nassertNobleCryptoRuntime();\n'''
+          new = '''const NOBLE_CRYPTO_RUNTIME = { gcm, hkdf, hmac, scryptAsync, sha256 } as const;\n\nexport const CRYPTO_UNAVAILABLE_MESSAGE = "Bu cihazda şifreleme bileşenleri yüklenemedi";\n\nexport function nobleCryptoRuntimeTypes(): Record<keyof typeof NOBLE_CRYPTO_RUNTIME, string> {\n  return Object.fromEntries(\n    Object.entries(NOBLE_CRYPTO_RUNTIME).map(([name, value]) => [name, typeof value]),\n  ) as Record<keyof typeof NOBLE_CRYPTO_RUNTIME, string>;\n}\n\nconst STARTUP_NOBLE_CRYPTO_RUNTIME_TYPES = nobleCryptoRuntimeTypes();\nexport const cryptoAvailable = Object.values(STARTUP_NOBLE_CRYPTO_RUNTIME_TYPES)\n  .every((value) => value === "function");\n\nexport function assertNobleCryptoRuntime(): void {\n  if (!cryptoAvailable) {\n    throw new Error(CRYPTO_UNAVAILABLE_MESSAGE);\n  }\n}\n'''
+          if old not in text:
+              raise SystemExit('D1 startup assertion block not found')
+          text = text.replace(old, new, 1)
+          old_encrypt = '''): Promise<EncryptedBackupResult> {\n  const random = requireEntropy(randomBytes);\n'''
+          new_encrypt = '''): Promise<EncryptedBackupResult> {\n  assertNobleCryptoRuntime();\n  const random = requireEntropy(randomBytes);\n'''
+          if old_encrypt not in text:
+              raise SystemExit('encrypt entry not found')
+          text = text.replace(old_encrypt, new_encrypt, 1)
+          old_decrypt = '''): Promise<DecryptedBackupResult> {\n  if (!bytes.length || bytes.length > MAX_BACKUP_FILE_BYTES'''
+          new_decrypt = '''): Promise<DecryptedBackupResult> {\n  assertNobleCryptoRuntime();\n  if (!bytes.length || bytes.length > MAX_BACKUP_FILE_BYTES'''
+          if old_decrypt not in text:
+              raise SystemExit('decrypt entry not found')
+          text = text.replace(old_decrypt, new_decrypt, 1)
+          core.write_text(text)
+
+          panel = Path('artifacts/legendstream-xplayer/components/ProviderBackupPanel.tsx')
+          text = panel.read_text()
+          old_import = '''import {\n  generateRecoveryPhrase,\n  validateCustomBackupPassword,\n  type ProviderBackupError,\n} from "@/lib/providerBackupCore";\n'''
+          new_import = '''import {\n  CRYPTO_UNAVAILABLE_MESSAGE,\n  cryptoAvailable,\n  generateRecoveryPhrase,\n  validateCustomBackupPassword,\n  type ProviderBackupError,\n} from "@/lib/providerBackupCore";\n'''
+          if old_import not in text:
+              raise SystemExit('backup panel import block not found')
+          text = text.replace(old_import, new_import, 1)
+          old_begin_export = '''  const beginExport = () => {\n    setMessage(null);\n    try {\n'''
+          new_begin_export = '''  const beginExport = () => {\n    setMessage(null);\n    if (!cryptoAvailable) {\n      setMessage(CRYPTO_UNAVAILABLE_MESSAGE);\n      return;\n    }\n    try {\n'''
+          if old_begin_export not in text:
+              raise SystemExit('beginExport block not found')
+          text = text.replace(old_begin_export, new_begin_export, 1)
+          old_begin_import = '''  const beginImport = async () => {\n    setBusy(true);\n    setMessage(null);\n    try {\n'''
+          new_begin_import = '''  const beginImport = async () => {\n    setMessage(null);\n    if (!cryptoAvailable) {\n      setMessage(CRYPTO_UNAVAILABLE_MESSAGE);\n      return;\n    }\n    setBusy(true);\n    try {\n'''
+          if old_begin_import not in text:
+              raise SystemExit('beginImport block not found')
+          text = text.replace(old_begin_import, new_begin_import, 1)
+          old_actions = '''    <View style={styles.actions}>\n      {mode === "full" ? <FocusButton label="Hesapları Dışa Aktar" icon="share-2" onPress={beginExport} disabled={busy} /> : null}\n      <FocusButton label="Hesapları İçe Aktar" icon="upload" variant={mode === "import-only" ? "primary" : "ghost"} onPress={() => void beginImport()} disabled={busy} />\n    </View>\n'''
+          new_actions = '''    {!cryptoAvailable ? (\n      <Text style={{ color: colors.destructive }}>{CRYPTO_UNAVAILABLE_MESSAGE}</Text>\n    ) : null}\n    <View style={styles.actions}>\n      {mode === "full" ? <FocusButton label="Hesapları Dışa Aktar" icon="share-2" onPress={beginExport} disabled={busy || !cryptoAvailable} /> : null}\n      <FocusButton label="Hesapları İçe Aktar" icon="upload" variant={mode === "import-only" ? "primary" : "ghost"} onPress={() => void beginImport()} disabled={busy || !cryptoAvailable} />\n    </View>\n'''
+          if old_actions not in text:
+              raise SystemExit('backup action block not found')
+          panel.write_text(text.replace(old_actions, new_actions, 1))
+
+          diag = Path('artifacts/legendstream-xplayer/components/CredentialDiagnosticsPanel.tsx')
+          text = diag.read_text()
+          marker = '''} from "@/lib/credentialDiagnostics";\n\nconst errorMessage'''
+          replacement = '''} from "@/lib/credentialDiagnostics";\nimport { cryptoAvailable, nobleCryptoRuntimeTypes } from "@/lib/providerBackupCore";\n\nconst formatDiagnosticsWithCryptoRuntime = (report: CredentialDiagnosticsReport) =>\n  `${formatCredentialDiagnostics(report)}\\ncryptoAvailable=${cryptoAvailable}\\nnobleCryptoRuntimeTypes=${JSON.stringify(nobleCryptoRuntimeTypes())}`;\n\nconst errorMessage'''
+          if marker not in text:
+              raise SystemExit('diagnostics import marker not found')
+          text = text.replace(marker, replacement, 1)
+          text = text.replace('formatCredentialDiagnostics(report)', 'formatDiagnosticsWithCryptoRuntime(report)')
+          text = text.replace('formatCredentialDiagnostics(next)', 'formatDiagnosticsWithCryptoRuntime(next)')
+          old_fatal = '''JSON.stringify({ fatalError: errorMessage(error) })'''
+          new_fatal = '''JSON.stringify({\n          fatalError: errorMessage(error),\n          cryptoAvailable,\n          nobleCryptoRuntimeTypes: nobleCryptoRuntimeTypes(),\n        })'''
+          if old_fatal not in text:
+              raise SystemExit('startup fatal diagnostics block not found')
+          text = text.replace(old_fatal, new_fatal, 1)
+          old_run_fatal = '''JSON.stringify({ fatalError: message })'''
+          new_run_fatal = '''JSON.stringify({\n        fatalError: message,\n        cryptoAvailable,\n        nobleCryptoRuntimeTypes: nobleCryptoRuntimeTypes(),\n      })'''
+          if old_run_fatal not in text:
+              raise SystemExit('manual fatal diagnostics block not found')
+          text = text.replace(old_run_fatal, new_run_fatal, 1)
+          diag.write_text(text)
+          PY
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Existing credential tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(pnpm --filter @workspace/legendstream-xplayer test:credentials 2>&1 | tee /dev/stderr)"
+          grep -F 'credential storage scenarios: 6/6 passed' <<<"$output"
+      - name: Backup tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(pnpm --filter @workspace/legendstream-xplayer test:backup 2>&1 | tee /dev/stderr)"
+          grep -F 'noble runtime types: {"gcm":"function","hkdf":"function","hmac":"function","scryptAsync":"function","sha256":"function"}' <<<"$output"
+          grep -F 'provider backup acceptance: 7/7 passed' <<<"$output"
+          grep -F 'negative crypto: 2/2 passed' <<<"$output"
+          grep -F 'credential round-trip: 1/1 passed' <<<"$output"
+          grep -F 'security regressions: 6/6 passed' <<<"$output"
+          grep -F 'provider backup tests: 16/16 passed' <<<"$output"
+      - name: Mobile typecheck
+        run: pnpm --filter @workspace/legendstream-xplayer typecheck
+      - name: D1 D2 invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT='artifacts/legendstream-xplayer'
+          CORE="$ROOT/lib/providerBackupCore.ts"
+          PANEL="$ROOT/components/ProviderBackupPanel.tsx"
+          DIAG="$ROOT/components/CredentialDiagnosticsPanel.tsx"
+          grep -F 'export const cryptoAvailable' "$CORE"
+          grep -F 'CRYPTO_UNAVAILABLE_MESSAGE = "Bu cihazda şifreleme bileşenleri yüklenemedi"' "$CORE"
+          test "$(grep -Fc 'assertNobleCryptoRuntime();' "$CORE")" -eq 2
+          ! grep -A2 -F 'export function assertNobleCryptoRuntime' "$CORE" | grep -F 'assertNobleCryptoRuntime();'
+          test "$(grep -Fc 'disabled={busy || !cryptoAvailable}' "$PANEL")" -eq 2
+          grep -F '{CRYPTO_UNAVAILABLE_MESSAGE}' "$PANEL"
+          grep -F 'nobleCryptoRuntimeTypes=${JSON.stringify(nobleCryptoRuntimeTypes())}' "$DIAG"
+          grep -F 'cryptoAvailable=${cryptoAvailable}' "$DIAG"
+          echo 'IP2_D1_D2_GATE=pass'
+      - name: Commit verified D1 D2 and remove temporary workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'd3vilsgo'
+          git config user.email '80721458+d3vilsgo@users.noreply.github.com'
+          git rm .github/workflows/zz-ip2-d1-d2-gate.yml
+          git add artifacts/legendstream-xplayer/lib/providerBackupCore.ts \
+                  artifacts/legendstream-xplayer/components/ProviderBackupPanel.tsx \
+                  artifacts/legendstream-xplayer/components/CredentialDiagnosticsPanel.tsx
+          git diff --cached --check
+          git commit -m 'fix(backup): make crypto runtime probe non-fatal'
+          git push origin HEAD:feat/provider-backup
