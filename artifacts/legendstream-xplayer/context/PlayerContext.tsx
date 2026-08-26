@@ -22,6 +22,7 @@ import {
 import { mapInBatches, yieldToUi } from "@/lib/cooperative";
 import { deleteCredentials, readCredentials, saveCredentials, type ProviderSecrets } from "@/lib/secureCredentials";
 import { credentialFieldsEqual, hasRequiredCredentialFields, migratedLegacyStateAfterVerification, resolveCredentialState } from "@/lib/providerCredentialState";
+import type { ProviderMetadataCommitMetrics } from "@/lib/providerBackupService";
 
 export { ProviderType };
 export type { Channel, EpgProgram };
@@ -113,7 +114,7 @@ interface PlayerContextValue extends PlayerState {
   isEpgLoading: boolean;
   error: string | null;
   connectProvider: (config: ProviderInput) => Promise<boolean>;
-  mergeImportedProviders: (providers: ProviderConfig[]) => Promise<void>;
+  mergeImportedProviders: (providers: ProviderConfig[]) => Promise<ProviderMetadataCommitMetrics>;
   removeProvider: (providerId?: string) => Promise<void>;
   disconnectProvider: () => Promise<void>;
   refreshProvider: (providerId?: string) => Promise<void>;
@@ -712,7 +713,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const mergeImportedProviders = async (incoming: ProviderConfig[]) => {
-    if (!incoming.length) return;
+    if (!incoming.length) {
+      return {
+        prepareMs: 0,
+        asyncStorageWriteMs: 0,
+        stateApplyMs: 0,
+        asyncStorageWriteCount: 0,
+      };
+    }
+    const prepareStartedAt = Date.now();
     const current = stateRef.current;
     const importedById = new Map(incoming.map((item) => [item.id, item]));
     const importedIds = new Set(importedById.keys());
@@ -739,12 +748,23 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       favorites: current.favorites.filter((id) => !removedChannelIds.has(id)),
       history: current.history.filter((id) => !removedChannelIds.has(id)),
     };
+    const serialized = serializedPlayerState(next);
+    const prepareMs = Date.now() - prepareStartedAt;
 
     // Import credentials have already passed SecureStore write/read-back verification.
     // Metadata is the final commit point and must not be swallowed like normal UI persist().
-    await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
+    const writeStartedAt = Date.now();
+    await AsyncStorage.setItem(STORAGE_KEY, serialized);
+    const asyncStorageWriteMs = Date.now() - writeStartedAt;
+    const stateApplyStartedAt = Date.now();
     stateRef.current = next;
     setState(next);
+    return {
+      prepareMs,
+      asyncStorageWriteMs,
+      stateApplyMs: Date.now() - stateApplyStartedAt,
+      asyncStorageWriteCount: 1,
+    };
   };
 
   const connectProvider = async (config: ProviderInput) => {

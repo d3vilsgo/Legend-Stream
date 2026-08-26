@@ -1,3 +1,4 @@
+import * as Clipboard from "expo-clipboard";
 import React, { useEffect, useState } from "react";
 import { ScrollView, Text, View } from "react-native";
 import { FocusButton } from "@/components/FocusButton";
@@ -8,6 +9,11 @@ import {
   type CredentialDiagnosticsReport,
 } from "@/lib/credentialDiagnostics";
 import { cryptoAvailable, nobleCryptoRuntimeTypes } from "@/lib/providerBackupCore";
+import {
+  formatProviderImportMetrics,
+  type ProviderImportMetricsReport,
+} from "@/lib/providerImportMetrics";
+import { readLatestProviderImportMetrics } from "@/lib/providerImportMetricsStore";
 
 const formatDiagnosticsWithCryptoRuntime = (report: CredentialDiagnosticsReport) =>
   `${formatCredentialDiagnostics(report)}\ncryptoAvailable=${cryptoAvailable}\nnobleCryptoRuntimeTypes=${JSON.stringify(nobleCryptoRuntimeTypes())}`;
@@ -44,13 +50,20 @@ export function CredentialDiagnosticsPanel() {
   const [report, setReport] = useState<CredentialDiagnosticsReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [fatalError, setFatalError] = useState<string | null>(null);
+  const [importMetrics, setImportMetrics] = useState<ProviderImportMetricsReport | null>(null);
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
 
   const run = async () => {
     setBusy(true);
     setFatalError(null);
+    setCopyMessage(null);
     try {
-      const next = await runCredentialDiagnostics();
+      const [next, latestImportMetrics] = await Promise.all([
+        runCredentialDiagnostics(),
+        readLatestProviderImportMetrics().catch(() => null),
+      ]);
       setReport(next);
+      setImportMetrics(latestImportMetrics);
       console.log("LS_DIAG", formatDiagnosticsWithCryptoRuntime(next));
     } catch (error) {
       const message = errorMessage(error);
@@ -84,6 +97,30 @@ export function CredentialDiagnosticsPanel() {
           </Text>
         </ScrollView>
       ) : null}
+      {importMetrics ? <>
+        <Text style={{ color: colors.foreground, fontSize: 16, fontWeight: "800" }}>
+          Son içe aktarma performansı
+        </Text>
+        <Text style={{ color: colors.mutedForeground }}>
+          Kullanıcı karar süresi ayrı ölçülür ve düzeltilmiş toplamdan çıkarılır. Hesap kimliği veya kimlik bilgisi içermez.
+        </Text>
+        <FocusButton
+          label="İçe Aktarma Ölçümünü Kopyala"
+          icon="copy"
+          onPress={() => void Clipboard.setStringAsync(formatProviderImportMetrics(importMetrics))
+            .then(() => setCopyMessage("Ölçüm panoya kopyalandı."))
+            .catch(() => setCopyMessage("Ölçüm panoya kopyalanamadı."))}
+        />
+        {copyMessage ? <Text style={{ color: colors.mutedForeground }}>{copyMessage}</Text> : null}
+        <ScrollView
+          nestedScrollEnabled
+          style={{ maxHeight: 360, borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 12 }}
+        >
+          <Text selectable style={{ color: colors.foreground, fontFamily: "monospace", fontSize: 12 }}>
+            {formatProviderImportMetrics(importMetrics)}
+          </Text>
+        </ScrollView>
+      </> : null}
     </View>
   );
 }

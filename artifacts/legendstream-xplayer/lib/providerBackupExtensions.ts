@@ -9,6 +9,11 @@ export type ExtensionReadResult =
   | { status: "missing" }
   | { status: "error"; error: Error };
 
+export type SecureExtensionWriteMetrics = {
+  writeMs: number;
+  verifyReadMs: number;
+};
+
 const ROOT_EXTENSION_KEY = "provider-backup.root-ext";
 
 function providerExtensionKey(providerId: string) {
@@ -39,11 +44,20 @@ async function readExtensionKey(key: string): Promise<ExtensionReadResult> {
   }
 }
 
-async function writeVerifiedExtensionKey(key: string, value: OpaqueExtensionRecord): Promise<void> {
+async function writeVerifiedExtensionKey(
+  key: string,
+  value: OpaqueExtensionRecord,
+  onMetrics?: (metrics: SecureExtensionWriteMetrics) => void,
+): Promise<void> {
   const raw = JSON.stringify(value);
   assertSecureRecordFits(value, "opaque extension record");
+  const writeStartedAt = Date.now();
   await SecureStore.setItemAsync(key, raw);
+  const writeMs = Date.now() - writeStartedAt;
+  const verifyStartedAt = Date.now();
   const readBack = await SecureStore.getItemAsync(key);
+  const verifyReadMs = Date.now() - verifyStartedAt;
+  onMetrics?.({ writeMs, verifyReadMs });
   if (readBack !== raw) throw new Error("Secure extension write verification failed.");
 }
 
@@ -51,8 +65,12 @@ export function readProviderBackupExtension(providerId: string) {
   return readExtensionKey(providerExtensionKey(providerId));
 }
 
-export function saveProviderBackupExtension(providerId: string, value: OpaqueExtensionRecord) {
-  return writeVerifiedExtensionKey(providerExtensionKey(providerId), value);
+export function saveProviderBackupExtension(
+  providerId: string,
+  value: OpaqueExtensionRecord,
+  onMetrics?: (metrics: SecureExtensionWriteMetrics) => void,
+) {
+  return writeVerifiedExtensionKey(providerExtensionKey(providerId), value, onMetrics);
 }
 
 export async function deleteProviderBackupExtension(providerId: string) {
@@ -63,8 +81,11 @@ export function readRootBackupExtension() {
   return readExtensionKey(ROOT_EXTENSION_KEY);
 }
 
-export function saveRootBackupExtension(value: OpaqueExtensionRecord) {
-  return writeVerifiedExtensionKey(ROOT_EXTENSION_KEY, value);
+export function saveRootBackupExtension(
+  value: OpaqueExtensionRecord,
+  onMetrics?: (metrics: SecureExtensionWriteMetrics) => void,
+) {
+  return writeVerifiedExtensionKey(ROOT_EXTENSION_KEY, value, onMetrics);
 }
 
 export async function deleteRootBackupExtension() {

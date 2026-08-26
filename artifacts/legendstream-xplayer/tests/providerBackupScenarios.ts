@@ -26,6 +26,10 @@ import {
 } from "../lib/providerBackupCore";
 import { resolveImportTargets } from "../lib/providerBackupPlanning";
 import { normalizeRecoveryPhrasePassword } from "../lib/recoveryPhrasePassword";
+import {
+  createProviderImportMetricsReport,
+  formatProviderImportMetrics,
+} from "../lib/providerImportMetrics";
 
 type Category = "acceptance" | "negativeCrypto" | "roundTrip" | "security";
 type TestCase = { category: Category; name: string; run: () => void | Promise<void> };
@@ -34,7 +38,7 @@ const EXPECTED: Record<Category, number> = {
   acceptance: 7,
   negativeCrypto: 2,
   roundTrip: 1,
-  security: 13,
+  security: 14,
 };
 const EXPECTED_TESTS = Object.values(EXPECTED).reduce((sum, count) => sum + count, 0);
 const tests: TestCase[] = [];
@@ -413,6 +417,67 @@ test("security", "encrypted artifact exposes no credential values in cleartext",
   for (const secret of ["user-secret", "pass-secret", "https://provider.example"]) {
     assert.equal(encryptedText.includes(secret), false, `encrypted file leaked ${secret}`);
   }
+});
+
+test("security", "import metrics subtract decision wait and exclude provider identity and secrets", () => {
+  const redactionSentinel = "K4_SENTINEL_MUST_NOT_APPEAR_7F3C";
+  const report = createProviderImportMetricsReport({
+    status: "success",
+    candidateCount: 1,
+    conflictCount: 1,
+    choices: { overwrite: 1, keepBoth: 0, skip: 0 },
+    documentPickerWaitMs: 800,
+    passwordEntryWaitMs: 600,
+    fileReadMs: 20,
+    unlockTotalMs: 900,
+    kdfMs: 700,
+    conflictDecisionWaitMs: 4_000,
+    conflictUiReadyMs: 75,
+    planBuildMs: 2,
+    measuredFlowToFinishMs: 5_500,
+    commit: {
+      commitTotalMs: 578,
+      snapshotTotalMs: 100,
+      rootSnapshotReadMs: 4,
+      rootWriteMs: 0,
+      rootVerifyReadMs: 0,
+      metadata: {
+        prepareMs: 3,
+        asyncStorageWriteMs: 5,
+        stateApplyMs: 1,
+        asyncStorageWriteCount: 1,
+      },
+      providers: [{
+        index: 1,
+        credentialSnapshotReadMs: 10,
+        extensionSnapshotReadMs: 11,
+        credentialWriteMs: 12,
+        credentialVerifyReadMs: 13,
+        extensionWriteMs: 0,
+        extensionVerifyReadMs: 0,
+        providerId: redactionSentinel,
+        providerName: redactionSentinel,
+        credential: redactionSentinel,
+      } as never],
+      calls: {
+        credentialRead: 2,
+        credentialWrite: 1,
+        extensionRead: 1,
+        extensionWrite: 0,
+        rootRead: 1,
+        rootWrite: 0,
+        asyncStorageWrite: 1,
+      },
+    },
+  });
+  assert.equal(report.durations.totalExcludingConflictDecisionWaitMs, 1_500);
+  assert.equal(report.durations.decryptAndParseOtherMs, 200);
+  const serialized = JSON.stringify(report);
+  const formatted = formatProviderImportMetrics(report);
+  assert.equal(serialized.includes(redactionSentinel), false);
+  assert.equal(formatted.includes(redactionSentinel), false);
+  assert.match(formatted, /provider\[1\]/u);
+  assert.doesNotMatch(formatted, /providerId|providerName|credential=/u);
 });
 
 async function main() {

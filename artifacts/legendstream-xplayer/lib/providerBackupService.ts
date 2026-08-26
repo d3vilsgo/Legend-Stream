@@ -110,6 +110,56 @@ export type ImportPlan = {
 export type ImportCommitResult = {
   importedCount: number;
   skippedCount: number;
+  diagnostics: ProviderImportCommitDiagnostics;
+};
+
+export type ProviderMetadataCommitMetrics = {
+  prepareMs: number;
+  asyncStorageWriteMs: number;
+  stateApplyMs: number;
+  asyncStorageWriteCount: number;
+};
+
+export type ProviderImportProgressPhase =
+  | "snapshot"
+  | "credential_write"
+  | "extension_write"
+  | "root_write"
+  | "metadata";
+
+export type ProviderImportProgress = {
+  phase: ProviderImportProgressPhase;
+  completed: number;
+  total: number;
+};
+
+export type ProviderImportProviderMetrics = {
+  index: number;
+  credentialSnapshotReadMs: number;
+  extensionSnapshotReadMs: number;
+  credentialWriteMs: number;
+  credentialVerifyReadMs: number;
+  extensionWriteMs: number;
+  extensionVerifyReadMs: number;
+};
+
+export type ProviderImportCommitDiagnostics = {
+  commitTotalMs: number;
+  snapshotTotalMs: number;
+  rootSnapshotReadMs: number;
+  rootWriteMs: number;
+  rootVerifyReadMs: number;
+  metadata: ProviderMetadataCommitMetrics;
+  providers: ProviderImportProviderMetrics[];
+  calls: {
+    credentialRead: number;
+    credentialWrite: number;
+    extensionRead: number;
+    extensionWrite: number;
+    rootRead: number;
+    rootWrite: number;
+    asyncStorageWrite: number;
+  };
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -396,24 +446,47 @@ type ExtensionSnapshot =
 
 type TargetSnapshot = {
   item: ImportPlanItem;
+  metric: ProviderImportProviderMetrics;
   credential: CredentialSnapshot;
   extension: ExtensionSnapshot;
   extensionToWrite: OpaqueExtensionRecord;
 };
 
-async function snapshotTargets(plan: ImportPlan): Promise<{
+async function snapshotTargets(
+  plan: ImportPlan,
+  diagnostics: ProviderImportCommitDiagnostics,
+  onProgress?: (progress: ProviderImportProgress) => void,
+): Promise<{
   targets: TargetSnapshot[];
   root: ExtensionSnapshot;
   rootToWrite: OpaqueExtensionRecord;
 }> {
   const targets: TargetSnapshot[] = [];
-  for (const item of plan.items) {
+  const snapshotStartedAt = Date.now();
+  for (const [index, item] of plan.items.entries()) {
+    onProgress?.({ phase: "snapshot", completed: index, total: plan.items.length });
+    const metric: ProviderImportProviderMetrics = {
+      index: index + 1,
+      credentialSnapshotReadMs: 0,
+      extensionSnapshotReadMs: 0,
+      credentialWriteMs: 0,
+      credentialVerifyReadMs: 0,
+      extensionWriteMs: 0,
+      extensionVerifyReadMs: 0,
+    };
+    diagnostics.providers.push(metric);
+    diagnostics.calls.credentialRead += 1;
+    const credentialStartedAt = Date.now();
     const credential = await readCredentials(item.targetId);
+    metric.credentialSnapshotReadMs = Date.now() - credentialStartedAt;
     if (credential.status === "error") throw credential.error;
     if (!item.overwrite && credential.status === "found") {
       throw new Error("Imported provider ID unexpectedly collides with secure credential storage.");
     }
+    diagnostics.calls.extensionRead += 1;
+    const extensionStartedAt = Date.now();
     const extension = await readProviderBackupExtension(item.targetId);
+    metric.extensionSnapshotReadMs = Date.now() - extensionStartedAt;
     if (extension.status === "error") throw extension.error;
     if (!item.overwrite && extension.status === "found") {
       throw new Error("Imported provider ID unexpectedly collides with secure extension storage.");
@@ -421,16 +494,21 @@ async function snapshotTargets(plan: ImportPlan): Promise<{
     const localOpaque = extension.status === "found" ? extension.value : undefined;
     const extensionToWrite = mergeOpaque(localOpaque, item.opaque);
     if (hasKeys(extensionToWrite)) assertSecureRecordFits(extensionToWrite, "provider extensions");
-    targets.push({ item, credential, extension, extensionToWrite });
+    targets.push({ item, metric, credential, extension, extensionToWrite });
   }
 
+  onProgress?.({ phase: "snapshot", completed: plan.items.length, total: plan.items.length });
+  diagnostics.calls.rootRead += 1;
+  const rootStartedAt = Date.now();
   const rootRead = await readRootBackupExtension();
+  diagnostics.rootSnapshotReadMs = Date.now() - rootStartedAt;
   if (rootRead.status === "error") throw rootRead.error;
   const root: ExtensionSnapshot = rootRead.status === "found"
     ? { status: "found", value: rootRead.value }
     : { status: "missing" };
   const rootToWrite = { ...(root.status === "found" ? root.value : {}), ...plan.rootOpaque };
   if (hasKeys(rootToWrite)) assertSecureRecordFits(rootToWrite, "root backup extensions");
+  diagnostics.snapshotTotalMs = Date.now() - snapshotStartedAt;
   return { targets, root, rootToWrite };
 }
 
@@ -451,32 +529,87 @@ async function restoreRoot(snapshot: ExtensionSnapshot) {
 
 export async function commitProviderImport(
   plan: ImportPlan,
-  mergeImportedProviders: (providers: ProviderConfig[]) => Promise<void>,
+  mergeImportedProviders: (providers: ProviderConfig[]) => Promise<ProviderMetadataCommitMetrics>,
+  onProgress?: (progress: ProviderImportProgress) => void,
 ): Promise<ImportCommitResult> {
   assertSecureEntropyAvailable();
+  const commitStartedAt = Date.now();
+  const diagnostics: ProviderImportCommitDiagnostics = {
+    commitTotalMs: 0,
+    snapshotTotalMs: 0,
+    rootSnapshotReadMs: 0,
+    rootWriteMs: 0,
+    rootVerifyReadMs: 0,
+    metadata: {
+      prepareMs: 0,
+      asyncStorageWriteMs: 0,
+      stateApplyMs: 0,
+      asyncStorageWriteCount: 0,
+    },
+    providers: [],
+    calls: {
+      credentialRead: 0,
+      credentialWrite: 0,
+      extensionRead: 0,
+      extensionWrite: 0,
+      rootRead: 0,
+      rootWrite: 0,
+      asyncStorageWrite: 0,
+    },
+  };
   // All reads and size calculations happen before the first write.
-  const snapshots = await snapshotTargets(plan);
+  const snapshots = await snapshotTargets(plan, diagnostics, onProgress);
   const touched: TargetSnapshot[] = [];
   let rootTouched = false;
 
   try {
-    for (const target of snapshots.targets) {
+    for (const [index, target] of snapshots.targets.entries()) {
       // Mark the target before its first write: SecureStore may persist setItem and
       // then fail during read-back verification, which still requires rollback.
       touched.push(target);
-      await saveCredentials(target.item.targetId, target.item.secrets);
+      onProgress?.({ phase: "credential_write", completed: index, total: snapshots.targets.length });
+      diagnostics.calls.credentialWrite += 1;
+      await saveCredentials(target.item.targetId, target.item.secrets, (metrics) => {
+        target.metric.credentialWriteMs = metrics.writeMs;
+        target.metric.credentialVerifyReadMs = metrics.verifyReadMs;
+        diagnostics.calls.credentialRead += 1;
+      });
       if (hasKeys(target.extensionToWrite)) {
-        await saveProviderBackupExtension(target.item.targetId, target.extensionToWrite);
+        onProgress?.({ phase: "extension_write", completed: index, total: snapshots.targets.length });
+        diagnostics.calls.extensionWrite += 1;
+        await saveProviderBackupExtension(target.item.targetId, target.extensionToWrite, (metrics) => {
+          target.metric.extensionWriteMs = metrics.writeMs;
+          target.metric.extensionVerifyReadMs = metrics.verifyReadMs;
+          diagnostics.calls.extensionRead += 1;
+        });
       }
     }
+    onProgress?.({ phase: "credential_write", completed: snapshots.targets.length, total: snapshots.targets.length });
     if (hasKeys(snapshots.rootToWrite)) {
       rootTouched = true;
-      await saveRootBackupExtension(snapshots.rootToWrite);
+      onProgress?.({ phase: "root_write", completed: 0, total: 1 });
+      diagnostics.calls.rootWrite += 1;
+      await saveRootBackupExtension(snapshots.rootToWrite, (metrics) => {
+        diagnostics.rootWriteMs = metrics.writeMs;
+        diagnostics.rootVerifyReadMs = metrics.verifyReadMs;
+        diagnostics.calls.rootRead += 1;
+      });
+      onProgress?.({ phase: "root_write", completed: 1, total: 1 });
     }
 
     // Metadata is the final commit point; the PlayerContext method must propagate errors.
-    await mergeImportedProviders(snapshots.targets.map(({ item }) => item.provider));
-    return { importedCount: snapshots.targets.length, skippedCount: plan.skippedCount };
+    onProgress?.({ phase: "metadata", completed: 0, total: 1 });
+    diagnostics.metadata = await mergeImportedProviders(
+      snapshots.targets.map(({ item }) => item.provider),
+    );
+    diagnostics.calls.asyncStorageWrite = diagnostics.metadata.asyncStorageWriteCount;
+    onProgress?.({ phase: "metadata", completed: 1, total: 1 });
+    diagnostics.commitTotalMs = Date.now() - commitStartedAt;
+    return {
+      importedCount: snapshots.targets.length,
+      skippedCount: plan.skippedCount,
+      diagnostics,
+    };
   } catch (error) {
     const rollbackErrors: Error[] = [];
     for (const target of [...touched].reverse()) {
