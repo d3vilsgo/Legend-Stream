@@ -218,7 +218,7 @@ export default function OptimizedHomeScreenV6() {
   useCredentialDiagnosticsStartup();
 
   const [view, setView] = useState<ViewName>("home");
-  const [editing, setEditing] = useState(false);
+  const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [playable, setPlayable] = useState<Playable | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -602,6 +602,12 @@ getCachedItems<XtreamSeriesItem>(provider.id, "series"),
 
   const switchProvider = async (id: string) => {
     clearError(); setCatalogError(null);
+    const target = providers.find((item) => item.id === id);
+    if (target?.needsCredentials) {
+      setAdding(false);
+      setEditingProviderId(id);
+      return;
+    }
     const ok = await setActiveProvider(id);
     if (ok) setView("home");
   };
@@ -619,20 +625,24 @@ getCachedItems<XtreamSeriesItem>(provider.id, "series"),
     return <View style={[s.centered, { backgroundColor: colors.background }]}><Text style={{ color: colors.foreground }}>{t("loading")}</Text></View>;
   }
 
-  if (!provider && !adding) {
+  const editingProvider = editingProviderId
+    ? providers.find((item) => item.id === editingProviderId) ?? null
+    : null;
+
+  if (!provider && !adding && !editingProvider) {
     return <SavedAccounts providers={providers} busy={isLoading} error={error} onOpen={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} onRemove={(id) => void removeProvider(id)} />;
   }
 
-  if (adding || editing || !provider) {
+  if (adding || editingProvider || !provider) {
     return <ProviderSetup
-      existing={editing ? effectiveProvider : null}
+      existing={editingProvider}
       busy={isLoading}
       error={error}
-      onCancel={providers.length ? () => { setAdding(false); setEditing(false); } : undefined}
+      onCancel={providers.length ? () => { setAdding(false); setEditingProviderId(null); } : undefined}
       onSubmit={async (config) => {
         clearError();
         const ok = await connectProvider(config);
-        if (ok) { setAdding(false); setEditing(false); setView("home"); }
+        if (ok) { setAdding(false); setEditingProviderId(null); setView("home"); }
       }}
     />;
   }
@@ -790,7 +800,7 @@ getCachedItems<XtreamSeriesItem>(provider.id, "series"),
       {view === "series" ? <Series items={series} cats={seriesCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
       {view === "history" ? <HistoryView channels={providerChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
-      {view === "settings" ? <Settings provider={shownProvider} providers={providers} busy={isLoading} onEdit={() => setEditing(true)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
+      {view === "settings" ? <Settings provider={shownProvider} providers={providers} busy={isLoading} onEdit={() => setEditingProviderId(shownProvider.id)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
     </ScrollView>}
   </View>;
 }
@@ -805,7 +815,7 @@ function SavedAccounts({ providers, busy, error, onOpen, onAdd, onRemove }: { pr
     <View style={{ gap: 10 }}>{providers.map((item) => <View key={item.id} style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Pressable style={{ flex: 1 }} onPress={() => onOpen(item.id)} disabled={busy}>
         <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16 }}>{item.name}</Text>
-        <Text style={{ color: colors.mutedForeground }}>{item.type.toUpperCase()} · {item.username || item.mac || item.type}</Text>
+        <Text style={{ color: item.needsCredentials ? colors.destructive : colors.mutedForeground }}>{item.needsCredentials ? t("credentialsMissing") : `${item.type.toUpperCase()} · ${item.username || item.mac || item.type}`}</Text>
         <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{item.url || item.playlistUrl}</Text>
       </Pressable>
       <Pressable onPress={() => onRemove(item.id)} style={s.iconButton}><Feather name="trash-2" size={20} color={colors.mutedForeground} /></Pressable>
@@ -819,17 +829,18 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   busy: boolean;
   error: string | null;
   onCancel?: () => void;
-  onSubmit: (config: Omit<ProviderConfig, "id" | "connectedAt" | "createdAt" | "url" | "channelCount"> & { url?: string; epgUrl?: string; mac?: string }) => Promise<void>;
+  onSubmit: (config: Omit<ProviderConfig, "id" | "connectedAt" | "createdAt" | "url" | "channelCount" | "needsCredentials"> & { providerId?: string; url?: string; epgUrl?: string; mac?: string }) => Promise<void>;
 }) {
   const colors = useColors(); const insets = useSafeAreaInsets(); const { t } = useI18n();
   const [name, setName] = useState(existing?.name ?? "My provider");
   const [type, setType] = useState<ProviderType>(existing?.type ?? "xtream");
-  const [url, setUrl] = useState(existing?.playlistUrl ?? "");
+  const [url, setUrl] = useState(existing?.playlistUrl || existing?.url || "");
   const [username, setUsername] = useState(existing?.username ?? "");
   const [password, setPassword] = useState(existing?.password ?? "");
   const [mac, setMac] = useState(existing?.mac ?? "");
   const [epgUrl, setEpgUrl] = useState(existing?.epgUrl ?? "");
   const [localError, setLocalError] = useState<string | null>(null);
+  const credentialsOnly = Boolean(existing?.needsCredentials);
 
   const submit = async () => {
     const clean = url.trim();
@@ -837,6 +848,7 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
     if (type === "xtream" && (!username.trim() || !password)) return setLocalError(t("xtreamCredentials"));
     setLocalError(null);
     await onSubmit({
+      providerId: existing?.id,
       name: name.trim() || "My provider",
       type,
       playlistUrl: clean,
@@ -850,13 +862,13 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   return <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.background }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
     <ScrollView contentContainerStyle={[s.setup, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 140 }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
       <Text style={[s.brandLarge, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text>
-      <Text style={[s.title, { color: colors.foreground }]}>{existing ? t("editIptvSource") : t("addIptvSource")}</Text>
-      <View style={s.row}>{(["xtream", "m3u", "stalker"] as ProviderType[]).map((item) => <FocusButton key={item} label={item === "xtream" ? "Xtream" : item === "m3u" ? "M3U" : "Stalker"} variant={type === item ? "secondary" : "ghost"} onPress={() => setType(item)} />)}</View>
-      <Input label={t("sourceName")} value={name} onChangeText={setName} />
-      <Input label={t("serverUrl")} value={url} onChangeText={setUrl} autoCapitalize="none" />
+      <Text style={[s.title, { color: colors.foreground }]}>{credentialsOnly ? t("credentialsMissing") : existing ? t("editIptvSource") : t("addIptvSource")}</Text>
+      <View style={s.row}>{(["xtream", "m3u", "stalker"] as ProviderType[]).map((item) => <FocusButton key={item} label={item === "xtream" ? "Xtream" : item === "m3u" ? "M3U" : "Stalker"} variant={type === item ? "secondary" : "ghost"} onPress={() => setType(item)} disabled={credentialsOnly} />)}</View>
+      <Input label={t("sourceName")} value={name} onChangeText={setName} editable={!credentialsOnly} />
+      <Input label={t("serverUrl")} value={url} onChangeText={setUrl} autoCapitalize="none" editable={!credentialsOnly || !url} />
       {type === "xtream" ? <><Input label={t("username")} value={username} onChangeText={setUsername} autoCapitalize="none" /><Input label={t("password")} value={password} onChangeText={setPassword} secureTextEntry /></> : null}
       {type === "stalker" ? <Input label={t("macAddress")} value={mac} onChangeText={setMac} autoCapitalize="none" /> : null}
-      <Input label={t("epgOptional")} value={epgUrl} onChangeText={setEpgUrl} autoCapitalize="none" />
+      <Input label={t("epgOptional")} value={epgUrl} onChangeText={setEpgUrl} autoCapitalize="none" editable={!credentialsOnly} />
       {localError || error ? <Text style={{ color: colors.destructive }}>{localError || error}</Text> : null}
       <View style={s.row}>
         <FocusButton label={busy ? t("connecting") : existing ? t("saveConnect") : t("addConnect")} icon="log-in" variant="primary" onPress={() => void submit()} disabled={busy} />
@@ -1658,7 +1670,7 @@ function Settings({ provider, providers, busy, onEdit, onAdd, onSwitch, onDiscon
     <View style={{ marginTop: 24 }}>
       <Text style={[s.section, { color: colors.foreground }]}>{t("savedAccounts")}</Text>
       <View style={{ gap: 8 }}>{providers.map((item) => <View key={item.id} style={[s.accountCard, { borderColor: item.id === provider.id ? colors.primary : colors.border, backgroundColor: colors.card }]}>
-        <Pressable disabled={busy} onPress={() => onSwitch(item.id)} style={{ flex: 1 }}><Text style={{ color: colors.foreground, fontWeight: "800" }}>{item.name}{item.id === provider.id ? ` · ${t("active")}` : ""}</Text><Text style={{ color: colors.mutedForeground }}>{item.username || item.type.toUpperCase()}</Text></Pressable>
+        <Pressable disabled={busy} onPress={() => onSwitch(item.id)} style={{ flex: 1 }}><Text style={{ color: colors.foreground, fontWeight: "800" }}>{item.name}{item.id === provider.id ? ` · ${t("active")}` : ""}</Text><Text style={{ color: item.needsCredentials ? colors.destructive : colors.mutedForeground }}>{item.needsCredentials ? t("credentialsMissing") : item.username || item.type.toUpperCase()}</Text></Pressable>
         <Pressable onPress={() => onRemove(item.id)} style={s.iconButton}><Feather name="trash-2" size={20} color={colors.mutedForeground} /></Pressable>
       </View>)}</View>
     </View>
@@ -1847,7 +1859,7 @@ function Poster({ uri, title }: { uri?: string; title: string }) {
   return uri ? <Image source={{ uri }} style={s.logo} /> : <View style={[s.logo, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}><Text style={{ color: colors.primary, fontWeight: "800" }}>{title.slice(0, 2).toUpperCase()}</Text></View>;
 }
 
-function Input({ label, ...props }: { label: string; value: string; onChangeText: (value: string) => void; autoCapitalize?: "none" | "sentences"; secureTextEntry?: boolean }) {
+function Input({ label, ...props }: { label: string; value: string; onChangeText: (value: string) => void; autoCapitalize?: "none" | "sentences"; secureTextEntry?: boolean; editable?: boolean }) {
   const colors = useColors();
   return <View style={{ gap: 6 }}><Text style={{ color: colors.mutedForeground, fontWeight: "700" }}>{label}</Text><TextInput {...props} style={[s.input, { color: colors.foreground, backgroundColor: colors.card, borderColor: colors.border }]} placeholderTextColor={colors.mutedForeground} /></View>;
 }
