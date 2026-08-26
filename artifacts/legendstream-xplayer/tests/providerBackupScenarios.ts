@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import {
   assertSecureRecordFits,
@@ -12,11 +14,18 @@ import {
   nobleCryptoRuntimeTypes,
   normalizeBackupPassword,
   ProviderBackupError,
+  RECOVERY_ENTROPY_BITS,
+  RECOVERY_REJECTION_LIMIT,
+  RECOVERY_WORD_COUNT,
+  RECOVERY_WORDLIST_SIZE,
+  recoveryWordlistStats,
+  sampleRecoveryWordIndex,
   secureRecordByteLength,
   type BackupPayloadV1,
   type SecureRandomBytes,
 } from "../lib/providerBackupCore";
 import { resolveImportTargets } from "../lib/providerBackupPlanning";
+import { normalizeRecoveryPhrasePassword } from "../lib/recoveryPhrasePassword";
 
 type Category = "acceptance" | "negativeCrypto" | "roundTrip" | "security";
 type TestCase = { category: Category; name: string; run: () => void | Promise<void> };
@@ -25,7 +34,7 @@ const EXPECTED: Record<Category, number> = {
   acceptance: 7,
   negativeCrypto: 2,
   roundTrip: 1,
-  security: 7,
+  security: 13,
 };
 const EXPECTED_TESTS = Object.values(EXPECTED).reduce((sum, count) => sum + count, 0);
 const tests: TestCase[] = [];
@@ -268,10 +277,110 @@ test("security", "degraded Noble runtime loads without throw and blocks crypto b
   );
 });
 
-test("security", "generated recovery phrase format is constrained", () => {
+test("security", "EFF recovery wordlist source is fail-closed audited", () => {
+  const runtimeRequire = createRequire(import.meta.url);
+  const wordlistPath = runtimeRequire.resolve("diceware-wordlist-en-eff");
+  const source = readFileSync(wordlistPath, "utf8");
+  const entryLines = source
+    .split(/\r?\n/u)
+    .filter((line) => /^\s*'[1-6]{5}':\s*'/u.test(line));
+  assert.equal(entryLines.length, 7776, "wordlist source must contain exactly 7776 entry lines");
+
+  const wordlist = runtimeRequire("diceware-wordlist-en-eff") as Record<string, string>;
+  const words = Object.values(wordlist);
+  assert.equal(words.length, 7776, "wordlist runtime must expose exactly 7776 words");
+  assert.equal(new Set(words).size, 7776, "wordlist words must all be unique");
+  assert.equal(words.every((word) => /^[\x20-\x7e]+$/u.test(word)), true, "all words must be printable ASCII");
+  assert.equal(words.every((word) => word === word.toLowerCase()), true, "all words must be lowercase");
+  assert.equal(words.every((word) => !/\s/u.test(word)), true, "words must not contain whitespace");
+
+  const sortedWords = [...words].sort();
+  let prefixPair: [string, string] | null = null;
+  for (let index = 0; index < sortedWords.length - 1; index += 1) {
+    if (sortedWords[index + 1].startsWith(sortedWords[index])) {
+      prefixPair = [sortedWords[index], sortedWords[index + 1]];
+      break;
+    }
+  }
+  console.log(`recovery wordlist prefix-free: ${prefixPair ? "no" : "yes"}`);
+
+  const stats = recoveryWordlistStats();
+  assert.equal(stats.source, "EFF Large Wordlist for Passphrases (2016-07-18)");
+  assert.equal(stats.actualWordCount, 7776);
+  assert.equal(stats.uniqueWordCount, 7776);
+  assert.equal(stats.asciiLowercase, true);
+  assert.equal(RECOVERY_WORDLIST_SIZE, 7776);
+});
+
+test("security", "six EFF words provide about 77.55 bits with replacement", () => {
+  assert.equal(RECOVERY_WORD_COUNT, 6);
+  const expected = Math.log2(7776) * 6;
+  assert(Math.abs(RECOVERY_ENTROPY_BITS - expected) < 1e-12);
+  assert(RECOVERY_ENTROPY_BITS > 77.54 && RECOVERY_ENTROPY_BITS < 77.56);
+});
+
+test("security", "recovery word index uses rejection sampling before modulo", () => {
+  assert.equal(RECOVERY_REJECTION_LIMIT, 62208);
+  let calls = 0;
+  const random: SecureRandomBytes = (length) => {
+    assert.equal(length, 2);
+    calls += 1;
+    return calls === 1 ? Uint8Array.of(0xf3, 0x00) : Uint8Array.of(0xf2, 0xff);
+  };
+  assert.equal(sampleRecoveryWordIndex(random), 7775);
+  assert.equal(calls, 2, "candidate equal to rejection limit must be discarded");
+});
+
+test("security", "recovery generation samples with replacement and permits repeated words", () => {
+  const random: SecureRandomBytes = (length) => {
+    assert.equal(length, 2);
+    return Uint8Array.of(0x00, 0x00);
+  };
+  const words = generateRecoveryPhrase(random).split(" ");
+  assert.equal(words.length, 6);
+  assert.equal(new Set(words).size, 1, "duplicate words must not be suppressed");
+});
+
+test("security", "generated EFF recovery phrase is six space-separated ASCII lowercase words", () => {
   const phrase = generateRecoveryPhrase(seededRandom(9));
-  assert.match(phrase, /^[a-z]{6}(?:-[a-z]{6}){5}$/u);
-  assert.equal(phrase.split("-").length, 6);
+  const words = phrase.split(" ");
+  assert.equal(words.length, 6);
+  for (const word of words) assert.match(word, /^[a-z]+(?:-[a-z]+)*$/u);
+});
+
+test("security", "recovery phrase input tolerates outer whitespace repeated whitespace and uppercase", async () => {
+  const canonicalPhrase = generateRecoveryPhrase(seededRandom(14));
+  const normalized = normalizeRecoveryPhrasePassword(canonicalPhrase);
+  const encrypted = await encryptBackupPayload(fullPayload, normalized, seededRandom(15));
+  const variants = [
+    `   ${canonicalPhrase}   `,
+    canonicalPhrase.replace(/ /gu, "   "),
+    canonicalPhrase.toUpperCase(),
+  ];
+  for (const variant of variants) {
+    const opened = await decryptBackupFile(
+      encrypted.bytes,
+      normalizeRecoveryPhrasePassword(variant),
+    );
+    assert.equal(opened.payload.providers[0].id, "provider-1");
+  }
+
+  const custom = "  Mixed CASE  Password  2026  ";
+  assert.equal(normalizeBackupPassword(custom), custom.normalize("NFKC"));
+  assert.notEqual(normalizeRecoveryPhrasePassword(custom), normalizeBackupPassword(custom));
+  const customEncrypted = await encryptBackupPayload(fullPayload, custom, seededRandom(16));
+  assert.equal((await decryptBackupFile(customEncrypted.bytes, custom)).payload.providers[0].id, "provider-1");
+  await expectBackupError(
+    decryptBackupFile(customEncrypted.bytes, normalizeRecoveryPhrasePassword(custom)),
+    "wrong_password",
+  );
+});
+
+test("security", "legacy synthetic recovery phrases remain valid opaque backup passwords", async () => {
+  const legacyPhrase = "banban-banbar-banben-banber-bandin-bandir";
+  const encrypted = await encryptBackupPayload(fullPayload, legacyPhrase, seededRandom(13));
+  const opened = await decryptBackupFile(encrypted.bytes, legacyPhrase);
+  assert.equal(opened.payload.providers[0].id, "provider-1");
 });
 
 test("security", "hostile KDF work factors are rejected before scrypt", async () => {

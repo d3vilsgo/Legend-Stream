@@ -17,10 +17,12 @@ import {
   CRYPTO_UNAVAILABLE_MESSAGE,
   cryptoAvailable,
   generateRecoveryPhrase,
+  RECOVERY_ENTROPY_BITS,
   validateCustomBackupPassword,
   type ProviderBackupError,
 } from "@/lib/providerBackupCore";
 import { secureRandomBytes } from "@/lib/cryptoBootstrap";
+import { normalizeRecoveryPhrasePassword } from "@/lib/recoveryPhrasePassword";
 import {
   buildImportPlan,
   commitProviderImport,
@@ -37,6 +39,8 @@ import {
   type PickedProviderBackup,
 } from "@/lib/providerBackupFiles";
 
+type ImportPasswordMode = "recovery" | "custom";
+
 export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import-only" }) {
   const colors = useColors();
   const { providers, activeProviderId, mergeImportedProviders } = usePlayer();
@@ -49,6 +53,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
   const [useCustomPassword, setUseCustomPassword] = useState(false);
   const [recoveryConfirmed, setRecoveryConfirmed] = useState(false);
   const [importPassword, setImportPassword] = useState("");
+  const [importPasswordMode, setImportPasswordMode] = useState<ImportPasswordMode>("recovery");
   const [picked, setPicked] = useState<PickedProviderBackup | null>(null);
   const [preview, setPreview] = useState<ProviderBackupPreview | null>(null);
   const [choices, setChoices] = useState<Record<string, ImportConflictChoice>>({});
@@ -101,7 +106,9 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
   };
 
   const performExport = async () => {
-    const password = useCustomPassword ? customPassword : generatedPassword;
+    const password = useCustomPassword
+      ? customPassword
+      : normalizeRecoveryPhrasePassword(generatedPassword);
     if (!useCustomPassword && !recoveryConfirmed) {
       setMessage("Devam etmeden önce kurtarma parolasını güvenli bir yere kaydettiğinizi onaylayın.");
       return;
@@ -154,6 +161,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
       if (picked) await picked.cleanup();
       setPicked(selection);
       setImportPassword("");
+      setImportPasswordMode("recovery");
       setPreview(null);
       setChoices({});
       setProgress(0);
@@ -171,9 +179,12 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
     setProgress(0);
     setMessage(null);
     try {
+      const password = importPasswordMode === "recovery"
+        ? normalizeRecoveryPhrasePassword(importPassword)
+        : importPassword;
       const opened = await decryptProviderBackupForImport(
         picked.bytes,
-        importPassword,
+        password,
         setProgress,
       );
       console.log("BACKUP_KDF_METRIC", JSON.stringify({ operation: "import", ms: opened.kdfMs }));
@@ -199,6 +210,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
       setPicked(null);
       setPreview(null);
       setImportPassword("");
+      setImportPasswordMode("recovery");
       setDialog(null);
     } catch (error) {
       setMessage(errorText(error));
@@ -220,6 +232,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
     setGeneratedPassword("");
     setCustomPassword("");
     setImportPassword("");
+    setImportPasswordMode("recovery");
     setDialog(null);
   };
 
@@ -256,13 +269,14 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
               secureTextEntry
               editable={!busy}
               autoCapitalize="none"
+              autoCorrect={false}
               style={[styles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.card }]}
               placeholder="Yedek parolası"
               placeholderTextColor={colors.mutedForeground}
             />
             {customValidation?.warnings.length ? <Text style={{ color: colors.destructive }}>Bu parola zayıf görünüyor; çevrimdışı parola tahmin saldırılarına karşı daha güçlü bir parola önerilir.</Text> : null}
           </> : <>
-            <Text style={{ color: colors.mutedForeground }}>Aşağıdaki 6 kelimelik parola yaklaşık 72 bit rastgelelik taşır. Başka cihazda geri yüklemek için gereklidir.</Text>
+            <Text style={{ color: colors.mutedForeground }}>Aşağıdaki 6 kelimelik parola yaklaşık {RECOVERY_ENTROPY_BITS.toFixed(1)} bit rastgelelik taşır. Başka cihazda geri yüklemek için gereklidir.</Text>
             <View style={[styles.phrase, { borderColor: colors.border, backgroundColor: colors.card }]}>
               <Text selectable style={{ color: colors.foreground, fontWeight: "800", flex: 1 }}>{generatedPassword}</Text>
               <Pressable onPress={() => void Clipboard.setStringAsync(generatedPassword)}><Feather name="copy" size={20} color={colors.primary} /></Pressable>
@@ -286,17 +300,37 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
             <Pressable onPress={() => void closeDialog()} disabled={busy}><Feather name="x" size={22} color={colors.mutedForeground} /></Pressable>
           </View>
           {!preview ? <>
-            <Text style={{ color: colors.mutedForeground }}>Dosyanın parolasını girin. Yanlış parola veya bozuk dosyada hiçbir hesap yazılmaz.</Text>
+            <View style={styles.actions}>
+              <FocusButton
+                label="Kurtarma parolası"
+                variant={importPasswordMode === "recovery" ? "secondary" : "ghost"}
+                onPress={() => setImportPasswordMode("recovery")}
+                disabled={busy}
+              />
+              <FocusButton
+                label="Kendi parolam"
+                variant={importPasswordMode === "custom" ? "secondary" : "ghost"}
+                onPress={() => setImportPasswordMode("custom")}
+                disabled={busy}
+              />
+            </View>
+            <Text style={{ color: colors.mutedForeground }}>
+              {importPasswordMode === "recovery"
+                ? "Kurtarma parolasında baş/son boşluklar yok sayılır, ardışık boşluklar tek boşluğa indirilir ve büyük/küçük harf farkı yok sayılır."
+                : "Kendi parolanız yalnızca NFKC ile normalize edilir; boşluk, harf büyüklüğü ve diğer karakterler aynen korunur."}
+            </Text>
             <TextInput
               value={importPassword}
               onChangeText={setImportPassword}
               secureTextEntry
               editable={!busy}
               autoCapitalize="none"
+              autoCorrect={false}
               style={[styles.input, { color: colors.foreground, borderColor: colors.border, backgroundColor: colors.card }]}
-              placeholder="Yedek parolası"
+              placeholder={importPasswordMode === "recovery" ? "6 kelimelik kurtarma parolası" : "Yedek parolası"}
               placeholderTextColor={colors.mutedForeground}
             />
+            <Text style={{ color: colors.mutedForeground }}>Yanlış parola veya bozuk dosyada hiçbir hesap yazılmaz.</Text>
             {busy ? <Text style={{ color: colors.primary }}>Doğrulanıyor… %{Math.round(progress * 100)}</Text> : null}
             <FocusButton label={busy ? "Doğrulanıyor…" : "Yedeği Doğrula"} icon="unlock" variant="primary" onPress={() => void unlockImport()} disabled={busy || !importPassword} />
           </> : <>

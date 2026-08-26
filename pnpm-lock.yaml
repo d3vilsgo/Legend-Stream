@@ -99,6 +99,9 @@ importers:
       '@noble/hashes':
         specifier: 2.3.0
         version: 2.3.0
+      diceware-wordlist-en-eff:
+        specifier: 1.0.1
+        version: 1.0.1
       expo-clipboard:
         specifier: ~8.0.8
         version: 8.0.8(expo@54.0.36)(react-native@0.81.5(@babel/core@7.29.7)(@types/react@19.1.17)(react@19.1.0))(react@19.1.0)
@@ -2836,6 +2839,9 @@ packages:
 
   detect-node-es@1.1.0:
     resolution: {integrity: sha512-ypdmJU/TbBby2Dxibuv7ZLW3Bs1QEmM7nHjEANfohJLvE0XVujisn1qPJcZxg+qDucsr+bP6fLD1rPS3AhJ7EQ==}
+
+  diceware-wordlist-en-eff@1.0.1:
+    resolution: {integrity: sha512-GdvxQdhl23fqk5NxH4Q6xv9x5yrMZmyQ14Im5fMHvRyEX68qgjHU1C0i/Ba+GYld5qWSbyel0TbHuc5i08gDcA==}
 
   dom-serializer@2.0.0:
     resolution: {integrity: sha512-wIkAryiqt/nV5EQKqQpo3SToSOV9J0DnbJqwK7Wv/Trc92zIAYZ4FlMu+JPFW1DfGFt81ZTCGgDEabffXeLyJg==}
@@ -8109,6 +8115,8 @@ snapshots:
   detect-libc@2.1.2: {}
 
   detect-node-es@1.1.0: {}
+
+  diceware-wordlist-en-eff@1.0.1: {}
 
   dom-serializer@2.0.0:
     dependencies:

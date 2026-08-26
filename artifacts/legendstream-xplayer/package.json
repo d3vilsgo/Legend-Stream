@@ -70,6 +70,7 @@
   "dependencies": {
     "@noble/ciphers": "2.3.0",
     "@noble/hashes": "2.3.0",
+    "diceware-wordlist-en-eff": "1.0.1",
     "expo-clipboard": "~8.0.8",
     "expo-crypto": "~15.0.9",
     "expo-document-picker": "~14.0.8",
