@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, feat/provider-backup]
 
 permissions:
   contents: write
@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 0
       - uses: pnpm/action-setup@v4
         with:
@@ -38,7 +38,7 @@ jobs:
             git push origin HEAD:${{ github.head_ref }}
           fi
       - name: Add fail-closed degraded-mode test
-        if: github.head_ref == 'feat/provider-backup'
+        if: github.ref == 'refs/heads/feat/provider-backup' || github.head_ref == 'feat/provider-backup'
         shell: bash
         run: |
           set -euo pipefail
@@ -94,14 +94,14 @@ jobs:
           fi
           echo 'Replit cleanup verification passed.'
       - name: Existing credential scenarios
-        if: github.head_ref == 'feat/provider-backup'
+        if: github.ref == 'refs/heads/feat/provider-backup' || github.head_ref == 'feat/provider-backup'
         shell: bash
         run: |
           set -euo pipefail
           output="$(pnpm --filter @workspace/legendstream-xplayer test:credentials 2>&1 | tee /dev/stderr)"
           grep -F 'credential storage scenarios: 6/6 passed' <<<"$output"
       - name: Provider backup scenarios
-        if: github.head_ref == 'feat/provider-backup'
+        if: github.ref == 'refs/heads/feat/provider-backup' || github.head_ref == 'feat/provider-backup'
         shell: bash
         run: |
           set -euo pipefail
@@ -116,7 +116,7 @@ jobs:
       - name: Typecheck API server and references
         run: pnpm exec tsc -b artifacts/api-server/tsconfig.json --pretty false
       - name: Storage and crypto invariants
-        if: github.head_ref == 'feat/provider-backup'
+        if: github.ref == 'refs/heads/feat/provider-backup' || github.head_ref == 'feat/provider-backup'
         shell: bash
         run: |
           set -euo pipefail
@@ -139,7 +139,7 @@ jobs:
           ! grep -R --line-number -E 'providerBackupDegraded(Loader|Mode)' "$ROOT/app" "$ROOT/components" "$ROOT/context" "$ROOT/lib"
           echo 'IP2_DEGRADED_MODE_INVARIANTS=pass'
       - name: Persist verified degraded-mode test and clean temporary CI
-        if: github.head_ref == 'feat/provider-backup'
+        if: github.ref == 'refs/heads/feat/provider-backup'
         shell: bash
         run: |
           set -euo pipefail
@@ -157,4 +157,4 @@ jobs:
             exit 0
           fi
           git commit -m 'test(backup): cover degraded crypto runtime'
-          git push origin HEAD:${{ github.head_ref }}
+          git push origin HEAD:feat/provider-backup
