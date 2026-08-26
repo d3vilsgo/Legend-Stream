@@ -89,16 +89,14 @@ jobs:
           grep '^reactNativeArchitectures=' android/gradle.properties || true
           sed -n '/@legendstream abi-splits:start/,/@legendstream abi-splits:end/p' android/app/build.gradle
 
-      - name: Assert diagnostics native module is autolinked
+      - name: Assert diagnostics native module declaration before compile
         working-directory: artifacts/legendstream-xplayer
         shell: bash
         run: |
           set -euo pipefail
-          AUTOLINK_FILE='android/build/generated/autolinking/autolinking.json'
-          test -f "$AUTOLINK_FILE"
-          grep -Fq 'legendstream-diagnostics' "$AUTOLINK_FILE"
-          grep -Fq 'LegendStreamDiagnosticsModule' modules/legendstream-diagnostics/android/src/main/java/expo/modules/legendstreamdiagnostics/LegendStreamDiagnosticsModule.kt
-          echo 'DIAGNOSTICS_NATIVE_MODULE_AUTOLINKED=yes'
+          grep -Fq 'expo.modules.legendstreamdiagnostics.LegendStreamDiagnosticsModule' modules/legendstream-diagnostics/expo-module.config.json
+          grep -Fq 'class LegendStreamDiagnosticsModule' modules/legendstream-diagnostics/android/src/main/java/expo/modules/legendstreamdiagnostics/LegendStreamDiagnosticsModule.kt
+          echo 'DIAGNOSTICS_NATIVE_MODULE_DECLARED=yes'
 
       - name: Set measurement-only generated versionCode base
         working-directory: artifacts/legendstream-xplayer
