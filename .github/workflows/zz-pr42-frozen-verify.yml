@@ -1,0 +1,43 @@
+name: PR42 Frozen Lockfile Verify
+
+on:
+  push:
+    branches:
+      - chore/frozen-lockfile-handoff-clarity
+    paths:
+      - '.github/workflows/zz-pr42-frozen-verify.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Frozen install
+        run: pnpm install --frozen-lockfile
+      - name: Lockfile unchanged
+        run: git diff --exit-code -- pnpm-lock.yaml
+      - name: Mobile typecheck
+        run: pnpm --filter @workspace/legendstream-xplayer typecheck
+      - name: API typecheck
+        run: pnpm exec tsc -b artifacts/api-server/tsconfig.json --pretty false
+      - name: Verify target workflow invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -F 'contents: read' .github/workflows/quality.yml
+          grep -F 'pnpm install --frozen-lockfile' .github/workflows/quality.yml
+          ! grep -F 'Persist lockfile update' .github/workflows/quality.yml
+          grep -F 'install --frozen-lockfile' .github/workflows/android-apk.yml
+          ! grep -F 'install --no-frozen-lockfile' .github/workflows/android-apk.yml
+          echo 'PR42_FROZEN_LOCKFILE_GATE=pass'
