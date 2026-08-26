@@ -12,6 +12,12 @@ import {
   nobleCryptoRuntimeTypes,
   normalizeBackupPassword,
   ProviderBackupError,
+  RECOVERY_ENTROPY_BITS,
+  RECOVERY_REJECTION_LIMIT,
+  RECOVERY_WORD_COUNT,
+  RECOVERY_WORDLIST_SIZE,
+  recoveryWordlistStats,
+  sampleRecoveryWordIndex,
   secureRecordByteLength,
   type BackupPayloadV1,
   type SecureRandomBytes,
@@ -25,7 +31,7 @@ const EXPECTED: Record<Category, number> = {
   acceptance: 7,
   negativeCrypto: 2,
   roundTrip: 1,
-  security: 7,
+  security: 12,
 };
 const EXPECTED_TESTS = Object.values(EXPECTED).reduce((sum, count) => sum + count, 0);
 const tests: TestCase[] = [];
@@ -268,10 +274,56 @@ test("security", "degraded Noble runtime loads without throw and blocks crypto b
   );
 });
 
-test("security", "generated recovery phrase format is constrained", () => {
+test("security", "EFF recovery wordlist has exactly 7776 unique lowercase ASCII words", () => {
+  const stats = recoveryWordlistStats();
+  assert.equal(stats.source, "EFF Large Wordlist for Passphrases (2016-07-18)");
+  assert.equal(stats.actualWordCount, 7776);
+  assert.equal(stats.uniqueWordCount, 7776);
+  assert.equal(stats.asciiLowercase, true);
+  assert.equal(RECOVERY_WORDLIST_SIZE, 7776);
+});
+
+test("security", "six EFF words provide about 77.55 bits with replacement", () => {
+  assert.equal(RECOVERY_WORD_COUNT, 6);
+  const expected = Math.log2(7776) * 6;
+  assert(Math.abs(RECOVERY_ENTROPY_BITS - expected) < 1e-12);
+  assert(RECOVERY_ENTROPY_BITS > 77.54 && RECOVERY_ENTROPY_BITS < 77.56);
+});
+
+test("security", "recovery word index uses rejection sampling before modulo", () => {
+  assert.equal(RECOVERY_REJECTION_LIMIT, 62208);
+  let calls = 0;
+  const random: SecureRandomBytes = (length) => {
+    assert.equal(length, 2);
+    calls += 1;
+    return calls === 1 ? Uint8Array.of(0xf3, 0x00) : Uint8Array.of(0xf2, 0xff);
+  };
+  assert.equal(sampleRecoveryWordIndex(random), 7775);
+  assert.equal(calls, 2, "candidate equal to rejection limit must be discarded");
+});
+
+test("security", "recovery generation samples with replacement and permits repeated words", () => {
+  const random: SecureRandomBytes = (length) => {
+    assert.equal(length, 2);
+    return Uint8Array.of(0x00, 0x00);
+  };
+  const words = generateRecoveryPhrase(random).split(" ");
+  assert.equal(words.length, 6);
+  assert.equal(new Set(words).size, 1, "duplicate words must not be suppressed");
+});
+
+test("security", "generated EFF recovery phrase is six space-separated ASCII lowercase words", () => {
   const phrase = generateRecoveryPhrase(seededRandom(9));
-  assert.match(phrase, /^[a-z]{6}(?:-[a-z]{6}){5}$/u);
-  assert.equal(phrase.split("-").length, 6);
+  const words = phrase.split(" ");
+  assert.equal(words.length, 6);
+  for (const word of words) assert.match(word, /^[a-z]+(?:-[a-z]+)*$/u);
+});
+
+test("security", "legacy synthetic recovery phrases remain valid opaque backup passwords", async () => {
+  const legacyPhrase = "banban-banbar-banben-banber-bandin-bandir";
+  const encrypted = await encryptBackupPayload(fullPayload, legacyPhrase, seededRandom(13));
+  const opened = await decryptBackupFile(encrypted.bytes, legacyPhrase);
+  assert.equal(opened.payload.providers[0].id, "provider-1");
 });
 
 test("security", "hostile KDF work factors are rejected before scrypt", async () => {
