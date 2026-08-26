@@ -113,6 +113,7 @@ interface PlayerContextValue extends PlayerState {
   isEpgLoading: boolean;
   error: string | null;
   connectProvider: (config: ProviderInput) => Promise<boolean>;
+  mergeImportedProviders: (providers: ProviderConfig[]) => Promise<void>;
   removeProvider: (providerId?: string) => Promise<void>;
   disconnectProvider: () => Promise<void>;
   refreshProvider: (providerId?: string) => Promise<void>;
@@ -710,6 +711,42 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const mergeImportedProviders = async (incoming: ProviderConfig[]) => {
+    if (!incoming.length) return;
+    const current = stateRef.current;
+    const importedById = new Map(incoming.map((item) => [item.id, item]));
+    const importedIds = new Set(importedById.keys());
+    const existingIds = new Set(current.providers.map((item) => item.id));
+    const providers = current.providers.map((item) => importedById.get(item.id) ?? item);
+    for (const item of incoming) {
+      if (!existingIds.has(item.id)) providers.push(item);
+    }
+
+    const removedChannelIds = new Set(
+      current.channels
+        .filter((channel) => importedIds.has(channel.providerId))
+        .map((channel) => channel.id),
+    );
+    const provider = current.provider?.id
+      ? importedById.get(current.provider.id) ?? current.provider
+      : current.provider;
+    const next: PlayerState = {
+      ...current,
+      providers,
+      provider,
+      channels: current.channels.filter((channel) => !importedIds.has(channel.providerId)),
+      epg: current.epg.filter((program) => !removedChannelIds.has(program.channelId)),
+      favorites: current.favorites.filter((id) => !removedChannelIds.has(id)),
+      history: current.history.filter((id) => !removedChannelIds.has(id)),
+    };
+
+    // Import credentials have already passed SecureStore write/read-back verification.
+    // Metadata is the final commit point and must not be swallowed like normal UI persist().
+    await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
+    stateRef.current = next;
+    setState(next);
+  };
+
   const connectProvider = async (config: ProviderInput) => {
     setIsLoading(true);
     setError(null);
@@ -1095,6 +1132,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       isEpgLoading,
       error,
       connectProvider,
+      mergeImportedProviders,
       removeProvider,
       disconnectProvider,
       refreshProvider,
