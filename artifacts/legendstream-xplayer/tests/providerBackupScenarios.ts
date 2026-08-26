@@ -435,6 +435,15 @@ test("security", "import metrics subtract decision wait and exclude provider ide
     conflictUiReadyMs: 75,
     planBuildMs: 2,
     measuredFlowToFinishMs: 5_500,
+    memory: {
+      available: true,
+      processingPeakPssKb: 123_456,
+      kdfPeakPssKb: 121_000,
+      commitPeakPssKb: 123_456,
+      decisionPeakPssKb: 120_000,
+      sampleCount: 42,
+      sampleIntervalMs: 250,
+    },
     commit: {
       commitTotalMs: 578,
       snapshotTotalMs: 100,
@@ -477,6 +486,9 @@ test("security", "import metrics subtract decision wait and exclude provider ide
   assert.equal(serialized.includes(redactionSentinel), false);
   assert.equal(formatted.includes(redactionSentinel), false);
   assert.match(formatted, /provider\[1\]/u);
+  assert.match(formatted, /peak_memory_pss_kb=123456/u);
+  assert.match(formatted, /kdf_peak_memory_pss_kb=121000/u);
+  assert.match(formatted, /commit_peak_memory_pss_kb=123456/u);
   assert.doesNotMatch(formatted, /providerId|providerName|credential=/u);
 });
 
