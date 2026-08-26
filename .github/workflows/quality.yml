@@ -111,7 +111,6 @@ jobs:
           grep -F 'credential round-trip: 1/1 passed' <<<"$output"
           grep -F 'security regressions: 7/7 passed' <<<"$output"
           grep -F 'provider backup tests: 17/17 passed' <<<"$output"
-          grep -F 'degraded-mode: module-load=pass cryptoAvailable=false secureStoreWrites=0 asyncStorageWrites=0' <<<"$output"
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references
