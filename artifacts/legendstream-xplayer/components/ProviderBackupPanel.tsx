@@ -14,6 +14,8 @@ import { FocusButton } from "@/components/FocusButton";
 import { usePlayer } from "@/context/PlayerContext";
 import { useColors } from "@/hooks/useColors";
 import {
+  CRYPTO_UNAVAILABLE_MESSAGE,
+  cryptoAvailable,
   generateRecoveryPhrase,
   validateCustomBackupPassword,
   type ProviderBackupError,
@@ -81,6 +83,10 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
 
   const beginExport = () => {
     setMessage(null);
+    if (!cryptoAvailable) {
+      setMessage(CRYPTO_UNAVAILABLE_MESSAGE);
+      return;
+    }
     try {
       const phrase = generateRecoveryPhrase(secureRandomBytes);
       setGeneratedPassword(phrase);
@@ -136,8 +142,12 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
   };
 
   const beginImport = async () => {
-    setBusy(true);
     setMessage(null);
+    if (!cryptoAvailable) {
+      setMessage(CRYPTO_UNAVAILABLE_MESSAGE);
+      return;
+    }
+    setBusy(true);
     try {
       const selection = await pickEncryptedProviderBackup();
       if (!selection) return;
@@ -218,9 +228,12 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
     <Text style={{ color: colors.mutedForeground }}>
       Hesap kimlik bilgilerini cihazdan bağımsız, parola korumalı bir dosyada saklayın.
     </Text>
+    {!cryptoAvailable ? (
+      <Text style={{ color: colors.destructive }}>{CRYPTO_UNAVAILABLE_MESSAGE}</Text>
+    ) : null}
     <View style={styles.actions}>
-      {mode === "full" ? <FocusButton label="Hesapları Dışa Aktar" icon="share-2" onPress={beginExport} disabled={busy} /> : null}
-      <FocusButton label="Hesapları İçe Aktar" icon="upload" variant={mode === "import-only" ? "primary" : "ghost"} onPress={() => void beginImport()} disabled={busy} />
+      {mode === "full" ? <FocusButton label="Hesapları Dışa Aktar" icon="share-2" onPress={beginExport} disabled={busy || !cryptoAvailable} /> : null}
+      <FocusButton label="Hesapları İçe Aktar" icon="upload" variant={mode === "import-only" ? "primary" : "ghost"} onPress={() => void beginImport()} disabled={busy || !cryptoAvailable} />
     </View>
     {message ? <Text style={{ color: colors.foreground }}>{message}</Text> : null}
 
