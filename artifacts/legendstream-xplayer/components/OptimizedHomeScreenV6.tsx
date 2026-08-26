@@ -25,6 +25,7 @@ import { DownloadsView } from "@/components/DownloadsView";
 import { ContinueWatchingView } from "@/components/ContinueWatchingView";
 import { ProviderSubscriptionChip } from "@/components/ProviderSubscriptionChip";
 import { PlayerChromeTimeoutSetting } from "@/components/PlayerChromeTimeoutSetting";
+import { CredentialDiagnosticsPanel, useCredentialDiagnosticsStartup } from "@/components/CredentialDiagnosticsPanel";
 import {
   Channel,
   EpgProgram,
@@ -214,6 +215,7 @@ export default function OptimizedHomeScreenV6() {
     clearError,
   } = usePlayer();
   const { snapshot, cacheReady, refreshCatalog } = useCatalogSync();
+  useCredentialDiagnosticsStartup();
 
   const [view, setView] = useState<ViewName>("home");
   const [editing, setEditing] = useState(false);
@@ -1652,6 +1654,7 @@ function Settings({ provider, providers, busy, onEdit, onAdd, onSwitch, onDiscon
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.rail}>{languages.map((item) => <FocusButton key={item.code} label={item.label} variant={language === item.code ? "secondary" : "ghost"} onPress={() => void setLanguage(item.code)} />)}</ScrollView>
     </View>
     <PlayerChromeTimeoutSetting />
+    <CredentialDiagnosticsPanel />
     <View style={{ marginTop: 24 }}>
       <Text style={[s.section, { color: colors.foreground }]}>{t("savedAccounts")}</Text>
       <View style={{ gap: 8 }}>{providers.map((item) => <View key={item.id} style={[s.accountCard, { borderColor: item.id === provider.id ? colors.primary : colors.border, backgroundColor: colors.card }]}>
