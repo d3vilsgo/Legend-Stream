@@ -270,7 +270,7 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   busy: boolean;
   error: string | null;
   onCancel?: () => void;
-  onSubmit: (config: Omit<ProviderConfig, "id" | "connectedAt" | "createdAt" | "url" | "channelCount"> & { url?: string; epgUrl?: string; mac?: string }) => Promise<void>;
+  onSubmit: (config: Omit<ProviderConfig, "id" | "connectedAt" | "createdAt" | "url" | "channelCount" | "needsCredentials"> & { url?: string; epgUrl?: string; mac?: string }) => Promise<void>;
 }) {
   const colors = useColors(); const insets = useSafeAreaInsets(); const { t } = useI18n();
   const [name, setName] = useState(existing?.name ?? "My provider");

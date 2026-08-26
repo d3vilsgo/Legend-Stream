@@ -20,7 +20,8 @@ import {
   ProviderType,
 } from "@/lib/iptv";
 import { mapInBatches, yieldToUi } from "@/lib/cooperative";
-import { deleteCredentials, getCredentials, saveCredentials, type ProviderSecrets } from "@/lib/secureCredentials";
+import { deleteCredentials, readCredentials, saveCredentials, type ProviderSecrets } from "@/lib/secureCredentials";
+import { credentialFieldsEqual, hasRequiredCredentialFields, migratedLegacyStateAfterVerification, resolveCredentialState } from "@/lib/providerCredentialState";
 
 export { ProviderType };
 export type { Channel, EpgProgram };
@@ -40,6 +41,7 @@ export interface ProviderConfig {
   lastLoadedAt?: number;
   channelCount?: number;
   loadError?: string;
+  needsCredentials: boolean;
 }
 
 export type EpgSelection = { now?: EpgProgram; next?: EpgProgram };
@@ -95,8 +97,9 @@ interface PlayerState {
 
 interface ProviderInput extends Omit<
   ProviderConfig,
-  "id" | "connectedAt" | "createdAt" | "url" | "channelCount"
+  "id" | "connectedAt" | "createdAt" | "url" | "channelCount" | "needsCredentials"
 > {
+  providerId?: string;
   url?: string;
   epgUrl?: string;
   mac?: string;
@@ -136,6 +139,7 @@ const toProvider = (provider: Provider): ProviderConfig => ({
   ...provider,
   playlistUrl: provider.url,
   connectedAt: new Date(provider.createdAt).toISOString(),
+  needsCredentials: false,
 });
 
 const fromProvider = (provider: ProviderConfig): Provider => ({
@@ -334,14 +338,55 @@ function serializedPlayerState(next: PlayerState) {
   });
 }
 
+function parseStoredPlayerState(raw: string | null, label: string): Partial<PlayerState> | null {
+  if (raw === null) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") {
+      throw new Error("Stored player state is not an object.");
+    }
+    return parsed as Partial<PlayerState>;
+  } catch {
+    throw new Error(`${label} player state could not be read.`);
+  }
+}
+
+function providersFromStoredState(saved: Partial<PlayerState> | null): ProviderConfig[] {
+  if (!saved) return [];
+  const providers = Array.isArray(saved.providers) ? [...saved.providers] : [];
+  if (saved.provider?.id && !providers.some((item) => item.id === saved.provider?.id)) {
+    providers.push(saved.provider);
+  }
+  return providers;
+}
+
 async function hydrateStoredProvider(
   stored: ProviderConfig | StoredProviderConfig,
-  legacySecrets?: ProviderSecrets,
-): Promise<ProviderConfig> {
-  const secure = await getCredentials(stored.id).catch(() => null);
-  const secrets = secure ?? legacySecrets ?? providerSecretsFrom(stored as ProviderConfig);
+  v3Secrets: ProviderSecrets | undefined,
+  v2Secrets: ProviderSecrets | undefined,
+): Promise<{ provider: ProviderConfig; secureVerified: boolean }> {
+  const secure = await readCredentials(stored.id);
+  const resolution = resolveCredentialState(stored.type, v3Secrets, v2Secrets, secure);
+  let needsCredentials = resolution.needsCredentials;
+  let secureVerified =
+    secure.status === "found" &&
+    hasRequiredCredentialFields(stored.type, resolution.secrets) &&
+    credentialFieldsEqual(secure.secrets, resolution.secrets);
+
+  if (secure.status !== "error" && resolution.shouldWriteSecureStore) {
+    try {
+      // saveCredentials resolves only after exact write/read-back verification.
+      await saveCredentials(stored.id, resolution.secrets);
+      secureVerified = true;
+    } catch {
+      needsCredentials = true;
+      secureVerified = false;
+    }
+  }
+
+  const secrets = resolution.secrets;
   const url = secrets.url || secrets.playlistUrl || "";
-  return {
+  const provider = {
     ...stored,
     url,
     playlistUrl: secrets.playlistUrl || secrets.url || "",
@@ -349,83 +394,110 @@ async function hydrateStoredProvider(
     username: secrets.username,
     password: secrets.password,
     mac: secrets.mac,
+    needsCredentials,
   } as ProviderConfig;
+  return { provider, secureVerified };
 }
 
 async function saveProviderSecrets(provider: ProviderConfig) {
-  await saveCredentials(provider.id, providerSecretsFrom(provider));
+  const secrets = providerSecretsFrom(provider);
+  if (!hasRequiredCredentialFields(provider.type, secrets)) {
+    throw new Error("Provider credentials are incomplete.");
+  }
+  await saveCredentials(provider.id, secrets);
 }
 
 const readState = async (): Promise<PlayerState> => {
-  let raw = await AsyncStorage.getItem(STORAGE_KEY);
-  if (!raw) raw = await AsyncStorage.getItem(LEGACY_STORAGE_KEY);
-  if (!raw) return emptyState;
+  const [v3Raw, v2Raw] = await Promise.all([
+    AsyncStorage.getItem(STORAGE_KEY),
+    AsyncStorage.getItem(LEGACY_STORAGE_KEY),
+  ]);
+  if (v3Raw === null && v2Raw === null) return emptyState;
 
-  try {
-    const saved = JSON.parse(raw) as Partial<PlayerState>;
-    const storedProviders = (saved.providers ?? []) as ProviderConfig[];
-    let migrationSucceeded = true;
-    const legacyById = new Map<string, ProviderSecrets>();
+  const v3Saved = parseStoredPlayerState(v3Raw, "Current");
+  const v2Saved = parseStoredPlayerState(v2Raw, "Legacy");
+  const v3Providers = providersFromStoredState(v3Saved);
+  const v2Providers = providersFromStoredState(v2Saved);
+  const v3ById = new Map(v3Providers.map((item) => [item.id, item]));
+  const v2ById = new Map(v2Providers.map((item) => [item.id, item]));
+  const providerIds = [
+    ...v3Providers.map((item) => item.id),
+    ...v2Providers.map((item) => item.id).filter((id) => !v3ById.has(id)),
+  ];
 
-    for (const item of storedProviders) {
-      const legacySecrets = providerSecretsFrom(item);
-      legacyById.set(item.id, legacySecrets);
-      if (!hasProviderSecrets(legacySecrets)) continue;
-      try {
-        await saveCredentials(item.id, legacySecrets);
-      } catch {
-        migrationSucceeded = false;
-      }
-    }
+  const legacyCredentialProviderIds = new Set(
+  v2Providers
+    .filter((item) => hasProviderSecrets(providerSecretsFrom(item)))
+    .map((item) => item.id),
+);
+if (
+  v2Saved?.provider?.id &&
+  hasProviderSecrets(providerSecretsFrom(v2Saved.provider))
+) {
+  legacyCredentialProviderIds.add(v2Saved.provider.id);
+}
+const verifiedLegacyProviderIds = new Set<string>();
+const providers: ProviderConfig[] = [];
+for (const id of providerIds) {
+  const v3 = v3ById.get(id);
+  const v2 = v2ById.get(id);
+  const stored = { ...(v2 ?? {}), ...(v3 ?? {}) } as ProviderConfig | StoredProviderConfig;
+  const hydration = await hydrateStoredProvider(
+    stored,
+    v3 ? providerSecretsFrom(v3) : undefined,
+    v2 ? providerSecretsFrom(v2) : undefined,
+  );
+  providers.push(hydration.provider);
+  if (hydration.secureVerified) verifiedLegacyProviderIds.add(id);
+}
 
-    if (saved.provider?.id) {
-      const activeLegacy = providerSecretsFrom(saved.provider);
-      const existing = legacyById.get(saved.provider.id) ?? {};
-      const merged = { ...existing, ...activeLegacy };
-      legacyById.set(saved.provider.id, merged);
-      if (hasProviderSecrets(activeLegacy)) {
-        try {
-          await saveCredentials(saved.provider.id, merged);
-        } catch {
-          migrationSucceeded = false;
-        }
-      }
-    }
+  const activeProviderId = v3Saved?.activeProviderId ?? v2Saved?.activeProviderId;
+  const savedActive = v3Saved?.provider ?? v2Saved?.provider;
+  const provider =
+    activeProviderId === LOGGED_OUT
+      ? null
+      : providers.find((item) => item.id === activeProviderId) ??
+        (savedActive
+? providers.find((item) => item.id === savedActive.id) ?? null
+: providers[0] ?? null);
+  const favoritesSource = Array.isArray(v3Saved?.favorites)
+    ? v3Saved.favorites
+    : Array.isArray(v2Saved?.favorites)
+      ? v2Saved.favorites
+      : [];
+  const historySource = Array.isArray(v3Saved?.history)
+    ? v3Saved.history
+    : Array.isArray(v2Saved?.history)
+      ? v2Saved.history
+      : [];
+  const next: PlayerState = {
+    providers,
+    provider,
+    channels: [],
+    epg: [],
+    favorites: favoritesSource.slice(0, 500),
+    history: historySource.slice(0, 50),
+    activeProviderId: activeProviderId ?? provider?.id,
+  };
 
-    const providers = await Promise.all(
-      storedProviders.map((item) => hydrateStoredProvider(item, legacyById.get(item.id))),
-    );
-    const activeProviderId = saved.activeProviderId;
-    const provider =
-      activeProviderId === LOGGED_OUT
-        ? null
-        : providers.find((item) => item.id === activeProviderId) ??
-          (saved.provider
-            ? providers.find((item) => item.id === saved.provider?.id) ?? null
-            : providers[0] ?? null);
-    const next: PlayerState = {
-      providers,
-      provider,
-      channels: [],
-      epg: [],
-      favorites: Array.isArray(saved.favorites) ? saved.favorites.slice(0, 500) : [],
-      history: Array.isArray(saved.history) ? saved.history.slice(0, 50) : [],
-      activeProviderId: activeProviderId ?? provider?.id,
-    };
+  if (providers.every((item) => !item.needsCredentials)) {
+  await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
+  await AsyncStorage.setItem(SECURE_MIGRATION_KEY, "1");
+}
 
-    if (migrationSucceeded) {
-      try {
-        await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
-        await AsyncStorage.setItem(SECURE_MIGRATION_KEY, "1");
-        await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
-      } catch {
-        // SecureStore already owns the secrets. A later persist will retry metadata cleanup.
-      }
-    }
-    return next;
-  } catch {
-    return emptyState;
-  }
+// K1-EK: keep v2 for rollback/audit metadata, but scrub plaintext only
+// after all credential-bearing legacy providers are verified in SecureStore.
+const legacyCredentialsVerified = [...legacyCredentialProviderIds].every((id) =>
+  verifiedLegacyProviderIds.has(id),
+);
+const migratedLegacy = migratedLegacyStateAfterVerification(
+  v2Saved,
+  v2Saved !== null && legacyCredentialsVerified,
+);
+if (migratedLegacy) {
+  await AsyncStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(migratedLegacy));
+}
+return next;
 };
 
 function decodeBase64Utf8(value: string) {
@@ -606,7 +678,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         setState(saved);
         setIsHydrating(false);
       })
-      .catch(() => setIsHydrating(false));
+      .catch(() => {
+        setError("Credential storage could not be read.");
+        setIsHydrating(false);
+      });
   }, []);
 
   const persist = async (next: PlayerState) => {
@@ -620,14 +695,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       for (const item of next.providers) providersToSecure.set(item.id, item);
       if (next.provider) providersToSecure.set(next.provider.id, next.provider);
       for (const item of providersToSecure.values()) {
-        if (hasProviderSecrets(providerSecretsFrom(item))) {
+        const secrets = providerSecretsFrom(item);
+        if (!item.needsCredentials && hasRequiredCredentialFields(item.type, secrets)) {
           await saveProviderSecrets(item);
         }
       }
 
       await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
       await AsyncStorage.setItem(SECURE_MIGRATION_KEY, "1");
-      await AsyncStorage.removeItem(LEGACY_STORAGE_KEY);
+      // LEGACY_STORAGE_KEY is deliberately retained as read-only backup.
     } catch {
       // Keep the in-memory session usable and, critically, leave the previous
       // on-disk state untouched so credentials are not lost on storage failure.
@@ -652,7 +728,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       };
       const candidate = await resolveProviderOnConnect(rawCandidate);
       const current = stateRef.current;
-      const duplicate = current.providers.find((item) => sameAccount(item, candidate));
+      const duplicate = config.providerId
+        ? current.providers.find((item) => item.id === config.providerId)
+        : current.providers.find((item) => sameAccount(item, candidate));
       const providerToLoad = duplicate
         ? { ...candidate, id: duplicate.id, createdAt: duplicate.createdAt }
         : candidate;
@@ -746,6 +824,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const current = stateRef.current;
     const existing = current.providers.find((item) => item.id === providerId);
     if (!existing) return false;
+    if (existing.needsCredentials) {
+      setError(null);
+      return false;
+    }
     setIsLoading(true);
     setError(null);
     try {
@@ -821,7 +903,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       history: current.history.filter((id) => channelIds.has(id)),
       epg: current.epg.filter((program) => channelIds.has(program.channelId)),
     });
-    await deleteCredentials(providerId).catch(() => undefined);
+    try {
+      await deleteCredentials(providerId);
+    } catch {
+      setError("Provider was removed, but secure credential cleanup failed.");
+    }
   };
 
   const refreshEpg = useCallback(
