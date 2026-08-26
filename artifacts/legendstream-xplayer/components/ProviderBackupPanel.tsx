@@ -17,6 +17,7 @@ import {
   CRYPTO_UNAVAILABLE_MESSAGE,
   cryptoAvailable,
   generateRecoveryPhrase,
+  RECOVERY_ENTROPY_BITS,
   validateCustomBackupPassword,
   type ProviderBackupError,
 } from "@/lib/providerBackupCore";
@@ -262,7 +263,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
             />
             {customValidation?.warnings.length ? <Text style={{ color: colors.destructive }}>Bu parola zayıf görünüyor; çevrimdışı parola tahmin saldırılarına karşı daha güçlü bir parola önerilir.</Text> : null}
           </> : <>
-            <Text style={{ color: colors.mutedForeground }}>Aşağıdaki 6 kelimelik parola yaklaşık 72 bit rastgelelik taşır. Başka cihazda geri yüklemek için gereklidir.</Text>
+            <Text style={{ color: colors.mutedForeground }}>Aşağıdaki 6 kelimelik parola yaklaşık {RECOVERY_ENTROPY_BITS.toFixed(1)} bit rastgelelik taşır. Başka cihazda geri yüklemek için gereklidir.</Text>
             <View style={[styles.phrase, { borderColor: colors.border, backgroundColor: colors.card }]}>
               <Text selectable style={{ color: colors.foreground, fontWeight: "800", flex: 1 }}>{generatedPassword}</Text>
               <Pressable onPress={() => void Clipboard.setStringAsync(generatedPassword)}><Feather name="copy" size={20} color={colors.primary} /></Pressable>
