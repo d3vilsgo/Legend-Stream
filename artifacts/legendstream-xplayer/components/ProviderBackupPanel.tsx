@@ -1,5 +1,5 @@
 import * as Clipboard from "expo-clipboard";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   Modal,
   Pressable,
@@ -32,14 +32,38 @@ import {
   providerBackupErrorCode,
   type ImportConflictChoice,
   type ProviderBackupPreview,
+  type ProviderImportProgress,
 } from "@/lib/providerBackupService";
 import {
   pickEncryptedProviderBackup,
   shareEncryptedProviderBackup,
   type PickedProviderBackup,
 } from "@/lib/providerBackupFiles";
+import {
+  createProviderImportMetricsReport,
+  formatProviderImportMetrics,
+} from "@/lib/providerImportMetrics";
+import { saveLatestProviderImportMetrics } from "@/lib/providerImportMetricsStore";
 
 type ImportPasswordMode = "recovery" | "custom";
+type ImportProgressState = { percent: number; label: string };
+
+function commitProgressState(progress: ProviderImportProgress): ImportProgressState {
+  const ratio = progress.total > 0 ? progress.completed / progress.total : 1;
+  if (progress.phase === "snapshot") {
+    return { percent: 62 + Math.round(ratio * 16), label: "Güvenli kayıtlar denetleniyor" };
+  }
+  if (progress.phase === "credential_write") {
+    return { percent: 79 + Math.round(ratio * 14), label: "Hesap bilgileri güvenli depoya yazılıyor" };
+  }
+  if (progress.phase === "extension_write") {
+    return { percent: 93, label: "Hesap uzantıları doğrulanıyor" };
+  }
+  if (progress.phase === "root_write") {
+    return { percent: 96 + Math.round(ratio), label: "Yedek uzantıları doğrulanıyor" };
+  }
+  return { percent: progress.completed ? 99 : 98, label: "Hesap listesi kaydediliyor" };
+}
 
 export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import-only" }) {
   const colors = useColors();
@@ -57,6 +81,18 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
   const [picked, setPicked] = useState<PickedProviderBackup | null>(null);
   const [preview, setPreview] = useState<ProviderBackupPreview | null>(null);
   const [choices, setChoices] = useState<Record<string, ImportConflictChoice>>({});
+  const [importProgress, setImportProgress] = useState<ImportProgressState>({
+    percent: 0,
+    label: "Yedek bekleniyor",
+  });
+  const importMeasurementStartedAt = useRef(0);
+  const importFileLoadedAt = useRef(0);
+  const passwordEntryWaitMs = useRef(0);
+  const unlockTotalMs = useRef(0);
+  const importKdfMs = useRef(0);
+  const conflictDecisionStartedAt = useRef(0);
+  const conflictPreviewPreparedAt = useRef(0);
+  const conflictUiReadyMs = useRef(0);
 
   const customValidation = useMemo(() => {
     if (!customPassword) return null;
@@ -72,6 +108,15 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
     [preview, providers],
   );
   const unresolved = conflicts.filter((conflict) => !choices[conflict.providerId]);
+
+  useEffect(() => {
+    if (!preview || !conflicts.length || conflictDecisionStartedAt.current) return;
+    const readyAt = Date.now();
+    conflictUiReadyMs.current = conflictPreviewPreparedAt.current
+      ? readyAt - conflictPreviewPreparedAt.current
+      : 0;
+    conflictDecisionStartedAt.current = readyAt;
+  }, [preview, conflicts.length]);
 
   const errorText = (error: unknown) => {
     const code = providerBackupErrorCode(error);
@@ -165,6 +210,15 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
       setPreview(null);
       setChoices({});
       setProgress(0);
+      importMeasurementStartedAt.current = 0;
+      importFileLoadedAt.current = Date.now();
+      passwordEntryWaitMs.current = 0;
+      unlockTotalMs.current = 0;
+      importKdfMs.current = 0;
+      conflictDecisionStartedAt.current = 0;
+      conflictPreviewPreparedAt.current = 0;
+      conflictUiReadyMs.current = 0;
+      setImportProgress({ percent: 0, label: "Parola bekleniyor" });
       setDialog("import");
     } catch (error) {
       setMessage(errorText(error));
@@ -178,6 +232,12 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
     setBusy(true);
     setProgress(0);
     setMessage(null);
+    setImportProgress({ percent: 2, label: "Yedek doğrulanıyor" });
+    const unlockStartedAt = Date.now();
+    passwordEntryWaitMs.current = importFileLoadedAt.current
+      ? unlockStartedAt - importFileLoadedAt.current
+      : 0;
+    importMeasurementStartedAt.current = unlockStartedAt - picked.diagnostics.fileReadMs;
     try {
       const password = importPasswordMode === "recovery"
         ? normalizeRecoveryPhrasePassword(importPassword)
@@ -185,11 +245,29 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
       const opened = await decryptProviderBackupForImport(
         picked.bytes,
         password,
-        setProgress,
+        (value) => {
+          setProgress(value);
+          setImportProgress({
+            percent: 5 + Math.round(value * 50),
+            label: "Parola anahtarı türetiliyor",
+          });
+        },
       );
+      unlockTotalMs.current = Date.now() - unlockStartedAt;
+      importKdfMs.current = opened.kdfMs;
       console.log("BACKUP_KDF_METRIC", JSON.stringify({ operation: "import", ms: opened.kdfMs }));
+      const openedConflicts = listImportConflicts(opened, providers);
+      conflictDecisionStartedAt.current = 0;
+      conflictPreviewPreparedAt.current = openedConflicts.length ? Date.now() : 0;
+      conflictUiReadyMs.current = 0;
       setPreview(opened);
       setChoices({});
+      setImportProgress({
+        percent: 60,
+        label: openedConflicts.length
+          ? "Çakışma kararları bekleniyor"
+          : "İçe aktarmaya hazır",
+      });
     } catch (error) {
       setMessage(errorText(error));
     } finally {
@@ -200,11 +278,63 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
 
   const performImport = async () => {
     if (!preview || unresolved.length) return;
+    const decisionEndedAt = Date.now();
+    const conflictDecisionWaitMs = conflictDecisionStartedAt.current
+      ? decisionEndedAt - conflictDecisionStartedAt.current
+      : 0;
     setBusy(true);
     setMessage(null);
+    setImportProgress((previous) => ({
+      percent: Math.max(previous.percent, 61),
+      label: "İçe aktarma planı hazırlanıyor",
+    }));
     try {
+      const planStartedAt = Date.now();
       const plan = buildImportPlan(preview, providers, choices);
-      const result = await commitProviderImport(plan, mergeImportedProviders);
+      const planBuildMs = Date.now() - planStartedAt;
+      const result = await commitProviderImport(
+        plan,
+        mergeImportedProviders,
+        (next) => {
+          const mapped = commitProgressState(next);
+          setImportProgress((previous) => ({
+            percent: Math.max(previous.percent, mapped.percent),
+            label: mapped.label,
+          }));
+        },
+      );
+      setImportProgress({ percent: 100, label: "İçe aktarma tamamlandı" });
+      const choiceCounts = Object.values(choices).reduce(
+        (counts, choice) => {
+          if (choice === "overwrite") counts.overwrite += 1;
+          else if (choice === "keep_both") counts.keepBoth += 1;
+          else if (choice === "skip") counts.skip += 1;
+          return counts;
+        },
+        { overwrite: 0, keepBoth: 0, skip: 0 },
+      );
+      const report = createProviderImportMetricsReport({
+        status: "success",
+        candidateCount: preview.candidates.length,
+        conflictCount: conflicts.length,
+        choices: choiceCounts,
+        documentPickerWaitMs: picked?.diagnostics.documentPickerWaitMs ?? 0,
+        passwordEntryWaitMs: passwordEntryWaitMs.current,
+        fileReadMs: picked?.diagnostics.fileReadMs ?? 0,
+        unlockTotalMs: unlockTotalMs.current,
+        kdfMs: importKdfMs.current,
+        conflictDecisionWaitMs,
+        conflictUiReadyMs: conflictUiReadyMs.current,
+        planBuildMs,
+        measuredFlowToFinishMs: importMeasurementStartedAt.current
+          ? Date.now() - importMeasurementStartedAt.current
+          : 0,
+        commit: result.diagnostics,
+      });
+      console.log("BACKUP_IMPORT_METRICS", formatProviderImportMetrics(report));
+      void saveLatestProviderImportMetrics(report).catch(() => {
+        console.warn("BACKUP_IMPORT_METRICS_SAVE_FAILED");
+      });
       setMessage(`${result.importedCount} hesap içe aktarıldı.${result.skippedCount ? ` ${result.skippedCount} hesap atlandı.` : ""}`);
       if (picked) await picked.cleanup();
       setPicked(null);
@@ -233,6 +363,15 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
     setCustomPassword("");
     setImportPassword("");
     setImportPasswordMode("recovery");
+    importMeasurementStartedAt.current = 0;
+    importFileLoadedAt.current = 0;
+    passwordEntryWaitMs.current = 0;
+    unlockTotalMs.current = 0;
+    importKdfMs.current = 0;
+    conflictDecisionStartedAt.current = 0;
+    conflictPreviewPreparedAt.current = 0;
+    conflictUiReadyMs.current = 0;
+    setImportProgress({ percent: 0, label: "Yedek bekleniyor" });
     setDialog(null);
   };
 
@@ -331,10 +470,13 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
               placeholderTextColor={colors.mutedForeground}
             />
             <Text style={{ color: colors.mutedForeground }}>Yanlış parola veya bozuk dosyada hiçbir hesap yazılmaz.</Text>
-            {busy ? <Text style={{ color: colors.primary }}>Doğrulanıyor… %{Math.round(progress * 100)}</Text> : null}
+            {busy ? <Text style={{ color: colors.primary }}>{importProgress.label}… %{importProgress.percent}</Text> : null}
             <FocusButton label={busy ? "Doğrulanıyor…" : "Yedeği Doğrula"} icon="unlock" variant="primary" onPress={() => void unlockImport()} disabled={busy || !importPassword} />
           </> : <>
             <Text style={{ color: colors.foreground, fontWeight: "700" }}>{preview.candidates.length} hesap doğrulandı.</Text>
+            <Text style={{ color: colors.primary }}>
+              {importProgress.label}… %{importProgress.percent}
+            </Text>
             {conflicts.map((conflict) => <View key={conflict.providerId} style={[styles.conflict, { borderColor: colors.border }]}>
               <Text style={{ color: colors.foreground, fontWeight: "800" }}>{conflict.incomingName}</Text>
               <Text style={{ color: colors.mutedForeground }}>Aynı ID mevcut: {conflict.existingName}</Text>

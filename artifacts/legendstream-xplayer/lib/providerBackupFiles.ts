@@ -135,16 +135,22 @@ export async function shareEncryptedProviderBackup(bytes: Uint8Array): Promise<s
 export type PickedProviderBackup = {
   bytes: Uint8Array;
   sourceName?: string;
+  diagnostics: {
+    documentPickerWaitMs: number;
+    fileReadMs: number;
+  };
   cleanup: () => Promise<void>;
 };
 
 export async function pickEncryptedProviderBackup(): Promise<PickedProviderBackup | null> {
   assertSecureEntropyAvailable();
+  const pickerStartedAt = Date.now();
   const result = await DocumentPicker.getDocumentAsync({
     type: "*/*",
     multiple: false,
     copyToCacheDirectory: true,
   });
+  const documentPickerWaitMs = Date.now() - pickerStartedAt;
   if (result.canceled) return null;
   const asset = result.assets[0];
   if (!asset) throw new Error("Selected backup file is unavailable.");
@@ -152,12 +158,15 @@ export async function pickEncryptedProviderBackup(): Promise<PickedProviderBacku
     throw new Error("Selected backup file is too large.");
   }
   const file = new File(asset.uri);
+  const fileReadStartedAt = Date.now();
   const bytes = await file.bytes();
+  const fileReadMs = Date.now() - fileReadStartedAt;
   if (bytes.length > MAX_BACKUP_FILE_BYTES) throw new Error("Selected backup file is too large.");
   let cleaned = false;
   return {
     bytes,
     sourceName: asset.name,
+    diagnostics: { documentPickerWaitMs, fileReadMs },
     cleanup: async () => {
       if (cleaned) return;
       cleaned = true;
