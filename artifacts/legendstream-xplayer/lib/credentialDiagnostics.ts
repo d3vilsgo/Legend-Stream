@@ -172,7 +172,11 @@ export function formatCredentialDiagnostics(report: CredentialDiagnosticsReport)
     lines.push(`  v3=${provider.v3.present ? "yes" : "no"}; embeddedFields=${provider.v3.embeddedSecretFields.join(",") || "none"}`);
     lines.push(`  v2=${provider.v2.present ? "yes" : "no"}; embeddedFields=${provider.v2.embeddedSecretFields.join(",") || "none"}`);
     for (const probe of provider.secureStore) {
-      lines.push(`  ${probe.scheme}: ${probe.status}; fields=${probe.fields.join(",") || "none"}${probe.error ? `; error=${probe.error}` : ""}`);
+      if (probe.scheme === "legacy-raw-id-v1") {
+        lines.push("  legacy scheme: INVALID KEY (beklenen, kanıt değeri yok)");
+        continue;
+      }
+      lines.push(`  current scheme: ${probe.status}; fields=${probe.fields.join(",") || "none"}${probe.error ? `; error=${probe.error}` : ""}`);
     }
   }
 
