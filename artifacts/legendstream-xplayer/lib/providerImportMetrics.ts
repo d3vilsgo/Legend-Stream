@@ -1,4 +1,5 @@
 import type { ProviderImportCommitDiagnostics } from "./providerBackupService";
+import type { ImportMemoryMetrics } from "../modules/legendstream-diagnostics";
 
 export type ImportConflictChoiceCounts = {
   overwrite: number;
@@ -7,7 +8,7 @@ export type ImportConflictChoiceCounts = {
 };
 
 export type ProviderImportMetricsReport = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   generatedAt: string;
   status: "success" | "error";
   candidateCount: number;
@@ -41,6 +42,7 @@ export type ProviderImportMetricsReport = {
     totalExcludingConflictDecisionWaitMs: number;
   };
   calls: ProviderImportCommitDiagnostics["calls"];
+  memory: ImportMemoryMetrics;
   providers: ProviderImportCommitDiagnostics["providers"];
 };
 
@@ -58,6 +60,7 @@ export type ProviderImportMetricsInput = {
   conflictUiReadyMs: number;
   planBuildMs: number;
   measuredFlowToFinishMs: number;
+  memory: ImportMemoryMetrics;
   commit: ProviderImportCommitDiagnostics;
 };
 
@@ -77,7 +80,7 @@ export function createProviderImportMetricsReport(
     extensionVerifyReadMs: provider.extensionVerifyReadMs,
   }));
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     generatedAt: new Date().toISOString(),
     status: input.status,
     candidateCount: input.candidateCount,
@@ -114,6 +117,15 @@ export function createProviderImportMetricsReport(
       ),
     },
     calls: { ...input.commit.calls },
+    memory: {
+      available: input.memory.available,
+      processingPeakPssKb: input.memory.processingPeakPssKb,
+      kdfPeakPssKb: input.memory.kdfPeakPssKb,
+      commitPeakPssKb: input.memory.commitPeakPssKb,
+      decisionPeakPssKb: input.memory.decisionPeakPssKb,
+      sampleCount: input.memory.sampleCount,
+      sampleIntervalMs: input.memory.sampleIntervalMs,
+    },
     providers,
   };
 }
@@ -121,7 +133,7 @@ export function createProviderImportMetricsReport(
 export function formatProviderImportMetrics(report: ProviderImportMetricsReport): string {
   const { durations: d, calls: c } = report;
   const lines = [
-    "LegendStream provider import metrics v1",
+    "LegendStream provider import metrics v2",
     `generated_at=${report.generatedAt}`,
     `status=${report.status}`,
     `candidate_count=${report.candidateCount}`,
@@ -161,6 +173,16 @@ export function formatProviderImportMetrics(report: ProviderImportMetricsReport)
     `call_root_read=${c.rootRead}`,
     `call_root_write=${c.rootWrite}`,
     `call_asyncstorage_write=${c.asyncStorageWrite}`,
+    `memory_available=${report.memory.available}`,
+    `peak_memory_pss_kb=${report.memory.processingPeakPssKb}`,
+    `peak_memory_pss_mb=${(report.memory.processingPeakPssKb / 1024).toFixed(1)}`,
+    `kdf_peak_memory_pss_kb=${report.memory.kdfPeakPssKb}`,
+    `kdf_peak_memory_pss_mb=${(report.memory.kdfPeakPssKb / 1024).toFixed(1)}`,
+    `commit_peak_memory_pss_kb=${report.memory.commitPeakPssKb}`,
+    `commit_peak_memory_pss_mb=${(report.memory.commitPeakPssKb / 1024).toFixed(1)}`,
+    `conflict_decision_peak_memory_pss_kb=${report.memory.decisionPeakPssKb}`,
+    `memory_sample_count=${report.memory.sampleCount}`,
+    `memory_sample_interval_ms=${report.memory.sampleIntervalMs}`,
   ];
 
   for (const provider of report.providers) {

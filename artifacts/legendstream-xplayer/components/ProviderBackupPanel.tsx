@@ -44,6 +44,11 @@ import {
   formatProviderImportMetrics,
 } from "@/lib/providerImportMetrics";
 import { saveLatestProviderImportMetrics } from "@/lib/providerImportMetricsStore";
+import {
+  setImportMemoryPhase,
+  startImportMemorySampling,
+  stopImportMemorySampling,
+} from "@/modules/legendstream-diagnostics";
 
 type ImportPasswordMode = "recovery" | "custom";
 type ImportProgressState = { percent: number; label: string };
@@ -234,6 +239,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
     setMessage(null);
     setImportProgress({ percent: 2, label: "Yedek doğrulanıyor" });
     const unlockStartedAt = Date.now();
+    startImportMemorySampling();
     passwordEntryWaitMs.current = importFileLoadedAt.current
       ? unlockStartedAt - importFileLoadedAt.current
       : 0;
@@ -257,6 +263,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
       importKdfMs.current = opened.kdfMs;
       console.log("BACKUP_KDF_METRIC", JSON.stringify({ operation: "import", ms: opened.kdfMs }));
       const openedConflicts = listImportConflicts(opened, providers);
+      if (openedConflicts.length) setImportMemoryPhase("decision");
       conflictDecisionStartedAt.current = 0;
       conflictPreviewPreparedAt.current = openedConflicts.length ? Date.now() : 0;
       conflictUiReadyMs.current = 0;
@@ -269,6 +276,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
           : "İçe aktarmaya hazır",
       });
     } catch (error) {
+      stopImportMemorySampling();
       setMessage(errorText(error));
     } finally {
       setBusy(false);
@@ -288,6 +296,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
       percent: Math.max(previous.percent, 61),
       label: "İçe aktarma planı hazırlanıyor",
     }));
+    setImportMemoryPhase("commit");
     try {
       const planStartedAt = Date.now();
       const plan = buildImportPlan(preview, providers, choices);
@@ -303,6 +312,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
           }));
         },
       );
+      const memory = stopImportMemorySampling();
       setImportProgress({ percent: 100, label: "İçe aktarma tamamlandı" });
       const choiceCounts = Object.values(choices).reduce(
         (counts, choice) => {
@@ -329,6 +339,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
         measuredFlowToFinishMs: importMeasurementStartedAt.current
           ? Date.now() - importMeasurementStartedAt.current
           : 0,
+        memory,
         commit: result.diagnostics,
       });
       console.log("BACKUP_IMPORT_METRICS", formatProviderImportMetrics(report));
@@ -343,6 +354,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
       setImportPasswordMode("recovery");
       setDialog(null);
     } catch (error) {
+      stopImportMemorySampling();
       setMessage(errorText(error));
     } finally {
       setBusy(false);
@@ -351,6 +363,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
 
   const closeDialog = async () => {
     if (busy) return;
+    stopImportMemorySampling();
     if (dialog === "import" && picked) {
       try { await picked.cleanup(); } catch (error) {
         console.warn("BACKUP_IMPORT_TEMP_CLEANUP_FAILED", error instanceof Error ? error.message : "unknown error");
