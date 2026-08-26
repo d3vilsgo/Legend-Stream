@@ -6,22 +6,23 @@ import { sha256 } from "@noble/hashes/sha2.js";
 
 const NOBLE_CRYPTO_RUNTIME = { gcm, hkdf, hmac, scryptAsync, sha256 } as const;
 
+export const CRYPTO_UNAVAILABLE_MESSAGE = "Bu cihazda şifreleme bileşenleri yüklenemedi";
+
 export function nobleCryptoRuntimeTypes(): Record<keyof typeof NOBLE_CRYPTO_RUNTIME, string> {
   return Object.fromEntries(
     Object.entries(NOBLE_CRYPTO_RUNTIME).map(([name, value]) => [name, typeof value]),
   ) as Record<keyof typeof NOBLE_CRYPTO_RUNTIME, string>;
 }
 
+const STARTUP_NOBLE_CRYPTO_RUNTIME_TYPES = nobleCryptoRuntimeTypes();
+export const cryptoAvailable = Object.values(STARTUP_NOBLE_CRYPTO_RUNTIME_TYPES)
+  .every((value) => value === "function");
+
 export function assertNobleCryptoRuntime(): void {
-  const unavailable = Object.entries(NOBLE_CRYPTO_RUNTIME)
-    .filter(([, value]) => typeof value !== "function")
-    .map(([name, value]) => `${name}:${typeof value}`);
-  if (unavailable.length) {
-    throw new Error(`Noble crypto runtime exports unavailable: ${unavailable.join(", ")}`);
+  if (!cryptoAvailable) {
+    throw new Error(CRYPTO_UNAVAILABLE_MESSAGE);
   }
 }
-
-assertNobleCryptoRuntime();
 
 export const BACKUP_FORMAT = "legendstream_provider_backup" as const;
 export const BACKUP_FORMAT_VERSION = 1 as const;
@@ -401,6 +402,7 @@ export async function encryptBackupPayload(
   randomBytes?: SecureRandomBytes,
   onProgress?: BackupKdfProgress,
 ): Promise<EncryptedBackupResult> {
+  assertNobleCryptoRuntime();
   const random = requireEntropy(randomBytes);
   const salt = random(16);
   const iv = random(12);
@@ -442,6 +444,7 @@ export async function decryptBackupFile(
   password: string,
   onProgress?: BackupKdfProgress,
 ): Promise<DecryptedBackupResult> {
+  assertNobleCryptoRuntime();
   if (!bytes.length || bytes.length > MAX_BACKUP_FILE_BYTES || (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf)) {
     throw new ProviderBackupError("invalid_file", "Backup file is empty, too large, or contains a BOM.");
   }
