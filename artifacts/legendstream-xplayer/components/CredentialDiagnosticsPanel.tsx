@@ -7,9 +7,19 @@ import {
   runCredentialDiagnostics,
   type CredentialDiagnosticsReport,
 } from "@/lib/credentialDiagnostics";
+import { cryptoAvailable, nobleCryptoRuntimeTypes } from "@/lib/providerBackupCore";
+
+const formatDiagnosticsWithCryptoRuntime = (report: CredentialDiagnosticsReport) =>
+  `${formatCredentialDiagnostics(report)}\ncryptoAvailable=${cryptoAvailable}\nnobleCryptoRuntimeTypes=${JSON.stringify(nobleCryptoRuntimeTypes())}`;
 
 const errorMessage = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
+
+const fatalDiagnostics = (message: string) => JSON.stringify({
+  fatalError: message,
+  cryptoAvailable,
+  nobleCryptoRuntimeTypes: nobleCryptoRuntimeTypes(),
+});
 
 export function useCredentialDiagnosticsStartup() {
   useEffect(() => {
@@ -17,11 +27,11 @@ export function useCredentialDiagnosticsStartup() {
     void runCredentialDiagnostics()
       .then((report) => {
         if (!active) return;
-        console.log("LS_DIAG", formatCredentialDiagnostics(report));
+        console.log("LS_DIAG", formatDiagnosticsWithCryptoRuntime(report));
       })
       .catch((error) => {
         if (!active) return;
-        console.log("LS_DIAG", JSON.stringify({ fatalError: errorMessage(error) }));
+        console.log("LS_DIAG", fatalDiagnostics(errorMessage(error)));
       });
     return () => {
       active = false;
@@ -41,11 +51,11 @@ export function CredentialDiagnosticsPanel() {
     try {
       const next = await runCredentialDiagnostics();
       setReport(next);
-      console.log("LS_DIAG", formatCredentialDiagnostics(next));
+      console.log("LS_DIAG", formatDiagnosticsWithCryptoRuntime(next));
     } catch (error) {
       const message = errorMessage(error);
       setFatalError(message);
-      console.log("LS_DIAG", JSON.stringify({ fatalError: message }));
+      console.log("LS_DIAG", fatalDiagnostics(message));
     } finally {
       setBusy(false);
     }
@@ -70,7 +80,7 @@ export function CredentialDiagnosticsPanel() {
           style={{ maxHeight: 360, borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 12 }}
         >
           <Text selectable style={{ color: colors.foreground, fontFamily: "monospace", fontSize: 12 }}>
-            {formatCredentialDiagnostics(report)}
+            {formatDiagnosticsWithCryptoRuntime(report)}
           </Text>
         </ScrollView>
       ) : null}

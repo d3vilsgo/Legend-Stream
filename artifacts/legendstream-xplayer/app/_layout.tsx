@@ -1,3 +1,4 @@
+import "@/lib/cryptoBootstrap";
 import React, { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -16,6 +17,7 @@ import { PlayerProvider } from "@/context/PlayerContext";
 import { I18nProvider } from "@/context/I18nContext";
 import { MediaLibraryProvider } from "@/context/MediaLibraryContext";
 import { CatalogSyncProvider } from "@/context/CatalogSyncContext";
+import { cleanupProviderBackupTempFiles } from "@/lib/providerBackupFiles";
 
 const abortSignalCtor = globalThis.AbortSignal as typeof AbortSignal & {
   timeout?: (milliseconds: number) => AbortSignal;
@@ -29,6 +31,13 @@ if (abortSignalCtor && typeof abortSignalCtor.timeout !== "function") {
 }
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
+
+void cleanupProviderBackupTempFiles({ coldStart: true }).catch((error) => {
+  console.warn(
+    "BACKUP_TEMP_CLEANUP_FAILED",
+    error instanceof Error ? error.message : "unknown error",
+  );
+});
 
 const queryClient = new QueryClient();
 

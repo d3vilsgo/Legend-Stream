@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "pnpm exec expo start --localhost",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test:credentials": "rm -rf .credential-tests && tsc --module commonjs --target ES2020 --moduleResolution node --skipLibCheck --outDir .credential-tests lib/providerCredentialState.ts tests/credentialStorageScenarios.ts && node .credential-tests/tests/credentialStorageScenarios.js && rm -rf .credential-tests"
+    "test:credentials": "rm -rf .credential-tests && tsc --module commonjs --target ES2020 --moduleResolution node --skipLibCheck --outDir .credential-tests lib/providerCredentialState.ts tests/credentialStorageScenarios.ts && node .credential-tests/tests/credentialStorageScenarios.js && rm -rf .credential-tests",
+    "test:backup": "tsx tests/providerBackupScenarios.ts"
   },
   "expo": {
     "autolinking": {
@@ -60,12 +61,20 @@
     "react-native-screens": "~4.16.0",
     "react-native-svg": "15.12.1",
     "react-native-web": "^0.21.0",
+    "tsx": "^4.23.12",
     "typescript": "~5.9.2",
     "zod": "catalog:",
-    "zod-validation-error": "^3.4.0"
+    "zod-validation-error": "^3.4.0",
+    "@types/node": "^22.10.0"
   },
   "dependencies": {
+    "@noble/ciphers": "2.3.0",
+    "@noble/hashes": "2.3.0",
+    "expo-clipboard": "~8.0.8",
+    "expo-crypto": "~15.0.9",
+    "expo-document-picker": "~14.0.8",
     "expo-secure-store": "~15.0.8",
+    "expo-sharing": "~14.0.8",
     "react-native-vlc-media-player": "1.0.98"
   }
 }
