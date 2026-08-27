@@ -66,6 +66,38 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
+      - name: Install required Android NDK (retry + verify)
+        env:
+          REQUIRED_NDK_VERSION: "27.1.12297006"
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' | sort -V | tail -n 1)"
+          test -x "$SDKMANAGER"
+          NDK_DIR="$ANDROID_HOME/ndk/$REQUIRED_NDK_VERSION"
+          VERIFIED=0
+
+          for attempt in 1 2 3; do
+            echo "NDK install attempt $attempt/3: $REQUIRED_NDK_VERSION"
+            rm -rf "$NDK_DIR" "$ANDROID_HOME/.temp" "$HOME/.android/cache"
+            mkdir -p "$HOME/.android"
+            if yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;$REQUIRED_NDK_VERSION"; then
+              if test -f "$NDK_DIR/source.properties" && grep -Eq "^Pkg\.Revision[[:space:]]*=[[:space:]]*$REQUIRED_NDK_VERSION$" "$NDK_DIR/source.properties"; then
+                VERIFIED=1
+                break
+              fi
+            fi
+            rm -rf "$NDK_DIR" "$ANDROID_HOME/.temp" "$HOME/.android/cache"
+            sleep "$((attempt * 5))"
+          done
+
+          if [ "$VERIFIED" -ne 1 ]; then
+            echo "::error::Required Android NDK $REQUIRED_NDK_VERSION could not be installed and verified after 3 attempts"
+            exit 1
+          fi
+          grep '^Pkg.Revision' "$NDK_DIR/source.properties"
+          echo "Android NDK verified: $NDK_DIR"
+
       - name: Install mobile dependencies from committed lockfile
         shell: bash
         run: |
