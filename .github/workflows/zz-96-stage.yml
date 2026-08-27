@@ -1,4 +1,4 @@
-name: 9.6 Log Redaction Stage
+name: 9.6 H1 Redaction Finalize
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: write
 
 jobs:
-  verify:
+  verify-and-commit-h1:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -26,41 +26,42 @@ jobs:
         with:
           node-version: 22
           cache: pnpm
-      - name: Apply remaining 9.6 migrations and permanent CI gates
+
+      - name: Apply staged H1 redaction migrations only
         shell: bash
         run: |
           set -euo pipefail
           python3 <<'PY'
           from pathlib import Path
 
-          def replace_one(path, old, new, label):
-              p = Path(path)
-              text = p.read_text()
-              if old not in text:
-                  raise SystemExit(f'{label}: expected source not found in {path}')
-              p.write_text(text.replace(old, new, 1))
-
-          # ErrorFallback: release logging is redacted; __DEV__ detail keeps redacted stack.
+          # ErrorFallback: preserve useful redacted error details; never raw release logging.
           p = Path('artifacts/legendstream-xplayer/components/ErrorFallback.tsx')
           text = p.read_text()
           marker = "import { reloadAppAsync } from 'expo';\n"
-          if marker not in text: raise SystemExit('ErrorFallback import marker missing')
+          if marker not in text:
+              raise SystemExit('ErrorFallback import marker missing')
           text = text.replace(marker, marker + "import { safeLog, sanitizeErrorForLog } from '@/lib/safeLog';\n", 1)
-          text = text.replace("      console.error('Failed to restart app:', restartError);", "      safeLog.error('APP_RESTART_FAILED', restartError);", 1)
+          old_console = "      console.error('Failed to restart app:', restartError);"
+          if old_console not in text:
+              raise SystemExit('ErrorFallback console marker missing')
+          text = text.replace(old_console, "      safeLog.error('APP_RESTART_FAILED', restartError);", 1)
           old = '''  const formatErrorDetails = (): string => {\n    let details = `Error: ${error.message}\\n\\n`;\n    if (error.stack) {\n      details += `Stack Trace:\\n${error.stack}`;\n    }\n    return details;\n  };'''
           new = '''  const formatErrorDetails = (): string => {\n    const safe = sanitizeErrorForLog(error, { includeStack: true });\n    let details = `${safe.name}: ${safe.message}\\n\\n`;\n    if (safe.stack) {\n      details += `Stack Trace:\\n${safe.stack}`;\n    }\n    return details;\n  };'''
-          if old not in text: raise SystemExit('ErrorFallback details block missing')
+          if old not in text:
+              raise SystemExit('ErrorFallback details block missing')
           p.write_text(text.replace(old, new, 1))
 
-          # Credential diagnostics: preserve useful redacted details, never raw error text.
+          # Credential diagnostics: redact message content while retaining diagnostic context.
           p = Path('artifacts/legendstream-xplayer/components/CredentialDiagnosticsPanel.tsx')
           text = p.read_text()
           marker = 'import { readLatestProviderImportMetrics } from "@/lib/providerImportMetricsStore";\n'
-          if marker not in text: raise SystemExit('CredentialDiagnostics import marker missing')
+          if marker not in text:
+              raise SystemExit('CredentialDiagnostics import marker missing')
           text = text.replace(marker, marker + 'import { redactSensitiveText, safeLog } from "@/lib/safeLog";\n', 1)
           old = '''const errorMessage = (error: unknown) =>\n  error instanceof Error ? error.message : String(error);'''
           new = '''const errorMessage = (error: unknown) =>\n  redactSensitiveText(error instanceof Error ? error.message : String(error));'''
-          if old not in text: raise SystemExit('CredentialDiagnostics errorMessage missing')
+          if old not in text:
+              raise SystemExit('CredentialDiagnostics errorMessage missing')
           text = text.replace(old, new, 1)
           text = text.replace('console.log("LS_DIAG",', 'safeLog.info("LS_DIAG",')
           p.write_text(text)
@@ -69,9 +70,13 @@ jobs:
           p = Path('artifacts/legendstream-xplayer/components/ProviderBackupPanel.tsx')
           text = p.read_text()
           marker = 'import { saveLatestProviderImportMetrics } from "@/lib/providerImportMetricsStore";\n'
-          if marker not in text: raise SystemExit('ProviderBackupPanel import marker missing')
+          if marker not in text:
+              raise SystemExit('ProviderBackupPanel import marker missing')
           text = text.replace(marker, marker + 'import { redactSensitiveText, safeLog } from "@/lib/safeLog";\n', 1)
-          text = text.replace('if (error instanceof Error) return error.message;', 'if (error instanceof Error) return redactSensitiveText(error.message);', 1)
+          old_error = 'if (error instanceof Error) return error.message;'
+          if old_error not in text:
+              raise SystemExit('ProviderBackupPanel error message marker missing')
+          text = text.replace(old_error, 'if (error instanceof Error) return redactSensitiveText(error.message);', 1)
           replacements = {
             'console.log("BACKUP_KDF_METRIC", JSON.stringify({ operation: "export", ms: result.kdfMs }));': 'safeLog.info("BACKUP_KDF_METRIC", { operation: "export", ms: result.kdfMs });',
             'console.log("BACKUP_KDF_METRIC", JSON.stringify({ operation: "import", ms: opened.kdfMs }));': 'safeLog.info("BACKUP_KDF_METRIC", { operation: "import", ms: opened.kdfMs });',
@@ -80,57 +85,49 @@ jobs:
             'console.warn("BACKUP_IMPORT_TEMP_CLEANUP_FAILED", error instanceof Error ? error.message : "unknown error");': 'safeLog.warn("BACKUP_IMPORT_TEMP_CLEANUP_FAILED", error);',
           }
           for old, new in replacements.items():
-              if old not in text: raise SystemExit(f'ProviderBackupPanel replacement missing: {old}')
+              if old not in text:
+                  raise SystemExit(f'ProviderBackupPanel replacement missing: {old}')
               text = text.replace(old, new, 1)
           p.write_text(text)
 
-          # Backup temp cleanup errors.
+          # Backup temp cleanup errors through the redacting logger.
           p = Path('artifacts/legendstream-xplayer/lib/providerBackupFiles.ts')
           text = p.read_text()
           marker = 'import { assertSecureEntropyAvailable, secureRandomBytes } from "./cryptoBootstrap";\n'
-          if marker not in text: raise SystemExit('providerBackupFiles import marker missing')
+          if marker not in text:
+              raise SystemExit('providerBackupFiles import marker missing')
           text = text.replace(marker, marker + 'import { safeLog } from "./safeLog";\n', 1)
           old = '''        console.warn(\n          "BACKUP_TEMP_CLEANUP_FAILED",\n          error instanceof Error ? error.message : "unknown error",\n        );'''
           new = '''        safeLog.warn("BACKUP_TEMP_CLEANUP_FAILED", error);'''
-          if old not in text: raise SystemExit('providerBackupFiles console block missing')
+          if old not in text:
+              raise SystemExit('providerBackupFiles console block missing')
           p.write_text(text.replace(old, new, 1))
 
-          # Verification/build scripts use process streams, not console.*.
-          replace_one(
-              'artifacts/legendstream-xplayer/scripts/verify-epg-utf8.mjs',
-              'console.log("EPG UTF-8 regression samples passed.");',
-              'process.stdout.write("EPG UTF-8 regression samples passed.\\n");',
-              'EPG script')
-          replace_one(
-              'artifacts/legendstream-xplayer/scripts/verify-premium-chrome.mjs',
-              'console.log("Premium player chrome source assertions passed.");',
-              'process.stdout.write("Premium player chrome source assertions passed.\\n");',
-              'premium chrome script')
-          replace_one(
-              'artifacts/api-server/build.mjs',
-              '''buildAll().catch((err) => {\n  console.error(err);\n  process.exit(1);\n});''',
-              '''buildAll().catch((err) => {\n  const type = err instanceof Error ? err.name : "BuildError";\n  const message = err instanceof Error ? err.message : String(err);\n  process.stderr.write(`${type}: ${message}\\n`);\n  process.exit(1);\n});''',
-              'API build script')
-
-          # Permanent H1/H2 gates, while retaining the existing #55 storage 30/30 gates.
+          # Permanent Quality gate for H1 only. No console guard in PR-A.
           p = Path('.github/workflows/quality.yml')
           text = p.read_text()
           marker = '      - name: Verify Replit removal\n'
-          if marker not in text: raise SystemExit('Quality insertion marker missing')
-          addition = '''      - name: Log redaction invariants (8/8 mobile + 4/4 API required)\n        shell: bash\n        run: |\n          set -euo pipefail\n          mobile="$(pnpm --filter @workspace/legendstream-xplayer test:logging 2>&1 | tee /dev/stderr)"\n          grep -F 'log redaction scenarios: 8/8 passed' <<<"$mobile"\n          api="$(pnpm --filter @workspace/legendstream-xplayer exec tsx "$GITHUB_WORKSPACE/artifacts/api-server/src/lib/logRedaction.test.ts" 2>&1 | tee /dev/stderr)"\n          grep -F 'API log redaction scenarios: 4/4 passed' <<<"$api"\n      - name: Direct console guard (fail-closed)\n        shell: bash\n        run: |\n          set -euo pipefail\n          node scripts/check-console-usage.mjs --self-test\n          node scripts/check-console-usage.mjs\n'''
-          text = text.replace(marker, addition + marker, 1)
-          p.write_text(text)
+          if marker not in text:
+              raise SystemExit('Quality insertion marker missing')
+          addition = '''      - name: Log redaction invariants (8/8 mobile + 4/4 API required)\n        shell: bash\n        run: |\n          set -euo pipefail\n          mobile="$(pnpm --filter @workspace/legendstream-xplayer test:logging 2>&1 | tee /dev/stderr)"\n          grep -F 'log redaction scenarios: 8/8 passed' <<<"$mobile"\n          api="$(pnpm --filter @workspace/legendstream-xplayer exec tsx "$GITHUB_WORKSPACE/artifacts/api-server/src/lib/logRedaction.test.ts" 2>&1 | tee /dev/stderr)"\n          grep -F 'API log redaction scenarios: 4/4 passed' <<<"$api"\n'''
+          if 'Log redaction invariants (8/8 mobile + 4/4 API required)' in text:
+              raise SystemExit('H1 Quality gate already present unexpectedly')
+          p.write_text(text.replace(marker, addition + marker, 1))
           PY
+
       - name: Install dependencies from committed lockfile
         run: pnpm install --frozen-lockfile
+
       - name: Verify lockfile remains unchanged
         run: git diff --exit-code -- pnpm-lock.yaml
+
       - name: Existing credential gate
         shell: bash
         run: |
           set -euo pipefail
           output="$(pnpm --filter @workspace/legendstream-xplayer test:credentials 2>&1 | tee /dev/stderr)"
           grep -F 'credential storage scenarios: 6/6 passed' <<<"$output"
+
       - name: Existing backup gate
         shell: bash
         run: |
@@ -138,50 +135,45 @@ jobs:
           output="$(pnpm --filter @workspace/legendstream-xplayer test:backup 2>&1 | tee /dev/stderr)"
           grep -F 'provider backup tests: 24/24 passed' <<<"$output"
           grep -F 'security regressions: 14/14 passed' <<<"$output"
-      - name: H1 log redaction gates
+
+      - name: H1 mobile redaction gate
         shell: bash
         run: |
           set -euo pipefail
-          mobile="$(pnpm --filter @workspace/legendstream-xplayer test:logging 2>&1 | tee /dev/stderr)"
-          grep -F 'log redaction scenarios: 8/8 passed' <<<"$mobile"
-          api="$(pnpm --filter @workspace/legendstream-xplayer exec tsx "$GITHUB_WORKSPACE/artifacts/api-server/src/lib/logRedaction.test.ts" 2>&1 | tee /dev/stderr)"
-          grep -F 'API log redaction scenarios: 4/4 passed' <<<"$api"
-      - name: H2 console guard
+          output="$(pnpm --filter @workspace/legendstream-xplayer test:logging 2>&1 | tee /dev/stderr)"
+          grep -F 'log redaction scenarios: 8/8 passed' <<<"$output"
+
+      - name: H1 API redaction gate
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/check-console-usage.mjs --self-test
-          node scripts/check-console-usage.mjs
-          printf 'console.log("must fail");\n' > artifacts/legendstream-xplayer/zz-console-guard-fixture.ts
-          if node scripts/check-console-usage.mjs >/tmp/console-positive.out 2>/tmp/console-positive.err; then
-            echo 'console guard accepted a forbidden production console call' >&2
-            rm -f artifacts/legendstream-xplayer/zz-console-guard-fixture.ts
-            exit 1
-          fi
-          rm -f artifacts/legendstream-xplayer/zz-console-guard-fixture.ts
-          printf 'if (__DEV__) { console.log("allowed dev-only"); }\n' > artifacts/legendstream-xplayer/zz-console-dev-fixture.ts
-          node scripts/check-console-usage.mjs
-          rm -f artifacts/legendstream-xplayer/zz-console-dev-fixture.ts
-          echo 'H2_CONSOLE_FAIL_CLOSED=pass'
+          output="$(pnpm --filter @workspace/legendstream-xplayer exec tsx "$GITHUB_WORKSPACE/artifacts/api-server/src/lib/logRedaction.test.ts" 2>&1 | tee /dev/stderr)"
+          grep -F 'API log redaction scenarios: 4/4 passed' <<<"$output"
+
       - name: Typecheck mobile
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
+
       - name: Typecheck API
         run: pnpm exec tsc -b artifacts/api-server/tsconfig.json --pretty false
-      - name: Commit verified 9.6 changes and remove temporary workflows
+
+      - name: Commit verified H1 and remove H2 staging artifacts
         shell: bash
         run: |
           set -euo pipefail
           git config user.name 'd3vilsgo'
           git config user.email '80721458+d3vilsgo@users.noreply.github.com'
-          git rm .github/workflows/zz-96-stage.yml .github/workflows/zz-96-log-inventory.yml
+
+          # PR-A must contain no H2 implementation/staging artifacts.
+          git rm .github/workflows/zz-96-stage.yml \
+                 .github/workflows/zz-96-log-inventory.yml \
+                 scripts/check-console-usage.mjs
+
           git add .github/workflows/quality.yml \
                   artifacts/legendstream-xplayer/components/ErrorFallback.tsx \
                   artifacts/legendstream-xplayer/components/CredentialDiagnosticsPanel.tsx \
                   artifacts/legendstream-xplayer/components/ProviderBackupPanel.tsx \
-                  artifacts/legendstream-xplayer/lib/providerBackupFiles.ts \
-                  artifacts/legendstream-xplayer/scripts/verify-epg-utf8.mjs \
-                  artifacts/legendstream-xplayer/scripts/verify-premium-chrome.mjs \
-                  artifacts/api-server/build.mjs
+                  artifacts/legendstream-xplayer/lib/providerBackupFiles.ts
+
           git diff --cached --check
-          git commit -m 'fix(security): route logs through redaction and enforce console guard'
+          git commit -m 'fix(security): complete H1 log redaction'
           git push origin HEAD:security/log-redaction-96
