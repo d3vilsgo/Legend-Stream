@@ -35,4 +35,4 @@ for (const expected of ["Kim Milyoner Olmak İster?", "Türkiye - Slovenya", "An
   }
 }
 
-console.log("EPG UTF-8 regression samples passed.");
+process.stdout.write("EPG UTF-8 regression samples passed.\n");
