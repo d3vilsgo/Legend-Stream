@@ -81,7 +81,7 @@ jobs:
             echo "NDK install attempt $attempt/3: $REQUIRED_NDK_VERSION"
             rm -rf "$NDK_DIR" "$ANDROID_HOME/.temp" "$HOME/.android/cache"
             mkdir -p "$HOME/.android"
-            if yes | "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;$REQUIRED_NDK_VERSION"; then
+            if "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;$REQUIRED_NDK_VERSION"; then
               if test -f "$NDK_DIR/source.properties" && grep -Eq "^Pkg\.Revision[[:space:]]*=[[:space:]]*$REQUIRED_NDK_VERSION$" "$NDK_DIR/source.properties"; then
                 VERIFIED=1
                 break
