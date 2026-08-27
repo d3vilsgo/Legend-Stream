@@ -37,10 +37,24 @@ jobs:
           start = raw.index(marker) + len(marker)
           end = raw.index("\n          PY\n", start)
           body = raw[start:end]
-          lines = []
-          for line in body.splitlines():
-              lines.append(line[10:] if line.startswith('          ') else line)
-          Path('/tmp/pr1c-stage.py').write_text('\n'.join(lines) + '\n')
+          lines = [line[10:] if line.startswith('          ') else line for line in body.splitlines()]
+          script = '\n'.join(lines) + '\n'
+          # The original temporary YAML was only a transport envelope. Some
+          # continuation lines inside Python triple-quoted patch anchors lost
+          # their YAML-only indentation. Restore only those known source lines;
+          # this does not change the intended application patch.
+          for token in [
+              'itemName(kind, item),',
+              'itemImage(kind, item),',
+              'JSON.stringify(item),',
+              'itemAdded(kind, item),',
+              'itemName(persisted),',
+              'itemImage(persisted),',
+              'JSON.stringify(persisted),',
+              'itemAdded(persisted),',
+          ]:
+              script = script.replace('\n' + token, '\n          ' + token)
+          Path('/tmp/pr1c-stage.py').write_text(script)
           PY
           python3 /tmp/pr1c-stage.py
       - name: Catalog persistence acceptance
