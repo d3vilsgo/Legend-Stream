@@ -1,1 +1,3 @@
-console.log("H2 fail-closed proof fixture");
+if (__DEV__) {
+  console.log("H2 dev-only proof fixture");
+}
