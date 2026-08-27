@@ -73,7 +73,7 @@ jobs:
         run: |
           set -euo pipefail
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' | sort -V | tail -n 1)"
-          test -x "$SDKMANAGER"
+          [ -x "$SDKMANAGER" ] || { echo "::error::sdkmanager not found under $ANDROID_HOME/cmdline-tools"; exit 1; }
           NDK_DIR="$ANDROID_HOME/ndk/$REQUIRED_NDK_VERSION"
           VERIFIED=0
 
@@ -82,7 +82,7 @@ jobs:
             rm -rf "$NDK_DIR" "$ANDROID_HOME/.temp" "$HOME/.android/cache"
             mkdir -p "$HOME/.android"
             if "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;$REQUIRED_NDK_VERSION"; then
-              if test -f "$NDK_DIR/source.properties" && grep -Eq "^Pkg\.Revision[[:space:]]*=[[:space:]]*$REQUIRED_NDK_VERSION$" "$NDK_DIR/source.properties"; then
+              if [ -f "$NDK_DIR/source.properties" ] && grep -Eq "^Pkg\.Revision[[:space:]]*=[[:space:]]*$REQUIRED_NDK_VERSION$" "$NDK_DIR/source.properties"; then
                 VERIFIED=1
                 break
               fi
@@ -159,7 +159,7 @@ jobs:
           rm -rf "$STAGE_DIR"
           mkdir -p "$STAGE_DIR"
           mapfile -t AABS < <(find app/build/outputs/bundle/release -type f -name '*.aab' | sort)
-          test "${#AABS[@]}" -eq 1
+          [ "${#AABS[@]}" -eq 1 ] || { echo "::error::Expected exactly 1 production AAB; found ${#AABS[@]}"; exit 1; }
           cp "${AABS[0]}" "$STAGE_DIR/LegendStream-XPlayer-production.aab"
 
       - name: Prepare staging
@@ -204,40 +204,63 @@ jobs:
           set -euo pipefail
           APK_DIR="artifacts/legendstream-xplayer/android/app/build/outputs/apk/release"
           STAGE_DIR="$GITHUB_WORKSPACE/release-staging"
+          [ -d "$APK_DIR" ] || { echo "::error::APK output directory not found: $APK_DIR"; exit 1; }
           mapfile -t APKS < <(find "$APK_DIR" -type f -name '*.apk' | sort)
           echo "APK outputs:"
           printf '%s\n' "${APKS[@]}"
 
           if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
-            test "${#APKS[@]}" -eq 2
+            [ "${#APKS[@]}" -eq 2 ] || { echo "::error::Expected exactly 2 split APKs for dual-ABI build; found ${#APKS[@]}"; exit 1; }
           else
-            test "${#APKS[@]}" -eq 1
+            [ "${#APKS[@]}" -eq 1 ] || { echo "::error::Expected exactly 1 APK for arm64-only build; found ${#APKS[@]}"; exit 1; }
           fi
 
           ARM64_APK=""
           ARMV7_APK=""
           for apk in "${APKS[@]}"; do
-            if unzip -Z1 "$apk" | grep -Eq '^lib/(x86|x86_64)/'; then
+            if ! entries="$(unzip -Z1 "$apk")"; then
+              echo "::error::Unable to list APK entries: $apk"
+              exit 1
+            fi
+            if grep -Eq '^lib/(x86|x86_64)/' <<<"$entries"; then
               echo "::error::Unexpected x86/x86_64 native library in $apk"
               exit 1
             fi
-            HAS_ARM64=0; HAS_ARMV7=0
-            unzip -Z1 "$apk" | grep -q '^lib/arm64-v8a/' && HAS_ARM64=1 || true
-            unzip -Z1 "$apk" | grep -q '^lib/armeabi-v7a/' && HAS_ARMV7=1 || true
-            if [ "$HAS_ARM64" -eq 1 ] && [ "$HAS_ARMV7" -eq 0 ]; then ARM64_APK="$apk"; fi
-            if [ "$HAS_ARMV7" -eq 1 ] && [ "$HAS_ARM64" -eq 0 ]; then ARMV7_APK="$apk"; fi
+
+            HAS_ARM64=0
+            HAS_ARMV7=0
+            if grep -q '^lib/arm64-v8a/' <<<"$entries"; then HAS_ARM64=1; fi
+            if grep -q '^lib/armeabi-v7a/' <<<"$entries"; then HAS_ARMV7=1; fi
+            echo "$apk arm64=$HAS_ARM64 armv7=$HAS_ARMV7"
+
+            if [ "$HAS_ARM64" -eq 1 ] && [ "$HAS_ARMV7" -eq 1 ]; then
+              echo "::error::Split APK unexpectedly contains both ARM ABIs: $apk"
+              exit 1
+            fi
+            if [ "$HAS_ARM64" -eq 0 ] && [ "$HAS_ARMV7" -eq 0 ]; then
+              echo "::error::APK contains neither expected ARM ABI: $apk"
+              exit 1
+            fi
+            if [ "$HAS_ARM64" -eq 1 ]; then ARM64_APK="$apk"; fi
+            if [ "$HAS_ARMV7" -eq 1 ]; then ARMV7_APK="$apk"; fi
           done
 
-          test -n "$ARM64_APK"
-          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then test -n "$ARMV7_APK"; fi
+          [ -n "$ARM64_APK" ] || { echo "::error::arm64-v8a-only APK not identified"; exit 1; }
+          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
+            [ -n "$ARMV7_APK" ] || { echo "::error::armeabi-v7a-only APK not identified"; exit 1; }
+          fi
 
-          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt2 | sort -V | tail -n 1)"
           APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-          test -x "$AAPT"
-          test -x "$APKSIGNER"
+          [ -x "$AAPT" ] || { echo "::error::aapt2 not found under $ANDROID_HOME/build-tools"; exit 1; }
+          [ -x "$APKSIGNER" ] || { echo "::error::apksigner not found under $ANDROID_HOME/build-tools"; exit 1; }
 
-          BASE_CODE="$(node -p "require('./artifacts/legendstream-xplayer/app.json').expo.android.versionCode")"
-          test "$BASE_CODE" -gt 0
+          if ! BASE_CODE="$(node -p "require('./artifacts/legendstream-xplayer/app.json').expo.android.versionCode")"; then
+            echo "::error::Unable to read Android base versionCode from app.json"
+            exit 1
+          fi
+          [[ "$BASE_CODE" =~ ^[0-9]+$ ]] || { echo "::error::Android base versionCode is not numeric: $BASE_CODE"; exit 1; }
+          [ "$BASE_CODE" -gt 0 ] || { echo "::error::Android base versionCode must be > 0; got $BASE_CODE"; exit 1; }
           EXPECTED_ARM64_CODE="$((BASE_CODE * 1000 + 2))"
           EXPECTED_ARMV7_CODE="$((BASE_CODE * 1000 + 1))"
 
@@ -245,12 +268,17 @@ jobs:
             local apk="$1"
             local expected_code="$2"
             local label="$3"
-            local package_name version_code cert_output cert_sha
+            local badging package_name version_code cert_output cert_sha
 
-            package_name="$($AAPT dump badging "$apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -n 1)"
-            version_code="$($AAPT dump badging "$apk" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
-            test -n "$package_name"
-            test -n "$version_code"
+            if ! badging="$("$AAPT" dump badging "$apk")"; then
+              echo "::error::$label aapt2 dump badging failed: $apk"
+              exit 1
+            fi
+            package_name="$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$badging")"
+            version_code="$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<<"$badging")"
+            [ -n "$package_name" ] || { echo "::error::$label package name not found by aapt2"; exit 1; }
+            [ -n "$version_code" ] || { echo "::error::$label versionCode not found by aapt2"; exit 1; }
+            [[ "$version_code" =~ ^[0-9]+$ ]] || { echo "::error::$label versionCode is not numeric: $version_code"; exit 1; }
 
             if [ "$package_name" != "$EXPECTED_PACKAGE" ]; then
               echo "::error::$label package mismatch: $package_name"
@@ -265,9 +293,14 @@ jobs:
               exit 1
             fi
 
-            cert_output="$("$APKSIGNER" verify --verbose --print-certs "$apk")"
-            cert_sha="$(printf '%s\n' "$cert_output" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1 | tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]')"
-            test -n "$cert_sha"
+            if ! cert_output="$("$APKSIGNER" verify --verbose --print-certs "$apk")"; then
+              echo "::error::$label APK signature verification failed: $apk"
+              exit 1
+            fi
+            cert_sha="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$cert_output")"
+            cert_sha="${cert_sha//[[:space:]:]/}"
+            cert_sha="${cert_sha^^}"
+            [ -n "$cert_sha" ] || { echo "::error::$label certificate SHA-256 digest not found"; exit 1; }
             if [ "$cert_sha" != "$EXPECTED_CERT_SHA256" ]; then
               echo "::error::$label signing certificate mismatch: $cert_sha"
               exit 1
@@ -286,10 +319,14 @@ jobs:
           if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
             ARMV7_CODE="$EXPECTED_ARMV7_CODE"
             echo "armeabi-v7a versionCode=$ARMV7_CODE"
-            test "$ARM64_CODE" != "$ARMV7_CODE"
+            [ "$ARM64_CODE" != "$ARMV7_CODE" ] || { echo "::error::ABI-specific versionCodes must differ"; exit 1; }
           fi
 
-          APP_VERSION="$(node -p "require('./artifacts/legendstream-xplayer/app.json').expo.version")"
+          if ! APP_VERSION="$(node -p "require('./artifacts/legendstream-xplayer/app.json').expo.version")"; then
+            echo "::error::Unable to read app version from app.json"
+            exit 1
+          fi
+          [ -n "$APP_VERSION" ] || { echo "::error::App version is empty in app.json"; exit 1; }
           ARM64_NAME="LegendStream-XPlayer-v${APP_VERSION}-arm64-v8a.apk"
           cp "$ARM64_APK" "$STAGE_DIR/$ARM64_NAME"
           ARM64_BYTES="$(stat -c%s "$STAGE_DIR/$ARM64_NAME")"
