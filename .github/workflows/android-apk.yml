@@ -297,9 +297,12 @@ jobs:
               echo "::error::$label APK signature verification failed: $apk"
               exit 1
             fi
-            cert_sha="$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<<"$cert_output")"
-            cert_sha="${cert_sha//[[:space:]:]/}"
-            cert_sha="${cert_sha^^}"
+            echo "=== apksigner output ($label) ==="
+            printf '%s\n' "$cert_output"
+            echo "=== end ==="
+            cert_sha="$(awk -F'certificate SHA-256 digest:' \
+              '/certificate SHA-256 digest:/ {gsub(/[[:space:]:]/,"",$2); print toupper($2); exit}' \
+              <<<"$cert_output")"
             [ -n "$cert_sha" ] || { echo "::error::$label certificate SHA-256 digest not found"; exit 1; }
             if [ "$cert_sha" != "$EXPECTED_CERT_SHA256" ]; then
               echo "::error::$label signing certificate mismatch: $cert_sha"
