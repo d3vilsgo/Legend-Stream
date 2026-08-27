@@ -4,6 +4,7 @@ import { Directory, File, Paths } from "expo-file-system";
 import * as Sharing from "expo-sharing";
 import { base64UrlEncode, MAX_BACKUP_FILE_BYTES } from "./providerBackupCore";
 import { assertSecureEntropyAvailable, secureRandomBytes } from "./cryptoBootstrap";
+import { safeLog } from "./safeLog";
 
 const TEMP_DIRECTORY_NAME = "legendstream-provider-backups";
 const TEMP_FILE_PREFIX = "LegendStream-Accounts-";
@@ -90,10 +91,7 @@ function scheduleGraceCleanup(uri: string) {
         deleteOwnTempFile(uri);
         await removeManifestUri(uri);
       } catch (error) {
-        console.warn(
-          "BACKUP_TEMP_CLEANUP_FAILED",
-          error instanceof Error ? error.message : "unknown error",
-        );
+        safeLog.warn("BACKUP_TEMP_CLEANUP_FAILED", error);
       }
     })();
   }, SHARE_GRACE_MS);

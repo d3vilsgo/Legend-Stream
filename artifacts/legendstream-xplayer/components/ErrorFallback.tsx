@@ -12,6 +12,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { Feather } from '@expo/vector-icons';
 import { reloadAppAsync } from 'expo';
+import { safeLog, sanitizeErrorForLog } from '@/lib/safeLog';
 
 export type ErrorFallbackProps = {
   error: Error;
@@ -28,15 +29,16 @@ export function ErrorFallback({ error, resetError }: ErrorFallbackProps) {
     try {
       await reloadAppAsync();
     } catch (restartError) {
-      console.error('Failed to restart app:', restartError);
+      safeLog.error('APP_RESTART_FAILED', restartError);
       resetError();
     }
   };
 
   const formatErrorDetails = (): string => {
-    let details = `Error: ${error.message}\n\n`;
-    if (error.stack) {
-      details += `Stack Trace:\n${error.stack}`;
+    const safe = sanitizeErrorForLog(error, { includeStack: true });
+    let details = `${safe.name}: ${safe.message}\n\n`;
+    if (safe.stack) {
+      details += `Stack Trace:\n${safe.stack}`;
     }
     return details;
   };

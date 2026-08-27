@@ -14,12 +14,13 @@ import {
   type ProviderImportMetricsReport,
 } from "@/lib/providerImportMetrics";
 import { readLatestProviderImportMetrics } from "@/lib/providerImportMetricsStore";
+import { redactSensitiveText, safeLog } from "@/lib/safeLog";
 
 const formatDiagnosticsWithCryptoRuntime = (report: CredentialDiagnosticsReport) =>
   `${formatCredentialDiagnostics(report)}\ncryptoAvailable=${cryptoAvailable}\nnobleCryptoRuntimeTypes=${JSON.stringify(nobleCryptoRuntimeTypes())}`;
 
 const errorMessage = (error: unknown) =>
-  error instanceof Error ? error.message : String(error);
+  redactSensitiveText(error instanceof Error ? error.message : String(error));
 
 const fatalDiagnostics = (message: string) => JSON.stringify({
   fatalError: message,
@@ -33,11 +34,11 @@ export function useCredentialDiagnosticsStartup() {
     void runCredentialDiagnostics()
       .then((report) => {
         if (!active) return;
-        console.log("LS_DIAG", formatDiagnosticsWithCryptoRuntime(report));
+        safeLog.info("LS_DIAG", formatDiagnosticsWithCryptoRuntime(report));
       })
       .catch((error) => {
         if (!active) return;
-        console.log("LS_DIAG", fatalDiagnostics(errorMessage(error)));
+        safeLog.info("LS_DIAG", fatalDiagnostics(errorMessage(error)));
       });
     return () => {
       active = false;
@@ -64,11 +65,11 @@ export function CredentialDiagnosticsPanel() {
       ]);
       setReport(next);
       setImportMetrics(latestImportMetrics);
-      console.log("LS_DIAG", formatDiagnosticsWithCryptoRuntime(next));
+      safeLog.info("LS_DIAG", formatDiagnosticsWithCryptoRuntime(next));
     } catch (error) {
       const message = errorMessage(error);
       setFatalError(message);
-      console.log("LS_DIAG", fatalDiagnostics(message));
+      safeLog.info("LS_DIAG", fatalDiagnostics(message));
     } finally {
       setBusy(false);
     }
