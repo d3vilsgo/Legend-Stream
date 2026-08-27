@@ -44,6 +44,7 @@ import {
   formatProviderImportMetrics,
 } from "@/lib/providerImportMetrics";
 import { saveLatestProviderImportMetrics } from "@/lib/providerImportMetricsStore";
+import { redactSensitiveText, safeLog } from "@/lib/safeLog";
 import {
   setImportMemoryPhase,
   startImportMemorySampling,
@@ -132,7 +133,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
     if (code === "entropy_unavailable") return "Güvenli rastgele sayı kaynağı kullanılamıyor; işlem başlatılmadı.";
     if (code === "secure_record_too_large") return "Yedekteki güvenli hesap verilerinden biri cihazın desteklenen boyut sınırını aşıyor.";
     if (code === "weak_password") return "Kendi parolanız en az 12 karakter olmalı.";
-    if (error instanceof Error) return error.message;
+    if (error instanceof Error) return redactSensitiveText(error.message);
     return "Yedekleme işlemi tamamlanamadı.";
   };
 
@@ -181,7 +182,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
         password,
         setProgress,
       );
-      console.log("BACKUP_KDF_METRIC", JSON.stringify({ operation: "export", ms: result.kdfMs }));
+      safeLog.info("BACKUP_KDF_METRIC", { operation: "export", ms: result.kdfMs });
       await shareEncryptedProviderBackup(result.bytes);
       const skipped = result.skipped.length;
       setMessage(
@@ -261,7 +262,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
       );
       unlockTotalMs.current = Date.now() - unlockStartedAt;
       importKdfMs.current = opened.kdfMs;
-      console.log("BACKUP_KDF_METRIC", JSON.stringify({ operation: "import", ms: opened.kdfMs }));
+      safeLog.info("BACKUP_KDF_METRIC", { operation: "import", ms: opened.kdfMs });
       const openedConflicts = listImportConflicts(opened, providers);
       if (openedConflicts.length) setImportMemoryPhase("decision");
       conflictDecisionStartedAt.current = 0;
@@ -342,9 +343,9 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
         memory,
         commit: result.diagnostics,
       });
-      console.log("BACKUP_IMPORT_METRICS", formatProviderImportMetrics(report));
+      safeLog.info("BACKUP_IMPORT_METRICS", formatProviderImportMetrics(report));
       void saveLatestProviderImportMetrics(report).catch(() => {
-        console.warn("BACKUP_IMPORT_METRICS_SAVE_FAILED");
+        safeLog.warn("BACKUP_IMPORT_METRICS_SAVE_FAILED");
       });
       setMessage(`${result.importedCount} hesap içe aktarıldı.${result.skippedCount ? ` ${result.skippedCount} hesap atlandı.` : ""}`);
       if (picked) await picked.cleanup();
@@ -366,7 +367,7 @@ export function ProviderBackupPanel({ mode = "full" }: { mode?: "full" | "import
     stopImportMemorySampling();
     if (dialog === "import" && picked) {
       try { await picked.cleanup(); } catch (error) {
-        console.warn("BACKUP_IMPORT_TEMP_CLEANUP_FAILED", error instanceof Error ? error.message : "unknown error");
+        safeLog.warn("BACKUP_IMPORT_TEMP_CLEANUP_FAILED", error);
       }
       setPicked(null);
     }

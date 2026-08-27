@@ -7,7 +7,8 @@
     "dev": "pnpm exec expo start --localhost",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test:credentials": "rm -rf .credential-tests && tsc --module commonjs --target ES2020 --moduleResolution node --skipLibCheck --outDir .credential-tests lib/providerCredentialState.ts tests/credentialStorageScenarios.ts && node .credential-tests/tests/credentialStorageScenarios.js && rm -rf .credential-tests",
-    "test:backup": "tsx tests/providerBackupScenarios.ts"
+    "test:backup": "tsx tests/providerBackupScenarios.ts",
+    "test:logging": "tsx tests/logRedactionScenarios.ts"
   },
   "expo": {
     "autolinking": {
