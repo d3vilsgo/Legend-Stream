@@ -4,6 +4,7 @@ import {
   Animated,
   LayoutChangeEvent,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   View,
@@ -52,6 +53,7 @@ type Action = {
   subLabel?: string;
   active?: boolean;
   accent?: boolean;
+  disabled?: boolean;
   onPress: () => void;
 };
 
@@ -187,10 +189,37 @@ export function PlayerChrome(props: Props) {
   const showChrome = chrome.controlsVisible && !chrome.panel;
   const showCenter = showChrome && !hasBlockingStatus;
 
+  const liveNavigationActions: Action[] = chrome.mediaKind === "live" && chrome.selectableItems.length
+    ? [
+        {
+          key: "previous",
+          label: "Önceki kanal",
+          icon: "skip-back" as FeatherName,
+          disabled: chrome.currentIndex <= 0,
+          onPress: () => chrome.onMoveRelative(-1),
+        },
+        {
+          key: "list",
+          label: "Kanallar",
+          icon: "list" as FeatherName,
+          active: chrome.panel === "content",
+          onPress: () => chrome.onTogglePanel("content"),
+        },
+        {
+          key: "next",
+          label: "Sonraki kanal",
+          icon: "skip-forward" as FeatherName,
+          disabled: chrome.currentIndex < 0 || chrome.currentIndex >= chrome.selectableItems.length - 1,
+          onPress: () => chrome.onMoveRelative(1),
+        },
+      ]
+    : [];
+
   const actions: Action[] = [
-    ...(chrome.selectableItems.length ? [{
+    ...liveNavigationActions,
+    ...(chrome.mediaKind !== "live" && chrome.selectableItems.length ? [{
       key: "list",
-      label: chrome.mediaKind === "live" ? "Kanallar" : "Liste",
+      label: "Liste",
       icon: "list" as FeatherName,
       active: chrome.panel === "content",
       onPress: () => chrome.onTogglePanel("content"),
@@ -343,14 +372,6 @@ export function PlayerChrome(props: Props) {
               size={Math.round((portrait ? 54 : 58) * uiScale)}
               iconSize={Math.round((portrait ? 27 : 30) * uiScale)}
             />
-          ) : chrome.canNavigate ? (
-            <RoundButton
-              icon="skip-back"
-              label="Önceki kanal"
-              onPress={() => chrome.onMoveRelative(-1)}
-              size={Math.round((portrait ? 54 : 58) * uiScale)}
-              iconSize={Math.round((portrait ? 27 : 30) * uiScale)}
-            />
           ) : null}
 
           <Pressable
@@ -381,14 +402,6 @@ export function PlayerChrome(props: Props) {
               badge="15"
               label="15 saniye ileri"
               onPress={() => chrome.onSeekBy(15)}
-              size={Math.round((portrait ? 54 : 58) * uiScale)}
-              iconSize={Math.round((portrait ? 27 : 30) * uiScale)}
-            />
-          ) : chrome.canNavigate ? (
-            <RoundButton
-              icon="skip-forward"
-              label="Sonraki kanal"
-              onPress={() => chrome.onMoveRelative(1)}
               size={Math.round((portrait ? 54 : 58) * uiScale)}
               iconSize={Math.round((portrait ? 27 : 30) * uiScale)}
             />
@@ -434,7 +447,11 @@ export function PlayerChrome(props: Props) {
             />
           ) : null}
 
-          <View style={[styles.dockRow, { gap }]}>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={[styles.dockRow, { gap }]}
+          >
             {actions.map((action) => (
               <AdaptiveDockButton
                 key={action.key}
@@ -443,7 +460,7 @@ export function PlayerChrome(props: Props) {
                 iconSize={dockIconSize}
               />
             ))}
-          </View>
+          </ScrollView>
         </Animated.View>
       ) : null}
     </>
@@ -572,8 +589,15 @@ function AdaptiveDockButton({ action, size, iconSize }: { action: Action; size: 
       accessibilityRole="button"
       accessibilityLabel={action.label}
       onPress={action.onPress}
+      disabled={action.disabled}
+      accessibilityState={{ disabled: Boolean(action.disabled) }}
       hitSlop={Math.max(10, Math.ceil((50 - size) / 2))}
-      style={({ pressed }) => [styles.dockButton, { width: size, height: size }, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.dockButton,
+        { width: size, height: size },
+        action.disabled && styles.disabled,
+        pressed && !action.disabled && styles.pressed,
+      ]}
     >
       {action.materialIcon ? (
         <EmbossedMaterialIcon name={action.materialIcon} size={iconSize + 1} accent={highlighted} />
@@ -757,7 +781,7 @@ const styles = StyleSheet.create({
     textAlign: "center",
     ...TEXT_SHADOW,
   },
-  dockRow: { width: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "transparent" },
+  dockRow: { flexGrow: 1, minWidth: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "transparent" },
   dockButton: { alignItems: "center", justifyContent: "center", backgroundColor: "transparent" },
   actionSubLabel: {
     position: "absolute",
@@ -785,5 +809,6 @@ const styles = StyleSheet.create({
     textShadowOffset: { width: 0, height: 0.8 },
     textShadowRadius: 8,
   },
+  disabled: { opacity: 0.34 },
   pressed: { opacity: 0.62, transform: [{ scale: 0.94 }] },
 });

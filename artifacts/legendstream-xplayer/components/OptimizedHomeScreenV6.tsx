@@ -39,6 +39,7 @@ import { MediaProgress, useMediaLibrary } from "@/context/MediaLibraryContext";
 import { useCatalogSync } from "@/context/CatalogSyncContext";
 import { getCachedCategories } from "@/lib/catalogCache";
 import { getCachedLiveItems, getCachedSeriesItems, getCachedVodItems } from "@/lib/catalogRuntime";
+import type { LiveChannelIdentity } from "@/lib/playerLiveQueue";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { DownloadedMedia } from "@/lib/downloads";
@@ -74,6 +75,7 @@ type Playable = {
   subtitle?: string;
   kind: "live" | "movie" | "episode" | "download";
   returnTo: ContentView;
+  liveIdentity?: LiveChannelIdentity;
 };
 
 const CATALOG_SORT_KEY = "@legendstream/catalog-sort-v1";
@@ -654,7 +656,14 @@ getCachedSeriesItems(provider),
       setCatalogError("The cached playback address is unavailable. Refresh Live TV and try again.");
       return;
     }
-    setPlayable({ title: channel.name, subtitle: channel.category, url: channel.streamUrl, kind: "live", returnTo: "live" });
+    setPlayable({
+      title: channel.name,
+      subtitle: channel.category,
+      url: channel.streamUrl,
+      kind: "live",
+      returnTo: "live",
+      liveIdentity: { providerId: channel.providerId, channelId: channel.id },
+    });
     void recordWatched(channel.id);
     setView("player");
   };
@@ -735,6 +744,8 @@ getCachedSeriesItems(provider),
       {playable ? <NativeVideoPlayer
         source={playable.url}
         title={playable.title}
+        mediaKind={playable.kind}
+        liveIdentity={playable.liveIdentity}
         autoFullscreen
         allowDownload={playable.kind === "movie" || playable.kind === "episode"}
         onFullscreenExit={() => setView(playable.returnTo)}

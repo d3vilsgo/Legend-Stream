@@ -10,7 +10,13 @@ import {
 } from "@/lib/playerPreferences";
 import { getEpisodePlaybackQueue, getVodPlaybackQueue } from "@/lib/xtreamCatalog";
 import { isCatalogRuntimeSource } from "@/lib/catalogPersistence";
-import { resolveCatalogRuntimeSource } from "@/lib/catalogRuntime";
+import { getCachedLiveItems, resolveCatalogRuntimeSource } from "@/lib/catalogRuntime";
+import {
+  liveQueueIndex,
+  resolveLiveQueue,
+  type LiveChannelIdentity,
+} from "@/lib/playerLiveQueue";
+import type { Channel } from "@/lib/iptv";
 import { usePlayerOrientation } from "@/hooks/usePlayerOrientation";
 import {
   enterPictureInPicture,
@@ -74,6 +80,7 @@ export function CompatibilityVideoPlayer({
   title,
   subtitle,
   mediaKind,
+  liveIdentity,
   autoFullscreen = true,
   onFullscreenExit,
   allowDownload = false,
@@ -82,6 +89,7 @@ export function CompatibilityVideoPlayer({
   title: string;
   subtitle?: string;
   mediaKind?: PlayerMediaKind;
+  liveIdentity?: LiveChannelIdentity;
   autoFullscreen?: boolean;
   onFullscreenExit?: () => void;
   allowDownload?: boolean;
@@ -120,6 +128,10 @@ export function CompatibilityVideoPlayer({
   const [currentTitle, setCurrentTitle] = useState(title);
   const [currentSubtitle, setCurrentSubtitle] = useState(subtitle);
   const [currentKind, setCurrentKind] = useState<PlayerMediaKind>(initialKind);
+  const [currentLiveIdentity, setCurrentLiveIdentity] = useState<LiveChannelIdentity | null>(
+    initialKind === "live" ? liveIdentity ?? null : null,
+  );
+  const [cachedLiveChannels, setCachedLiveChannels] = useState<Channel[]>([]);
   const [paused, setPaused] = useState(false);
   const [fit, setFit] = useState<PlayerFitMode>("fit");
   const [codecMode, setCodecMode] = useState<PlayerCodecMode>("auto");
@@ -302,28 +314,46 @@ export function CompatibilityVideoPlayer({
     };
   }, [persistProgress]);
 
-  const currentLive = useMemo(
-    () => currentKind === "live" && provider
-      ? channels.find((channel) => channel.providerId === provider.id && channel.streamUrl === currentSource)
-      : undefined,
-    [channels, currentKind, currentSource, provider],
+  useEffect(() => {
+    let cancelled = false;
+    if (
+      currentKind !== "live" ||
+      !currentLiveIdentity ||
+      !provider ||
+      provider.id !== currentLiveIdentity.providerId ||
+      provider.type !== "xtream" ||
+      liveQueueIndex(channels, currentLiveIdentity) >= 0
+    ) {
+      setCachedLiveChannels([]);
+      return () => { cancelled = true; };
+    }
+    void getCachedLiveItems(provider)
+      .then((items) => {
+        if (!cancelled) setCachedLiveChannels(items);
+      })
+      .catch(() => {
+        if (!cancelled) setCachedLiveChannels([]);
+      });
+    return () => { cancelled = true; };
+  }, [channels, currentKind, currentLiveIdentity, provider]);
+
+  const liveQueue = useMemo(
+    () => currentKind === "live"
+      ? resolveLiveQueue(channels, cachedLiveChannels, currentLiveIdentity)
+      : [],
+    [cachedLiveChannels, channels, currentKind, currentLiveIdentity],
   );
+  const currentLiveIndex = useMemo(
+    () => liveQueueIndex(liveQueue, currentLiveIdentity),
+    [currentLiveIdentity, liveQueue],
+  );
+  const currentLive = currentLiveIndex >= 0 ? liveQueue[currentLiveIndex] : undefined;
 
   // EPG is presentation-only while playback is active. Do not start any EPG
   // network request from the player and do not use an EPG timer in this parent.
   // The normal VLC progress updates already re-render the overlay often enough
   // for Date.now() to advance without touching the native video surface.
   const currentEpg = selectChannelEpg(epg, currentLive, Date.now());
-
-  const liveQueue = useMemo(() => {
-    if (!provider || !currentLive) return [];
-    const sameCategory = channels.filter(
-      (channel) => channel.providerId === provider.id && channel.category === currentLive.category,
-    );
-    return sameCategory.length
-      ? sameCategory
-      : channels.filter((channel) => channel.providerId === provider.id);
-  }, [channels, currentLive, provider]);
 
   const episodeQueue = useMemo(
     () => currentKind === "episode" ? getEpisodePlaybackQueue(currentSource) : undefined,
@@ -368,8 +398,10 @@ export function CompatibilityVideoPlayer({
   }, [currentKind, episodeQueue, liveQueue, vodQueue]);
 
   const currentIndex = useMemo(
-    () => selectableItems.findIndex((item) => item.source === currentSource),
-    [currentSource, selectableItems],
+    () => currentKind === "live"
+      ? currentLiveIndex
+      : selectableItems.findIndex((item) => item.source === currentSource),
+    [currentKind, currentLiveIndex, currentSource, selectableItems],
   );
   const queueMeta = currentIndex >= 0 ? selectableItems[currentIndex]?.subtitle : currentLive?.category;
   const currentMeta = currentSubtitle || queueMeta;
@@ -383,6 +415,11 @@ export function CompatibilityVideoPlayer({
     setCurrentTitle(item.title);
     setCurrentSubtitle(item.subtitle);
     setCurrentKind(kind);
+    setCurrentLiveIdentity(
+      item.isLive && provider
+        ? { providerId: provider.id, channelId: item.id }
+        : null,
+    );
     setPosition(0);
     setDuration(0);
     setPaused(false);
@@ -398,7 +435,7 @@ export function CompatibilityVideoPlayer({
     if (item.isLive) void recordWatched(item.id);
     revealControls();
     revealMediaInfo();
-  }, [persistProgress, recordWatched, revealControls, revealMediaInfo]);
+  }, [persistProgress, provider, recordWatched, revealControls, revealMediaInfo]);
 
   const moveRelative = useCallback((delta: number) => {
     if (!canNavigate) return;
