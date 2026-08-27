@@ -7,6 +7,7 @@ on:
     branches: [main]
 
 # Deterministic, read-only CI: dependency resolution must match pnpm-lock.yaml exactly.
+# Storage security gate: 6 credential scenarios + 24 backup scenarios must all pass.
 permissions:
   contents: read
 
@@ -30,6 +31,22 @@ jobs:
       - name: Verify lockfile remains unchanged
         shell: bash
         run: git diff --exit-code -- pnpm-lock.yaml
+      - name: Credential storage invariants (6/6 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(pnpm --filter @workspace/legendstream-xplayer test:credentials 2>&1 | tee /dev/stderr)"
+          grep -F 'credential storage scenarios: 6/6 passed' <<<"$output"
+      - name: Provider backup invariants (24/24 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(pnpm --filter @workspace/legendstream-xplayer test:backup 2>&1 | tee /dev/stderr)"
+          grep -F 'provider backup acceptance: 7/7 passed' <<<"$output"
+          grep -F 'negative crypto: 2/2 passed' <<<"$output"
+          grep -F 'credential round-trip: 1/1 passed' <<<"$output"
+          grep -F 'security regressions: 14/14 passed' <<<"$output"
+          grep -F 'provider backup tests: 24/24 passed' <<<"$output"
       - name: Verify Replit removal
         shell: bash
         run: |
