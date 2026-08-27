@@ -15,26 +15,16 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Inventory production console calls
+      - name: Inventory all non-test console calls
         shell: bash
         run: |
           set -u
           pattern='console\.(log|warn|error|info|debug|trace)'
-          echo '=== ALL MOBILE TS/TSX CONSOLE CALLS (tests/scripts excluded) ==='
-          grep -RInE --include='*.ts' --include='*.tsx' \
-            --exclude-dir=node_modules --exclude-dir=tests --exclude-dir=scripts \
-            --exclude-dir=.credential-tests --exclude-dir=.backup-tests \
+          echo '=== XPLAYER NON-TEST CONSOLE CALLS ==='
+          grep -RInE --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' \
+            --exclude-dir=node_modules --exclude-dir=tests --exclude-dir=.credential-tests --exclude-dir=.backup-tests \
             "$pattern" artifacts/legendstream-xplayer 2>/dev/null || true
-          echo '=== API PRODUCTION CONSOLE CALLS ==='
-          grep -RInE --include='*.ts' --include='*.tsx' --exclude-dir=node_modules --exclude-dir=tests \
-            "$pattern" artifacts/api-server/src 2>/dev/null || true
-          echo '=== ALL MOBILE COUNT ==='
-          mobile="$(grep -RIE --include='*.ts' --include='*.tsx' \
-            --exclude-dir=node_modules --exclude-dir=tests --exclude-dir=scripts \
-            --exclude-dir=.credential-tests --exclude-dir=.backup-tests \
-            -c "$pattern" artifacts/legendstream-xplayer 2>/dev/null || true)"
-          printf '%s\n' "$mobile" | awk -F: '{s+=$2} END {print s+0}'
-          echo '=== API COUNT ==='
-          api="$(grep -RIE --include='*.ts' --include='*.tsx' --exclude-dir=node_modules --exclude-dir=tests \
-            -c "$pattern" artifacts/api-server/src 2>/dev/null || true)"
-          printf '%s\n' "$api" | awk -F: '{s+=$2} END {print s+0}'
+          echo '=== API NON-TEST CONSOLE CALLS ==='
+          grep -RInE --include='*.ts' --include='*.tsx' --include='*.js' --include='*.mjs' \
+            --exclude-dir=node_modules --exclude-dir=tests \
+            "$pattern" artifacts/api-server 2>/dev/null || true
