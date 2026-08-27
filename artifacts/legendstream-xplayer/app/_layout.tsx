@@ -18,6 +18,7 @@ import { I18nProvider } from "@/context/I18nContext";
 import { MediaLibraryProvider } from "@/context/MediaLibraryContext";
 import { CatalogSyncProvider } from "@/context/CatalogSyncContext";
 import { cleanupProviderBackupTempFiles } from "@/lib/providerBackupFiles";
+import { safeLog } from "@/lib/safeLog";
 
 const abortSignalCtor = globalThis.AbortSignal as typeof AbortSignal & {
   timeout?: (milliseconds: number) => AbortSignal;
@@ -33,10 +34,7 @@ if (abortSignalCtor && typeof abortSignalCtor.timeout !== "function") {
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
 void cleanupProviderBackupTempFiles({ coldStart: true }).catch((error) => {
-  console.warn(
-    "BACKUP_TEMP_CLEANUP_FAILED",
-    error instanceof Error ? error.message : "unknown error",
-  );
+  safeLog.warn("BACKUP_TEMP_CLEANUP_FAILED", error);
 });
 
 const queryClient = new QueryClient();
