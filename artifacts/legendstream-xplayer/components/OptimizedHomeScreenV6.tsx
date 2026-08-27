@@ -37,7 +37,8 @@ import {
 } from "@/context/PlayerContext";
 import { MediaProgress, useMediaLibrary } from "@/context/MediaLibraryContext";
 import { useCatalogSync } from "@/context/CatalogSyncContext";
-import { getCachedCategories, getCachedItems } from "@/lib/catalogCache";
+import { getCachedCategories } from "@/lib/catalogCache";
+import { getCachedLiveItems, getCachedSeriesItems, getCachedVodItems } from "@/lib/catalogRuntime";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { DownloadedMedia } from "@/lib/downloads";
@@ -321,7 +322,7 @@ export default function OptimizedHomeScreenV6() {
     void Promise.all([
       getCachedCategories(provider.id, "vod"),
       getCachedCategories(provider.id, "series"),
-      getCachedItems<Channel>(provider.id, "live"),
+      getCachedLiveItems(provider),
     ]).then(([movieCategories, showCategories, liveRows]) => {
       if (cancelled) return;
       setVodCats(movieCategories);
@@ -492,7 +493,7 @@ export default function OptimizedHomeScreenV6() {
         if (force) await refreshCatalog();
         const [cats, items] = await Promise.all([
 getCachedCategories(provider.id, "vod"),
-getCachedItems<XtreamVodItem>(provider.id, "vod"),
+getCachedVodItems(provider),
         ]);
         setVodCats(cats);
         setVod(items);
@@ -520,7 +521,7 @@ getCachedItems<XtreamVodItem>(provider.id, "vod"),
     try {
       if (cacheReady && snapshot.providerId === provider.id) {
         if (force) await refreshCatalog();
-        const items = await getCachedItems<XtreamVodItem>(provider.id, "vod", categoryId);
+        const items = await getCachedVodItems(provider, categoryId);
         if (categoryId === "__all__") registerVodPlaybackQueue(credentials, items);
         setVod(items);
         setVodCache((previous) => ({ ...previous, [categoryId]: items }));
@@ -554,7 +555,7 @@ getCachedItems<XtreamVodItem>(provider.id, "vod"),
         if (force) await refreshCatalog();
         const [cats, items] = await Promise.all([
 getCachedCategories(provider.id, "series"),
-getCachedItems<XtreamSeriesItem>(provider.id, "series"),
+getCachedSeriesItems(provider),
         ]);
         setSeriesCats(cats);
         setSeries(items);
@@ -581,7 +582,7 @@ getCachedItems<XtreamSeriesItem>(provider.id, "series"),
     try {
       if (cacheReady && snapshot.providerId === provider.id) {
         if (force) await refreshCatalog();
-        const items = await getCachedItems<XtreamSeriesItem>(provider.id, "series", categoryId);
+        const items = await getCachedSeriesItems(provider, categoryId);
         setSeries(items);
         setSeriesCache((previous) => ({ ...previous, [categoryId]: items }));
         setHomeSeriesCount(snapshot.counts.series || items.length);
@@ -649,6 +650,10 @@ getCachedItems<XtreamSeriesItem>(provider.id, "series"),
   }
 
   const openLive = (channel: Channel) => {
+    if (!channel.streamUrl) {
+      setCatalogError("The cached playback address is unavailable. Refresh Live TV and try again.");
+      return;
+    }
     setPlayable({ title: channel.name, subtitle: channel.category, url: channel.streamUrl, kind: "live", returnTo: "live" });
     void recordWatched(channel.id);
     setView("player");

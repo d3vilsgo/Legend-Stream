@@ -9,6 +9,8 @@ import {
   getPlayerChromeTimeoutSeconds,
 } from "@/lib/playerPreferences";
 import { getEpisodePlaybackQueue, getVodPlaybackQueue } from "@/lib/xtreamCatalog";
+import { isCatalogRuntimeSource } from "@/lib/catalogPersistence";
+import { resolveCatalogRuntimeSource } from "@/lib/catalogRuntime";
 import { usePlayerOrientation } from "@/hooks/usePlayerOrientation";
 import {
   enterPictureInPicture,
@@ -112,6 +114,9 @@ export function CompatibilityVideoPlayer({
   });
 
   const [currentSource, setCurrentSource] = useState(source);
+  const [resolvedSource, setResolvedSource] = useState<string | null>(
+    isCatalogRuntimeSource(source) ? null : source,
+  );
   const [currentTitle, setCurrentTitle] = useState(title);
   const [currentSubtitle, setCurrentSubtitle] = useState(subtitle);
   const [currentKind, setCurrentKind] = useState<PlayerMediaKind>(initialKind);
@@ -151,12 +156,12 @@ export function CompatibilityVideoPlayer({
     setVolume(getMediaVolume());
   }, []);
 
-  const effectiveUri = useMemo(
-    () => /\/live\//i.test(currentSource) && /\.m3u8(?:$|\?)/i.test(currentSource)
-      ? currentSource.replace(/\.m3u8(?=$|\?)/i, ".ts")
-      : currentSource,
-    [currentSource],
-  );
+  const effectiveUri = useMemo(() => {
+    const runtimeSource = resolvedSource ?? "";
+    return /\/live\//i.test(runtimeSource) && /\.m3u8(?:$|\?)/i.test(runtimeSource)
+      ? runtimeSource.replace(/\.m3u8(?=$|\?)/i, ".ts")
+      : runtimeSource;
+  }, [resolvedSource]);
 
   const clearControlsTimer = useCallback(() => {
     if (controlsTimer.current) {
@@ -189,6 +194,38 @@ export function CompatibilityVideoPlayer({
       chromeTimeoutSeconds * 1000,
     );
   }, [chromeTimeoutSeconds, clearInfoTimer]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isCatalogRuntimeSource(currentSource)) {
+      setResolvedSource(currentSource);
+      return () => { cancelled = true; };
+    }
+    setResolvedSource(null);
+    setErrorText(null);
+    void resolveCatalogRuntimeSource(currentSource, provider)
+      .then((next) => {
+        if (!cancelled) setResolvedSource(next);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setResolvedSource(null);
+        setErrorText("The cached playback address could not be refreshed. Refresh the catalog and try again.");
+        revealControls(true);
+        revealMediaInfo();
+      });
+    return () => { cancelled = true; };
+  }, [
+    currentSource,
+    provider?.id,
+    provider?.type,
+    provider?.url,
+    provider?.playlistUrl,
+    provider?.username,
+    provider?.password,
+    revealControls,
+    revealMediaInfo,
+  ]);
 
   const onBackgroundPress = useCallback(() => {
     if (panel) {
@@ -445,7 +482,7 @@ export function CompatibilityVideoPlayer({
   }, []);
 
   const startDownload = useCallback(async () => {
-    if (!allowDownload || downloadState === "downloading") return;
+    if (!allowDownload || downloadState === "downloading" || !effectiveUri) return;
     setDownloadState("downloading");
     setDownloadProgress(0);
     revealControls(true);
@@ -568,7 +605,7 @@ export function CompatibilityVideoPlayer({
 
   return (
     <View style={styles.root}>
-      <VlcPlaybackSurface
+      {effectiveUri ? <VlcPlaybackSurface
         ref={vlcRef}
         uri={effectiveUri}
         paused={paused}
@@ -582,7 +619,7 @@ export function CompatibilityVideoPlayer({
         onPaused={handlePaused}
         onEnd={handleEnd}
         onError={handleError}
-      />
+      /> : null}
 
       {!pipActive ? (
         <PlayerChrome

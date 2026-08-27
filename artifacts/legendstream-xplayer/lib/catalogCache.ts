@@ -1,9 +1,13 @@
 import * as SQLite from "expo-sqlite";
 import { yieldToUi } from "./cooperative";
-import type { Channel } from "./iptv";
-import type { XtreamCategory, XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
+import type { XtreamCategory } from "./xtreamCatalog";
+import {
+  normalizePersistedCatalogPayload,
+  type CatalogKind,
+  type PersistedCatalogItem,
+} from "./catalogPersistence";
 
-export type CatalogKind = "live" | "vod" | "series";
+export type { CatalogKind } from "./catalogPersistence";
 export type CatalogSyncPhase = "idle" | "preparing" | "syncing" | "ready" | "cancelled" | "error";
 
 export type CatalogSyncState = {
@@ -96,9 +100,13 @@ async function database() {
   return databasePromise;
 }
 
-const parsePayload = <T,>(row: CacheRow): T | null => {
+const parsePayload = (
+  providerId: string,
+  kind: CatalogKind,
+  row: CacheRow,
+): PersistedCatalogItem | null => {
   try {
-    return JSON.parse(row.payload) as T;
+    return normalizePersistedCatalogPayload(providerId, kind, JSON.parse(row.payload));
   } catch {
     return null;
   }
@@ -114,31 +122,29 @@ const addedTime = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-function itemIdentity(kind: CatalogKind, item: Channel | XtreamVodItem | XtreamSeriesItem) {
-  if (kind === "live") return String((item as Channel).id);
-  if (kind === "vod") return String((item as XtreamVodItem).stream_id);
-  return String((item as XtreamSeriesItem).series_id);
+function itemIdentity(item: PersistedCatalogItem) {
+  if (item.catalogKind === "live") return String(item.id);
+  if (item.catalogKind === "vod") return String(item.stream_id);
+  return String(item.series_id);
 }
 
-function itemCategory(kind: CatalogKind, item: Channel | XtreamVodItem | XtreamSeriesItem) {
-  if (kind === "live") return String((item as Channel).category || "");
-  return String((item as XtreamVodItem | XtreamSeriesItem).category_id ?? "");
+function itemCategory(item: PersistedCatalogItem) {
+  if (item.catalogKind === "live") return String(item.category || "");
+  return String(item.category_id ?? "");
 }
 
-function itemName(kind: CatalogKind, item: Channel | XtreamVodItem | XtreamSeriesItem) {
-  if (kind === "live") return (item as Channel).name;
-  return (item as XtreamVodItem | XtreamSeriesItem).name;
+function itemName(item: PersistedCatalogItem) {
+  return item.name;
 }
 
-function itemImage(kind: CatalogKind, item: Channel | XtreamVodItem | XtreamSeriesItem) {
-  if (kind === "live") return (item as Channel).logoUrl ?? null;
-  if (kind === "vod") return (item as XtreamVodItem).stream_icon ?? null;
-  return (item as XtreamSeriesItem).cover ?? null;
+function itemImage(item: PersistedCatalogItem) {
+  if (item.catalogKind === "live") return item.logoUrl ?? null;
+  if (item.catalogKind === "vod") return item.stream_icon ?? null;
+  return item.cover ?? null;
 }
 
-function itemAdded(kind: CatalogKind, item: Channel | XtreamVodItem | XtreamSeriesItem) {
-  if (kind === "vod") return addedTime((item as XtreamVodItem).added);
-  return 0;
+function itemAdded(item: PersistedCatalogItem) {
+  return item.catalogKind === "vod" ? addedTime(item.added) : 0;
 }
 
 export async function initCatalogCache() {
@@ -256,7 +262,7 @@ export async function getCachedCategories(
 export async function upsertCatalogItems(
   providerId: string,
   kind: CatalogKind,
-  items: Array<Channel | XtreamVodItem | XtreamSeriesItem>,
+  items: PersistedCatalogItem[],
   options: { markNew?: boolean; seenAt?: number; onProgress?: (written: number) => void; isCancelled?: () => boolean } = {},
 ) {
   const db = await database();
@@ -267,9 +273,12 @@ export async function upsertCatalogItems(
     if (options.isCancelled?.()) break;
     const batch = items.slice(start, start + WRITE_BATCH_SIZE);
     await db.withTransactionAsync(async () => {
-      for (const item of batch) {
+      for (const persisted of batch) {
         if (options.isCancelled?.()) break;
-        const id = itemIdentity(kind, item);
+        if (persisted.catalogKind !== kind || persisted.providerId !== providerId) {
+throw new Error("Catalog persistence DTO does not match its write target.");
+        }
+        const id = itemIdentity(persisted);
         await db.runAsync(
           `INSERT INTO catalog_items (
              provider_id, kind, item_id, category_id, name, image_url, payload,
@@ -285,11 +294,11 @@ export async function upsertCatalogItems(
           providerId,
           kind,
           id,
-          itemCategory(kind, item),
-          itemName(kind, item),
-          itemImage(kind, item),
-          JSON.stringify(item),
-          itemAdded(kind, item),
+          itemCategory(persisted),
+          itemName(persisted),
+          itemImage(persisted),
+          JSON.stringify(persisted),
+          itemAdded(persisted),
           now,
           now,
           options.markNew ? 1 : 0,
@@ -307,7 +316,7 @@ export async function upsertCatalogItems(
 export async function replaceCatalogKind(
   providerId: string,
   kind: CatalogKind,
-  items: Array<Channel | XtreamVodItem | XtreamSeriesItem>,
+  items: PersistedCatalogItem[],
   options: { onProgress?: (written: number) => void; isCancelled?: () => boolean } = {},
 ) {
   const db = await database();
@@ -330,12 +339,12 @@ export async function pruneCatalogKind(providerId: string, kind: CatalogKind, se
   return result.changes;
 }
 
-export async function getCachedItems<T>(
+export async function getCachedPersistedItems(
   providerId: string,
   kind: CatalogKind,
   categoryId?: string,
   limit?: number,
-): Promise<T[]> {
+): Promise<PersistedCatalogItem[]> {
   const db = await database();
   const args: Array<string | number> = [providerId, kind];
   let sql = `SELECT payload FROM catalog_items WHERE provider_id = ? AND kind = ?`;
@@ -351,14 +360,16 @@ export async function getCachedItems<T>(
     args.push(limit);
   }
   const rows = await db.getAllAsync<CacheRow>(sql, ...args);
-  return rows.map((row) => parsePayload<T>(row)).filter((item): item is T => item !== null);
+  return rows
+    .map((row) => parsePayload(providerId, kind, row))
+    .filter((item): item is PersistedCatalogItem => item !== null);
 }
 
-export async function getNewCachedItems<T>(
+export async function getNewCachedPersistedItems(
   providerId: string,
   kind: CatalogKind,
   limit = 24,
-): Promise<T[]> {
+): Promise<PersistedCatalogItem[]> {
   const db = await database();
   const rows = await db.getAllAsync<CacheRow>(
     `SELECT payload FROM catalog_items
@@ -369,7 +380,9 @@ export async function getNewCachedItems<T>(
     kind,
     limit,
   );
-  return rows.map((row) => parsePayload<T>(row)).filter((item): item is T => item !== null);
+  return rows
+    .map((row) => parsePayload(providerId, kind, row))
+    .filter((item): item is PersistedCatalogItem => item !== null);
 }
 
 export async function getCatalogCounts(providerId: string): Promise<CatalogCounts> {

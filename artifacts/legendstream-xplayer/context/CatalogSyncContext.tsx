@@ -23,10 +23,8 @@ import { useI18n } from "./I18nContext";
 import {
   CatalogCounts,
   CatalogSyncState,
-  getCachedItems,
   getCatalogCounts,
   getCatalogSyncState,
-  getNewCachedItems,
   hasCatalogCache,
   initCatalogCache,
   pruneCatalogKind,
@@ -45,6 +43,15 @@ import {
   XtreamVodItem,
 } from "@/lib/xtreamCatalog";
 import { yieldToUi } from "@/lib/cooperative";
+import { projectCatalogItems } from "@/lib/catalogPersistence";
+import {
+  getCachedLiveItems,
+  getCachedSeriesItems,
+  getCachedVodItems,
+  getNewCachedLiveItems,
+  getNewCachedSeriesItems,
+  getNewCachedVodItems,
+} from "@/lib/catalogRuntime";
 import type { Channel } from "@/lib/iptv";
 
 export type CatalogSnapshot = {
@@ -142,12 +149,12 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     ]);
     const ready = state?.phase === "ready";
     const [live, movies, series, newChannels, newMovies, newSeries] = await Promise.all([
-      getCachedItems<Channel>(active.id, "live", undefined, HOME_SAMPLE_LIMIT),
-      getCachedItems<XtreamVodItem>(active.id, "vod", undefined, HOME_SAMPLE_LIMIT),
-      getCachedItems<XtreamSeriesItem>(active.id, "series", undefined, HOME_SAMPLE_LIMIT),
-      getNewCachedItems<Channel>(active.id, "live", NEW_SAMPLE_LIMIT),
-      getNewCachedItems<XtreamVodItem>(active.id, "vod", NEW_SAMPLE_LIMIT),
-      getNewCachedItems<XtreamSeriesItem>(active.id, "series", NEW_SAMPLE_LIMIT),
+      getCachedLiveItems(active, undefined, HOME_SAMPLE_LIMIT),
+      getCachedVodItems(active, undefined, HOME_SAMPLE_LIMIT),
+      getCachedSeriesItems(active, undefined, HOME_SAMPLE_LIMIT),
+      getNewCachedLiveItems(active, NEW_SAMPLE_LIMIT),
+      getNewCachedVodItems(active, NEW_SAMPLE_LIMIT),
+      getNewCachedSeriesItems(active, NEW_SAMPLE_LIMIT),
     ]);
     setSnapshot({
       providerId: active.id,
@@ -233,7 +240,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           ? currentLive
           : (await loadProvider(asLoadProvider(provider))).channels;
         if (isCancelled()) return;
-        await upsertCatalogItems(provider.id, "live", liveRows, { markNew, seenAt: syncStartedAt, isCancelled });
+        await upsertCatalogItems(provider.id, "live", projectCatalogItems(provider.id, "live", liveRows), { markNew, seenAt: syncStartedAt, isCancelled });
         completed += 1;
         await publishState(provider.id, "syncing", completed, total, "Movies");
 
@@ -242,14 +249,14 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
             if (isCancelled()) break;
             const rows = await getVodStreams(credentials, category.category_id);
             if (isCancelled()) break;
-            await upsertCatalogItems(provider.id, "vod", rows, { markNew, seenAt: syncStartedAt, isCancelled });
+            await upsertCatalogItems(provider.id, "vod", projectCatalogItems(provider.id, "vod", rows), { markNew, seenAt: syncStartedAt, isCancelled });
             completed += 1;
             await publishState(provider.id, "syncing", completed, total, `Movies · ${category.category_name}`);
             await yieldToUi();
           }
         } else if (!isCancelled()) {
           const rows = await getVodStreams(credentials);
-          await upsertCatalogItems(provider.id, "vod", rows, { markNew, seenAt: syncStartedAt, isCancelled });
+          await upsertCatalogItems(provider.id, "vod", projectCatalogItems(provider.id, "vod", rows), { markNew, seenAt: syncStartedAt, isCancelled });
           completed += 1;
         }
 
@@ -264,14 +271,14 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
             if (isCancelled()) break;
             const rows = await getSeries(credentials, category.category_id);
             if (isCancelled()) break;
-            await upsertCatalogItems(provider.id, "series", rows, { markNew, seenAt: syncStartedAt, isCancelled });
+            await upsertCatalogItems(provider.id, "series", projectCatalogItems(provider.id, "series", rows), { markNew, seenAt: syncStartedAt, isCancelled });
             completed += 1;
             await publishState(provider.id, "syncing", completed, total, `Series · ${category.category_name}`);
             await yieldToUi();
           }
         } else if (!isCancelled()) {
           const rows = await getSeries(credentials);
-          await upsertCatalogItems(provider.id, "series", rows, { markNew, seenAt: syncStartedAt, isCancelled });
+          await upsertCatalogItems(provider.id, "series", projectCatalogItems(provider.id, "series", rows), { markNew, seenAt: syncStartedAt, isCancelled });
           completed += 1;
         }
 
