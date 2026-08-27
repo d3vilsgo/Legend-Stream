@@ -26,13 +26,30 @@ export type CatalogRuntimeProvider = {
   password?: string;
 };
 
+function normalizeCatalogRuntimeBaseUrl(value: string) {
+  const normalized = normalizeXtreamBaseUrl(value);
+  try {
+    const url = new URL(normalized);
+    const path = url.pathname.replace(/\/+$/, "");
+    if (/\/get\.php$/i.test(path)) {
+      url.pathname = path.slice(0, path.lastIndexOf("/")) || "/";
+      url.search = "";
+      url.hash = "";
+      return url.toString().replace(/\/+$/, "");
+    }
+  } catch {
+    // normalizeXtreamBaseUrl already validates the value.
+  }
+  return normalized;
+}
+
 function requireXtreamCredentials(provider: CatalogRuntimeProvider) {
   if (provider.type !== "xtream" || !provider.username || !provider.password) {
     throw new Error("Cached playback credentials are unavailable.");
   }
   const source = provider.url || provider.playlistUrl || "";
   return {
-    baseUrl: normalizeXtreamBaseUrl(source),
+    baseUrl: normalizeCatalogRuntimeBaseUrl(source),
     username: provider.username,
     password: provider.password,
   };
