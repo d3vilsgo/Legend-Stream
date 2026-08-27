@@ -159,11 +159,14 @@ jobs:
             ./gradlew assembleRelease -PabiSplit -PabiOnly=arm64-v8a -PreactNativeArchitectures=arm64-v8a --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
           fi
 
-      - name: Verify and stage outputs
+      - name: Verify and stage outputs (fail-closed)
         id: package_android
         env:
           FULL_RELEASE: ${{ steps.mode.outputs.full_release }}
           DUAL_ABI: ${{ steps.mode.outputs.dual_abi }}
+          EXPECTED_PACKAGE: com.legendstream.xplayer
+          EXPECTED_CERT_SHA256: FAC61745DC0903786FB9EDE62A962B399F7348F0BB6F899B8332667591033B9C
+          MIN_VERSION_CODE_EXCLUSIVE: "45002"
         shell: bash
         run: |
           set -euo pipefail
@@ -197,15 +200,60 @@ jobs:
           if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then test -n "$ARMV7_APK"; fi
 
           AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt | sort -V | tail -n 1)"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
           test -x "$AAPT"
-          ARM64_CODE="$($AAPT dump badging "$ARM64_APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
-          echo "arm64-v8a versionCode=$ARM64_CODE"
-          test -n "$ARM64_CODE"
+          test -x "$APKSIGNER"
 
+          BASE_CODE="$(node -p "require('./artifacts/legendstream-xplayer/app.json').expo.android.versionCode")"
+          test "$BASE_CODE" -gt 0
+          EXPECTED_ARM64_CODE="$((BASE_CODE * 1000 + 2))"
+          EXPECTED_ARMV7_CODE="$((BASE_CODE * 1000 + 1))"
+
+          verify_apk() {
+            local apk="$1"
+            local expected_code="$2"
+            local label="$3"
+            local package_name version_code cert_output cert_sha
+
+            package_name="$($AAPT dump badging "$apk" | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -n 1)"
+            version_code="$($AAPT dump badging "$apk" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
+            test -n "$package_name"
+            test -n "$version_code"
+
+            if [ "$package_name" != "$EXPECTED_PACKAGE" ]; then
+              echo "::error::$label package mismatch: $package_name"
+              exit 1
+            fi
+            if [ "$version_code" -ne "$expected_code" ]; then
+              echo "::error::$label versionCode mismatch: got=$version_code expected=$expected_code"
+              exit 1
+            fi
+            if [ "$version_code" -le "$MIN_VERSION_CODE_EXCLUSIVE" ]; then
+              echo "::error::$label versionCode must be > $MIN_VERSION_CODE_EXCLUSIVE, got $version_code"
+              exit 1
+            fi
+
+            cert_output="$("$APKSIGNER" verify --verbose --print-certs "$apk")"
+            cert_sha="$(printf '%s\n' "$cert_output" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p' | head -n 1 | tr -d '[:space:]:' | tr '[:lower:]' '[:upper:]')"
+            test -n "$cert_sha"
+            if [ "$cert_sha" != "$EXPECTED_CERT_SHA256" ]; then
+              echo "::error::$label signing certificate mismatch: $cert_sha"
+              exit 1
+            fi
+
+            echo "$label package=$package_name versionCode=$version_code certSHA256=$cert_sha"
+          }
+
+          verify_apk "$ARM64_APK" "$EXPECTED_ARM64_CODE" "arm64-v8a"
           if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
-            ARMV7_CODE="$($AAPT dump badging "$ARMV7_APK" | sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" | head -n 1)"
+            verify_apk "$ARMV7_APK" "$EXPECTED_ARMV7_CODE" "armeabi-v7a"
+          fi
+
+          ARM64_CODE="$EXPECTED_ARM64_CODE"
+          echo "arm64-v8a versionCode=$ARM64_CODE"
+          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
+            ARMV7_CODE="$EXPECTED_ARMV7_CODE"
             echo "armeabi-v7a versionCode=$ARMV7_CODE"
-            test -n "$ARMV7_CODE"
             test "$ARM64_CODE" != "$ARMV7_CODE"
           fi
 
@@ -216,10 +264,12 @@ jobs:
           echo "arm64 APK bytes=$ARM64_BYTES"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "arm64_bytes=$ARM64_BYTES" >> "$GITHUB_OUTPUT"
+          echo "arm64_version_code=$ARM64_CODE" >> "$GITHUB_OUTPUT"
 
           if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
             ARMV7_NAME="LegendStream-XPlayer-v${APP_VERSION}-armeabi-v7a.apk"
             cp "$ARMV7_APK" "$STAGE_DIR/$ARMV7_NAME"
+            echo "armv7_version_code=$ARMV7_CODE" >> "$GITHUB_OUTPUT"
           fi
 
           if [ "$FULL_RELEASE" = "true" ]; then
@@ -244,16 +294,18 @@ jobs:
         env:
           ARTIFACT_URL: ${{ steps.upload_arm64.outputs.artifact-url }}
           ARM64_BYTES: ${{ steps.package_android.outputs.arm64_bytes }}
+          ARM64_VERSION_CODE: ${{ steps.package_android.outputs.arm64_version_code }}
         with:
           script: |
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: 12,
-              body: `ARM64_APK_READY\nrun_id=${context.runId}\nsha=${context.sha}\nbytes=${process.env.ARM64_BYTES}\nartifact=${process.env.ARTIFACT_URL}`,
+              body: `ARM64_APK_READY\nrun_id=${context.runId}\nsha=${context.sha}\nversionCode=${process.env.ARM64_VERSION_CODE}\nbytes=${process.env.ARM64_BYTES}\nartifact=${process.env.ARTIFACT_URL}`,
             });
 
       - name: Upload armeabi-v7a APK artifact
+        id: upload_armv7
         if: steps.mode.outputs.dual_abi == 'true'
         uses: actions/upload-artifact@v4
         with:
