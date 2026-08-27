@@ -9,7 +9,8 @@
     "test:credentials": "rm -rf .credential-tests && tsc --module commonjs --target ES2020 --moduleResolution node --skipLibCheck --outDir .credential-tests lib/providerCredentialState.ts tests/credentialStorageScenarios.ts && node .credential-tests/tests/credentialStorageScenarios.js && rm -rf .credential-tests",
     "test:backup": "tsx tests/providerBackupScenarios.ts",
     "test:logging": "tsx tests/logRedactionScenarios.ts",
-    "test:catalog-persistence": "tsx tests/catalogPersistenceScenarios.ts"
+    "test:catalog-persistence": "tsx tests/catalogPersistenceScenarios.ts",
+    "test:player-live-queue": "tsx tests/playerLiveQueueScenarios.ts"
   },
   "expo": {
     "autolinking": {
