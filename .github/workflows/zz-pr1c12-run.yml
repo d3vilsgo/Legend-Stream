@@ -39,10 +39,7 @@ jobs:
           body = raw[start:end]
           lines = [line[10:] if line.startswith('          ') else line for line in body.splitlines()]
           script = '\n'.join(lines) + '\n'
-          # The original temporary YAML was only a transport envelope. Some
-          # continuation lines inside Python triple-quoted patch anchors lost
-          # their YAML-only indentation. Restore only those known source lines;
-          # this does not change the intended application patch.
+          # Repair only transport-induced formatting in the temporary payload.
           for token in [
               'itemName(kind, item),',
               'itemImage(kind, item),',
@@ -54,6 +51,9 @@ jobs:
               'itemAdded(persisted),',
           ]:
               script = script.replace('\n' + token, '\n          ' + token)
+          # replace_between() already preserves its end marker from the source.
+          # Do not emit a second initCatalogCache() declaration in replacement.
+          script = script.replace("\nexport async function initCatalogCache()''')", "\n''')")
           Path('/tmp/pr1c-stage.py').write_text(script)
           PY
           python3 /tmp/pr1c-stage.py
