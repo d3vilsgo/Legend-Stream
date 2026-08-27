@@ -1,0 +1,50 @@
+name: 9.6 Log Inventory
+
+on:
+  push:
+    branches:
+      - security/log-redaction-96
+    paths:
+      - '.github/workflows/zz-96-log-inventory.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inventory production console calls
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo '=== MOBILE PRODUCTION CONSOLE CALLS ==='
+          grep -RInE --include='*.ts' --include='*.tsx' \
+            --exclude-dir=node_modules --exclude-dir=tests --exclude-dir=.credential-tests \
+            'console\.(log|warn|error|info|debug|trace)' \
+            artifacts/legendstream-xplayer/app \
+            artifacts/legendstream-xplayer/components \
+            artifacts/legendstream-xplayer/contexts \
+            artifacts/legendstream-xplayer/hooks \
+            artifacts/legendstream-xplayer/lib \
+            2>/dev/null || true
+          echo '=== API PRODUCTION CONSOLE CALLS ==='
+          grep -RInE --include='*.ts' --include='*.tsx' \
+            --exclude-dir=node_modules --exclude-dir=tests \
+            'console\.(log|warn|error|info|debug|trace)' \
+            artifacts/api-server/src 2>/dev/null || true
+          echo '=== LOGGER FILES ==='
+          find artifacts/legendstream-xplayer artifacts/api-server/src -type f \
+            \( -iname '*log*.ts' -o -iname '*log*.tsx' -o -iname '*diagnostic*.ts' -o -iname '*diagnostic*.tsx' \) \
+            -not -path '*/node_modules/*' -print | sort
+          echo '=== MOBILE CONSOLE COUNT ==='
+          grep -RIE --include='*.ts' --include='*.tsx' \
+            --exclude-dir=node_modules --exclude-dir=tests --exclude-dir=.credential-tests \
+            -c 'console\.(log|warn|error|info|debug|trace)' \
+            artifacts/legendstream-xplayer/app artifacts/legendstream-xplayer/components artifacts/legendstream-xplayer/contexts artifacts/legendstream-xplayer/hooks artifacts/legendstream-xplayer/lib 2>/dev/null \
+            | awk -F: '{s+=$2} END {print s+0}'
+          echo '=== API CONSOLE COUNT ==='
+          grep -RIE --include='*.ts' --include='*.tsx' --exclude-dir=node_modules --exclude-dir=tests \
+            -c 'console\.(log|warn|error|info|debug|trace)' artifacts/api-server/src 2>/dev/null \
+            | awk -F: '{s+=$2} END {print s+0}'
