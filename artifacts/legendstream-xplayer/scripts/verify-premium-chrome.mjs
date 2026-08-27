@@ -25,4 +25,4 @@ if (source.includes('backgroundColor: "#07101a"')) {
   throw new Error("Legacy opaque InfoCard background is still present.");
 }
 
-console.log("Premium player chrome source assertions passed.");
+process.stdout.write("Premium player chrome source assertions passed.\n");
