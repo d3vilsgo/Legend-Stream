@@ -8,6 +8,7 @@ on:
 
 # Deterministic, read-only CI: dependency resolution must match pnpm-lock.yaml exactly.
 # Storage security gate: 6 credential scenarios + 24 backup scenarios must all pass.
+# H1 logging gate: mobile 8/8 + API 4/4 redaction scenarios must pass.
 permissions:
   contents: read
 
@@ -47,6 +48,14 @@ jobs:
           grep -F 'credential round-trip: 1/1 passed' <<<"$output"
           grep -F 'security regressions: 14/14 passed' <<<"$output"
           grep -F 'provider backup tests: 24/24 passed' <<<"$output"
+      - name: Log redaction invariants (8/8 mobile + 4/4 API required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mobile="$(pnpm --filter @workspace/legendstream-xplayer test:logging 2>&1 | tee /dev/stderr)"
+          grep -F 'log redaction scenarios: 8/8 passed' <<<"$mobile"
+          api="$(pnpm --filter @workspace/legendstream-xplayer exec tsx "$GITHUB_WORKSPACE/artifacts/api-server/src/lib/logRedaction.test.ts" 2>&1 | tee /dev/stderr)"
+          grep -F 'API log redaction scenarios: 4/4 passed' <<<"$api"
       - name: Verify Replit removal
         shell: bash
         run: |
