@@ -1,0 +1,1046 @@
+name: PR-1C-12 Stage
+
+on:
+  push:
+    branches: [security/catalog-cache-safe-dto-12]
+
+permissions:
+  contents: write
+
+jobs:
+  stage:
+    if: ${{ !contains(github.event.head_commit.message, 'security: stage PR-1C/1+2') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: security/catalog-cache-safe-dto-12
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install frozen dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Apply PR-1C/1+2 safe catalog DTO and runtime patches
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          root = Path('.')
+          mobile = root / 'artifacts/legendstream-xplayer'
+
+          def replace_once(path: Path, old: str, new: str):
+              text = path.read_text()
+              if old not in text:
+                  raise SystemExit(f'expected patch anchor missing in {path}: {old[:120]!r}')
+              path.write_text(text.replace(old, new, 1))
+
+          def replace_all(path: Path, old: str, new: str, minimum: int = 1):
+              text = path.read_text()
+              count = text.count(old)
+              if count < minimum:
+                  raise SystemExit(f'expected at least {minimum} matches in {path}, found {count}: {old[:120]!r}')
+              path.write_text(text.replace(old, new))
+
+          def replace_between(path: Path, start: str, end: str, replacement: str):
+              text = path.read_text()
+              a = text.find(start)
+              b = text.find(end, a)
+              if a < 0 or b < 0:
+                  raise SystemExit(f'patch range missing in {path}: {start!r} -> {end!r}')
+              path.write_text(text[:a] + replacement + text[b:])
+
+          (mobile / 'lib/catalogPersistence.ts').write_text(r'''import type { Channel } from "./iptv";
+import type { XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
+
+export type CatalogKind = "live" | "vod" | "series";
+export type CatalogSourceMode = "canonical" | "direct";
+
+export type PersistedLivePlaybackRef =
+  | {
+      type: "xtream-live";
+      streamId: string;
+      containerExtension: string;
+    }
+  | { type: "unresolved" };
+
+export type PersistedVodPlaybackRef = {
+  type: "xtream-vod";
+  streamId: string;
+  containerExtension: string;
+  sourceMode: CatalogSourceMode;
+};
+
+export type PersistedLiveCatalogItem = {
+  schemaVersion: 1;
+  catalogKind: "live";
+  providerId: string;
+  id: string;
+  name: string;
+  logoUrl?: string;
+  category: string;
+  tvgId?: string;
+  streamType?: string;
+  contentType: "live";
+  nowPlaying?: string;
+  nextPlaying?: string;
+  playbackRef: PersistedLivePlaybackRef;
+};
+
+export type PersistedVodCatalogItem = {
+  schemaVersion: 1;
+  catalogKind: "vod";
+  providerId: string;
+  stream_id: string | number;
+  name: string;
+  stream_icon?: string;
+  rating?: string | number;
+  rating_5based?: number;
+  added?: string;
+  category_id?: string | number;
+  container_extension?: string;
+  plot?: string;
+  cast?: string;
+  director?: string;
+  genre?: string;
+  releaseDate?: string;
+  release_date?: string;
+  youtube_trailer?: string;
+  playbackRef: PersistedVodPlaybackRef;
+};
+
+export type PersistedSeriesCatalogItem = {
+  schemaVersion: 1;
+  catalogKind: "series";
+  providerId: string;
+  series_id: string | number;
+  name: string;
+  cover?: string;
+  plot?: string;
+  cast?: string;
+  director?: string;
+  genre?: string;
+  releaseDate?: string;
+  release_date?: string;
+  rating?: string | number;
+  category_id?: string | number;
+  backdrop_path?: string[];
+};
+
+export type PersistedCatalogItem =
+  | PersistedLiveCatalogItem
+  | PersistedVodCatalogItem
+  | PersistedSeriesCatalogItem;
+
+const asObject = (value: unknown): Record<string, unknown> | null =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+
+const stringValue = (value: unknown) => typeof value === "string" ? value : undefined;
+const numberValue = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : undefined;
+const stringOrNumber = (value: unknown) =>
+  typeof value === "string" || (typeof value === "number" && Number.isFinite(value))
+    ? value
+    : undefined;
+const stringArray = (value: unknown) =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
+
+function parseXtreamLivePlaybackRef(source: unknown): PersistedLivePlaybackRef {
+  if (typeof source !== "string" || !source) return { type: "unresolved" };
+  try {
+    const url = new URL(source);
+    const match = url.pathname.match(/\/live\/[^/]+\/[^/]+\/([^/]+)$/i);
+    if (!match) return { type: "unresolved" };
+    const file = decodeURIComponent(match[1]);
+    const dot = file.lastIndexOf(".");
+    if (dot <= 0 || dot === file.length - 1) return { type: "unresolved" };
+    const streamId = file.slice(0, dot);
+    const containerExtension = file.slice(dot + 1);
+    if (!streamId || !/^[a-zA-Z0-9]{1,10}$/.test(containerExtension)) {
+      return { type: "unresolved" };
+    }
+    return { type: "xtream-live", streamId, containerExtension };
+  } catch {
+    return { type: "unresolved" };
+  }
+}
+
+function normalizeLivePlaybackRef(value: unknown): PersistedLivePlaybackRef {
+  const raw = asObject(value);
+  if (!raw) return { type: "unresolved" };
+  if (raw.type === "xtream-live") {
+    const streamId = stringValue(raw.streamId);
+    const containerExtension = stringValue(raw.containerExtension);
+    if (streamId && containerExtension && /^[a-zA-Z0-9]{1,10}$/.test(containerExtension)) {
+      return { type: "xtream-live", streamId, containerExtension };
+    }
+  }
+  return { type: "unresolved" };
+}
+
+function normalizeVodPlaybackRef(value: unknown, fallback: Record<string, unknown>): PersistedVodPlaybackRef | null {
+  const raw = asObject(value);
+  const streamId = stringValue(raw?.streamId) ?? String(stringOrNumber(fallback.stream_id) ?? "");
+  if (!streamId) return null;
+  const rawExtension = stringValue(raw?.containerExtension) ?? stringValue(fallback.container_extension) ?? "mp4";
+  const containerExtension = /^[a-zA-Z0-9]{1,10}$/.test(rawExtension) ? rawExtension : "mp4";
+  const sourceMode: CatalogSourceMode = raw?.sourceMode === "direct" || Boolean(stringValue(fallback.direct_source))
+    ? "direct"
+    : "canonical";
+  return { type: "xtream-vod", streamId, containerExtension, sourceMode };
+}
+
+function projectLive(providerId: string, value: unknown): PersistedLiveCatalogItem | null {
+  const raw = asObject(value);
+  if (!raw) return null;
+  const id = stringValue(raw.id);
+  const name = stringValue(raw.name);
+  if (!id || !name) return null;
+  const playbackRef = raw.schemaVersion === 1 && raw.catalogKind === "live"
+    ? normalizeLivePlaybackRef(raw.playbackRef)
+    : parseXtreamLivePlaybackRef(raw.streamUrl);
+  return {
+    schemaVersion: 1,
+    catalogKind: "live",
+    providerId,
+    id,
+    name,
+    logoUrl: stringValue(raw.logoUrl),
+    category: stringValue(raw.category) ?? "Live TV",
+    tvgId: stringValue(raw.tvgId),
+    streamType: stringValue(raw.streamType),
+    contentType: "live",
+    nowPlaying: stringValue(raw.nowPlaying),
+    nextPlaying: stringValue(raw.nextPlaying),
+    playbackRef,
+  };
+}
+
+function projectVod(providerId: string, value: unknown): PersistedVodCatalogItem | null {
+  const raw = asObject(value);
+  if (!raw) return null;
+  const streamId = stringOrNumber(raw.stream_id);
+  const name = stringValue(raw.name);
+  const playbackRef = normalizeVodPlaybackRef(raw.playbackRef, raw);
+  if (streamId === undefined || !name || !playbackRef) return null;
+  return {
+    schemaVersion: 1,
+    catalogKind: "vod",
+    providerId,
+    stream_id: streamId,
+    name,
+    stream_icon: stringValue(raw.stream_icon),
+    rating: stringOrNumber(raw.rating),
+    rating_5based: numberValue(raw.rating_5based),
+    added: stringValue(raw.added),
+    category_id: stringOrNumber(raw.category_id),
+    container_extension: stringValue(raw.container_extension),
+    plot: stringValue(raw.plot),
+    cast: stringValue(raw.cast),
+    director: stringValue(raw.director),
+    genre: stringValue(raw.genre),
+    releaseDate: stringValue(raw.releaseDate),
+    release_date: stringValue(raw.release_date),
+    youtube_trailer: stringValue(raw.youtube_trailer),
+    playbackRef,
+  };
+}
+
+function projectSeries(providerId: string, value: unknown): PersistedSeriesCatalogItem | null {
+  const raw = asObject(value);
+  if (!raw) return null;
+  const seriesId = stringOrNumber(raw.series_id);
+  const name = stringValue(raw.name);
+  if (seriesId === undefined || !name) return null;
+  return {
+    schemaVersion: 1,
+    catalogKind: "series",
+    providerId,
+    series_id: seriesId,
+    name,
+    cover: stringValue(raw.cover),
+    plot: stringValue(raw.plot),
+    cast: stringValue(raw.cast),
+    director: stringValue(raw.director),
+    genre: stringValue(raw.genre),
+    releaseDate: stringValue(raw.releaseDate),
+    release_date: stringValue(raw.release_date),
+    rating: stringOrNumber(raw.rating),
+    category_id: stringOrNumber(raw.category_id),
+    backdrop_path: stringArray(raw.backdrop_path),
+  };
+}
+
+export function projectCatalogItem(
+  providerId: string,
+  kind: CatalogKind,
+  value: Channel | XtreamVodItem | XtreamSeriesItem | unknown,
+): PersistedCatalogItem | null {
+  if (kind === "live") return projectLive(providerId, value);
+  if (kind === "vod") return projectVod(providerId, value);
+  return projectSeries(providerId, value);
+}
+
+export function projectCatalogItems(
+  providerId: string,
+  kind: CatalogKind,
+  values: Array<Channel | XtreamVodItem | XtreamSeriesItem>,
+): PersistedCatalogItem[] {
+  return values
+    .map((value) => projectCatalogItem(providerId, kind, value))
+    .filter((value): value is PersistedCatalogItem => value !== null);
+}
+
+export function normalizePersistedCatalogPayload(
+  providerId: string,
+  kind: CatalogKind,
+  raw: unknown,
+): PersistedCatalogItem | null {
+  // Re-project both v1 runtime payloads and v1-safe DTO payloads through the
+  // explicit whitelist. Unknown provider fields can never escape this boundary.
+  return projectCatalogItem(providerId, kind, raw);
+}
+
+const RUNTIME_SCHEME = "legendstream-catalog:";
+
+export function makeDirectVodRuntimeSource(ref: PersistedVodCatalogItem): string {
+  return `legendstream-catalog://xtream/movie/${encodeURIComponent(ref.providerId)}/${encodeURIComponent(ref.playbackRef.streamId)}?ext=${encodeURIComponent(ref.playbackRef.containerExtension)}`;
+}
+
+export type CatalogRuntimeSourceRef = {
+  kind: "vod-direct";
+  providerId: string;
+  streamId: string;
+  containerExtension: string;
+};
+
+export function parseCatalogRuntimeSource(source: string): CatalogRuntimeSourceRef | null {
+  if (!source.startsWith(RUNTIME_SCHEME)) return null;
+  try {
+    const url = new URL(source);
+    if (url.protocol !== RUNTIME_SCHEME || url.hostname !== "xtream") return null;
+    const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
+    if (parts.length !== 3 || parts[0] !== "movie") return null;
+    const containerExtension = url.searchParams.get("ext") || "mp4";
+    if (!parts[1] || !parts[2] || !/^[a-zA-Z0-9]{1,10}$/.test(containerExtension)) return null;
+    return {
+      kind: "vod-direct",
+      providerId: parts[1],
+      streamId: parts[2],
+      containerExtension,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function isCatalogRuntimeSource(source: string): boolean {
+  return parseCatalogRuntimeSource(source) !== null;
+}
+''')
+
+          (mobile / 'lib/catalogRuntime.ts').write_text(r'''import type { Channel } from "./iptv";
+import { normalizeXtreamBaseUrl } from "./iptv";
+import {
+  getVodInfo,
+  type XtreamSeriesItem,
+  type XtreamVodItem,
+} from "./xtreamCatalog";
+import {
+  getCachedPersistedItems,
+  getNewCachedPersistedItems,
+} from "./catalogCache";
+import {
+  makeDirectVodRuntimeSource,
+  parseCatalogRuntimeSource,
+  type PersistedLiveCatalogItem,
+  type PersistedSeriesCatalogItem,
+  type PersistedVodCatalogItem,
+} from "./catalogPersistence";
+
+export type CatalogRuntimeProvider = {
+  id: string;
+  type: string;
+  url?: string;
+  playlistUrl?: string;
+  username?: string;
+  password?: string;
+};
+
+function requireXtreamCredentials(provider: CatalogRuntimeProvider) {
+  if (provider.type !== "xtream" || !provider.username || !provider.password) {
+    throw new Error("Cached playback credentials are unavailable.");
+  }
+  const source = provider.url || provider.playlistUrl || "";
+  return {
+    baseUrl: normalizeXtreamBaseUrl(source),
+    username: provider.username,
+    password: provider.password,
+  };
+}
+
+function liveRuntimeItem(
+  persisted: PersistedLiveCatalogItem,
+  provider: CatalogRuntimeProvider,
+): Channel {
+  let streamUrl = "";
+  if (persisted.playbackRef.type === "xtream-live") {
+    try {
+      const credentials = requireXtreamCredentials(provider);
+      if (provider.id === persisted.providerId) {
+        streamUrl = `${credentials.baseUrl}/live/${encodeURIComponent(credentials.username)}/${encodeURIComponent(credentials.password)}/${encodeURIComponent(persisted.playbackRef.streamId)}.${persisted.playbackRef.containerExtension}`;
+      }
+    } catch {
+      streamUrl = "";
+    }
+  }
+  return {
+    id: persisted.id,
+    providerId: persisted.providerId,
+    name: persisted.name,
+    streamUrl,
+    logoUrl: persisted.logoUrl,
+    category: persisted.category,
+    tvgId: persisted.tvgId,
+    streamType: persisted.streamType,
+    contentType: "live",
+    nowPlaying: persisted.nowPlaying,
+    nextPlaying: persisted.nextPlaying,
+  };
+}
+
+function vodRuntimeItem(persisted: PersistedVodCatalogItem): XtreamVodItem {
+  return {
+    stream_id: persisted.stream_id,
+    name: persisted.name,
+    stream_icon: persisted.stream_icon,
+    rating: persisted.rating,
+    rating_5based: persisted.rating_5based,
+    added: persisted.added,
+    category_id: persisted.category_id,
+    container_extension: persisted.container_extension,
+    direct_source: persisted.playbackRef.sourceMode === "direct"
+      ? makeDirectVodRuntimeSource(persisted)
+      : undefined,
+    plot: persisted.plot,
+    cast: persisted.cast,
+    director: persisted.director,
+    genre: persisted.genre,
+    releaseDate: persisted.releaseDate,
+    release_date: persisted.release_date,
+    youtube_trailer: persisted.youtube_trailer,
+  };
+}
+
+function seriesRuntimeItem(persisted: PersistedSeriesCatalogItem): XtreamSeriesItem {
+  return {
+    series_id: persisted.series_id,
+    name: persisted.name,
+    cover: persisted.cover,
+    plot: persisted.plot,
+    cast: persisted.cast,
+    director: persisted.director,
+    genre: persisted.genre,
+    releaseDate: persisted.releaseDate,
+    release_date: persisted.release_date,
+    rating: persisted.rating,
+    category_id: persisted.category_id,
+    backdrop_path: persisted.backdrop_path,
+  };
+}
+
+export async function getCachedLiveItems(
+  provider: CatalogRuntimeProvider,
+  categoryId?: string,
+  limit?: number,
+): Promise<Channel[]> {
+  const rows = await getCachedPersistedItems(provider.id, "live", categoryId, limit);
+  return rows
+    .filter((row): row is PersistedLiveCatalogItem => row.catalogKind === "live")
+    .map((row) => liveRuntimeItem(row, provider));
+}
+
+export async function getCachedVodItems(
+  provider: CatalogRuntimeProvider,
+  categoryId?: string,
+  limit?: number,
+): Promise<XtreamVodItem[]> {
+  const rows = await getCachedPersistedItems(provider.id, "vod", categoryId, limit);
+  return rows
+    .filter((row): row is PersistedVodCatalogItem => row.catalogKind === "vod")
+    .map(vodRuntimeItem);
+}
+
+export async function getCachedSeriesItems(
+  provider: CatalogRuntimeProvider,
+  categoryId?: string,
+  limit?: number,
+): Promise<XtreamSeriesItem[]> {
+  const rows = await getCachedPersistedItems(provider.id, "series", categoryId, limit);
+  return rows
+    .filter((row): row is PersistedSeriesCatalogItem => row.catalogKind === "series")
+    .map(seriesRuntimeItem);
+}
+
+export async function getNewCachedLiveItems(provider: CatalogRuntimeProvider, limit = 24) {
+  const rows = await getNewCachedPersistedItems(provider.id, "live", limit);
+  return rows
+    .filter((row): row is PersistedLiveCatalogItem => row.catalogKind === "live")
+    .map((row) => liveRuntimeItem(row, provider));
+}
+
+export async function getNewCachedVodItems(provider: CatalogRuntimeProvider, limit = 24) {
+  const rows = await getNewCachedPersistedItems(provider.id, "vod", limit);
+  return rows
+    .filter((row): row is PersistedVodCatalogItem => row.catalogKind === "vod")
+    .map(vodRuntimeItem);
+}
+
+export async function getNewCachedSeriesItems(provider: CatalogRuntimeProvider, limit = 24) {
+  const rows = await getNewCachedPersistedItems(provider.id, "series", limit);
+  return rows
+    .filter((row): row is PersistedSeriesCatalogItem => row.catalogKind === "series")
+    .map(seriesRuntimeItem);
+}
+
+export async function resolveCatalogRuntimeSource(
+  source: string,
+  provider: CatalogRuntimeProvider | null | undefined,
+): Promise<string> {
+  const ref = parseCatalogRuntimeSource(source);
+  if (!ref) return source;
+  if (!provider || provider.id !== ref.providerId) {
+    throw new Error("Cached playback provider is unavailable.");
+  }
+  const credentials = requireXtreamCredentials(provider);
+  if (ref.kind === "vod-direct") {
+    const info = await getVodInfo(credentials, ref.streamId);
+    const directSource = info.movie_data?.direct_source?.trim();
+    if (!directSource || parseCatalogRuntimeSource(directSource)) {
+      throw new Error("The cached direct playback address could not be refreshed.");
+    }
+    return directSource;
+  }
+  return source;
+}
+''')
+
+          (mobile / 'tests/catalogPersistenceScenarios.ts').write_text(r'''import fs from "node:fs";
+import path from "node:path";
+import {
+  isCatalogRuntimeSource,
+  normalizePersistedCatalogPayload,
+  projectCatalogItems,
+  type PersistedLiveCatalogItem,
+  type PersistedVodCatalogItem,
+} from "../lib/catalogPersistence";
+
+let passed = 0;
+const expect = (condition: unknown, message: string) => {
+  if (!condition) throw new Error(message);
+  passed += 1;
+};
+
+const providerId = "provider-safe-1";
+const liveSecret = "https://iptv.example/live/alice/super-secret/991.ts";
+const live = {
+  id: "provider-safe-1:0:991",
+  providerId,
+  name: "News",
+  streamUrl: liveSecret,
+  logoUrl: "https://images.example/news.png",
+  category: "News",
+  tvgId: "news-1",
+  streamType: "xtream",
+  contentType: "live" as const,
+  token: "must-not-persist",
+};
+const projectedLive = projectCatalogItems(providerId, "live", [live])[0] as PersistedLiveCatalogItem;
+const liveJson = JSON.stringify(projectedLive);
+expect(
+  projectedLive.playbackRef.type === "xtream-live" &&
+  projectedLive.playbackRef.streamId === "991" &&
+  !liveJson.includes("alice") && !liveJson.includes("super-secret") && !liveJson.includes("streamUrl") && !liveJson.includes("must-not-persist"),
+  "live projection must retain only a safe playback reference",
+);
+
+const directVod = {
+  stream_id: 44,
+  name: "Movie",
+  container_extension: "mkv",
+  category_id: "7",
+  direct_source: "https://cdn.example/watch?token=secret-token",
+  stream_icon: "https://images.example/movie.jpg",
+  playback_url: "https://evil.example/secret",
+  password: "not-allowed",
+};
+const projectedDirect = projectCatalogItems(providerId, "vod", [directVod as any])[0] as PersistedVodCatalogItem;
+const directJson = JSON.stringify(projectedDirect);
+expect(
+  projectedDirect.playbackRef.sourceMode === "direct" &&
+  !directJson.includes("direct_source") && !directJson.includes("secret-token") &&
+  !directJson.includes("playback_url") && !directJson.includes("not-allowed"),
+  "direct VOD projection must drop all source/secret extras",
+);
+
+const canonicalVod = projectCatalogItems(providerId, "vod", [{
+  stream_id: "55",
+  name: "Canonical",
+  container_extension: "mp4",
+  category_id: 9,
+} as any])[0] as PersistedVodCatalogItem;
+expect(
+  canonicalVod.playbackRef.sourceMode === "canonical" && canonicalVod.playbackRef.streamId === "55",
+  "canonical VOD must preserve credential-free identity",
+);
+
+const series = projectCatalogItems(providerId, "series", [{
+  series_id: 77,
+  name: "Series",
+  cover: "https://images.example/series.jpg",
+  backdrop_path: ["https://images.example/backdrop.jpg"],
+  source: "https://evil.example/source",
+  token: "drop-me",
+} as any])[0];
+const seriesJson = JSON.stringify(series);
+expect(
+  Boolean(series) && !seriesJson.includes('"source"') && !seriesJson.includes("drop-me") && seriesJson.includes("backdrop.jpg"),
+  "series projection must be whitelist-only while retaining artwork metadata",
+);
+
+const normalizedLegacy = normalizePersistedCatalogPayload(providerId, "live", live) as PersistedLiveCatalogItem;
+expect(
+  normalizedLegacy.playbackRef.type === "xtream-live" && !JSON.stringify(normalizedLegacy).includes("super-secret"),
+  "legacy live payload must normalize through the same whitelist",
+);
+
+const unresolved = normalizePersistedCatalogPayload(providerId, "live", {
+  id: "legacy-unresolved",
+  providerId,
+  name: "Legacy",
+  streamUrl: "opaque-command-without-xtream-path",
+  category: "Legacy",
+}) as PersistedLiveCatalogItem;
+expect(
+  unresolved.playbackRef.type === "unresolved",
+  "unparseable legacy live source must remain metadata-only",
+);
+
+const packageRoot = process.cwd();
+const cacheSource = fs.readFileSync(path.join(packageRoot, "lib/catalogCache.ts"), "utf8");
+expect(
+  cacheSource.includes("items: PersistedCatalogItem[]") &&
+  cacheSource.includes("JSON.stringify(persisted)") &&
+  !cacheSource.includes("Array<Channel | XtreamVodItem | XtreamSeriesItem>"),
+  "catalog cache write API must accept only persisted DTOs",
+);
+
+const syncSource = fs.readFileSync(path.join(packageRoot, "context/CatalogSyncContext.tsx"), "utf8");
+expect(
+  syncSource.includes('projectCatalogItems(provider.id, "live", liveRows)') &&
+  syncSource.includes('projectCatalogItems(provider.id, "vod", rows)') &&
+  syncSource.includes('projectCatalogItems(provider.id, "series", rows)'),
+  "all catalog sync writers must project runtime rows before persistence",
+);
+
+const runtimeDirect = `legendstream-catalog://xtream/movie/${encodeURIComponent(providerId)}/44?ext=mkv`;
+expect(isCatalogRuntimeSource(runtimeDirect), "direct-source runtime reference must be credential-free and recognizable");
+
+process.stdout.write(`catalog persistence scenarios: ${passed}/9 passed\n`);
+''')
+
+          cache = mobile / 'lib/catalogCache.ts'
+          replace_once(cache,
+'''import * as SQLite from "expo-sqlite";
+import { yieldToUi } from "./cooperative";
+import type { Channel } from "./iptv";
+import type { XtreamCategory, XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
+
+export type CatalogKind = "live" | "vod" | "series";
+''',
+'''import * as SQLite from "expo-sqlite";
+import { yieldToUi } from "./cooperative";
+import type { XtreamCategory } from "./xtreamCatalog";
+import {
+  normalizePersistedCatalogPayload,
+  type CatalogKind,
+  type PersistedCatalogItem,
+} from "./catalogPersistence";
+
+export type { CatalogKind } from "./catalogPersistence";
+''')
+
+          replace_between(cache, 'const parsePayload =', 'export async function initCatalogCache()', r'''const parsePayload = (
+  providerId: string,
+  kind: CatalogKind,
+  row: CacheRow,
+): PersistedCatalogItem | null => {
+  try {
+    return normalizePersistedCatalogPayload(providerId, kind, JSON.parse(row.payload));
+  } catch {
+    return null;
+  }
+};
+
+const addedTime = (value: unknown) => {
+  if (value === undefined || value === null || value === "") return 0;
+  const numeric = Number(value);
+  if (Number.isFinite(numeric) && numeric > 0) {
+    return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
+  }
+  const parsed = Date.parse(String(value));
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+function itemIdentity(item: PersistedCatalogItem) {
+  if (item.catalogKind === "live") return String(item.id);
+  if (item.catalogKind === "vod") return String(item.stream_id);
+  return String(item.series_id);
+}
+
+function itemCategory(item: PersistedCatalogItem) {
+  if (item.catalogKind === "live") return String(item.category || "");
+  return String(item.category_id ?? "");
+}
+
+function itemName(item: PersistedCatalogItem) {
+  return item.name;
+}
+
+function itemImage(item: PersistedCatalogItem) {
+  if (item.catalogKind === "live") return item.logoUrl ?? null;
+  if (item.catalogKind === "vod") return item.stream_icon ?? null;
+  return item.cover ?? null;
+}
+
+function itemAdded(item: PersistedCatalogItem) {
+  return item.catalogKind === "vod" ? addedTime(item.added) : 0;
+}
+
+export async function initCatalogCache()''')
+
+          replace_once(cache,
+'''  items: Array<Channel | XtreamVodItem | XtreamSeriesItem>,
+''',
+'''  items: PersistedCatalogItem[],
+''')
+          replace_once(cache,
+'''      for (const item of batch) {
+        if (options.isCancelled?.()) break;
+        const id = itemIdentity(kind, item);
+        await db.runAsync(
+''',
+'''      for (const persisted of batch) {
+        if (options.isCancelled?.()) break;
+        if (persisted.catalogKind !== kind || persisted.providerId !== providerId) {
+          throw new Error("Catalog persistence DTO does not match its write target.");
+        }
+        const id = itemIdentity(persisted);
+        await db.runAsync(
+''')
+          replace_once(cache,
+'''          itemCategory(kind, item),
+          itemName(kind, item),
+          itemImage(kind, item),
+          JSON.stringify(item),
+          itemAdded(kind, item),
+''',
+'''          itemCategory(persisted),
+          itemName(persisted),
+          itemImage(persisted),
+          JSON.stringify(persisted),
+          itemAdded(persisted),
+''')
+          replace_once(cache,
+'''  items: Array<Channel | XtreamVodItem | XtreamSeriesItem>,
+''',
+'''  items: PersistedCatalogItem[],
+''')
+          replace_once(cache, 'export async function getCachedItems<T>(\n', 'export async function getCachedPersistedItems(\n')
+          replace_once(cache, '): Promise<T[]> {\n  const db = await database();\n  const args: Array<string | number> = [providerId, kind];\n', '): Promise<PersistedCatalogItem[]> {\n  const db = await database();\n  const args: Array<string | number> = [providerId, kind];\n')
+          replace_once(cache,
+'''  const rows = await db.getAllAsync<CacheRow>(sql, ...args);
+  return rows.map((row) => parsePayload<T>(row)).filter((item): item is T => item !== null);
+}
+
+export async function getNewCachedItems<T>(
+''',
+'''  const rows = await db.getAllAsync<CacheRow>(sql, ...args);
+  return rows
+    .map((row) => parsePayload(providerId, kind, row))
+    .filter((item): item is PersistedCatalogItem => item !== null);
+}
+
+export async function getNewCachedPersistedItems(
+''')
+          replace_once(cache,
+'''): Promise<T[]> {
+  const db = await database();
+  const rows = await db.getAllAsync<CacheRow>(
+''',
+'''): Promise<PersistedCatalogItem[]> {
+  const db = await database();
+  const rows = await db.getAllAsync<CacheRow>(
+''')
+          replace_once(cache,
+'''  return rows.map((row) => parsePayload<T>(row)).filter((item): item is T => item !== null);
+}
+''',
+'''  return rows
+    .map((row) => parsePayload(providerId, kind, row))
+    .filter((item): item is PersistedCatalogItem => item !== null);
+}
+''')
+
+          sync = mobile / 'context/CatalogSyncContext.tsx'
+          replace_once(sync,
+'''  getCachedItems,
+  getCatalogCounts,
+  getCatalogSyncState,
+  getNewCachedItems,
+''',
+'''  getCatalogCounts,
+  getCatalogSyncState,
+''')
+          replace_once(sync,
+'''import { yieldToUi } from "@/lib/cooperative";
+import type { Channel } from "@/lib/iptv";
+''',
+'''import { yieldToUi } from "@/lib/cooperative";
+import { projectCatalogItems } from "@/lib/catalogPersistence";
+import {
+  getCachedLiveItems,
+  getCachedSeriesItems,
+  getCachedVodItems,
+  getNewCachedLiveItems,
+  getNewCachedSeriesItems,
+  getNewCachedVodItems,
+} from "@/lib/catalogRuntime";
+import type { Channel } from "@/lib/iptv";
+''')
+          replace_once(sync,
+'''      getCachedItems<Channel>(active.id, "live", undefined, HOME_SAMPLE_LIMIT),
+      getCachedItems<XtreamVodItem>(active.id, "vod", undefined, HOME_SAMPLE_LIMIT),
+      getCachedItems<XtreamSeriesItem>(active.id, "series", undefined, HOME_SAMPLE_LIMIT),
+      getNewCachedItems<Channel>(active.id, "live", NEW_SAMPLE_LIMIT),
+      getNewCachedItems<XtreamVodItem>(active.id, "vod", NEW_SAMPLE_LIMIT),
+      getNewCachedItems<XtreamSeriesItem>(active.id, "series", NEW_SAMPLE_LIMIT),
+''',
+'''      getCachedLiveItems(active, undefined, HOME_SAMPLE_LIMIT),
+      getCachedVodItems(active, undefined, HOME_SAMPLE_LIMIT),
+      getCachedSeriesItems(active, undefined, HOME_SAMPLE_LIMIT),
+      getNewCachedLiveItems(active, NEW_SAMPLE_LIMIT),
+      getNewCachedVodItems(active, NEW_SAMPLE_LIMIT),
+      getNewCachedSeriesItems(active, NEW_SAMPLE_LIMIT),
+''')
+          replace_once(sync,
+'''        await upsertCatalogItems(provider.id, "live", liveRows, { markNew, seenAt: syncStartedAt, isCancelled });
+''',
+'''        await upsertCatalogItems(provider.id, "live", projectCatalogItems(provider.id, "live", liveRows), { markNew, seenAt: syncStartedAt, isCancelled });
+''')
+          replace_all(sync,
+'''            await upsertCatalogItems(provider.id, "vod", rows, { markNew, seenAt: syncStartedAt, isCancelled });
+''',
+'''            await upsertCatalogItems(provider.id, "vod", projectCatalogItems(provider.id, "vod", rows), { markNew, seenAt: syncStartedAt, isCancelled });
+''', minimum=1)
+          replace_all(sync,
+'''          await upsertCatalogItems(provider.id, "vod", rows, { markNew, seenAt: syncStartedAt, isCancelled });
+''',
+'''          await upsertCatalogItems(provider.id, "vod", projectCatalogItems(provider.id, "vod", rows), { markNew, seenAt: syncStartedAt, isCancelled });
+''', minimum=1)
+          replace_all(sync,
+'''            await upsertCatalogItems(provider.id, "series", rows, { markNew, seenAt: syncStartedAt, isCancelled });
+''',
+'''            await upsertCatalogItems(provider.id, "series", projectCatalogItems(provider.id, "series", rows), { markNew, seenAt: syncStartedAt, isCancelled });
+''', minimum=1)
+          replace_all(sync,
+'''          await upsertCatalogItems(provider.id, "series", rows, { markNew, seenAt: syncStartedAt, isCancelled });
+''',
+'''          await upsertCatalogItems(provider.id, "series", projectCatalogItems(provider.id, "series", rows), { markNew, seenAt: syncStartedAt, isCancelled });
+''', minimum=1)
+
+          home = mobile / 'components/OptimizedHomeScreenV6.tsx'
+          replace_once(home,
+'''import { getCachedCategories, getCachedItems } from "@/lib/catalogCache";
+''',
+'''import { getCachedCategories } from "@/lib/catalogCache";
+import { getCachedLiveItems, getCachedSeriesItems, getCachedVodItems } from "@/lib/catalogRuntime";
+''')
+          replace_all(home, 'getCachedItems<Channel>(provider.id, "live")', 'getCachedLiveItems(provider)')
+          replace_all(home, 'getCachedItems<XtreamVodItem>(provider.id, "vod")', 'getCachedVodItems(provider)')
+          replace_all(home, 'getCachedItems<XtreamVodItem>(provider.id, "vod", categoryId)', 'getCachedVodItems(provider, categoryId)')
+          replace_all(home, 'getCachedItems<XtreamSeriesItem>(provider.id, "series")', 'getCachedSeriesItems(provider)')
+          replace_all(home, 'getCachedItems<XtreamSeriesItem>(provider.id, "series", categoryId)', 'getCachedSeriesItems(provider, categoryId)')
+          replace_once(home,
+'''  const openLive = (channel: Channel) => {
+    setPlayable({ title: channel.name, subtitle: channel.category, url: channel.streamUrl, kind: "live", returnTo: "live" });
+''',
+'''  const openLive = (channel: Channel) => {
+    if (!channel.streamUrl) {
+      setCatalogError("The cached playback address is unavailable. Refresh Live TV and try again.");
+      return;
+    }
+    setPlayable({ title: channel.name, subtitle: channel.category, url: channel.streamUrl, kind: "live", returnTo: "live" });
+''')
+
+          player = mobile / 'components/CompatibilityVideoPlayerV2.tsx'
+          replace_once(player,
+'''import { getEpisodePlaybackQueue, getVodPlaybackQueue } from "@/lib/xtreamCatalog";
+''',
+'''import { getEpisodePlaybackQueue, getVodPlaybackQueue } from "@/lib/xtreamCatalog";
+import { isCatalogRuntimeSource } from "@/lib/catalogPersistence";
+import { resolveCatalogRuntimeSource } from "@/lib/catalogRuntime";
+''')
+          replace_once(player,
+'''  const [currentSource, setCurrentSource] = useState(source);
+  const [currentTitle, setCurrentTitle] = useState(title);
+''',
+'''  const [currentSource, setCurrentSource] = useState(source);
+  const [resolvedSource, setResolvedSource] = useState<string | null>(
+    isCatalogRuntimeSource(source) ? null : source,
+  );
+  const [currentTitle, setCurrentTitle] = useState(title);
+''')
+          replace_once(player,
+'''  const effectiveUri = useMemo(
+    () => /\/live\//i.test(currentSource) && /\.m3u8(?:$|\?)/i.test(currentSource)
+      ? currentSource.replace(/\.m3u8(?=$|\?)/i, ".ts")
+      : currentSource,
+    [currentSource],
+  );
+''',
+'''  const effectiveUri = useMemo(() => {
+    const runtimeSource = resolvedSource ?? "";
+    return /\/live\//i.test(runtimeSource) && /\.m3u8(?:$|\?)/i.test(runtimeSource)
+      ? runtimeSource.replace(/\.m3u8(?=$|\?)/i, ".ts")
+      : runtimeSource;
+  }, [resolvedSource]);
+''')
+          replace_once(player,
+'''  const revealMediaInfo = useCallback(() => {
+    setInfoVisible(true);
+    clearInfoTimer();
+    infoTimer.current = setTimeout(
+      () => setInfoVisible(false),
+      chromeTimeoutSeconds * 1000,
+    );
+  }, [chromeTimeoutSeconds, clearInfoTimer]);
+
+''',
+'''  const revealMediaInfo = useCallback(() => {
+    setInfoVisible(true);
+    clearInfoTimer();
+    infoTimer.current = setTimeout(
+      () => setInfoVisible(false),
+      chromeTimeoutSeconds * 1000,
+    );
+  }, [chromeTimeoutSeconds, clearInfoTimer]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!isCatalogRuntimeSource(currentSource)) {
+      setResolvedSource(currentSource);
+      return () => { cancelled = true; };
+    }
+    setResolvedSource(null);
+    setErrorText(null);
+    void resolveCatalogRuntimeSource(currentSource, provider)
+      .then((next) => {
+        if (!cancelled) setResolvedSource(next);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setResolvedSource(null);
+        setErrorText("The cached playback address could not be refreshed. Refresh the catalog and try again.");
+        revealControls(true);
+        revealMediaInfo();
+      });
+    return () => { cancelled = true; };
+  }, [
+    currentSource,
+    provider?.id,
+    provider?.type,
+    provider?.url,
+    provider?.playlistUrl,
+    provider?.username,
+    provider?.password,
+    revealControls,
+    revealMediaInfo,
+  ]);
+
+''')
+          replace_once(player,
+'''    if (!allowDownload || downloadState === "downloading") return;
+''',
+'''    if (!allowDownload || downloadState === "downloading" || !effectiveUri) return;
+''')
+          replace_once(player,
+'''      <VlcPlaybackSurface
+        ref={vlcRef}
+        uri={effectiveUri}
+        paused={paused}
+        fit={fit}
+        codecMode={codecMode}
+        audioTrack={audioTrack}
+        textTrack={textTrack}
+        onLoad={handleLoad}
+        onProgress={handleProgress}
+        onPlaying={handlePlaying}
+        onPaused={handlePaused}
+        onEnd={handleEnd}
+        onError={handleError}
+      />
+''',
+'''      {effectiveUri ? <VlcPlaybackSurface
+        ref={vlcRef}
+        uri={effectiveUri}
+        paused={paused}
+        fit={fit}
+        codecMode={codecMode}
+        audioTrack={audioTrack}
+        textTrack={textTrack}
+        onLoad={handleLoad}
+        onProgress={handleProgress}
+        onPlaying={handlePlaying}
+        onPaused={handlePaused}
+        onEnd={handleEnd}
+        onError={handleError}
+      /> : null}
+''')
+
+          package = mobile / 'package.json'
+          replace_once(package,
+'''    "test:logging": "tsx tests/logRedactionScenarios.ts"
+''',
+'''    "test:logging": "tsx tests/logRedactionScenarios.ts",
+    "test:catalog-persistence": "tsx tests/catalogPersistenceScenarios.ts"
+''')
+          PY
+      - name: Catalog persistence acceptance
+        run: pnpm --filter @workspace/legendstream-xplayer test:catalog-persistence
+      - name: Existing storage and logging gates
+        shell: bash
+        run: |
+          pnpm --filter @workspace/legendstream-xplayer test:credentials
+          pnpm --filter @workspace/legendstream-xplayer test:backup
+          pnpm --filter @workspace/legendstream-xplayer test:logging
+          node scripts/check-console-usage.mjs
+      - name: Typecheck mobile
+        run: pnpm --filter @workspace/legendstream-xplayer typecheck
+      - name: Verify lockfile unchanged
+        run: git diff --exit-code -- pnpm-lock.yaml
+      - name: Commit verified PR-1C/1+2 source changes
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add artifacts/legendstream-xplayer
+          git commit -m "security: stage PR-1C/1+2 safe catalog DTOs and runtime resolution"
+          git push origin HEAD:security/catalog-cache-safe-dto-12
