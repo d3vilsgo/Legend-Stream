@@ -9,6 +9,7 @@ on:
 # Deterministic, read-only CI: dependency resolution must match pnpm-lock.yaml exactly.
 # Storage security gate: 6 credential scenarios + 24 backup scenarios must all pass.
 # H1 logging gate: mobile 8/8 + API 4/4 redaction scenarios must pass.
+# H2 console gate: direct console.* is forbidden outside tests and __DEV__ guards.
 permissions:
   contents: read
 
@@ -56,6 +57,12 @@ jobs:
           grep -F 'log redaction scenarios: 8/8 passed' <<<"$mobile"
           api="$(pnpm --filter @workspace/legendstream-xplayer exec tsx "$GITHUB_WORKSPACE/artifacts/api-server/src/lib/logRedaction.test.ts" 2>&1 | tee /dev/stderr)"
           grep -F 'API log redaction scenarios: 4/4 passed' <<<"$api"
+      - name: Console usage guard (fail-closed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/check-console-usage.mjs --self-test
+          node scripts/check-console-usage.mjs
       - name: Verify Replit removal
         shell: bash
         run: |
