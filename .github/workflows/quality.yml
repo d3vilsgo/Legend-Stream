@@ -10,6 +10,7 @@ on:
 # Storage security gate: 6 credential scenarios + 24 backup scenarios must all pass.
 # H1 logging gate: mobile 8/8 + API 4/4 redaction scenarios must pass.
 # H2 console gate: direct console.* is forbidden outside tests and __DEV__ guards.
+# 9.2 catalog gate: runtime catalog rows must pass explicit persisted DTO projection.
 permissions:
   contents: read
 
@@ -63,6 +64,12 @@ jobs:
           set -euo pipefail
           node scripts/check-console-usage.mjs --self-test
           node scripts/check-console-usage.mjs
+      - name: Catalog persistence invariants (10/10 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          catalog="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-persistence 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog persistence scenarios: 10/10 passed' <<<"$catalog"
       - name: Verify Replit removal
         shell: bash
         run: |
