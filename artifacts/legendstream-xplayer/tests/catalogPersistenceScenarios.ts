@@ -119,4 +119,12 @@ expect(
 const runtimeDirect = `legendstream-catalog://xtream/movie/${encodeURIComponent(providerId)}/44?ext=mkv`;
 expect(isCatalogRuntimeSource(runtimeDirect), "direct-source runtime reference must be credential-free and recognizable");
 
-process.stdout.write(`catalog persistence scenarios: ${passed}/9 passed\n`);
+const runtimeSource = fs.readFileSync(path.join(packageRoot, "lib/catalogRuntime.ts"), "utf8");
+expect(
+  runtimeSource.includes("normalizeCatalogRuntimeBaseUrl") &&
+  runtimeSource.includes("get\\.php") &&
+  runtimeSource.includes("baseUrl: normalizeCatalogRuntimeBaseUrl(source)"),
+  "cached live runtime must strip get.php before rebuilding the canonical stream URL",
+);
+
+process.stdout.write(`catalog persistence scenarios: ${passed}/10 passed\n`);
