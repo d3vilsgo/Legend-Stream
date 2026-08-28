@@ -78,12 +78,12 @@ jobs:
           set -euo pipefail
           player="$(pnpm --filter @workspace/legendstream-xplayer test:player-live-queue 2>&1 | tee /dev/stderr)"
           grep -F 'player live queue scenarios: 6/6 passed' <<<"$player"
-      - name: Media progress provider-scope and migration invariants (24/24 required)
+      - name: Media progress provider-scope and migration invariants (31/31 required)
         shell: bash
         run: |
           set -euo pipefail
           progress="$(pnpm --filter @workspace/legendstream-xplayer test:media-progress 2>&1 | tee /dev/stderr)"
-          grep -F 'media progress scenarios: 24/24 passed' <<<"$progress"
+          grep -F 'media progress scenarios: 31/31 passed' <<<"$progress"
       - name: Verify Replit removal
         shell: bash
         run: |
