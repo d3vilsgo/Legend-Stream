@@ -278,22 +278,21 @@ async function requestNative(
   });
 
   const requestAbort = linkedRequestSignal(signal, 20_000);
-  let response: Response;
   try {
-    response = await fetch(url.toString(), {
+    const response = await fetch(url.toString(), {
       headers: {
         Accept: "application/json,text/plain,*/*",
         "User-Agent": "LegendStream-XPlayer/1.0 Android",
       },
       signal: requestAbort.signal,
     });
+    return await parseResponse(response);
   } catch (caught) {
     if (signal?.aborted) throw caught;
     throw transportError(caught, "server");
   } finally {
     requestAbort.cleanup();
   }
-  return parseResponse(response);
 }
 
 async function requestWeb(
@@ -303,21 +302,20 @@ async function requestWeb(
   signal?: AbortSignal,
 ) {
   const requestAbort = linkedRequestSignal(signal, 25_000);
-  let response: Response;
   try {
-    response = await fetch("/api/iptv/xtream/action", {
+    const response = await fetch("/api/iptv/xtream/action", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ ...encodeCredentials(credentials), action, params }),
       signal: requestAbort.signal,
     });
+    return await parseResponse(response);
   } catch (caught) {
     if (signal?.aborted) throw caught;
     throw transportError(caught, "web proxy");
   } finally {
     requestAbort.cleanup();
   }
-  return parseResponse(response);
 }
 
 async function requestXtream(
