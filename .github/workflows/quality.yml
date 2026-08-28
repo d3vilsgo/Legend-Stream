@@ -13,6 +13,7 @@ on:
 # 9.2 catalog gate: runtime catalog rows must pass explicit persisted DTO projection.
 # Player live queue gate: stable identity, cache fallback, category scope and boundaries must pass.
 # PR-1B media progress gate: provider scope + single v1->v2 migration + K1/K2/K4 must pass.
+# Live history gate: provider scope + per-provider quota + deterministic migration + K1/K2 must pass.
 permissions:
   contents: read
 
@@ -84,6 +85,12 @@ jobs:
           set -euo pipefail
           progress="$(pnpm --filter @workspace/legendstream-xplayer test:media-progress 2>&1 | tee /dev/stderr)"
           grep -F 'media progress scenarios: 31/31 passed' <<<"$progress"
+      - name: Live history provider-scope and migration invariants (32/32 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          history="$(pnpm --filter @workspace/legendstream-xplayer test:live-history 2>&1 | tee /dev/stderr)"
+          grep -F 'live history scenarios: 32/32 passed' <<<"$history"
       - name: Verify Replit removal
         shell: bash
         run: |
