@@ -9,14 +9,8 @@ on:
         default: false
         type: boolean
   push:
-    branches:
-      - main
     tags:
       - "v*"
-    paths:
-      - "artifacts/legendstream-xplayer/**"
-      - "pnpm-lock.yaml"
-      - ".github/workflows/android-apk.yml"
 
 permissions:
   contents: read
