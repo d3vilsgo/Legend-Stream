@@ -10,6 +10,7 @@
     "test:backup": "tsx tests/providerBackupScenarios.ts",
     "test:logging": "tsx tests/logRedactionScenarios.ts",
     "test:catalog-persistence": "tsx tests/catalogPersistenceScenarios.ts",
+    "test:catalog-category-fallback": "tsx tests/catalogCategoryFallbackScenarios.ts",
     "test:player-live-queue": "tsx tests/playerLiveQueueScenarios.ts",
     "test:media-progress": "tsx tests/mediaProgressScenarios.ts",
     "test:live-history": "tsx tests/liveHistoryScenarios.ts"
