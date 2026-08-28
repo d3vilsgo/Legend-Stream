@@ -404,6 +404,11 @@ export async function commitMediaProgressV2(
   }
 }
 
+function parseLegacyPayload(raw: string): unknown {
+  try { return JSON.parse(raw); }
+  catch { throw asMediaProgressMigrationError(); }
+}
+
 export async function migrateMediaProgressStorage(
   storage: MediaProgressStorageAdapter,
   snapshots: readonly MediaProgressCredentialSnapshot[],
@@ -415,17 +420,21 @@ export async function migrateMediaProgressStorage(
     ]);
 
     if (v2Raw !== null) {
-      const existing = parseMediaProgressV2Payload(v2Raw);
-      if (!isMediaProgressV2PayloadSafe(existing, snapshots)) throw asMediaProgressMigrationError();
-      if (v1Raw !== null) await storage.removeItem(MEDIA_PROGRESS_V1_STORAGE_KEY);
-      return existing;
+      try {
+        const existing = parseMediaProgressV2Payload(v2Raw);
+        if (!isMediaProgressV2PayloadSafe(existing, snapshots)) throw asMediaProgressMigrationError();
+        if (v1Raw !== null) await storage.removeItem(MEDIA_PROGRESS_V1_STORAGE_KEY);
+        return existing;
+      } catch {
+        // If K1 left a partial/corrupt V2 but V1 still exists, V1 is the
+        // authoritative rollback copy. Retry the same one-step migration by
+        // overwriting V2; never delete V1 until the new read-back passes.
+        if (v1Raw === null) throw asMediaProgressMigrationError();
+      }
     }
 
     if (v1Raw === null) return [];
-    let legacy: unknown;
-    try { legacy = JSON.parse(v1Raw); }
-    catch { throw asMediaProgressMigrationError(); }
-    const migrated = migrateMediaProgressV1Entries(legacy, snapshots);
+    const migrated = migrateMediaProgressV1Entries(parseLegacyPayload(v1Raw), snapshots);
     const verified = await commitMediaProgressV2(storage, migrated, snapshots);
     await storage.removeItem(MEDIA_PROGRESS_V1_STORAGE_KEY);
     return verified;
@@ -466,6 +475,20 @@ export function trimMediaProgressByScope(entries: readonly MediaProgressV2[], li
     result.push(entry);
   }
   return result;
+}
+
+export function mediaProgressForProvider(
+  entries: readonly MediaProgressV2[],
+  providerId: string,
+): MediaProgressV2[] {
+  return entries.filter((entry) => entry.providerId === providerId);
+}
+
+export function clearMediaProgressForProvider(
+  entries: readonly MediaProgressV2[],
+  providerId: string,
+): MediaProgressV2[] {
+  return entries.filter((entry) => entry.providerId !== providerId);
 }
 
 export function makeMediaProgressId(
