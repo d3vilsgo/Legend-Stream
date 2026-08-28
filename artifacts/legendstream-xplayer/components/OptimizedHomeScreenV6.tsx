@@ -219,7 +219,7 @@ export default function OptimizedHomeScreenV6() {
     disconnectProvider,
     clearError,
   } = usePlayer();
-  const { snapshot, cacheReady, refreshCatalog } = useCatalogSync();
+  const { snapshot, cacheReady, hasUsableCache, isSyncing, refreshCatalog } = useCatalogSync();
   useCredentialDiagnosticsStartup();
 
   const [view, setView] = useState<ViewName>("home");
@@ -239,7 +239,8 @@ export default function OptimizedHomeScreenV6() {
   const [seriesCache, setSeriesCache] = useState<Record<string, XtreamSeriesItem[]>>({});
   const [homeVodCount, setHomeVodCount] = useState<number | null>(null);
   const [homeSeriesCount, setHomeSeriesCount] = useState<number | null>(null);
-  const [homeCatalogLoading, setHomeCatalogLoading] = useState(false);
+  const [homeCatalogProbeLoading, setHomeCatalogProbeLoading] = useState(false);
+  const homeCatalogLoading = isSyncing || homeCatalogProbeLoading;
   const [catalogSort, setCatalogSort] = useState<CatalogSortMode>("default");
   const [providerTypeOverride, setProviderTypeOverride] = useState<ProviderType | null>(null);
   const [selectedSeries, setSelectedSeries] = useState<XtreamSeriesItem | null>(null);
@@ -308,7 +309,7 @@ export default function OptimizedHomeScreenV6() {
   useEffect(() => {
     setVod([]); setVodCats([]); setVodCache({}); setVodLoaded(false); setVodLoading(false);
     setSeries([]); setSeriesCats([]); setSeriesCache({}); setSeriesLoaded(false); setSeriesLoading(false);
-    setHomeVodCount(null); setHomeSeriesCount(null); setHomeCatalogLoading(false);
+    setHomeVodCount(null); setHomeSeriesCount(null); setHomeCatalogProbeLoading(false);
     setProviderTypeOverride(null);
     setSelectedSeries(null); setSeriesInfo(null); setCatalogError(null);
     setCachedLive([]);
@@ -317,11 +318,11 @@ export default function OptimizedHomeScreenV6() {
   }, [provider?.id]);
 
   useEffect(() => {
-    if (!provider || provider.type !== "xtream" || snapshot.providerId !== provider.id || !snapshot.ready) return;
+    if (!provider || provider.type !== "xtream" || snapshot.providerId !== provider.id || !hasUsableCache) return;
     let cancelled = false;
     setHomeVodCount(snapshot.counts.vod);
     setHomeSeriesCount(snapshot.counts.series);
-    setHomeCatalogLoading(false);
+    setHomeCatalogProbeLoading(false);
     void Promise.all([
       getCachedCategories(provider.id, "vod"),
       getCachedCategories(provider.id, "series"),
@@ -335,28 +336,28 @@ export default function OptimizedHomeScreenV6() {
       // Keep loaded=false until loadVodCategory/loadSeriesCategory publishes actual rows.
     }).catch(() => undefined);
     return () => { cancelled = true; };
-  }, [provider?.id, snapshot.providerId, snapshot.ready, snapshot.counts.live, snapshot.counts.vod, snapshot.counts.series]);
+  }, [provider?.id, snapshot.providerId, hasUsableCache, snapshot.counts.live, snapshot.counts.vod, snapshot.counts.series]);
 
   useEffect(() => {
     if (!effectiveProvider) {
-      setHomeCatalogLoading(false);
+      setHomeCatalogProbeLoading(false);
       return;
     }
-    if (effectiveProvider.type === "xtream" && cacheReady && snapshot.providerId === effectiveProvider.id) {
+    if (effectiveProvider.type === "xtream" && hasUsableCache && snapshot.providerId === effectiveProvider.id) {
       setHomeVodCount(snapshot.counts.vod);
       setHomeSeriesCount(snapshot.counts.series);
-      setHomeCatalogLoading(false);
+      setHomeCatalogProbeLoading(false);
       return;
     }
     if (effectiveProvider.type === "m3u") {
       const local = getM3UCatalog(effectiveProvider.id);
       setHomeVodCount(local.movieItems.length);
       setHomeSeriesCount(local.seriesGroups.length);
-      setHomeCatalogLoading(false);
+      setHomeCatalogProbeLoading(false);
       return;
     }
     if (effectiveProvider.type !== "xtream" || !credentials) {
-      setHomeCatalogLoading(false);
+      setHomeCatalogProbeLoading(false);
       return;
     }
 
@@ -366,12 +367,12 @@ export default function OptimizedHomeScreenV6() {
     // Movies/Series path still performs its existing category request and can
     // migrate on a typed catalog-format failure.
     if (isGetPhpM3UPlusProvider(effectiveProvider)) {
-      setHomeCatalogLoading(false);
+      setHomeCatalogProbeLoading(false);
       return;
     }
 
     let cancelled = false;
-    setHomeCatalogLoading(true);
+    setHomeCatalogProbeLoading(true);
     void (async () => {
       try {
         const [vodResult, seriesResult] = await Promise.allSettled([
@@ -391,14 +392,14 @@ export default function OptimizedHomeScreenV6() {
           setHomeSeriesCount(exactCategoryTotal(seriesResult.value));
         }
       } finally {
-        if (!cancelled) setHomeCatalogLoading(false);
+        if (!cancelled) setHomeCatalogProbeLoading(false);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [effectiveProvider, credentials]);
+  }, [effectiveProvider, credentials, hasUsableCache, snapshot.providerId, snapshot.counts.vod, snapshot.counts.series]);
 
   const applyLocalVod = () => {
     if (!provider) return;
@@ -946,8 +947,8 @@ function Home({ provider, live, vod, series, vodCategories, seriesCategories, ca
   const colors = useColors();
   const { t, language } = useI18n();
   const { entries, loaded: mediaLibraryLoaded, removeProgress } = useMediaLibrary();
-  const { snapshot, cacheReady } = useCatalogSync();
-  const cached = provider.type === "xtream" && snapshot.providerId === provider.id && snapshot.ready ? snapshot : null;
+  const { snapshot, hasUsableCache } = useCatalogSync();
+  const cached = provider.type === "xtream" && snapshot.providerId === provider.id && hasUsableCache ? snapshot : null;
   const copy = language === "tr"
     ? {
         continue: "İzlemeye Devam Et",
@@ -1055,7 +1056,7 @@ function Home({ provider, live, vod, series, vodCategories, seriesCategories, ca
   const newChannelShelf = (cached?.newChannels ?? []).map<HomeShelfEntry>((channel) => ({
     id: `new-channel-${channel.id}`, title: channel.name, subtitle: channel.category, image: channel.logoUrl, onPress: () => onOpenLive(channel),
   }));
-  const effectiveLoading = catalogLoading && !cacheReady;
+  const effectiveLoading = catalogLoading && !hasUsableCache;
 
   return <View style={s.homeDiscoveryShell}>
     <HomeHeroCarousel items={heroItems} eyebrow={copy.featured} providerName={provider.name}
