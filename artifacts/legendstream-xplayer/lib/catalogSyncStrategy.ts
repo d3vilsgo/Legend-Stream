@@ -43,12 +43,12 @@ export function suspiciousBulkResult<T, C extends CategoryLike>(
 
   // Bulk mode is only authoritative when it preserves the category relationship that
   // downstream SQLite filtering relies on. A majority of rows without category_id is suspect.
-  const categorizedRows = rows.reduce(
-    (count, row) => categoryIdOf(row) === undefined || categoryIdOf(row) === null || String(categoryIdOf(row)).trim() === ""
+  const categorizedRows = rows.reduce((count, row) => {
+    const categoryId = categoryIdOf(row);
+    return categoryId === undefined || categoryId === null || String(categoryId).trim() === ""
       ? count
-      : count + 1,
-    0,
-  );
+      : count + 1;
+  }, 0);
   if (categorizedRows < Math.ceil(rows.length / 2)) return "missing-category-ids";
   return null;
 }
@@ -105,9 +105,13 @@ export async function runCatalogFetchPlan<T, C extends CategoryLike>(
         if (cancelled()) break;
         const batch = options.categories.slice(start, start + limit);
         parallelMaxObserved = Math.max(parallelMaxObserved, batch.length);
-        const batchRows = await Promise.all(batch.map((category) => options.fetchCategory(category)));
+        const settled = await Promise.allSettled(batch.map((category) => options.fetchCategory(category)));
         if (cancelled()) break;
-        for (const rows of batchRows) await write(rows);
+        const failed = settled.find((result) => result.status === "rejected");
+        if (failed?.status === "rejected") throw failed.reason;
+        for (const result of settled) {
+          if (result.status === "fulfilled") await write(result.value);
+        }
         completedCategories += batch.length;
         await options.onFallbackProgress?.(completedCategories, options.categories.length, "parallel");
       }
