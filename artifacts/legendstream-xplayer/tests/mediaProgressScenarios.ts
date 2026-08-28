@@ -5,7 +5,9 @@ import {
   MEDIA_PROGRESS_V1_STORAGE_KEY,
   MEDIA_PROGRESS_V2_STORAGE_KEY,
   claimProgressForProvider,
+  clearMediaProgressForProvider,
   isMediaProgressV2PayloadSafe,
+  mediaProgressForProvider,
   migrateMediaProgressStorage,
   migrateMediaProgressV1Entries,
   trimMediaProgressByScope,
@@ -82,10 +84,19 @@ async function main() {
   const sameServerDifferentUser = migrateMediaProgressV1Entries([legacy(sourceB)], snapshots)[0];
   expect(sameServerDifferentUser.providerId === "provider-B", "same server with a different username must not cross-attribute");
 
-  const sameUserDifferentPassword = migrateMediaProgressV1Entries([
-    legacy("https://iptv.example/movie/alice/secret-A/202.mp4"),
-  ], snapshots)[0];
-  expect(sameUserDifferentPassword.providerId === "provider-A", "password must participate in exact provider attribution");
+  const passwordSnapshots: MediaProgressCredentialSnapshot[] = [
+    snapshots[0],
+    {
+      providerId: "provider-A-wrong-password",
+      type: "xtream",
+      secrets: { url: "https://iptv.example", username: "alice", password: "wrong-password" },
+    },
+  ];
+  const sameUserDifferentPassword = migrateMediaProgressV1Entries([legacy(sourceA)], passwordSnapshots)[0];
+  expect(
+    sameUserDifferentPassword.providerId === "provider-A",
+    "same server and username with a different password must still attribute only to the exact account",
+  );
 
   const ambiguousSnapshots: MediaProgressCredentialSnapshot[] = [
     snapshots[0],
@@ -115,6 +126,14 @@ async function main() {
 
   const malformed = migrateMediaProgressV1Entries([legacy("not-a-url")], snapshots)[0];
   expect(malformed.providerId === null && malformed.playbackRef.type === "unresolved", "malformed legacy sources must be preserved unscoped");
+
+  const deletedProvider = migrateMediaProgressV1Entries([
+    legacy("https://deleted.example/movie/old-user/old-pass/88.mp4"),
+  ], snapshots)[0];
+  expect(
+    deletedProvider.providerId === null && deletedProvider.playbackRef.type === "xtream-vod",
+    "canonical progress for a deleted provider must retain a safe playbackRef but remain unscoped",
+  );
 
   const hundred = Array.from({ length: 100 }, (_, index) =>
     legacy(`https://iptv.example/movie/alice/secret-A/${1000 + index}.mp4`, "movie", index));
@@ -164,6 +183,25 @@ async function main() {
     "K1 read-back failure must be fail-closed and must not delete v1",
   );
 
+  let removedOnK2Failure = false;
+  const k2Legacy = { ...legacy(sourceA), title: "secret-A" };
+  const k2StorageState = new Map<string, string>([[MEDIA_PROGRESS_V1_STORAGE_KEY, JSON.stringify([k2Legacy])]]);
+  const k2Storage: MediaProgressStorageAdapter = {
+    async getItem(key) { return k2StorageState.get(key) ?? null; },
+    async setItem(key, value) { k2StorageState.set(key, value); },
+    async removeItem(key) {
+      if (key === MEDIA_PROGRESS_V1_STORAGE_KEY) removedOnK2Failure = true;
+      k2StorageState.delete(key);
+    },
+  };
+  let k2Error = "";
+  try { await migrateMediaProgressStorage(k2Storage, snapshots); }
+  catch (error) { k2Error = error instanceof Error ? error.message : String(error); }
+  expect(
+    k2Error === MEDIA_PROGRESS_MIGRATION_ERROR && !removedOnK2Failure && k2StorageState.has(MEDIA_PROGRESS_V1_STORAGE_KEY),
+    "K2 failure must keep the authoritative v1 progress intact",
+  );
+
   let cleanupRemoved = false;
   const cleanV2 = JSON.stringify([migratedA]);
   const recoveryStorage: MediaProgressStorageAdapter = {
@@ -179,6 +217,26 @@ async function main() {
   expect(
     recovered.length === 1 && recovered[0].id === migratedA.id && cleanupRemoved,
     "existing verified v2 plus leftover v1 must perform cleanup, not a second migration",
+  );
+
+  const interruptedState = new Map<string, string>([
+    [MEDIA_PROGRESS_V1_STORAGE_KEY, JSON.stringify([legacy(sourceA)])],
+    [MEDIA_PROGRESS_V2_STORAGE_KEY, "partial-corrupt-v2"],
+  ]);
+  let interruptedRemoved = false;
+  const interruptedStorage: MediaProgressStorageAdapter = {
+    async getItem(key) { return interruptedState.get(key) ?? null; },
+    async setItem(key, value) { interruptedState.set(key, value); },
+    async removeItem(key) {
+      if (key === MEDIA_PROGRESS_V1_STORAGE_KEY) interruptedRemoved = true;
+      interruptedState.delete(key);
+    },
+  };
+  const interruptedRecovered = await migrateMediaProgressStorage(interruptedStorage, snapshots);
+  expect(
+    interruptedRecovered.length === 1 && interruptedRecovered[0].providerId === "provider-A" && interruptedRemoved &&
+    !interruptedState.has(MEDIA_PROGRESS_V1_STORAGE_KEY),
+    "partial/corrupt v2 with intact v1 must retry the one-step migration and recover without progress loss",
   );
 
   const secretUrl = "https://secret.example/movie/alice/do-not-log/77.mp4";
@@ -255,7 +313,42 @@ async function main() {
     "progress retention limit must be per provider scope rather than globally shared",
   );
 
-  process.stdout.write(`media progress scenarios: ${passed}/24 passed\n`);
+  const providerBProgress: MediaProgressV2 = {
+    ...migratedA,
+    id: "provider-b-progress",
+    providerId: "provider-B",
+    playbackRef: { ...(migratedA.playbackRef as Extract<MediaPlaybackRef, { type: "xtream-vod" }>), streamId: "909" },
+  };
+  const unscopedProgress: MediaProgressV2 = { ...deletedProvider, id: "legacy-deleted", providerId: null };
+  const multiProvider = [migratedA, providerBProgress, unscopedProgress];
+  expect(
+    mediaProgressForProvider(multiProvider, "provider-A").map((entry) => entry.id).join(",") === migratedA.id,
+    "provider A view must exclude provider B and unscoped progress",
+  );
+
+  const afterClearA = clearMediaProgressForProvider(multiProvider, "provider-A");
+  expect(
+    !afterClearA.some((entry) => entry.providerId === "provider-A") &&
+    afterClearA.some((entry) => entry.providerId === "provider-B") &&
+    afterClearA.some((entry) => entry.providerId === null),
+    "clearing provider A must preserve provider B and unscoped legacy progress",
+  );
+
+  const afterBWrite = [providerBProgress, migratedA];
+  expect(
+    mediaProgressForProvider(afterBWrite, "provider-A")[0]?.position === migratedA.position,
+    "creating/updating provider B progress must leave provider A progress unchanged",
+  );
+
+  const contextSource = fs.readFileSync(path.join(process.cwd(), "context/MediaLibraryContext.tsx"), "utf8");
+  expect(
+    contextSource.includes("unscopedIdFromRuntimeSource") &&
+    contextSource.includes("item.id !== unscopedId") &&
+    contextSource.includes("provider?.id, toView"),
+    "unscoped rows must remain individually removable after provider switches",
+  );
+
+  process.stdout.write(`media progress scenarios: ${passed}/31 passed\n`);
 }
 
 void main();
