@@ -141,4 +141,4 @@ const direct = migrateLiveHistoryV1([a(4), b(4)]);
 await commitLiveHistoryV2(directStorage, direct);
 expect(parseLiveHistoryV2Payload(directStorage.values.get(LIVE_HISTORY_V2_STORAGE_KEY)!).byProvider["provider-B"][0] === b(4), "direct K1 commit/read-back must round-trip canonical v2");
 
-process.stdout.write(`live history scenarios: ${passed}/25 passed\n`);
+process.stdout.write(`live history scenarios: ${passed}/32 passed\n`);
