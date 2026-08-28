@@ -18,8 +18,10 @@ import {
   MEDIA_PROGRESS_V2_STORAGE_KEY,
   asMediaProgressMigrationError,
   claimProgressForProvider,
+  clearMediaProgressForProvider,
   isMediaProgressV2PayloadSafe,
   makeMediaProgressId,
+  mediaProgressForProvider,
   migrateMediaProgressStorage,
   normalizeXtreamProgressBaseUrl,
   parseCanonicalXtreamProgressSource,
@@ -249,6 +251,12 @@ function unresolvedRef(kind: MediaKind, title: string): MediaPlaybackRef {
   return { type: "unresolved", mediaKind: kind, legacyTag: `runtime-${Math.abs(hash).toString(36)}` };
 }
 
+function unscopedIdFromRuntimeSource(source: string): string | null {
+  if (!source.startsWith(UNSCOPED_RUNTIME_PREFIX)) return null;
+  try { return decodeURIComponent(source.slice(UNSCOPED_RUNTIME_PREFIX.length)); }
+  catch { return null; }
+}
+
 export function MediaLibraryProvider({ children }: { children: ReactNode }) {
   const { provider, providers, isHydrating } = usePlayer();
   const [allEntries, setAllEntries] = useState<MediaProgressV2[]>([]);
@@ -315,16 +323,16 @@ export function MediaLibraryProvider({ children }: { children: ReactNode }) {
   const entries = useMemo(() => {
     sourceIndexRef.current = new Map();
     if (!provider) return [];
-    return allEntries
-      .filter((entry) => entry.providerId === provider.id)
-      .map((entry) => toView(entry, provider));
+    return mediaProgressForProvider(allEntries, provider.id).map((entry) => toView(entry, provider));
   }, [allEntries, provider, toView]);
 
   const unscopedEntries = useMemo(
     () => allEntries
       .filter((entry) => entry.providerId === null)
       .map((entry) => toView(entry, null)),
-    [allEntries, toView],
+    // Re-project after provider switches because the scoped projection resets
+    // the transient source index used by History remove actions.
+    [allEntries, provider?.id, toView],
   );
 
   const getProgress = useCallback((source: string) => {
@@ -392,6 +400,11 @@ export function MediaLibraryProvider({ children }: { children: ReactNode }) {
   }, [persist, provider]);
 
   const removeProgress = useCallback(async (source: string) => {
+    const unscopedId = unscopedIdFromRuntimeSource(source);
+    if (unscopedId) {
+      await persist(entriesRef.current.filter((item) => item.id !== unscopedId));
+      return;
+    }
     const indexedId = sourceIndexRef.current.get(source);
     if (indexedId) {
       await persist(entriesRef.current.filter((item) => item.id !== indexedId));
@@ -408,7 +421,7 @@ export function MediaLibraryProvider({ children }: { children: ReactNode }) {
 
   const clearProgress = useCallback(async () => {
     if (!provider) return;
-    await persist(entriesRef.current.filter((item) => item.providerId !== provider.id));
+    await persist(clearMediaProgressForProvider(entriesRef.current, provider.id));
   }, [persist, provider]);
 
   const value = useMemo<MediaLibraryValue>(() => ({
