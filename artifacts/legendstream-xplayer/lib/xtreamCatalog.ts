@@ -244,10 +244,29 @@ function transportError(caught: unknown, target: "server" | "web proxy") {
   return new XtreamCatalogError("UNREACHABLE", `Xtream ${target} could not be reached.`);
 }
 
+function linkedRequestSignal(external: AbortSignal | undefined, timeoutMs: number) {
+  if (!external) {
+    return { signal: AbortSignal.timeout(timeoutMs), cleanup: () => undefined };
+  }
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  external.addEventListener("abort", onAbort, { once: true });
+  if (external.aborted) controller.abort();
+  return {
+    signal: controller.signal,
+    cleanup: () => {
+      clearTimeout(timeout);
+      external.removeEventListener("abort", onAbort);
+    },
+  };
+}
+
 async function requestNative(
   credentials: XtreamCredentials,
   action: string,
   params: Record<string, string | number | undefined> = {},
+  signal?: AbortSignal,
 ) {
   const normalized = encodeCredentials(credentials);
   const url = new URL("player_api.php", `${normalized.baseUrl}/`);
@@ -258,48 +277,56 @@ async function requestNative(
     if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
   });
 
-  let response: Response;
+  const requestAbort = linkedRequestSignal(signal, 20_000);
   try {
-    response = await fetch(url.toString(), {
+    const response = await fetch(url.toString(), {
       headers: {
         Accept: "application/json,text/plain,*/*",
         "User-Agent": "LegendStream-XPlayer/1.0 Android",
       },
-      signal: AbortSignal.timeout(20_000),
+      signal: requestAbort.signal,
     });
+    return await parseResponse(response);
   } catch (caught) {
+    if (signal?.aborted) throw caught;
     throw transportError(caught, "server");
+  } finally {
+    requestAbort.cleanup();
   }
-  return parseResponse(response);
 }
 
 async function requestWeb(
   credentials: XtreamCredentials,
   action: string,
   params: Record<string, string | number | undefined> = {},
+  signal?: AbortSignal,
 ) {
-  let response: Response;
+  const requestAbort = linkedRequestSignal(signal, 25_000);
   try {
-    response = await fetch("/api/iptv/xtream/action", {
+    const response = await fetch("/api/iptv/xtream/action", {
       method: "POST",
       headers: { "Content-Type": "application/json", Accept: "application/json" },
       body: JSON.stringify({ ...encodeCredentials(credentials), action, params }),
-      signal: AbortSignal.timeout(25_000),
+      signal: requestAbort.signal,
     });
+    return await parseResponse(response);
   } catch (caught) {
+    if (signal?.aborted) throw caught;
     throw transportError(caught, "web proxy");
+  } finally {
+    requestAbort.cleanup();
   }
-  return parseResponse(response);
 }
 
 async function requestXtream(
   credentials: XtreamCredentials,
   action: string,
   params: Record<string, string | number | undefined> = {},
+  signal?: AbortSignal,
 ) {
   return Platform.OS === "web"
-    ? requestWeb(credentials, action, params)
-    : requestNative(credentials, action, params);
+    ? requestWeb(credentials, action, params, signal)
+    : requestNative(credentials, action, params, signal);
 }
 
 function requireArray<T>(data: unknown, label: string): T[] {
@@ -312,8 +339,8 @@ function requireArray<T>(data: unknown, label: string): T[] {
   return data as T[];
 }
 
-export async function getVodCategories(credentials: XtreamCredentials) {
-  const data = await requestXtream(credentials, "get_vod_categories");
+export async function getVodCategories(credentials: XtreamCredentials, signal?: AbortSignal) {
+  const data = await requestXtream(credentials, "get_vod_categories", {}, signal);
   return requireArray<XtreamCategory>(data, "VOD categories");
 }
 
@@ -337,10 +364,11 @@ export function getVodPlaybackQueue(source: string): VodPlaybackQueue | undefine
 export async function getVodStreams(
   credentials: XtreamCredentials,
   categoryId?: string | number,
+  signal?: AbortSignal,
 ) {
   const data = await requestXtream(credentials, "get_vod_streams", {
     category_id: categoryId,
-  });
+  }, signal);
   const rows = requireArray<XtreamVodItem>(data, "VOD streams");
   registerVodQueue(credentials, rows);
   await yieldToUi();
@@ -365,18 +393,19 @@ export async function getVodInfo(
   return (data ?? {}) as XtreamVodInfo;
 }
 
-export async function getSeriesCategories(credentials: XtreamCredentials) {
-  const data = await requestXtream(credentials, "get_series_categories");
+export async function getSeriesCategories(credentials: XtreamCredentials, signal?: AbortSignal) {
+  const data = await requestXtream(credentials, "get_series_categories", {}, signal);
   return requireArray<XtreamCategory>(data, "series categories");
 }
 
 export async function getSeries(
   credentials: XtreamCredentials,
   categoryId?: string | number,
+  signal?: AbortSignal,
 ) {
   const data = await requestXtream(credentials, "get_series", {
     category_id: categoryId,
-  });
+  }, signal);
   await yieldToUi();
   return requireArray<XtreamSeriesItem>(data, "series catalog");
 }
