@@ -1,4 +1,5 @@
 import type { Channel } from "./iptv";
+import { normalizeImageUrl } from "./imageUrl";
 import type { XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
 
 export type CatalogKind = "live" | "vod" | "series";
@@ -86,6 +87,10 @@ const asObject = (value: unknown): Record<string, unknown> | null =>
     : null;
 
 const stringValue = (value: unknown) => typeof value === "string" ? value : undefined;
+const nonBlankString = (value: unknown) => {
+  const text = stringValue(value)?.trim();
+  return text ? text : undefined;
+};
 const numberValue = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : undefined;
 const stringOrNumber = (value: unknown) =>
   typeof value === "string" || (typeof value === "number" && Number.isFinite(value))
@@ -143,7 +148,7 @@ function projectLive(providerId: string, value: unknown): PersistedLiveCatalogIt
   const raw = asObject(value);
   if (!raw) return null;
   const id = stringValue(raw.id);
-  const name = stringValue(raw.name);
+  const name = nonBlankString(raw.name);
   if (!id || !name) return null;
   const playbackRef = raw.schemaVersion === 1 && raw.catalogKind === "live"
     ? normalizeLivePlaybackRef(raw.playbackRef)
@@ -154,7 +159,7 @@ function projectLive(providerId: string, value: unknown): PersistedLiveCatalogIt
     providerId,
     id,
     name,
-    logoUrl: stringValue(raw.logoUrl),
+    logoUrl: normalizeImageUrl(raw.logoUrl) ?? undefined,
     category: stringValue(raw.category) ?? "Live TV",
     tvgId: stringValue(raw.tvgId),
     streamType: stringValue(raw.streamType),
@@ -169,7 +174,7 @@ function projectVod(providerId: string, value: unknown): PersistedVodCatalogItem
   const raw = asObject(value);
   if (!raw) return null;
   const streamId = stringOrNumber(raw.stream_id);
-  const name = stringValue(raw.name);
+  const name = nonBlankString(raw.name);
   const playbackRef = normalizeVodPlaybackRef(raw.playbackRef, raw);
   if (streamId === undefined || !name || !playbackRef) return null;
   return {
@@ -178,7 +183,7 @@ function projectVod(providerId: string, value: unknown): PersistedVodCatalogItem
     providerId,
     stream_id: streamId,
     name,
-    stream_icon: stringValue(raw.stream_icon),
+    stream_icon: normalizeImageUrl(raw.stream_icon) ?? undefined,
     rating: stringOrNumber(raw.rating),
     rating_5based: numberValue(raw.rating_5based),
     added: stringValue(raw.added),
@@ -199,7 +204,7 @@ function projectSeries(providerId: string, value: unknown): PersistedSeriesCatal
   const raw = asObject(value);
   if (!raw) return null;
   const seriesId = stringOrNumber(raw.series_id);
-  const name = stringValue(raw.name);
+  const name = nonBlankString(raw.name);
   if (seriesId === undefined || !name) return null;
   return {
     schemaVersion: 1,
@@ -207,7 +212,7 @@ function projectSeries(providerId: string, value: unknown): PersistedSeriesCatal
     providerId,
     series_id: seriesId,
     name,
-    cover: stringValue(raw.cover),
+    cover: normalizeImageUrl(raw.cover) ?? undefined,
     plot: stringValue(raw.plot),
     cast: stringValue(raw.cast),
     director: stringValue(raw.director),

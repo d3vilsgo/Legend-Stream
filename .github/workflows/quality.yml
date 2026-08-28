@@ -13,6 +13,7 @@ on:
 # 9.2 catalog gate: runtime catalog rows must pass explicit persisted DTO projection.
 # Catalog category fallback gate: __all__ must stay out of Xtream transport and empty cache must fall back.
 # Catalog availability gate: usable rows stay browsable across cancelled/error refreshes; initial blocking is cache-driven.
+# Poster image resilience gate: artwork URLs normalize consistently and blank catalog names never persist.
 # Player live queue gate: stable identity, cache fallback, category scope and boundaries must pass.
 # PR-1B media progress gate: provider scope + single v1->v2 migration + K1/K2/K4 must pass.
 # Live history gate: provider scope + per-provider quota + deterministic migration + K1/K2 must pass.
@@ -87,6 +88,12 @@ jobs:
           set -euo pipefail
           availability="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-availability 2>&1 | tee /dev/stderr)"
           grep -F 'catalog availability scenarios: 7/7 passed' <<<"$availability"
+      - name: Poster image resilience regressions (6/6 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          poster="$(pnpm --filter @workspace/legendstream-xplayer test:poster-image-resilience 2>&1 | tee /dev/stderr)"
+          grep -F 'poster image resilience scenarios: 6/6 passed' <<<"$poster"
       - name: Player live queue regressions (6/6 required)
         shell: bash
         run: |
