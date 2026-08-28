@@ -10,7 +10,8 @@
     "test:backup": "tsx tests/providerBackupScenarios.ts",
     "test:logging": "tsx tests/logRedactionScenarios.ts",
     "test:catalog-persistence": "tsx tests/catalogPersistenceScenarios.ts",
-    "test:player-live-queue": "tsx tests/playerLiveQueueScenarios.ts"
+    "test:player-live-queue": "tsx tests/playerLiveQueueScenarios.ts",
+    "test:media-progress": "tsx tests/mediaProgressScenarios.ts"
   },
   "expo": {
     "autolinking": {

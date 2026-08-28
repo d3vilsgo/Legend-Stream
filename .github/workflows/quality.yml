@@ -12,6 +12,7 @@ on:
 # H2 console gate: direct console.* is forbidden outside tests and __DEV__ guards.
 # 9.2 catalog gate: runtime catalog rows must pass explicit persisted DTO projection.
 # Player live queue gate: stable identity, cache fallback, category scope and boundaries must pass.
+# PR-1B media progress gate: provider scope + single v1->v2 migration + K1/K2/K4 must pass.
 permissions:
   contents: read
 
@@ -77,6 +78,12 @@ jobs:
           set -euo pipefail
           player="$(pnpm --filter @workspace/legendstream-xplayer test:player-live-queue 2>&1 | tee /dev/stderr)"
           grep -F 'player live queue scenarios: 6/6 passed' <<<"$player"
+      - name: Media progress provider-scope and migration invariants (31/31 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          progress="$(pnpm --filter @workspace/legendstream-xplayer test:media-progress 2>&1 | tee /dev/stderr)"
+          grep -F 'media progress scenarios: 31/31 passed' <<<"$progress"
       - name: Verify Replit removal
         shell: bash
         run: |
