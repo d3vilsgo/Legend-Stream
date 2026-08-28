@@ -23,6 +23,17 @@ import { mapInBatches, yieldToUi } from "@/lib/cooperative";
 import { deleteCredentials, readCredentials, saveCredentials, type ProviderSecrets } from "@/lib/secureCredentials";
 import { credentialFieldsEqual, hasRequiredCredentialFields, migratedLegacyStateAfterVerification, resolveCredentialState } from "@/lib/providerCredentialState";
 import type { ProviderMetadataCommitMetrics } from "@/lib/providerBackupService";
+import {
+  clearLiveHistoryProvider,
+  commitLiveHistoryV2,
+  emptyLiveHistoryV2,
+  historyForProvider,
+  migrateLiveHistoryStorage,
+  providerIdFromChannelId,
+  recordLiveHistory,
+  removeLiveHistory,
+  type LiveHistoryV2,
+} from "@/lib/liveHistory";
 
 export { ProviderType };
 export type { Channel, EpgProgram };
@@ -123,6 +134,7 @@ interface PlayerContextValue extends PlayerState {
   toggleFavorite: (channelId: string) => Promise<void>;
   recordWatched: (channelId: string) => Promise<void>;
   removeWatched: (channelId: string) => Promise<void>;
+  clearHistory: () => Promise<void>;
   clearError: () => void;
 }
 
@@ -210,15 +222,9 @@ async function probeXtreamApi(parsed: ParsedGetPhp) {
 }
 
 async function resolveProviderOnConnect(provider: Provider): Promise<Provider> {
-  // An explicitly selected M3U source is authoritative. Never silently turn it
-  // into Xtream merely because its URL happens to be a get.php/m3u_plus link.
   if (provider.type !== "xtream") return provider;
-
   const parsed = parseXtreamGetPhp(provider.url);
   if (!parsed) return provider;
-
-  // get.php can be exposed by both full Xtream servers and playlist-only
-  // gateways. Promote only after a cheap, bounded player_api.php auth probe.
   if (await probeXtreamApi(parsed)) {
     return {
       ...provider,
@@ -227,7 +233,6 @@ async function resolveProviderOnConnect(provider: Provider): Promise<Provider> {
       password: parsed.password,
     };
   }
-
   return {
     ...provider,
     type: "m3u",
@@ -250,33 +255,25 @@ function toXtreamLoadProvider(provider: Provider): Provider {
 }
 
 async function loadProviderSmart(provider: Provider) {
-  // The saved type is authoritative for explicit M3U/Stalker accounts. This
-  // also prevents Home/VOD from ever entering player_api.php for M3U sources.
   if (provider.type !== "xtream") {
     return { provider, loaded: await loadProvider(provider) };
   }
-
   const parsed = parseXtreamGetPhp(provider.url);
   if (!parsed) {
     return { provider, loaded: await loadProvider(provider) };
   }
-
   const savedXtream: Provider = {
     ...provider,
     type: "xtream",
     username: parsed.username,
     password: parsed.password,
   };
-
   try {
     return {
       provider: savedXtream,
       loaded: await loadProvider(toXtreamLoadProvider(savedXtream)),
     };
   } catch {
-    // Migration path for accounts that older APKs blindly persisted as Xtream.
-    // A failed player_api.php load silently falls back to the original get.php
-    // playlist and callers persist this resolved M3U type after the load.
     const fallback: Provider = {
       ...provider,
       type: "m3u",
@@ -336,7 +333,6 @@ function serializedPlayerState(next: PlayerState) {
     provider: next.provider ? storedProviderFrom(next.provider) : null,
     activeProviderId: next.activeProviderId,
     favorites: next.favorites.slice(0, 500),
-    history: next.history.slice(0, 50),
   });
 }
 
@@ -362,6 +358,28 @@ function providersFromStoredState(saved: Partial<PlayerState> | null): ProviderC
   return providers;
 }
 
+function withoutLegacyHistory(saved: Partial<PlayerState> | null): Partial<PlayerState> | null {
+  if (!saved) return null;
+  const { history: _history, ...rest } = saved;
+  return rest as Partial<PlayerState>;
+}
+
+async function stripLegacyHistoryFields() {
+  for (const key of [STORAGE_KEY, LEGACY_STORAGE_KEY]) {
+    const raw = await AsyncStorage.getItem(key);
+    if (!raw) continue;
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !("history" in parsed)) continue;
+    const { history: _history, ...rest } = parsed;
+    await AsyncStorage.setItem(key, JSON.stringify(rest));
+  }
+}
+
+const liveHistoryStorage = {
+  getItem: (key: string) => AsyncStorage.getItem(key),
+  setItem: (key: string, value: string) => AsyncStorage.setItem(key, value),
+};
+
 async function hydrateStoredProvider(
   stored: ProviderConfig | StoredProviderConfig,
   v3Secrets: ProviderSecrets | undefined,
@@ -377,7 +395,6 @@ async function hydrateStoredProvider(
 
   if (secure.status !== "error" && resolution.shouldWriteSecureStore) {
     try {
-      // saveCredentials resolves only after exact write/read-back verification.
       await saveCredentials(stored.id, resolution.secrets);
       secureVerified = true;
     } catch {
@@ -409,12 +426,21 @@ async function saveProviderSecrets(provider: ProviderConfig) {
   await saveCredentials(provider.id, secrets);
 }
 
-const readState = async (): Promise<PlayerState> => {
+type HydratedState = { state: PlayerState; liveHistory: LiveHistoryV2 };
+
+const readState = async (): Promise<HydratedState> => {
   const [v3Raw, v2Raw] = await Promise.all([
     AsyncStorage.getItem(STORAGE_KEY),
     AsyncStorage.getItem(LEGACY_STORAGE_KEY),
   ]);
-  if (v3Raw === null && v2Raw === null) return emptyState;
+  if (v3Raw === null && v2Raw === null) {
+    const liveHistory = await migrateLiveHistoryStorage(
+      liveHistoryStorage,
+      undefined,
+      stripLegacyHistoryFields,
+    );
+    return { state: emptyState, liveHistory };
+  }
 
   const v3Saved = parseStoredPlayerState(v3Raw, "Current");
   const v2Saved = parseStoredPlayerState(v2Raw, "Legacy");
@@ -428,30 +454,30 @@ const readState = async (): Promise<PlayerState> => {
   ];
 
   const legacyCredentialProviderIds = new Set(
-  v2Providers
-    .filter((item) => hasProviderSecrets(providerSecretsFrom(item)))
-    .map((item) => item.id),
-);
-if (
-  v2Saved?.provider?.id &&
-  hasProviderSecrets(providerSecretsFrom(v2Saved.provider))
-) {
-  legacyCredentialProviderIds.add(v2Saved.provider.id);
-}
-const verifiedLegacyProviderIds = new Set<string>();
-const providers: ProviderConfig[] = [];
-for (const id of providerIds) {
-  const v3 = v3ById.get(id);
-  const v2 = v2ById.get(id);
-  const stored = { ...(v2 ?? {}), ...(v3 ?? {}) } as ProviderConfig | StoredProviderConfig;
-  const hydration = await hydrateStoredProvider(
-    stored,
-    v3 ? providerSecretsFrom(v3) : undefined,
-    v2 ? providerSecretsFrom(v2) : undefined,
+    v2Providers
+      .filter((item) => hasProviderSecrets(providerSecretsFrom(item)))
+      .map((item) => item.id),
   );
-  providers.push(hydration.provider);
-  if (hydration.secureVerified) verifiedLegacyProviderIds.add(id);
-}
+  if (
+    v2Saved?.provider?.id &&
+    hasProviderSecrets(providerSecretsFrom(v2Saved.provider))
+  ) {
+    legacyCredentialProviderIds.add(v2Saved.provider.id);
+  }
+  const verifiedLegacyProviderIds = new Set<string>();
+  const providers: ProviderConfig[] = [];
+  for (const id of providerIds) {
+    const v3 = v3ById.get(id);
+    const v2 = v2ById.get(id);
+    const stored = { ...(v2 ?? {}), ...(v3 ?? {}) } as ProviderConfig | StoredProviderConfig;
+    const hydration = await hydrateStoredProvider(
+      stored,
+      v3 ? providerSecretsFrom(v3) : undefined,
+      v2 ? providerSecretsFrom(v2) : undefined,
+    );
+    providers.push(hydration.provider);
+    if (hydration.secureVerified) verifiedLegacyProviderIds.add(id);
+  }
 
   const activeProviderId = v3Saved?.activeProviderId ?? v2Saved?.activeProviderId;
   const savedActive = v3Saved?.provider ?? v2Saved?.provider;
@@ -460,46 +486,50 @@ for (const id of providerIds) {
       ? null
       : providers.find((item) => item.id === activeProviderId) ??
         (savedActive
-? providers.find((item) => item.id === savedActive.id) ?? null
-: providers[0] ?? null);
+          ? providers.find((item) => item.id === savedActive.id) ?? null
+          : providers[0] ?? null);
   const favoritesSource = Array.isArray(v3Saved?.favorites)
     ? v3Saved.favorites
     : Array.isArray(v2Saved?.favorites)
       ? v2Saved.favorites
       : [];
+  const hasLegacyHistory = Array.isArray(v3Saved?.history) || Array.isArray(v2Saved?.history);
   const historySource = Array.isArray(v3Saved?.history)
     ? v3Saved.history
     : Array.isArray(v2Saved?.history)
       ? v2Saved.history
-      : [];
+      : undefined;
+  const liveHistory = await migrateLiveHistoryStorage(
+    liveHistoryStorage,
+    hasLegacyHistory ? historySource : undefined,
+    stripLegacyHistoryFields,
+  );
   const next: PlayerState = {
     providers,
     provider,
     channels: [],
     epg: [],
     favorites: favoritesSource.slice(0, 500),
-    history: historySource.slice(0, 50),
+    history: historyForProvider(liveHistory, provider?.id),
     activeProviderId: activeProviderId ?? provider?.id,
   };
 
   if (providers.every((item) => !item.needsCredentials)) {
-  await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
-  await AsyncStorage.setItem(SECURE_MIGRATION_KEY, "1");
-}
+    await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
+    await AsyncStorage.setItem(SECURE_MIGRATION_KEY, "1");
+  }
 
-// K1-EK: keep v2 for rollback/audit metadata, but scrub plaintext only
-// after all credential-bearing legacy providers are verified in SecureStore.
-const legacyCredentialsVerified = [...legacyCredentialProviderIds].every((id) =>
-  verifiedLegacyProviderIds.has(id),
-);
-const migratedLegacy = migratedLegacyStateAfterVerification(
-  v2Saved,
-  v2Saved !== null && legacyCredentialsVerified,
-);
-if (migratedLegacy) {
-  await AsyncStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(migratedLegacy));
-}
-return next;
+  const legacyCredentialsVerified = [...legacyCredentialProviderIds].every((id) =>
+    verifiedLegacyProviderIds.has(id),
+  );
+  const migratedLegacy = migratedLegacyStateAfterVerification(
+    withoutLegacyHistory(v2Saved),
+    v2Saved !== null && legacyCredentialsVerified,
+  );
+  if (migratedLegacy) {
+    await AsyncStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(migratedLegacy));
+  }
+  return { state: next, liveHistory };
 };
 
 function decodeBase64Utf8(value: string) {
@@ -664,6 +694,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [isEpgLoading, setIsEpgLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const stateRef = useRef(state);
+  const liveHistoryRef = useRef<LiveHistoryV2>(emptyLiveHistoryV2());
   const epgCacheRef = useRef(
     new Map<string, { loadedAt: number; channelCount: number }>(),
   );
@@ -675,7 +706,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     readState()
-      .then((saved) => {
+      .then(({ state: saved, liveHistory }) => {
+        liveHistoryRef.current = liveHistory;
         stateRef.current = saved;
         setState(saved);
         setIsHydrating(false);
@@ -690,9 +722,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     stateRef.current = next;
     setState(next);
     try {
-      // Never strip plaintext provider secrets from AsyncStorage until every
-      // in-memory provider secret has been durably written to SecureStore.
-      // This is especially important while recovering from a failed migration.
       const providersToSecure = new Map<string, ProviderConfig>();
       for (const item of next.providers) providersToSecure.set(item.id, item);
       if (next.provider) providersToSecure.set(next.provider.id, next.provider);
@@ -705,10 +734,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
       await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
       await AsyncStorage.setItem(SECURE_MIGRATION_KEY, "1");
-      // LEGACY_STORAGE_KEY is deliberately retained as read-only backup.
     } catch {
-      // Keep the in-memory session usable and, critically, leave the previous
-      // on-disk state untouched so credentials are not lost on storage failure.
+      // Keep the in-memory session usable and leave the previous on-disk state intact.
+    }
+  };
+
+  const persistLiveHistory = async (next: LiveHistoryV2) => {
+    try {
+      const verified = await commitLiveHistoryV2(liveHistoryStorage, next);
+      liveHistoryRef.current = verified;
+      return verified;
+    } catch {
+      setError("Live TV history could not be saved.");
+      return null;
     }
   };
 
@@ -746,13 +784,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       channels: current.channels.filter((channel) => !importedIds.has(channel.providerId)),
       epg: current.epg.filter((program) => !removedChannelIds.has(program.channelId)),
       favorites: current.favorites.filter((id) => !removedChannelIds.has(id)),
-      history: current.history.filter((id) => !removedChannelIds.has(id)),
+      history: historyForProvider(liveHistoryRef.current, provider?.id),
     };
     const serialized = serializedPlayerState(next);
     const prepareMs = Date.now() - prepareStartedAt;
 
-    // Import credentials have already passed SecureStore write/read-back verification.
-    // Metadata is the final commit point and must not be swallowed like normal UI persist().
     const writeStartedAt = Date.now();
     await AsyncStorage.setItem(STORAGE_KEY, serialized);
     const asyncStorageWriteMs = Date.now() - writeStartedAt;
@@ -810,6 +846,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         providers,
         provider: savedProvider,
         activeProviderId: savedProvider.id,
+        history: historyForProvider(liveHistoryRef.current, savedProvider.id),
         channels: [
           ...current.channels.filter(
             (channel) => channel.providerId !== savedProvider.id,
@@ -889,7 +926,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setError(null);
     try {
       if (current.channels.some((channel) => channel.providerId === providerId)) {
-        await persist({ ...current, provider: existing, activeProviderId: providerId });
+        await persist({
+          ...current,
+          provider: existing,
+          activeProviderId: providerId,
+          history: historyForProvider(liveHistoryRef.current, providerId),
+        });
         return true;
       }
       const smart = await loadProviderSmart(fromProvider(existing));
@@ -906,6 +948,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         ...stateRef.current,
         provider: updated,
         activeProviderId: providerId,
+        history: historyForProvider(liveHistoryRef.current, providerId),
         providers: stateRef.current.providers.map((item) =>
           item.id === providerId ? updated : item,
         ),
@@ -934,6 +977,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       ...stateRef.current,
       provider: null,
       activeProviderId: LOGGED_OUT,
+      history: [],
     });
   };
 
@@ -957,7 +1001,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         nextProvider?.id ?? (providers.length ? providers[0].id : LOGGED_OUT),
       channels,
       favorites: current.favorites.filter((id) => channelIds.has(id)),
-      history: current.history.filter((id) => channelIds.has(id)),
+      history: historyForProvider(liveHistoryRef.current, nextProvider?.id),
       epg: current.epg.filter((program) => channelIds.has(program.channelId)),
     });
     try {
@@ -1114,20 +1158,49 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const recordWatched = async (channelId: string) => {
     const current = stateRef.current;
+    const providerId = providerIdFromChannelId(channelId) ?? current.provider?.id;
+    if (!providerId) return;
+    const verified = await persistLiveHistory(
+      recordLiveHistory(liveHistoryRef.current, providerId, channelId),
+    );
+    if (!verified) return;
+    const latest = stateRef.current;
+    if (latest.provider?.id !== providerId) return;
     await persist({
-      ...current,
-      history: [
-        channelId,
-        ...current.history.filter((id) => id !== channelId),
-      ].slice(0, 50),
+      ...latest,
+      history: historyForProvider(verified, providerId),
     });
   };
 
   const removeWatched = async (channelId: string) => {
     const current = stateRef.current;
+    const providerId = providerIdFromChannelId(channelId) ?? current.provider?.id;
+    if (!providerId) return;
+    const verified = await persistLiveHistory(
+      removeLiveHistory(liveHistoryRef.current, providerId, channelId),
+    );
+    if (!verified) return;
+    const latest = stateRef.current;
+    if (latest.provider?.id !== providerId) return;
     await persist({
-      ...current,
-      history: current.history.filter((id) => id !== channelId),
+      ...latest,
+      history: historyForProvider(verified, providerId),
+    });
+  };
+
+  const clearHistory = async () => {
+    const current = stateRef.current;
+    const providerId = current.provider?.id;
+    if (!providerId) return;
+    const verified = await persistLiveHistory(
+      clearLiveHistoryProvider(liveHistoryRef.current, providerId),
+    );
+    if (!verified) return;
+    const latest = stateRef.current;
+    if (latest.provider?.id !== providerId) return;
+    await persist({
+      ...latest,
+      history: historyForProvider(verified, providerId),
     });
   };
 
@@ -1161,6 +1234,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       toggleFavorite,
       recordWatched,
       removeWatched,
+      clearHistory,
       clearError: () => setError(null),
     }),
     [
