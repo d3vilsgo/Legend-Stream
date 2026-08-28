@@ -46,6 +46,7 @@ import { useColors } from "@/hooks/useColors";
 import { DownloadedMedia } from "@/lib/downloads";
 import { getM3UCatalog } from "@/lib/iptv";
 import { yieldToUi } from "@/lib/cooperative";
+import { normalizeImageUrl } from "@/lib/imageUrl";
 import {
   buildEpisodeStreamUrl,
   buildVodStreamUrl,
@@ -496,8 +497,8 @@ export default function OptimizedHomeScreenV6() {
       if (cacheReady && snapshot.providerId === provider.id) {
         if (force) await refreshCatalog();
         const [cats, items] = await Promise.all([
-getCachedCategories(provider.id, "vod"),
-getCachedVodItems(provider),
+          getCachedCategories(provider.id, "vod"),
+          getCachedVodItems(provider),
         ]);
         setVodCats(cats);
         setVod(items);
@@ -562,8 +563,8 @@ getCachedVodItems(provider),
       if (cacheReady && snapshot.providerId === provider.id) {
         if (force) await refreshCatalog();
         const [cats, items] = await Promise.all([
-getCachedCategories(provider.id, "series"),
-getCachedSeriesItems(provider),
+          getCachedCategories(provider.id, "series"),
+          getCachedSeriesItems(provider),
         ]);
         setSeriesCats(cats);
         setSeries(items);
@@ -1010,12 +1011,16 @@ function Home({ provider, live, vod, series, vodCategories, seriesCategories, ca
   };
 
   const heroItems = useMemo<HomeHeroEntry[]>(() => {
-    const movieRows = homeMovies
-      .filter((item) => Boolean(item.stream_icon && /^https?:\/\//i.test(item.stream_icon)))
-      .map((item) => ({ id: `movie-${item.stream_id}`, title: item.name, subtitle: item.genre || t("movies"), image: item.stream_icon as string, movie: item }));
-    const seriesRows = homeSeries
-      .filter((item) => Boolean(item.cover && /^https?:\/\//i.test(item.cover)))
-      .map((item) => ({ id: `series-${item.series_id}`, title: item.name, subtitle: t("series"), image: item.cover as string, series: item }));
+    const movieRows: HomeHeroEntry[] = [];
+    for (const item of homeMovies) {
+      const image = normalizeImageUrl(item.stream_icon);
+      if (image) movieRows.push({ id: `movie-${item.stream_id}`, title: item.name, subtitle: item.genre || t("movies"), image, movie: item });
+    }
+    const seriesRows: HomeHeroEntry[] = [];
+    for (const item of homeSeries) {
+      const image = normalizeImageUrl(item.cover);
+      if (image) seriesRows.push({ id: `series-${item.series_id}`, title: item.name, subtitle: t("series"), image, series: item });
+    }
     return [...movieRows, ...seriesRows].slice(0, 6);
   }, [homeMovies, homeSeries, t]);
 
@@ -1106,6 +1111,23 @@ function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = fal
   >{children}</Pressable>;
 }
 
+function ResilientCatalogImage({ uri, style, resizeMode = "cover" }: {
+  uri?: string;
+  style: any;
+  resizeMode?: "cover" | "contain" | "stretch" | "repeat" | "center";
+}) {
+  const colors = useColors();
+  const normalized = normalizeImageUrl(uri);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => setFailed(false), [normalized]);
+  if (!normalized || failed) {
+    return <View style={[style, { alignItems: "center", justifyContent: "center", backgroundColor: colors.muted }]}>
+      <Feather name="film" size={30} color={colors.primary} />
+    </View>;
+  }
+  return <Image source={{ uri: normalized }} resizeMode={resizeMode} style={style} onError={() => setFailed(true)} />;
+}
+
 function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, discoverLabel, loading = false }: {
   items: HomeHeroEntry[];
   eyebrow: string;
@@ -1170,7 +1192,7 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
         onFocus={() => listRef.current?.scrollToIndex({ index: itemIndex, animated: true })}
         style={[s.homeHeroCard, { width: cardWidth, borderColor: "transparent" }]}
       >
-        <Image source={{ uri: item.image }} resizeMode="cover" style={StyleSheet.absoluteFill} />
+        <ResilientCatalogImage uri={item.image} resizeMode="cover" style={StyleSheet.absoluteFill} />
         <LinearGradient colors={["rgba(2,6,16,0.02)", "rgba(2,6,16,0.18)", "rgba(2,6,16,0.92)"]} locations={[0, 0.5, 1]} style={StyleSheet.absoluteFill} pointerEvents="none" />
         <View style={s.homeHeroCaption}>
           <Text style={[s.homeHeroEyebrow, { color: colors.primary }]}>{eyebrow}</Text>
@@ -1754,7 +1776,7 @@ function Grid<T>({ items, keyOf, titleOf, imageOf, onOpen }: { items: T[]; keyOf
   const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
   return <View style={s.grid}>{items.map((item) => <Pressable key={keyOf(item)} onPress={() => onOpen(item)} style={[s.card, { width: `${100 / columns}%` }]}> 
     <View style={[s.media, { borderColor: colors.border, backgroundColor: colors.card }]}> 
-      {imageOf(item) ? <Image source={{ uri: imageOf(item) }} style={s.posterBig} /> : <View style={[s.posterBig, { alignItems: "center", justifyContent: "center" }]}><Feather name="film" size={30} color={colors.primary} /></View>}
+      <ResilientCatalogImage uri={imageOf(item)} style={s.posterBig} />
       <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", padding: 9 }}>{titleOf(item)}</Text>
     </View>
   </Pressable>)}</View>;
