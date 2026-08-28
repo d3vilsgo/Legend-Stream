@@ -39,6 +39,7 @@ import { MediaProgress, useMediaLibrary } from "@/context/MediaLibraryContext";
 import { useCatalogSync } from "@/context/CatalogSyncContext";
 import { getCachedCategories } from "@/lib/catalogCache";
 import { getCachedLiveItems, getCachedSeriesItems, getCachedVodItems } from "@/lib/catalogRuntime";
+import { toXtreamCategoryId } from "@/lib/catalogCategory";
 import type { LiveChannelIdentity } from "@/lib/playerLiveQueue";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
@@ -520,23 +521,27 @@ getCachedVodItems(provider),
   const loadVodCategory = async (categoryId: string, force = false) => {
     if (!provider || effectiveProvider?.type !== "xtream" || !credentials) return;
     setVodLoading(true); setCatalogError(null);
+    const cacheIsActive = cacheReady && snapshot.providerId === provider.id;
     try {
-      if (cacheReady && snapshot.providerId === provider.id) {
+      if (cacheIsActive) {
         if (force) await refreshCatalog();
         const items = await getCachedVodItems(provider, categoryId);
-        if (categoryId === "__all__") registerVodPlaybackQueue(credentials, items);
-        setVod(items);
-        setVodCache((previous) => ({ ...previous, [categoryId]: items }));
-        setHomeVodCount(snapshot.counts.vod || items.length);
-        setVodLoaded(true);
-        return;
+        if (items.length > 0) {
+          if (categoryId === "__all__") registerVodPlaybackQueue(credentials, items);
+          setVod(items);
+          setVodCache((previous) => ({ ...previous, [categoryId]: items }));
+          setHomeVodCount(snapshot.counts.vod || items.length);
+          setVodLoaded(true);
+          return;
+        }
       }
-      if (categoryId === "__all__") return;
-      if (vodCache[categoryId] && !force) { setVod(vodCache[categoryId]); return; }
-      const items = await getVodStreams(credentials, categoryId);
+      if (!cacheIsActive && vodCache[categoryId] && !force) { setVod(vodCache[categoryId]); return; }
+      const networkCategoryId = toXtreamCategoryId(categoryId);
+      const items = await getVodStreams(credentials, networkCategoryId);
       await yieldToUi();
       setVodCache((previous) => ({ ...previous, [categoryId]: items }));
       setVod(items);
+      setVodLoaded(true);
     } catch (caught) {
       if (await tryCatalogFallbackToM3U(caught, "movies")) return;
       setVodLoaded(true);
@@ -581,22 +586,26 @@ getCachedSeriesItems(provider),
   const loadSeriesCategory = async (categoryId: string, force = false) => {
     if (!provider || effectiveProvider?.type !== "xtream" || !credentials) return;
     setSeriesLoading(true); setCatalogError(null);
+    const cacheIsActive = cacheReady && snapshot.providerId === provider.id;
     try {
-      if (cacheReady && snapshot.providerId === provider.id) {
+      if (cacheIsActive) {
         if (force) await refreshCatalog();
         const items = await getCachedSeriesItems(provider, categoryId);
-        setSeries(items);
-        setSeriesCache((previous) => ({ ...previous, [categoryId]: items }));
-        setHomeSeriesCount(snapshot.counts.series || items.length);
-        setSeriesLoaded(true);
-        return;
+        if (items.length > 0) {
+          setSeries(items);
+          setSeriesCache((previous) => ({ ...previous, [categoryId]: items }));
+          setHomeSeriesCount(snapshot.counts.series || items.length);
+          setSeriesLoaded(true);
+          return;
+        }
       }
-      if (categoryId === "__all__") return;
-      if (seriesCache[categoryId] && !force) { setSeries(seriesCache[categoryId]); return; }
-      const items = await getSeries(credentials, categoryId);
+      if (!cacheIsActive && seriesCache[categoryId] && !force) { setSeries(seriesCache[categoryId]); return; }
+      const networkCategoryId = toXtreamCategoryId(categoryId);
+      const items = await getSeries(credentials, networkCategoryId);
       await yieldToUi();
       setSeriesCache((previous) => ({ ...previous, [categoryId]: items }));
       setSeries(items);
+      setSeriesLoaded(true);
     } catch (caught) {
       if (await tryCatalogFallbackToM3U(caught, "series")) return;
       setSeriesLoaded(true);
@@ -778,7 +787,7 @@ getCachedSeriesItems(provider),
       </ScrollView>
     </View>
 
-    {error || catalogError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}>
+    {error || catalogError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}> 
       <Text style={{ color: colors.destructive, flex: 1 }}>{error || catalogError}</Text>
       <Pressable onPress={() => { clearError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable>
     </View> : null}
@@ -829,7 +838,7 @@ function SavedAccounts({ providers, busy, error, onOpen, onAdd, onRemove }: { pr
     <Text style={[s.title, { color: colors.foreground }]}>{t("savedConnections")}</Text>
     <Text style={{ color: colors.mutedForeground }}>{t("chooseAccount")}</Text>
     {error ? <Text style={{ color: colors.destructive }}>{error}</Text> : null}
-    <View style={{ gap: 10 }}>{providers.map((item) => <View key={item.id} style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
+    <View style={{ gap: 10 }}>{providers.map((item) => <View key={item.id} style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}> 
       <Pressable style={{ flex: 1 }} onPress={() => onOpen(item.id)} disabled={busy}>
         <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16 }}>{item.name}</Text>
         <Text style={{ color: item.needsCredentials ? colors.destructive : colors.mutedForeground }}>{item.needsCredentials ? t("credentialsMissing") : `${item.type.toUpperCase()} · ${item.username || item.mac || item.type}`}</Text>
@@ -1125,7 +1134,7 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
 
   if (!items.length) {
     if (loading) {
-      return <View style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}>
+      return <View style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}> 
         <LinearGradient colors={["rgba(0,212,255,0.10)", "rgba(5,9,20,0.02)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
         <View style={{ flex: 1, justifyContent: "flex-end", gap: 10 }}>
           <View style={[s.homeSkeletonLine, { width: "28%", backgroundColor: colors.muted }]} />
@@ -1134,7 +1143,7 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
         </View>
       </View>;
     }
-    return <TvFocusPressable preferredFocus onPress={onDiscover} style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}>
+    return <TvFocusPressable preferredFocus onPress={onDiscover} style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}> 
       <LinearGradient colors={["rgba(0,212,255,0.12)", "rgba(5,9,20,0.02)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
       <View style={{ flex: 1, justifyContent: "flex-end" }}>
         <Text style={[s.homeHeroEyebrow, { color: colors.primary }]}>{providerName}</Text>
@@ -1182,7 +1191,7 @@ function HomeCountCard({ icon, label, value, accent, onPress, preferredFocus = f
   preferredFocus?: boolean;
 }) {
   const colors = useColors();
-  return <TvFocusPressable preferredFocus={preferredFocus} onPress={onPress} style={[s.homeCompactStatCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+  return <TvFocusPressable preferredFocus={preferredFocus} onPress={onPress} style={[s.homeCompactStatCard, { backgroundColor: colors.card, borderColor: colors.border }]}> 
     <LinearGradient colors={[`${accent}18`, "rgba(255,255,255,0.015)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
     <View style={[s.homeCompactStatIcon, { backgroundColor: `${accent}18` }]}><Feather name={icon} size={18} color={accent} /></View>
     <View style={{ flex: 1, minWidth: 0 }}>
@@ -1227,7 +1236,7 @@ function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel
         onFocus={() => listRef.current?.scrollToIndex({ index, animated: true, viewPosition: 0.45 })}
         style={[compact ? s.homeShelfCardCompact : s.homeShelfCard, { backgroundColor: colors.card, borderColor: colors.border }]}
       >
-        <View style={[compact ? s.homeShelfImageCompact : s.homeShelfImage, { backgroundColor: colors.muted }]}>
+        <View style={[compact ? s.homeShelfImageCompact : s.homeShelfImage, { backgroundColor: colors.muted }]}> 
           {item.image ? <Image source={{ uri: item.image }} resizeMode="cover" style={StyleSheet.absoluteFill} /> : <View style={s.homeShelfFallback}><Feather name={compact ? "radio" : "play-circle"} size={28} color={colors.primary} /></View>}
           {!Platform.isTV && item.onRemove ? <Pressable onPress={item.onRemove} hitSlop={8} style={s.homeShelfRemove}><Feather name="x" size={14} color="#fff" /></Pressable> : null}
         </View>
@@ -1310,7 +1319,7 @@ function Live({ channels, epgByChannel, favorites, providerType, loading, epgLoa
       </View>
       <FocusButton label={loading ? t("loading") : t("refresh")} icon="refresh-cw" variant="ghost" onPress={onRefresh} disabled={loading} />
     </View>
-    <View style={[s.search, { borderColor: colors.border, backgroundColor: colors.card }]}>
+    <View style={[s.search, { borderColor: colors.border, backgroundColor: colors.card }]}> 
       <Feather name="search" size={18} color={colors.mutedForeground} />
       <TextInput
         value={search}
@@ -1336,12 +1345,12 @@ function Live({ channels, epgByChannel, favorites, providerType, loading, epgLoa
         const endLabel = current
           ? new Date(current.end).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })
           : undefined;
-        return <View style={[s.liveRow, { borderColor: colors.border, backgroundColor: colors.card }]}>
+        return <View style={[s.liveRow, { borderColor: colors.border, backgroundColor: colors.card }]}> 
           <Pressable style={s.liveMain} onPress={() => onOpen(channel)}>
             <Poster uri={channel.logoUrl} title={channel.name} />
             <View style={{ flex: 1 }}>
               <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700" }}>{channel.name}</Text>
-              <Text numberOfLines={1} style={[s.liveProgram, { color: current ? colors.foreground : colors.mutedForeground }]}>
+              <Text numberOfLines={1} style={[s.liveProgram, { color: current ? colors.foreground : colors.mutedForeground }]}> 
                 {current ? `Şu an: ${current.title}${endLabel ? ` · ${endLabel}` : ""}` : "—"}
               </Text>
             </View>
@@ -1492,9 +1501,9 @@ function Series({ items, cats, providerType, sortMode, onSort, loading, loaded, 
     return <View>
       <FocusButton label={t("back")} icon="arrow-left" variant="ghost" onPress={onBack} />
       <Text style={[s.title, { color: colors.foreground, marginTop: 14 }]}>{selected.name}</Text>
-      {!info ? <Loading text={t("loadingEpisodes")} /> : groups.length ? groups.map(([season, episodes]) => <View key={season} style={{ marginTop: 18 }}>
+      {!info ? <Loading text={t("loadingEpisodes")} /> : groups.length ? groups.map(([season, episodes]) => <View key={season} style={{ marginTop: 18 }}> 
         <Text style={[s.section, { color: colors.foreground }]}>{t("season")} {season}</Text>
-        <View style={s.list}>{episodes.map((episode) => <Pressable key={String(episode.id)} onPress={() => onEpisode(episode)} style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}>
+        <View style={s.list}>{episodes.map((episode) => <Pressable key={String(episode.id)} onPress={() => onEpisode(episode)} style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}> 
           <Text style={{ color: colors.foreground, flex: 1 }}>{episode.title || `${t("episode")} ${episode.episode_num ?? ""}`}</Text>
           <Feather name="play-circle" size={24} color={colors.primary} />
         </Pressable>)}</View>
@@ -1653,7 +1662,7 @@ function HistoryView({ channels, favorites, history, onOpen, onOpenMedia }: {
   const favs = favorites.map((id) => channels.find((channel) => channel.id === id)).filter((item): item is Channel => Boolean(item));
   const section = (title: string, rows: Channel[]) => <View style={{ marginBottom: 28 }}>
     <Text style={[s.section, { color: colors.foreground, marginBottom: 10 }]}>{title}</Text>
-    {rows.length ? rows.map((channel) => <Pressable key={`${title}-${channel.id}`} onPress={() => onOpen(channel)} style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}>
+    {rows.length ? rows.map((channel) => <Pressable key={`${title}-${channel.id}`} onPress={() => onOpen(channel)} style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}> 
       <View style={{ flex: 1 }}><Text style={{ color: colors.foreground, fontWeight: "700" }}>{channel.name}</Text><Text style={{ color: colors.mutedForeground }}>{channel.category}</Text></View>
       <Feather name="play" size={20} color={colors.primary} />
     </Pressable>) : <Text style={{ color: colors.mutedForeground }}>{t("nothingYet")}</Text>}
@@ -1673,7 +1682,7 @@ function Settings({ provider, providers, busy, onEdit, onAdd, onSwitch, onDiscon
   const colors = useColors(); const { t, language, languages, setLanguage } = useI18n();
   return <View>
     <Text style={[s.title, { color: colors.foreground }]}>{t("settings")}</Text>
-    <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}>
+    <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}> 
       <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16 }}>{t("activeConnection")}</Text>
       <Text style={{ color: colors.foreground }}>{provider.name}</Text>
       <Text style={{ color: colors.mutedForeground }}>{provider.type.toUpperCase()} · {provider.channelCount ?? 0}</Text>
@@ -1688,7 +1697,7 @@ function Settings({ provider, providers, busy, onEdit, onAdd, onSwitch, onDiscon
     <CredentialDiagnosticsPanel />
     <View style={{ marginTop: 24 }}>
       <Text style={[s.section, { color: colors.foreground }]}>{t("savedAccounts")}</Text>
-      <View style={{ gap: 8 }}>{providers.map((item) => <View key={item.id} style={[s.accountCard, { borderColor: item.id === provider.id ? colors.primary : colors.border, backgroundColor: colors.card }]}>
+      <View style={{ gap: 8 }}>{providers.map((item) => <View key={item.id} style={[s.accountCard, { borderColor: item.id === provider.id ? colors.primary : colors.border, backgroundColor: colors.card }]}> 
         <Pressable disabled={busy} onPress={() => onSwitch(item.id)} style={{ flex: 1 }}><Text style={{ color: colors.foreground, fontWeight: "800" }}>{item.name}{item.id === provider.id ? ` · ${t("active")}` : ""}</Text><Text style={{ color: item.needsCredentials ? colors.destructive : colors.mutedForeground }}>{item.needsCredentials ? t("credentialsMissing") : item.username || item.type.toUpperCase()}</Text></Pressable>
         <Pressable onPress={() => onRemove(item.id)} style={s.iconButton}><Feather name="trash-2" size={20} color={colors.mutedForeground} /></Pressable>
       </View>)}</View>
@@ -1721,15 +1730,15 @@ function SortControl({ selected, supportsAdded, onSelect }: {
   ];
   const active = options.find((option) => option.id === selected) ?? options[0];
   return <View style={s.sortDropdownWrap}>
-    <Pressable onPress={() => setOpen((value) => !value)} style={[s.sortDropdownButton, { borderColor: open ? colors.primary : colors.border, backgroundColor: colors.card }]}>
+    <Pressable onPress={() => setOpen((value) => !value)} style={[s.sortDropdownButton, { borderColor: open ? colors.primary : colors.border, backgroundColor: colors.card }]}> 
       <Feather name="sliders" size={16} color={open ? colors.primary : colors.mutedForeground} />
       <Text style={{ flex: 1, color: colors.foreground, fontWeight: "700", fontSize: 13 }} numberOfLines={1}>{language === "tr" ? "Sırala" : "Sort"}: {active.short}</Text>
       <Feather name={open ? "chevron-up" : "chevron-down"} size={17} color={colors.mutedForeground} />
     </Pressable>
-    {open ? <View style={[s.sortDropdownMenu, { borderColor: colors.border, backgroundColor: colors.card }]}>
+    {open ? <View style={[s.sortDropdownMenu, { borderColor: colors.border, backgroundColor: colors.card }]}> 
       {options.map((option) => {
         const activeOption = option.id === selected;
-        return <Pressable key={option.id} onPress={() => { onSelect(option.id); setOpen(false); }} style={[s.sortDropdownItem, { borderColor: activeOption ? colors.primary : "transparent" }]}>
+        return <Pressable key={option.id} onPress={() => { onSelect(option.id); setOpen(false); }} style={[s.sortDropdownItem, { borderColor: activeOption ? colors.primary : "transparent" }]}> 
           <View style={[s.drawerDot, { backgroundColor: activeOption ? colors.primary : "transparent", borderColor: activeOption ? colors.primary : colors.mutedForeground }]} />
           <Text style={{ flex: 1, color: activeOption ? colors.primary : colors.foreground, fontWeight: activeOption ? "800" : "600" }}>{option.label}</Text>
           {activeOption ? <Feather name="check" size={17} color={colors.primary} /> : null}
@@ -1742,8 +1751,8 @@ function SortControl({ selected, supportsAdded, onSelect }: {
 function Grid<T>({ items, keyOf, titleOf, imageOf, onOpen }: { items: T[]; keyOf: (item: T) => string; titleOf: (item: T) => string; imageOf: (item: T) => string | undefined; onOpen: (item: T) => void }) {
   const colors = useColors(); const { width } = useWindowDimensions();
   const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
-  return <View style={s.grid}>{items.map((item) => <Pressable key={keyOf(item)} onPress={() => onOpen(item)} style={[s.card, { width: `${100 / columns}%` }]}>
-    <View style={[s.media, { borderColor: colors.border, backgroundColor: colors.card }]}>
+  return <View style={s.grid}>{items.map((item) => <Pressable key={keyOf(item)} onPress={() => onOpen(item)} style={[s.card, { width: `${100 / columns}%` }]}> 
+    <View style={[s.media, { borderColor: colors.border, backgroundColor: colors.card }]}> 
       {imageOf(item) ? <Image source={{ uri: imageOf(item) }} style={s.posterBig} /> : <View style={[s.posterBig, { alignItems: "center", justifyContent: "center" }]}><Feather name="film" size={30} color={colors.primary} /></View>}
       <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", padding: 9 }}>{titleOf(item)}</Text>
     </View>
@@ -1773,7 +1782,7 @@ function Stat({ icon, label, value, accent, onPress, preferredFocus = false }: {
       useNativeDriver: true,
     }).start();
   };
-  return <Animated.View style={[s.statPremiumPress, tvFocused ? s.homeTvGlow : null, tvFocused ? { shadowColor: colors.primary } : null, { transform: [{ scale }] }]}>
+  return <Animated.View style={[s.statPremiumPress, tvFocused ? s.homeTvGlow : null, tvFocused ? { shadowColor: colors.primary } : null, { transform: [{ scale }] }]}> 
     <Pressable
       focusable
       hasTVPreferredFocus={Platform.isTV && preferredFocus}
@@ -1831,7 +1840,7 @@ function HomeAccountTile({ item, active = false, add = false, disabled = false, 
     }).start();
   };
   const icon = add ? "plus" : item?.type === "xtream" ? "radio" : item?.type === "m3u" ? "list" : "server";
-  return <Animated.View style={[s.accountTileAnimationWrap, tvFocused ? s.homeTvGlow : null, tvFocused ? { shadowColor: colors.primary } : null, { transform: [{ scale }] }]}>
+  return <Animated.View style={[s.accountTileAnimationWrap, tvFocused ? s.homeTvGlow : null, tvFocused ? { shadowColor: colors.primary } : null, { transform: [{ scale }] }]}> 
     <Pressable
       focusable={!disabled}
       disabled={disabled}
@@ -1856,7 +1865,7 @@ function HomeAccountTile({ item, active = false, add = false, disabled = false, 
         <Text style={[s.accountMetaPremium, { color: colors.mutedForeground }]}>{t("savedConnections")}</Text>
       </> : <>
         <View style={s.accountTileTop}>
-          <View style={[s.accountAvatar, { backgroundColor: active ? `${colors.primary}22` : "rgba(255,255,255,0.05)" }]}>
+          <View style={[s.accountAvatar, { backgroundColor: active ? `${colors.primary}22` : "rgba(255,255,255,0.05)" }]}> 
             <Feather name={icon as React.ComponentProps<typeof Feather>["name"]} size={18} color={active || tvFocused ? colors.primary : colors.mutedForeground} />
           </View>
           {active ? <View style={[s.accountActivePill, { backgroundColor: `${colors.primary}1C` }]}><View style={[s.dot, { backgroundColor: colors.primary }]} /><Text style={{ color: colors.primary, fontSize: 11, fontWeight: "600" }}>{t("active")}</Text></View> : null}
