@@ -52,6 +52,8 @@ import {
 } from "@/lib/xtreamCatalog";
 import { yieldToUi } from "@/lib/cooperative";
 import { projectCatalogItems } from "@/lib/catalogPersistence";
+import { runCatalogFetchPlan, type CatalogFetchMetrics } from "@/lib/catalogSyncStrategy";
+import { recordCatalogSyncMeasurement } from "@/lib/catalogSyncMetrics";
 import {
   getCachedLiveItems,
   getCachedSeriesItems,
@@ -100,6 +102,7 @@ const EMPTY_SNAPSHOT: CatalogSnapshot = {
 const HOME_SAMPLE_LIMIT = 48;
 const NEW_SAMPLE_LIMIT = 24;
 const BACKGROUND_SYNC_DELAY_MS = 1_250;
+const SYNC_STAGE_TOTAL = 4;
 
 const Context = createContext<CatalogSyncContextValue | null>(null);
 
@@ -232,7 +235,10 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     setSyncStateLocal(freshCatalogRunState(provider.id, generation, mode));
 
     let completed = 0;
-    let total = 1;
+    const total = SYNC_STAGE_TOTAL;
+    let liveSqliteWriteMs = 0;
+    let vodMetrics: CatalogFetchMetrics | null = null;
+    let seriesMetrics: CatalogFetchMetrics | null = null;
     const isCancelled = () =>
       cancelRef.current || controller.signal.aborted || generationRef.current !== generation;
 
@@ -245,8 +251,8 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           provider.id,
           isInitial ? "preparing" : "syncing",
           0,
-          1,
-          isInitial ? "Catalogs are being prepared" : "Catalog update started",
+          total,
+          isInitial ? "Preparing catalog sources" : "Catalog update started",
           undefined,
           generation,
         );
@@ -261,9 +267,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         await replaceCatalogCategories(provider.id, "series", seriesCategories);
         await yieldToUi();
 
-        total = 1 + Math.max(vodCategories.length, 1) + Math.max(seriesCategories.length, 1);
-        completed = 0;
-        await publishState(provider.id, "syncing", completed, total, "Live TV", undefined, generation);
+        await publishState(provider.id, "syncing", completed, total, "Live TV · loading", undefined, generation);
 
         // Initial preparation can reuse the just-loaded PlayerContext list. Background/manual
         // refreshes deliberately hit the provider again so newly-added live channels can be found.
@@ -274,25 +278,46 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           ? currentLive
           : (await loadProvider(asLoadProvider(provider))).channels;
         if (isCancelled()) return;
-        await upsertCatalogItems(provider.id, "live", projectCatalogItems(provider.id, "live", liveRows), { markNew, seenAt: syncStartedAt, isCancelled });
-        completed += 1;
-        await publishState(provider.id, "syncing", completed, total, "Movies", undefined, generation);
+        const liveWriteStartedAt = Date.now();
+        await upsertCatalogItems(provider.id, "live", projectCatalogItems(provider.id, "live", liveRows), {
+          markNew,
+          seenAt: syncStartedAt,
+          isCancelled,
+        });
+        liveSqliteWriteMs = Date.now() - liveWriteStartedAt;
+        completed = 1;
+        await publishState(provider.id, "syncing", completed, total, "Movies · bulk catalog", undefined, generation);
 
-        if (vodCategories.length) {
-          for (const category of vodCategories) {
-            if (isCancelled()) break;
-            const rows = await getVodStreams(credentials, category.category_id, controller.signal);
-            if (isCancelled()) break;
-            await upsertCatalogItems(provider.id, "vod", projectCatalogItems(provider.id, "vod", rows), { markNew, seenAt: syncStartedAt, isCancelled });
-            completed += 1;
-            await publishState(provider.id, "syncing", completed, total, `Movies · ${category.category_name}`, undefined, generation);
-            await yieldToUi();
-          }
-        } else if (!isCancelled()) {
-          const rows = await getVodStreams(credentials, undefined, controller.signal);
-          await upsertCatalogItems(provider.id, "vod", projectCatalogItems(provider.id, "vod", rows), { markNew, seenAt: syncStartedAt, isCancelled });
-          completed += 1;
-        }
+        vodMetrics = await runCatalogFetchPlan<XtreamVodItem, (typeof vodCategories)[number]>({
+          categories: vodCategories,
+          fetchBulk: (onParseMs) => getVodStreams(
+            credentials,
+            undefined,
+            controller.signal,
+            ({ parseMs }) => onParseMs(parseMs),
+          ),
+          fetchCategory: (category) => getVodStreams(credentials, category.category_id, controller.signal),
+          writeRows: async (rows) => {
+            await upsertCatalogItems(provider.id, "vod", projectCatalogItems(provider.id, "vod", rows), {
+              markNew,
+              seenAt: syncStartedAt,
+              isCancelled,
+            });
+          },
+          categoryIdOf: (row) => row.category_id,
+          isCancelled,
+          onFallbackProgress: async (done, categoryTotal, path) => {
+            await publishState(
+              provider.id,
+              "syncing",
+              completed,
+              total,
+              `Movies · ${path === "parallel" ? "parallel" : "serial"} fallback ${done}/${categoryTotal}`,
+              undefined,
+              generation,
+            );
+          },
+        });
 
         if (isCancelled()) {
           await publishState(provider.id, "cancelled", completed, total, "Catalog preparation cancelled", undefined, generation);
@@ -300,21 +325,39 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        if (seriesCategories.length) {
-          for (const category of seriesCategories) {
-            if (isCancelled()) break;
-            const rows = await getSeries(credentials, category.category_id, controller.signal);
-            if (isCancelled()) break;
-            await upsertCatalogItems(provider.id, "series", projectCatalogItems(provider.id, "series", rows), { markNew, seenAt: syncStartedAt, isCancelled });
-            completed += 1;
-            await publishState(provider.id, "syncing", completed, total, `Series · ${category.category_name}`, undefined, generation);
-            await yieldToUi();
-          }
-        } else if (!isCancelled()) {
-          const rows = await getSeries(credentials, undefined, controller.signal);
-          await upsertCatalogItems(provider.id, "series", projectCatalogItems(provider.id, "series", rows), { markNew, seenAt: syncStartedAt, isCancelled });
-          completed += 1;
-        }
+        completed = 2;
+        await publishState(provider.id, "syncing", completed, total, "Series · bulk catalog", undefined, generation);
+
+        seriesMetrics = await runCatalogFetchPlan<XtreamSeriesItem, (typeof seriesCategories)[number]>({
+          categories: seriesCategories,
+          fetchBulk: (onParseMs) => getSeries(
+            credentials,
+            undefined,
+            controller.signal,
+            ({ parseMs }) => onParseMs(parseMs),
+          ),
+          fetchCategory: (category) => getSeries(credentials, category.category_id, controller.signal),
+          writeRows: async (rows) => {
+            await upsertCatalogItems(provider.id, "series", projectCatalogItems(provider.id, "series", rows), {
+              markNew,
+              seenAt: syncStartedAt,
+              isCancelled,
+            });
+          },
+          categoryIdOf: (row) => row.category_id,
+          isCancelled,
+          onFallbackProgress: async (done, categoryTotal, path) => {
+            await publishState(
+              provider.id,
+              "syncing",
+              completed,
+              total,
+              `Series · ${path === "parallel" ? "parallel" : "serial"} fallback ${done}/${categoryTotal}`,
+              undefined,
+              generation,
+            );
+          },
+        });
 
         if (isCancelled()) {
           await publishState(provider.id, "cancelled", completed, total, "Catalog preparation cancelled", undefined, generation);
@@ -322,7 +365,10 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        // Prune only after every requested category completed successfully.
+        completed = 3;
+        await publishState(provider.id, "syncing", completed, total, "Finalizing catalog cache", undefined, generation);
+
+        // Prune only after every requested catalog completed successfully.
         // Cancellation/network failure therefore never deletes a valid old cache.
         await Promise.all([
           pruneCatalogKind(provider.id, "live", syncStartedAt),
@@ -331,15 +377,27 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         ]);
         await yieldToUi();
 
+        completed = total;
         await publishState(
           provider.id,
           "ready",
-          total,
+          completed,
           total,
           "Catalog cache ready",
           mode === "background" ? "background" : "full",
           generation,
         );
+        if (vodMetrics && seriesMetrics) {
+          recordCatalogSyncMeasurement({
+            providerId: provider.id,
+            mode,
+            startedAt: syncStartedAt,
+            totalMs: Date.now() - syncStartedAt,
+            liveSqliteWriteMs,
+            vod: vodMetrics,
+            series: seriesMetrics,
+          });
+        }
         await refreshSnapshot();
       } catch (caught) {
         if (isCancelled()) {
@@ -482,7 +540,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
             <View style={[styles.progressFill, { width: `${Math.round(progress * 100)}%`, backgroundColor: colors.primary }]} />
           </View>
           <Text style={[styles.progressText, { color: colors.mutedForeground }]}>
-            {syncState?.completed ?? 0} / {syncState?.total ?? 1}
+            {syncState?.completed ?? 0} / {syncState?.total ?? SYNC_STAGE_TOTAL}
           </Text>
           <Pressable
             onPress={cancelInitialSync}
