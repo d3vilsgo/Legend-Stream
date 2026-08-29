@@ -3,6 +3,7 @@ import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
+  ActivityIndicator,
   Animated,
   FlatList,
   Image,
@@ -48,6 +49,12 @@ import { getM3UCatalog } from "@/lib/iptv";
 import { yieldToUi } from "@/lib/cooperative";
 import { normalizeImageUrl } from "@/lib/imageUrl";
 import { providerListPresentation } from "@/lib/providerDisplaySecurity";
+import { prepareProviderSwitchCache, type ProviderSwitchCachePreparation } from "@/lib/providerSwitchCache";
+import {
+  clearProviderSwitchSnapshot,
+  safeProviderSwitchError,
+  tryBeginProviderSwitch,
+} from "@/lib/providerSwitchUx";
 import { redactSensitiveText } from "@/lib/safeLog";
 import {
   buildEpisodeStreamUrl,
@@ -253,6 +260,9 @@ export default function OptimizedHomeScreenV6() {
   const [seriesInfo, setSeriesInfo] = useState<XtreamSeriesInfo | null>(null);
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
   const [cachedLive, setCachedLive] = useState<Channel[]>([]);
+  const [switchingProviderId, setSwitchingProviderId] = useState<string | null>(null);
+  const switchingProviderRef = useRef<string | null>(null);
+  const preparedSwitchRef = useRef<ProviderSwitchCachePreparation | null>(null);
 
   const effectiveProvider = useMemo<ProviderConfig | null>(() => {
     if (!provider || !providerTypeOverride) return provider;
@@ -313,12 +323,33 @@ export default function OptimizedHomeScreenV6() {
   };
 
   useEffect(() => {
-    setVod([]); setVodCats([]); setVodCache({}); setVodLoaded(false); setVodLoading(false);
-    setSeries([]); setSeriesCats([]); setSeriesCache({}); setSeriesLoaded(false); setSeriesLoading(false);
-    setHomeVodCount(null); setHomeSeriesCount(null); setHomeCatalogProbeLoading(false);
+    const prepared = provider && preparedSwitchRef.current?.snapshot.providerId === provider.id
+      ? preparedSwitchRef.current
+      : null;
+    if (prepared) {
+      setVod(prepared.snapshot.movies);
+      setVodCats(prepared.vodCategories);
+      setVodCache(prepared.snapshot.movies.length ? { __all__: prepared.snapshot.movies } : {});
+      setVodLoaded(prepared.snapshot.ready || prepared.snapshot.counts.vod > 0);
+      setVodLoading(false);
+      setSeries(prepared.snapshot.series);
+      setSeriesCats(prepared.seriesCategories);
+      setSeriesCache(prepared.snapshot.series.length ? { __all__: prepared.snapshot.series } : {});
+      setSeriesLoaded(prepared.snapshot.ready || prepared.snapshot.counts.series > 0);
+      setSeriesLoading(false);
+      setHomeVodCount(prepared.snapshot.counts.vod);
+      setHomeSeriesCount(prepared.snapshot.counts.series);
+      setHomeCatalogProbeLoading(false);
+      setCachedLive(prepared.live);
+      preparedSwitchRef.current = null;
+    } else {
+      setVod([]); setVodCats([]); setVodCache({}); setVodLoaded(false); setVodLoading(false);
+      setSeries([]); setSeriesCats([]); setSeriesCache({}); setSeriesLoaded(false); setSeriesLoading(false);
+      setHomeVodCount(null); setHomeSeriesCount(null); setHomeCatalogProbeLoading(false);
+      setCachedLive([]);
+    }
     setProviderTypeOverride(null);
     setSelectedSeries(null); setSeriesInfo(null); setCatalogError(null);
-    setCachedLive([]);
     catalogCategoryMemory.movies = "__all__";
     catalogCategoryMemory.series = "__all__";
   }, [provider?.id]);
@@ -329,6 +360,16 @@ export default function OptimizedHomeScreenV6() {
     setHomeVodCount(snapshot.counts.vod);
     setHomeSeriesCount(snapshot.counts.series);
     setHomeCatalogProbeLoading(false);
+    if (snapshot.movies.length || snapshot.ready || snapshot.counts.vod > 0) {
+      setVod(snapshot.movies);
+      setVodCache(snapshot.movies.length ? { __all__: snapshot.movies } : {});
+      setVodLoaded(snapshot.ready || snapshot.counts.vod > 0);
+    }
+    if (snapshot.series.length || snapshot.ready || snapshot.counts.series > 0) {
+      setSeries(snapshot.series);
+      setSeriesCache(snapshot.series.length ? { __all__: snapshot.series } : {});
+      setSeriesLoaded(snapshot.ready || snapshot.counts.series > 0);
+    }
     void Promise.all([
       getCachedCategories(provider.id, "vod"),
       getCachedCategories(provider.id, "series"),
@@ -338,11 +379,9 @@ export default function OptimizedHomeScreenV6() {
       setVodCats(movieCategories);
       setSeriesCats(showCategories);
       setCachedLive(liveRows);
-      // Category metadata being ready does not mean the full __all__ item list is hydrated.
-      // Keep loaded=false until loadVodCategory/loadSeriesCategory publishes actual rows.
     }).catch(() => undefined);
     return () => { cancelled = true; };
-  }, [provider?.id, snapshot.providerId, hasUsableCache, snapshot.counts.live, snapshot.counts.vod, snapshot.counts.series]);
+  }, [provider?.id, snapshot.providerId, hasUsableCache, snapshot.ready, snapshot.counts.live, snapshot.counts.vod, snapshot.counts.series, snapshot.movies, snapshot.series]);
 
   useEffect(() => {
     if (!effectiveProvider) {
@@ -615,15 +654,49 @@ export default function OptimizedHomeScreenV6() {
   };
 
   const switchProvider = async (id: string) => {
-    clearError(); setCatalogError(null);
+    if (id === provider?.id) return;
     const target = providers.find((item) => item.id === id);
-    if (target?.needsCredentials) {
+    if (!target) {
+      setCatalogError("The saved provider could not be opened.");
+      return;
+    }
+    if (target.needsCredentials) {
       setAdding(false);
       setEditingProviderId(id);
       return;
     }
-    const ok = await setActiveProvider(id);
-    if (ok) setView("home");
+    const gate = tryBeginProviderSwitch(switchingProviderRef.current, id);
+    if (!gate.started) return;
+
+    switchingProviderRef.current = id;
+    setSwitchingProviderId(id);
+    clearError();
+    setCatalogError(null);
+    try {
+      try {
+        preparedSwitchRef.current = await prepareProviderSwitchCache(target);
+        if (!preparedSwitchRef.current) clearProviderSwitchSnapshot(id);
+      } catch {
+        preparedSwitchRef.current = null;
+        clearProviderSwitchSnapshot(id);
+      }
+
+      const ok = await setActiveProvider(id);
+      if (ok) {
+        await yieldToUi();
+        setView("home");
+      } else {
+        preparedSwitchRef.current = null;
+        clearProviderSwitchSnapshot(id);
+      }
+    } catch (caught) {
+      preparedSwitchRef.current = null;
+      clearProviderSwitchSnapshot(id);
+      setCatalogError(safeProviderSwitchError(caught));
+    } finally {
+      switchingProviderRef.current = null;
+      setSwitchingProviderId(null);
+    }
   };
 
   const navigate = (target: ContentView) => {
@@ -640,9 +713,10 @@ export default function OptimizedHomeScreenV6() {
   const editingProvider = editingProviderId
     ? providers.find((item) => item.id === editingProviderId) ?? null
     : null;
+  const providerSwitchBusy = isLoading || switchingProviderId !== null;
 
   if (!provider && !adding && !editingProvider) {
-    return <SavedAccounts providers={providers} busy={isLoading} error={error} onOpen={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} onRemove={(id) => void removeProvider(id)} />;
+    return <SavedAccounts providers={providers} busy={providerSwitchBusy} switchingProviderId={switchingProviderId} error={error} onOpen={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} onRemove={(id) => void removeProvider(id)} />;
   }
 
   if (adding || editingProvider || !provider) {
@@ -825,26 +899,32 @@ export default function OptimizedHomeScreenV6() {
       {view === "series" ? <Series items={series} cats={seriesCats} providerType={shownProvider.type} sortMode={catalogSort} onSort={changeCatalogSort} loading={seriesLoading} loaded={seriesLoaded} selected={selectedSeries} info={seriesInfo} onCategory={(category) => void loadSeriesCategory(category)} onRefresh={(category) => void loadSeriesCategory(category, true)} onOpen={openSeries} onBack={() => { setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
       {view === "history" ? <HistoryView channels={providerChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
-      {view === "settings" ? <Settings provider={shownProvider} providers={providers} busy={isLoading} onEdit={() => setEditingProviderId(shownProvider.id)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
+      {view === "settings" ? <Settings provider={shownProvider} providers={providers} busy={providerSwitchBusy} switchingProviderId={switchingProviderId} onEdit={() => setEditingProviderId(shownProvider.id)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
     </ScrollView>}
   </View>;
 }
 
-function SavedAccounts({ providers, busy, error, onOpen, onAdd, onRemove }: { providers: ProviderConfig[]; busy: boolean; error: string | null; onOpen: (id: string) => void; onAdd: () => void; onRemove: (id: string) => void }) {
+function SavedAccounts({ providers, busy, switchingProviderId, error, onOpen, onAdd, onRemove }: { providers: ProviderConfig[]; busy: boolean; switchingProviderId: string | null; error: string | null; onOpen: (id: string) => void; onAdd: () => void; onRemove: (id: string) => void }) {
   const colors = useColors(); const insets = useSafeAreaInsets(); const { t } = useI18n();
   return <ScrollView style={{ backgroundColor: colors.background }} contentContainerStyle={[s.setup, { paddingTop: insets.top + 30, paddingBottom: insets.bottom + 40 }]}>
     <Text style={[s.brandLarge, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text>
     <Text style={[s.title, { color: colors.foreground }]}>{t("savedConnections")}</Text>
     <Text style={{ color: colors.mutedForeground }}>{t("chooseAccount")}</Text>
     {error ? <Text style={{ color: colors.destructive }}>{visibleErrorText(error)}</Text> : null}
-    <View style={{ gap: 10 }}>{providers.map((item) => <View key={item.id} style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}> 
-      <Pressable style={{ flex: 1 }} onPress={() => onOpen(item.id)} disabled={busy}>
-        <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16 }}>{item.name}</Text>
-        <Text style={{ color: item.needsCredentials ? colors.destructive : colors.mutedForeground }}>{item.needsCredentials ? t("credentialsMissing") : providerListPresentation(item).meta}</Text>
-        <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{providerListPresentation(item).host}</Text>
-      </Pressable>
-      <Pressable onPress={() => onRemove(item.id)} style={s.iconButton}><Feather name="trash-2" size={20} color={colors.mutedForeground} /></Pressable>
-    </View>)}</View>
+    <View style={{ gap: 10 }}>{providers.map((item) => {
+      const switching = switchingProviderId === item.id;
+      return <View key={item.id} style={[s.accountCard, { borderColor: switching ? colors.primary : colors.border, backgroundColor: colors.card, opacity: busy && !switching ? 0.6 : 1 }]}> 
+        <Pressable style={{ flex: 1 }} onPress={() => onOpen(item.id)} disabled={busy}>
+          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+            <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16, flex: 1 }}>{item.name}</Text>
+            {switching ? <ActivityIndicator size="small" color={colors.primary} /> : null}
+          </View>
+          <Text style={{ color: item.needsCredentials ? colors.destructive : switching ? colors.primary : colors.mutedForeground }}>{switching ? t("opening") : item.needsCredentials ? t("credentialsMissing") : providerListPresentation(item).meta}</Text>
+          <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{providerListPresentation(item).host}</Text>
+        </Pressable>
+        <Pressable disabled={busy} onPress={() => onRemove(item.id)} style={s.iconButton}><Feather name="trash-2" size={20} color={colors.mutedForeground} /></Pressable>
+      </View>;
+    })}</View>
     <FocusButton label={busy ? t("opening") : t("addNewAccount")} icon="plus" variant="primary" onPress={onAdd} disabled={busy} />
     <ProviderBackupPanel mode="import-only" />
   </ScrollView>;
@@ -1469,9 +1549,9 @@ function Movies({ items, cats, providerType, sortMode, onSort, loading, loaded, 
     return sortCatalogRows(rows, effectiveSort, (item) => item.added, (item) => item.stream_id);
   }, [items, search, category, effectiveSort]);
 
-  if (!loaded && loading) return <Loading text={t("loadingMovies")} />;
+  if (!loaded) return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
   return <View {...drawerSwipe.panHandlers}>
-    <Catalog title={t("movies")} detail={loaded ? t("titles", { count: items.length.toLocaleString() }) : t("loading")} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={() => onRefresh(category)}>
+    <Catalog title={t("movies")} detail={t("titles", { count: items.length.toLocaleString() })} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={() => onRefresh(category)}>
       <SortControl selected={effectiveSort} supportsAdded={providerType === "xtream"} onSelect={(mode) => { setLimit(60); onSort(mode); }} />
       <Grid items={filtered.slice(0, limit)} keyOf={(item) => String(item.stream_id)} titleOf={(item) => item.name} imageOf={(item) => item.stream_icon} onOpen={onOpen} />
       {limit < filtered.length ? <View style={s.more}><FocusButton label={t("loadMore")} onPress={() => setLimit((value) => value + 60)} /></View> : null}
@@ -1550,9 +1630,9 @@ function Series({ items, cats, providerType, sortMode, onSort, loading, loaded, 
     </View>;
   }
 
-  if (!loaded && loading) return <Loading text={t("loadingSeries")} />;
+  if (!loaded) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
   return <View {...drawerSwipe.panHandlers}>
-    <Catalog title={t("series")} detail={loaded ? t("seriesCount", { count: items.length.toLocaleString() }) : t("loading")} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={() => onRefresh(category)}>
+    <Catalog title={t("series")} detail={t("seriesCount", { count: items.length.toLocaleString() })} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={() => onRefresh(category)}>
       <SortControl selected={effectiveSort} supportsAdded={providerType === "xtream"} onSelect={(mode) => { setLimit(60); onSort(mode); }} />
       <Grid items={filtered.slice(0, limit)} keyOf={(item) => String(item.series_id)} titleOf={(item) => item.name} imageOf={(item) => item.cover} onOpen={onOpen} />
       {limit < filtered.length ? <View style={s.more}><FocusButton label={t("loadMore")} onPress={() => setLimit((value) => value + 60)} /></View> : null}
@@ -1715,8 +1795,8 @@ function HistoryView({ channels, favorites, history, onOpen, onOpenMedia }: {
   </View>;
 }
 
-function Settings({ provider, providers, busy, onEdit, onAdd, onSwitch, onDisconnect, onRemove }: {
-  provider: ProviderConfig; providers: ProviderConfig[]; busy: boolean; onEdit: () => void; onAdd: () => void; onSwitch: (id: string) => void; onDisconnect: () => void; onRemove: (id: string) => void;
+function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAdd, onSwitch, onDisconnect, onRemove }: {
+  provider: ProviderConfig; providers: ProviderConfig[]; busy: boolean; switchingProviderId: string | null; onEdit: () => void; onAdd: () => void; onSwitch: (id: string) => void; onDisconnect: () => void; onRemove: (id: string) => void;
 }) {
   const colors = useColors(); const { t, language, languages, setLanguage } = useI18n();
   return <View>
@@ -1736,10 +1816,21 @@ function Settings({ provider, providers, busy, onEdit, onAdd, onSwitch, onDiscon
     <CredentialDiagnosticsPanel />
     <View style={{ marginTop: 24 }}>
       <Text style={[s.section, { color: colors.foreground }]}>{t("savedAccounts")}</Text>
-      <View style={{ gap: 8 }}>{providers.map((item) => <View key={item.id} style={[s.accountCard, { borderColor: item.id === provider.id ? colors.primary : colors.border, backgroundColor: colors.card }]}> 
-        <Pressable disabled={busy} onPress={() => onSwitch(item.id)} style={{ flex: 1 }}><Text style={{ color: colors.foreground, fontWeight: "800" }}>{item.name}{item.id === provider.id ? ` · ${t("active")}` : ""}</Text><Text style={{ color: item.needsCredentials ? colors.destructive : colors.mutedForeground }}>{item.needsCredentials ? t("credentialsMissing") : providerListPresentation(item).meta}</Text><Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{providerListPresentation(item).host}</Text></Pressable>
-        <Pressable onPress={() => onRemove(item.id)} style={s.iconButton}><Feather name="trash-2" size={20} color={colors.mutedForeground} /></Pressable>
-      </View>)}</View>
+      <View style={{ gap: 8 }}>{providers.map((item) => {
+        const active = item.id === provider.id;
+        const switching = switchingProviderId === item.id;
+        return <View key={item.id} style={[s.accountCard, { borderColor: switching || active ? colors.primary : colors.border, backgroundColor: colors.card, opacity: busy && !switching && !active ? 0.6 : 1 }]}> 
+          <Pressable disabled={busy} onPress={() => onSwitch(item.id)} style={{ flex: 1 }}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Text style={{ color: colors.foreground, fontWeight: "800", flex: 1 }}>{item.name}{active ? ` · ${t("active")}` : ""}</Text>
+              {switching ? <ActivityIndicator size="small" color={colors.primary} /> : active ? <Feather name="check-circle" size={18} color={colors.primary} /> : null}
+            </View>
+            <Text style={{ color: item.needsCredentials ? colors.destructive : switching ? colors.primary : colors.mutedForeground }}>{switching ? t("opening") : item.needsCredentials ? t("credentialsMissing") : providerListPresentation(item).meta}</Text>
+            <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{providerListPresentation(item).host}</Text>
+          </Pressable>
+          <Pressable disabled={busy} onPress={() => onRemove(item.id)} style={s.iconButton}><Feather name="trash-2" size={20} color={colors.mutedForeground} /></Pressable>
+        </View>;
+      })}</View>
     </View>
   </View>;
 }
@@ -1919,6 +2010,27 @@ function HomeAccountTile({ item, active = false, add = false, disabled = false, 
 function Loading({ text }: { text: string }) {
   const colors = useColors();
   return <View style={{ paddingVertical: 40 }}><Text style={{ color: colors.mutedForeground, textAlign: "center" }}>{text}</Text></View>;
+}
+
+function CatalogLoadingSkeleton({ text }: { text: string }) {
+  const colors = useColors();
+  const { width } = useWindowDimensions();
+  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  return <View style={{ paddingVertical: 16 }}>
+    <View style={{ flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, paddingVertical: 18 }}>
+      <ActivityIndicator size="small" color={colors.primary} />
+      <Text style={{ color: colors.mutedForeground, fontWeight: "600" }}>{text}</Text>
+    </View>
+    <View style={s.grid}>{Array.from({ length: columns * 2 }, (_, index) => <View key={index} style={[s.card, { width: `${100 / columns}%` }]}> 
+      <View style={[s.media, { borderColor: colors.border, backgroundColor: colors.card }]}> 
+        <View style={[s.posterBig, { backgroundColor: colors.muted, opacity: 0.72 }]} />
+        <View style={{ padding: 9, gap: 6 }}>
+          <View style={[s.homeSkeletonLine, { width: "82%", backgroundColor: colors.muted }]} />
+          <View style={[s.homeSkeletonLine, { width: "52%", backgroundColor: colors.muted }]} />
+        </View>
+      </View>
+    </View>)}</View>
+  </View>;
 }
 
 function Poster({ uri, title }: { uri?: string; title: string }) {
