@@ -2,6 +2,13 @@ import { redactSensitiveText } from "./safeLog";
 
 export type ProviderSwitchPath = "memory" | "cache" | "network";
 
+type PrimedSnapshot = {
+  providerId: string;
+  snapshot: unknown;
+};
+
+let primedSnapshot: PrimedSnapshot | null = null;
+
 export function chooseProviderSwitchPath(options: {
   hasInMemoryChannels: boolean;
   hasUsableCatalogCache: boolean;
@@ -26,6 +33,25 @@ export function safeProviderSwitchError(caught: unknown) {
     ? caught.message
     : "The saved provider could not be opened.";
   return redactSensitiveText(message);
+}
+
+export function primeProviderSwitchSnapshot<T>(providerId: string, snapshot: T) {
+  primedSnapshot = { providerId, snapshot };
+}
+
+export function hasPrimedProviderSwitchSnapshot(providerId: string) {
+  return primedSnapshot?.providerId === providerId;
+}
+
+export function peekProviderSwitchSnapshot<T>(providerId: string): T | null {
+  if (primedSnapshot?.providerId !== providerId) return null;
+  return primedSnapshot.snapshot as T;
+}
+
+export function clearProviderSwitchSnapshot(providerId?: string) {
+  if (!providerId || primedSnapshot?.providerId === providerId) {
+    primedSnapshot = null;
+  }
 }
 
 export function shouldPreserveProviderSwitchSnapshot(options: {
