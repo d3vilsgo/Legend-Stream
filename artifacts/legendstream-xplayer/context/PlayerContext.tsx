@@ -24,6 +24,11 @@ import { deleteCredentials, readCredentials, saveCredentials, type ProviderSecre
 import { credentialFieldsEqual, hasRequiredCredentialFields, migratedLegacyStateAfterVerification, resolveCredentialState } from "@/lib/providerCredentialState";
 import type { ProviderMetadataCommitMetrics } from "@/lib/providerBackupService";
 import {
+  chooseProviderSwitchPath,
+  hasPrimedProviderSwitchSnapshot,
+  safeProviderSwitchError,
+} from "@/lib/providerSwitchUx";
+import {
   clearLiveHistoryProvider,
   commitLiveHistoryV2,
   emptyLiveHistoryV2,
@@ -925,7 +930,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setIsLoading(true);
     setError(null);
     try {
-      if (current.channels.some((channel) => channel.providerId === providerId)) {
+      const switchPath = chooseProviderSwitchPath({
+        hasInMemoryChannels: current.channels.some(
+          (channel) => channel.providerId === providerId,
+        ),
+        hasUsableCatalogCache: hasPrimedProviderSwitchSnapshot(providerId),
+      });
+      if (switchPath === "memory" || switchPath === "cache") {
         await persist({
           ...current,
           provider: existing,
@@ -961,11 +972,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       });
       return true;
     } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? caught.message
-          : "The saved provider could not be opened.",
-      );
+      setError(safeProviderSwitchError(caught));
       return false;
     } finally {
       setIsLoading(false);
