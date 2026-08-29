@@ -1,5 +1,6 @@
 import type { Channel } from "./iptv";
 import { normalizeXtreamBaseUrl } from "./iptv";
+import { buildM3UStreamUrl } from "./m3uCatalogRefs";
 import {
   getVodInfo,
   type XtreamSeriesItem,
@@ -55,6 +56,10 @@ function requireXtreamCredentials(provider: CatalogRuntimeProvider) {
   };
 }
 
+function providerSource(provider: CatalogRuntimeProvider) {
+  return provider.url || provider.playlistUrl || "";
+}
+
 function liveRuntimeItem(
   persisted: PersistedLiveCatalogItem,
   provider: CatalogRuntimeProvider,
@@ -69,6 +74,8 @@ function liveRuntimeItem(
     } catch {
       streamUrl = "";
     }
+  } else if (persisted.playbackRef.type === "m3u-path" && provider.type === "m3u") {
+    streamUrl = buildM3UStreamUrl(providerSource(provider), persisted.playbackRef) ?? "";
   }
   return {
     id: persisted.id,
@@ -85,7 +92,19 @@ function liveRuntimeItem(
   };
 }
 
-function vodRuntimeItem(persisted: PersistedVodCatalogItem): XtreamVodItem {
+function vodRuntimeItem(
+  persisted: PersistedVodCatalogItem,
+  provider: CatalogRuntimeProvider,
+): XtreamVodItem {
+  let directSource: string | undefined;
+  if (persisted.playbackRef.type === "m3u-path" && provider.type === "m3u") {
+    directSource = buildM3UStreamUrl(providerSource(provider), persisted.playbackRef) ?? undefined;
+  } else if (
+    persisted.playbackRef.type === "xtream-vod" &&
+    persisted.playbackRef.sourceMode === "direct"
+  ) {
+    directSource = makeDirectVodRuntimeSource(persisted);
+  }
   return {
     stream_id: persisted.stream_id,
     name: persisted.name,
@@ -95,9 +114,7 @@ function vodRuntimeItem(persisted: PersistedVodCatalogItem): XtreamVodItem {
     added: persisted.added,
     category_id: persisted.category_id,
     container_extension: persisted.container_extension,
-    direct_source: persisted.playbackRef.sourceMode === "direct"
-      ? makeDirectVodRuntimeSource(persisted)
-      : undefined,
+    direct_source: directSource,
     plot: persisted.plot,
     cast: persisted.cast,
     director: persisted.director,
@@ -144,7 +161,7 @@ export async function getCachedVodItems(
   const rows = await getCachedPersistedItems(provider.id, "vod", categoryId, limit);
   return rows
     .filter((row): row is PersistedVodCatalogItem => row.catalogKind === "vod")
-    .map(vodRuntimeItem);
+    .map((row) => vodRuntimeItem(row, provider));
 }
 
 export async function getCachedSeriesItems(
@@ -169,7 +186,7 @@ export async function getNewCachedVodItems(provider: CatalogRuntimeProvider, lim
   const rows = await getNewCachedPersistedItems(provider.id, "vod", limit);
   return rows
     .filter((row): row is PersistedVodCatalogItem => row.catalogKind === "vod")
-    .map(vodRuntimeItem);
+    .map((row) => vodRuntimeItem(row, provider));
 }
 
 export async function getNewCachedSeriesItems(provider: CatalogRuntimeProvider, limit = 24) {

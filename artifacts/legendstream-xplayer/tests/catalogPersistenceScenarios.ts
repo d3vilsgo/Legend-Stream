@@ -1,3 +1,4 @@
+import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -49,6 +50,7 @@ const directVod = {
 };
 const projectedDirect = projectCatalogItems(providerId, "vod", [directVod as any])[0] as PersistedVodCatalogItem;
 const directJson = JSON.stringify(projectedDirect);
+assert.equal(projectedDirect.playbackRef.type, "xtream-vod");
 expect(
   projectedDirect.playbackRef.sourceMode === "direct" &&
   !directJson.includes("direct_source") && !directJson.includes("secret-token") &&
@@ -62,6 +64,7 @@ const canonicalVod = projectCatalogItems(providerId, "vod", [{
   container_extension: "mp4",
   category_id: 9,
 } as any])[0] as PersistedVodCatalogItem;
+assert.equal(canonicalVod.playbackRef.type, "xtream-vod");
 expect(
   canonicalVod.playbackRef.sourceMode === "canonical" && canonicalVod.playbackRef.streamId === "55",
   "canonical VOD must preserve credential-free identity",

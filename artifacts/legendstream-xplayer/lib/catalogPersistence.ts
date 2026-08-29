@@ -1,5 +1,9 @@
 import type { Channel } from "./iptv";
 import { normalizeImageUrl } from "./imageUrl";
+import {
+  isSafeM3UPlaybackRef,
+  type M3UPathPlaybackRef,
+} from "./m3uCatalogRefs";
 import type { XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
 
 export type CatalogKind = "live" | "vod" | "series";
@@ -11,13 +15,26 @@ export type PersistedLivePlaybackRef =
       streamId: string;
       containerExtension: string;
     }
+  | M3UPathPlaybackRef
   | { type: "unresolved" };
 
-export type PersistedVodPlaybackRef = {
+export type PersistedXtreamVodPlaybackRef = {
   type: "xtream-vod";
   streamId: string;
   containerExtension: string;
   sourceMode: CatalogSourceMode;
+};
+
+export type PersistedVodPlaybackRef = PersistedXtreamVodPlaybackRef | M3UPathPlaybackRef;
+
+export type PersistedM3UEpisode = {
+  id: string;
+  title: string;
+  category: string;
+  season: number;
+  episode: number;
+  logoUrl?: string;
+  playbackRef: M3UPathPlaybackRef;
 };
 
 export type PersistedLiveCatalogItem = {
@@ -74,6 +91,7 @@ export type PersistedSeriesCatalogItem = {
   rating?: string | number;
   category_id?: string | number;
   backdrop_path?: string[];
+  m3uEpisodes?: PersistedM3UEpisode[];
 };
 
 export type PersistedCatalogItem =
@@ -99,6 +117,19 @@ const stringOrNumber = (value: unknown) =>
 const stringArray = (value: unknown) =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
 
+function normalizeM3UPlaybackRef(
+  value: unknown,
+  expectedKind: M3UPathPlaybackRef["kind"],
+): M3UPathPlaybackRef | null {
+  if (!isSafeM3UPlaybackRef(value) || value.kind !== expectedKind) return null;
+  return {
+    type: "m3u-path",
+    kind: value.kind,
+    streamId: value.streamId,
+    containerExtension: value.containerExtension,
+  };
+}
+
 function parseXtreamLivePlaybackRef(source: unknown): PersistedLivePlaybackRef {
   if (typeof source !== "string" || !source) return { type: "unresolved" };
   try {
@@ -120,6 +151,8 @@ function parseXtreamLivePlaybackRef(source: unknown): PersistedLivePlaybackRef {
 }
 
 function normalizeLivePlaybackRef(value: unknown): PersistedLivePlaybackRef {
+  const m3u = normalizeM3UPlaybackRef(value, "live");
+  if (m3u) return m3u;
   const raw = asObject(value);
   if (!raw) return { type: "unresolved" };
   if (raw.type === "xtream-live") {
@@ -133,6 +166,8 @@ function normalizeLivePlaybackRef(value: unknown): PersistedLivePlaybackRef {
 }
 
 function normalizeVodPlaybackRef(value: unknown, fallback: Record<string, unknown>): PersistedVodPlaybackRef | null {
+  const m3u = normalizeM3UPlaybackRef(value, "movie");
+  if (m3u) return m3u;
   const raw = asObject(value);
   const streamId = stringValue(raw?.streamId) ?? String(stringOrNumber(fallback.stream_id) ?? "");
   if (!streamId) return null;
@@ -144,15 +179,43 @@ function normalizeVodPlaybackRef(value: unknown, fallback: Record<string, unknow
   return { type: "xtream-vod", streamId, containerExtension, sourceMode };
 }
 
+function normalizeM3UEpisodes(value: unknown): PersistedM3UEpisode[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const episodes: PersistedM3UEpisode[] = [];
+  for (const item of value) {
+    const raw = asObject(item);
+    if (!raw) continue;
+    const id = nonBlankString(raw.id);
+    const title = nonBlankString(raw.title);
+    const category = stringValue(raw.category) ?? "Series";
+    const season = numberValue(raw.season);
+    const episode = numberValue(raw.episode);
+    const playbackRef = normalizeM3UPlaybackRef(raw.playbackRef, "series");
+    if (!id || !title || season === undefined || episode === undefined || !playbackRef) continue;
+    episodes.push({
+      id,
+      title,
+      category,
+      season: Math.max(1, Math.trunc(season)),
+      episode: Math.max(1, Math.trunc(episode)),
+      logoUrl: normalizeImageUrl(raw.logoUrl) ?? undefined,
+      playbackRef,
+    });
+  }
+  return episodes.length ? episodes : undefined;
+}
+
 function projectLive(providerId: string, value: unknown): PersistedLiveCatalogItem | null {
   const raw = asObject(value);
   if (!raw) return null;
   const id = stringValue(raw.id);
   const name = nonBlankString(raw.name);
   if (!id || !name) return null;
-  const playbackRef = raw.schemaVersion === 1 && raw.catalogKind === "live"
+  const playbackRef = raw.playbackRef
     ? normalizeLivePlaybackRef(raw.playbackRef)
-    : parseXtreamLivePlaybackRef(raw.streamUrl);
+    : raw.schemaVersion === 1 && raw.catalogKind === "live"
+      ? normalizeLivePlaybackRef(raw.playbackRef)
+      : parseXtreamLivePlaybackRef(raw.streamUrl);
   return {
     schemaVersion: 1,
     catalogKind: "live",
@@ -222,6 +285,7 @@ function projectSeries(providerId: string, value: unknown): PersistedSeriesCatal
     rating: stringOrNumber(raw.rating),
     category_id: stringOrNumber(raw.category_id),
     backdrop_path: stringArray(raw.backdrop_path),
+    m3uEpisodes: normalizeM3UEpisodes(raw.m3uEpisodes),
   };
 }
 
@@ -258,6 +322,9 @@ export function normalizePersistedCatalogPayload(
 const RUNTIME_SCHEME = "legendstream-catalog:";
 
 export function makeDirectVodRuntimeSource(ref: PersistedVodCatalogItem): string {
+  if (ref.playbackRef.type !== "xtream-vod") {
+    throw new Error("Only Xtream VOD references use the catalog runtime scheme.");
+  }
   return `legendstream-catalog://xtream/movie/${encodeURIComponent(ref.providerId)}/${encodeURIComponent(ref.playbackRef.streamId)}?ext=${encodeURIComponent(ref.playbackRef.containerExtension)}`;
 }
 

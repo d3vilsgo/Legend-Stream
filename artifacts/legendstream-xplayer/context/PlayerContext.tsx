@@ -24,8 +24,15 @@ import { deleteCredentials, readCredentials, saveCredentials, type ProviderSecre
 import { credentialFieldsEqual, hasRequiredCredentialFields, migratedLegacyStateAfterVerification, resolveCredentialState } from "@/lib/providerCredentialState";
 import type { ProviderMetadataCommitMetrics } from "@/lib/providerBackupService";
 import {
+  consumeM3UCacheActivation,
+  hydrateM3UProviderCache,
+  markM3UCacheActivation,
+  persistM3UProviderCache,
+} from "@/lib/m3uCatalogCache";
+import {
   chooseProviderSwitchPath,
   hasPrimedProviderSwitchSnapshot,
+  peekProviderSwitchSnapshot,
   safeProviderSwitchError,
 } from "@/lib/providerSwitchUx";
 import {
@@ -65,6 +72,7 @@ export type EpgSelection = { now?: EpgProgram; next?: EpgProgram };
 
 const EPG_CACHE_TTL_MS = 15 * 60 * 1000;
 const EPG_START_DELAY_MS = 1_200;
+const M3U_BACKGROUND_REFRESH_DELAY_MS = 1_250;
 const LARGE_PROVIDER_CHANNEL_THRESHOLD = 1_000;
 const LARGE_PROVIDER_INITIAL_EPG_CHANNELS = 48;
 const XTREAM_PROBE_TIMEOUT_MS = 7_000;
@@ -259,9 +267,16 @@ function toXtreamLoadProvider(provider: Provider): Provider {
     : provider;
 }
 
+function persistM3ULoadInBackground(provider: Provider, loaded: Awaited<ReturnType<typeof loadProvider>>) {
+  if (provider.type !== "m3u") return;
+  void persistM3UProviderCache(provider, loaded).catch(() => undefined);
+}
+
 async function loadProviderSmart(provider: Provider) {
   if (provider.type !== "xtream") {
-    return { provider, loaded: await loadProvider(provider) };
+    const loaded = await loadProvider(provider);
+    persistM3ULoadInBackground(provider, loaded);
+    return { provider, loaded };
   }
   const parsed = parseXtreamGetPhp(provider.url);
   if (!parsed) {
@@ -285,7 +300,9 @@ async function loadProviderSmart(provider: Provider) {
       username: undefined,
       password: undefined,
     };
-    return { provider: fallback, loaded: await loadProvider(fallback) };
+    const loaded = await loadProvider(fallback);
+    persistM3ULoadInBackground(fallback, loaded);
+    return { provider: fallback, loaded };
   }
 }
 
@@ -518,6 +535,18 @@ const readState = async (): Promise<HydratedState> => {
     history: historyForProvider(liveHistory, provider?.id),
     activeProviderId: activeProviderId ?? provider?.id,
   };
+
+  if (provider?.type === "m3u" && !provider.needsCredentials) {
+    try {
+      const cached = await hydrateM3UProviderCache(provider);
+      if (cached) {
+        next.channels = cached.live;
+        markM3UCacheActivation(provider.id);
+      }
+    } catch {
+      // A cache read failure must preserve the existing network fallback path.
+    }
+  }
 
   if (providers.every((item) => !item.needsCredentials)) {
     await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
@@ -919,6 +948,51 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const refreshProviderInBackground = async (providerId: string) => {
+    const current = stateRef.current;
+    const existing = current.providers.find((item) => item.id === providerId);
+    if (!existing || existing.type !== "m3u") return;
+    try {
+      const smart = await loadProviderSmart(fromProvider(existing));
+      const updated = toProvider({
+        ...smart.provider,
+        lastLoadedAt: Date.now(),
+        channelCount: smart.loaded.channels.length,
+        epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
+        loadError: undefined,
+      });
+      await saveProviderSecrets(updated);
+      epgCacheRef.current.delete(providerId);
+      const latest = stateRef.current;
+      await persist({
+        ...latest,
+        provider: latest.provider?.id === providerId ? updated : latest.provider,
+        providers: latest.providers.map((item) => item.id === providerId ? updated : item),
+        channels: [
+          ...latest.channels.filter((channel) => channel.providerId !== providerId),
+          ...smart.loaded.channels,
+        ],
+      });
+    } catch {
+      // A background refresh failure must never hide or invalidate usable cached rows.
+    }
+  };
+
+  useEffect(() => {
+    const active = state.provider;
+    if (isHydrating || !active || active.type !== "m3u") return;
+    if (!consumeM3UCacheActivation(active.id)) return;
+    let cancelled = false;
+    const providerId = active.id;
+    const timer = setTimeout(() => {
+      if (!cancelled) void refreshProviderInBackground(providerId);
+    }, M3U_BACKGROUND_REFRESH_DELAY_MS);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [isHydrating, state.provider?.id, state.provider?.type]);
+
   const setActiveProvider = async (providerId: string) => {
     const current = stateRef.current;
     const existing = current.providers.find((item) => item.id === providerId);
@@ -937,11 +1011,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         hasUsableCatalogCache: hasPrimedProviderSwitchSnapshot(providerId),
       });
       if (switchPath === "memory" || switchPath === "cache") {
+        const primed = existing.type === "m3u" && switchPath === "cache"
+          ? peekProviderSwitchSnapshot<{ live?: Channel[] }>(providerId)
+          : null;
+        const cachedLive = primed?.live ?? [];
         await persist({
           ...current,
           provider: existing,
           activeProviderId: providerId,
           history: historyForProvider(liveHistoryRef.current, providerId),
+          channels: cachedLive.length
+            ? [
+                ...current.channels.filter((channel) => channel.providerId !== providerId),
+                ...cachedLive,
+              ]
+            : current.channels,
         });
         return true;
       }
