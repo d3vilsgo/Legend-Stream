@@ -62,6 +62,10 @@ import {
   getNewCachedSeriesItems,
   getNewCachedVodItems,
 } from "@/lib/catalogRuntime";
+import {
+  clearProviderSwitchSnapshot,
+  peekProviderSwitchSnapshot,
+} from "@/lib/providerSwitchUx";
 import type { Channel } from "@/lib/iptv";
 
 export type CatalogSnapshot = {
@@ -445,12 +449,21 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     activeModeRef.current = null;
     runningRef.current = null;
     backgroundStartedRef.current = null;
-    setSnapshot(EMPTY_SNAPSHOT);
-    setHasUsableCache(false);
+
+    const active = provider;
+    const primedSnapshot = active
+      ? peekProviderSwitchSnapshot<CatalogSnapshot>(active.id)
+      : null;
+    if (primedSnapshot) {
+      setSnapshot(primedSnapshot);
+      setHasUsableCache(true);
+    } else {
+      setSnapshot(EMPTY_SNAPSHOT);
+      setHasUsableCache(false);
+    }
     setSyncStateLocal(null);
     setIsInitialSyncRunning(false);
 
-    const active = provider;
     if (!active) return;
     let disposed = false;
     let backgroundTimer: ReturnType<typeof setTimeout> | undefined;
@@ -466,8 +479,10 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         if (disposed) return;
         const usable = hasUsableCatalogCache(counts);
 
-        // Cache-first: publish local rows before doing any update request.
+        // Cache-first: publish local rows before doing any update request. A provider-switch
+        // handoff may already be showing the target cache, so never blank it first.
         await refreshSnapshot();
+        clearProviderSwitchSnapshot(active.id);
         if (disposed || active.type !== "xtream") return;
 
         // Only a genuinely empty, never-completed cache uses the blocking initial path.
@@ -485,6 +500,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           }, BACKGROUND_SYNC_DELAY_MS);
         }
       } catch {
+        clearProviderSwitchSnapshot(active.id);
         // SQLite/provider failures leave the legacy on-demand catalog path intact.
       }
     })();
