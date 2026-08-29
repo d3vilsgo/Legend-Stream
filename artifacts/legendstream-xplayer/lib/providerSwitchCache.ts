@@ -13,6 +13,10 @@ import {
   getNewCachedSeriesItems,
   getNewCachedVodItems,
 } from "./catalogRuntime";
+import {
+  hydrateM3UProviderCache,
+  markM3UCacheActivation,
+} from "./m3uCatalogCache";
 import { primeProviderSwitchSnapshot } from "./providerSwitchUx";
 import type { Channel } from "./iptv";
 import type { XtreamCategory, XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
@@ -51,6 +55,29 @@ export type ProviderSwitchCachePreparation = {
 export async function prepareProviderSwitchCache(
   provider: ProviderSwitchCacheProvider,
 ): Promise<ProviderSwitchCachePreparation | null> {
+  if (provider.type === "m3u") {
+    const cached = await hydrateM3UProviderCache(provider as any);
+    if (!cached) return null;
+    const snapshot: ProviderSwitchCatalogSnapshot = {
+      providerId: provider.id,
+      ready: cached.ready,
+      counts: cached.counts,
+      live: cached.live,
+      movies: cached.movies.slice(0, HOME_SAMPLE_LIMIT),
+      series: cached.series.slice(0, HOME_SAMPLE_LIMIT),
+      newChannels: cached.newChannels,
+      newMovies: cached.newMovies,
+      newSeries: cached.newSeries,
+    };
+    primeProviderSwitchSnapshot(provider.id, snapshot);
+    markM3UCacheActivation(provider.id);
+    return {
+      snapshot,
+      live: cached.live,
+      vodCategories: cached.vodCategories,
+      seriesCategories: cached.seriesCategories,
+    };
+  }
   if (provider.type !== "xtream") return null;
 
   await initCatalogCache();
