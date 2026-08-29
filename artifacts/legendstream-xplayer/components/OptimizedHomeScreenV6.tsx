@@ -47,6 +47,8 @@ import { DownloadedMedia } from "@/lib/downloads";
 import { getM3UCatalog } from "@/lib/iptv";
 import { yieldToUi } from "@/lib/cooperative";
 import { normalizeImageUrl } from "@/lib/imageUrl";
+import { providerListPresentation } from "@/lib/providerDisplaySecurity";
+import { redactSensitiveText } from "@/lib/safeLog";
 import {
   buildEpisodeStreamUrl,
   buildVodStreamUrl,
@@ -87,6 +89,9 @@ const catalogCategoryMemory = {
   movies: "__all__",
   series: "__all__",
 };
+
+const visibleErrorText = (value?: string | null) =>
+  value ? redactSensitiveText(value) : null;
 
 const flattenCatalogCache = <T,>(cache: Record<string, T[]>) =>
   Object.values(cache).flat();
@@ -782,7 +787,7 @@ export default function OptimizedHomeScreenV6() {
     </View>
 
     {error || catalogError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}> 
-      <Text style={{ color: colors.destructive, flex: 1 }}>{error || catalogError}</Text>
+      <Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError)}</Text>
       <Pressable onPress={() => { clearError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable>
     </View> : null}
 
@@ -831,12 +836,12 @@ function SavedAccounts({ providers, busy, error, onOpen, onAdd, onRemove }: { pr
     <Text style={[s.brandLarge, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text>
     <Text style={[s.title, { color: colors.foreground }]}>{t("savedConnections")}</Text>
     <Text style={{ color: colors.mutedForeground }}>{t("chooseAccount")}</Text>
-    {error ? <Text style={{ color: colors.destructive }}>{error}</Text> : null}
+    {error ? <Text style={{ color: colors.destructive }}>{visibleErrorText(error)}</Text> : null}
     <View style={{ gap: 10 }}>{providers.map((item) => <View key={item.id} style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}> 
       <Pressable style={{ flex: 1 }} onPress={() => onOpen(item.id)} disabled={busy}>
         <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16 }}>{item.name}</Text>
-        <Text style={{ color: item.needsCredentials ? colors.destructive : colors.mutedForeground }}>{item.needsCredentials ? t("credentialsMissing") : `${item.type.toUpperCase()} · ${item.username || item.mac || item.type}`}</Text>
-        <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{item.url || item.playlistUrl}</Text>
+        <Text style={{ color: item.needsCredentials ? colors.destructive : colors.mutedForeground }}>{item.needsCredentials ? t("credentialsMissing") : providerListPresentation(item).meta}</Text>
+        <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{providerListPresentation(item).host}</Text>
       </Pressable>
       <Pressable onPress={() => onRemove(item.id)} style={s.iconButton}><Feather name="trash-2" size={20} color={colors.mutedForeground} /></Pressable>
     </View>)}</View>
@@ -858,6 +863,7 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   const [url, setUrl] = useState(existing?.playlistUrl || existing?.url || "");
   const [username, setUsername] = useState(existing?.username ?? "");
   const [password, setPassword] = useState(existing?.password ?? "");
+  const [passwordVisible, setPasswordVisible] = useState(false);
   const [mac, setMac] = useState(existing?.mac ?? "");
   const [epgUrl, setEpgUrl] = useState(existing?.epgUrl ?? "");
   const [localError, setLocalError] = useState<string | null>(null);
@@ -887,10 +893,27 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
       <View style={s.row}>{(["xtream", "m3u", "stalker"] as ProviderType[]).map((item) => <FocusButton key={item} label={item === "xtream" ? "Xtream" : item === "m3u" ? "M3U" : "Stalker"} variant={type === item ? "secondary" : "ghost"} onPress={() => setType(item)} disabled={credentialsOnly} />)}</View>
       <Input label={t("sourceName")} value={name} onChangeText={setName} editable={!credentialsOnly} />
       <Input label={t("serverUrl")} value={url} onChangeText={setUrl} autoCapitalize="none" editable={!credentialsOnly || !url} />
-      {type === "xtream" ? <><Input label={t("username")} value={username} onChangeText={setUsername} autoCapitalize="none" /><Input label={t("password")} value={password} onChangeText={setPassword} secureTextEntry /></> : null}
+      {type === "xtream" ? <>
+        <Input label={t("username")} value={username} onChangeText={setUsername} autoCapitalize="none" />
+        <Input
+          label={t("password")}
+          value={password}
+          onChangeText={setPassword}
+          secureTextEntry={!passwordVisible}
+          trailingAction={<Pressable
+            accessibilityRole="button"
+            accessibilityLabel={passwordVisible ? "Şifreyi gizle" : "Şifreyi göster"}
+            hitSlop={8}
+            onPress={() => setPasswordVisible((value) => !value)}
+            style={s.iconButton}
+          >
+            <Feather name={passwordVisible ? "eye-off" : "eye"} size={20} color={colors.mutedForeground} />
+          </Pressable>}
+        />
+      </> : null}
       {type === "stalker" ? <Input label={t("macAddress")} value={mac} onChangeText={setMac} autoCapitalize="none" /> : null}
       <Input label={t("epgOptional")} value={epgUrl} onChangeText={setEpgUrl} autoCapitalize="none" editable={!credentialsOnly} />
-      {localError || error ? <Text style={{ color: colors.destructive }}>{localError || error}</Text> : null}
+      {localError || error ? <Text style={{ color: colors.destructive }}>{visibleErrorText(localError || error)}</Text> : null}
       <View style={s.row}>
         <FocusButton label={busy ? t("connecting") : existing ? t("saveConnect") : t("addConnect")} icon="log-in" variant="primary" onPress={() => void submit()} disabled={busy} />
         {onCancel ? <FocusButton label={t("cancel")} variant="ghost" onPress={onCancel} /> : null}
@@ -1714,7 +1737,7 @@ function Settings({ provider, providers, busy, onEdit, onAdd, onSwitch, onDiscon
     <View style={{ marginTop: 24 }}>
       <Text style={[s.section, { color: colors.foreground }]}>{t("savedAccounts")}</Text>
       <View style={{ gap: 8 }}>{providers.map((item) => <View key={item.id} style={[s.accountCard, { borderColor: item.id === provider.id ? colors.primary : colors.border, backgroundColor: colors.card }]}> 
-        <Pressable disabled={busy} onPress={() => onSwitch(item.id)} style={{ flex: 1 }}><Text style={{ color: colors.foreground, fontWeight: "800" }}>{item.name}{item.id === provider.id ? ` · ${t("active")}` : ""}</Text><Text style={{ color: item.needsCredentials ? colors.destructive : colors.mutedForeground }}>{item.needsCredentials ? t("credentialsMissing") : item.username || item.type.toUpperCase()}</Text></Pressable>
+        <Pressable disabled={busy} onPress={() => onSwitch(item.id)} style={{ flex: 1 }}><Text style={{ color: colors.foreground, fontWeight: "800" }}>{item.name}{item.id === provider.id ? ` · ${t("active")}` : ""}</Text><Text style={{ color: item.needsCredentials ? colors.destructive : colors.mutedForeground }}>{item.needsCredentials ? t("credentialsMissing") : providerListPresentation(item).meta}</Text><Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{providerListPresentation(item).host}</Text></Pressable>
         <Pressable onPress={() => onRemove(item.id)} style={s.iconButton}><Feather name="trash-2" size={20} color={colors.mutedForeground} /></Pressable>
       </View>)}</View>
     </View>
@@ -1887,7 +1910,7 @@ function HomeAccountTile({ item, active = false, add = false, disabled = false, 
           {active ? <View style={[s.accountActivePill, { backgroundColor: `${colors.primary}1C` }]}><View style={[s.dot, { backgroundColor: colors.primary }]} /><Text style={{ color: colors.primary, fontSize: 11, fontWeight: "600" }}>{t("active")}</Text></View> : null}
         </View>
         <Text numberOfLines={1} style={[s.accountNamePremium, { color: colors.foreground }]}>{item?.name}</Text>
-        <Text numberOfLines={1} style={[s.accountMetaPremium, { color: colors.mutedForeground }]}>{item?.username || item?.type.toUpperCase()}</Text>
+        <Text numberOfLines={1} style={[s.accountMetaPremium, { color: colors.mutedForeground }]}>{item ? `${providerListPresentation(item).host} · ${providerListPresentation(item).meta}` : ""}</Text>
       </>}
     </Pressable>
   </Animated.View>;
@@ -1903,9 +1926,15 @@ function Poster({ uri, title }: { uri?: string; title: string }) {
   return uri ? <Image source={{ uri }} style={s.logo} /> : <View style={[s.logo, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}><Text style={{ color: colors.primary, fontWeight: "800" }}>{title.slice(0, 2).toUpperCase()}</Text></View>;
 }
 
-function Input({ label, ...props }: { label: string; value: string; onChangeText: (value: string) => void; autoCapitalize?: "none" | "sentences"; secureTextEntry?: boolean; editable?: boolean }) {
+function Input({ label, trailingAction, ...props }: { label: string; value: string; onChangeText: (value: string) => void; autoCapitalize?: "none" | "sentences"; secureTextEntry?: boolean; editable?: boolean; trailingAction?: React.ReactNode }) {
   const colors = useColors();
-  return <View style={{ gap: 6 }}><Text style={{ color: colors.mutedForeground, fontWeight: "700" }}>{label}</Text><TextInput {...props} style={[s.input, { color: colors.foreground, backgroundColor: colors.card, borderColor: colors.border }]} placeholderTextColor={colors.mutedForeground} /></View>;
+  return <View style={{ gap: 6 }}>
+    <Text style={{ color: colors.mutedForeground, fontWeight: "700" }}>{label}</Text>
+    <View style={{ position: "relative" }}>
+      <TextInput {...props} style={[s.input, trailingAction ? { paddingRight: 52 } : null, { color: colors.foreground, backgroundColor: colors.card, borderColor: colors.border }]} placeholderTextColor={colors.mutedForeground} />
+      {trailingAction ? <View pointerEvents="box-none" style={s.inputTrailingAction}>{trailingAction}</View> : null}
+    </View>
+  </View>;
 }
 
 const s = StyleSheet.create({
@@ -1929,6 +1958,7 @@ const s = StyleSheet.create({
   setup: { width: "100%", maxWidth: 720, alignSelf: "center", paddingHorizontal: 20, gap: 14 },
   row: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 8 },
   input: { borderWidth: 1, borderRadius: 12, minHeight: 50, paddingHorizontal: 14 },
+  inputTrailingAction: { position: "absolute", right: 4, top: 0, bottom: 0, justifyContent: "center", alignItems: "center" },
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },
   kicker: { fontSize: 12, fontWeight: "800", letterSpacing: 1.1, marginBottom: 8 },
   hero: { fontSize: 38, lineHeight: 43, fontWeight: "900" },
