@@ -182,10 +182,7 @@ test("get.php source is represented only by host plus masked account identity", 
 });
 
 test("provider edit screen keeps editable URL and username with explicit password reveal", () => {
-  const source = readFileSync(
-    new URL("../components/OptimizedHomeScreenV6.tsx", import.meta.url),
-    "utf8",
-  );
+  const source = readFileSync("components/OptimizedHomeScreenV6.tsx", "utf8");
   assert.match(source, /<Input label=\{t\("serverUrl"\)\} value=\{url\}/);
   assert.match(source, /<Input label=\{t\("username"\)\} value=\{username\}/);
   assert.match(source, /secureTextEntry=\{!passwordVisible\}/);
