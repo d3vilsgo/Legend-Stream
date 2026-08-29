@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { formatCatalogSyncMeasurement } from "../lib/catalogSyncMetrics";
 import {
   redactSensitiveText,
   sanitizeErrorForLog,
@@ -88,7 +89,59 @@ test("ordinary error text is retained rather than collapsed to a fixed code", ()
   });
 });
 
-const EXPECTED = 8;
+test("catalog sync diagnostics output is strict K4 allowlist", () => {
+  const output = formatCatalogSyncMeasurement({
+    providerId: "https://demo.example/player_api.php?username=alice&password=hunter2&token=secret-token",
+    providerName: "Secret Provider",
+    baseUrl: "https://demo.example",
+    username: "alice",
+    password: "hunter2",
+    token: "secret-token",
+    credential: "username=alice password=hunter2",
+    streamUrl: "https://demo.example/live/alice/hunter2/42.ts",
+    mode: "manual",
+    startedAt: 123,
+    totalMs: 4500,
+    liveSqliteWriteMs: 120,
+    vod: {
+      path: "bulk",
+      itemCount: 22241,
+      bulkParseMs: 310,
+      sqliteWriteMs: 900,
+      totalMs: 1800,
+      parallelMaxObserved: 0,
+    },
+    series: {
+      path: "parallel",
+      itemCount: 4991,
+      bulkParseMs: 80,
+      sqliteWriteMs: 420,
+      totalMs: 1600,
+      parallelMaxObserved: 6,
+      fallbackReason: "empty",
+    },
+  } as any);
+
+  assert.match(output, /^mode=manual$/m);
+  assert.match(output, /^totalMs=4500$/m);
+  assert.match(output, /^liveSqliteWriteMs=120$/m);
+  assert.match(output, /^vod\.path=bulk$/m);
+  assert.match(output, /^vod\.bulkParseMs=310$/m);
+  assert.match(output, /^vod\.sqliteWriteMs=900$/m);
+  assert.match(output, /^vod\.totalMs=1800$/m);
+  assert.match(output, /^vod\.itemCount=22241$/m);
+  assert.match(output, /^vod\.parallelMaxObserved=0$/m);
+  assert.match(output, /^vod\.fallbackReason=none$/m);
+  assert.match(output, /^series\.path=parallel$/m);
+  assert.match(output, /^series\.fallbackReason=empty$/m);
+
+  assert.doesNotMatch(
+    output,
+    /provider(?:Id|Name)?|server|baseUrl|https?:\/\/|username|password|token|credential|streamUrl|alice|hunter2|secret-token|demo\.example/i,
+  );
+});
+
+const EXPECTED = 9;
 if (scenarios.length !== EXPECTED) {
   throw new Error(`log redaction scenario registration mismatch: ${scenarios.length}/${EXPECTED}`);
 }

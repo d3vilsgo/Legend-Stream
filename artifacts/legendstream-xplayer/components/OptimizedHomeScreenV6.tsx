@@ -446,9 +446,6 @@ export default function OptimizedHomeScreenV6() {
       return false;
     }
 
-    // Persist the resolved type before parsing the potentially huge playlist.
-    // This prevents a slow/blocked M3U parse from leaving the account stored as
-    // Xtream and re-triggering the same catalog request after restart.
     await persistProviderAsM3U(provider.id);
     setProviderTypeOverride("m3u");
     clearError();
@@ -472,9 +469,6 @@ export default function OptimizedHomeScreenV6() {
       return true;
     }
 
-    // The storage migration is already durable even if parsing failed/timed
-    // out. Do not surface the stale Xtream JSON error or leave catalog loading
-    // permanently pending.
     if (target === "movies") {
       applyLocalVod();
       setVodLoaded(true);
@@ -629,8 +623,6 @@ export default function OptimizedHomeScreenV6() {
 
   const navigate = (target: ContentView) => {
     setView(target);
-    // __all__ is a real cache query, not an implicit/no-op initial state.
-    // This guarantees the first Movies/Series render hydrates the complete local catalog.
     if (target === "movies") void loadVodCategory("__all__");
     if (target === "series") void loadSeriesCategory("__all__");
     if (target !== "series") { setSelectedSeries(null); setSeriesInfo(null); }
@@ -1111,10 +1103,11 @@ function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = fal
   >{children}</Pressable>;
 }
 
-function ResilientCatalogImage({ uri, style, resizeMode = "cover" }: {
+function ResilientCatalogImage({ uri, style, resizeMode = "cover", fallbackIcon = "film" }: {
   uri?: string;
   style: any;
   resizeMode?: "cover" | "contain" | "stretch" | "repeat" | "center";
+  fallbackIcon?: keyof typeof Feather.glyphMap;
 }) {
   const colors = useColors();
   const normalized = normalizeImageUrl(uri);
@@ -1122,7 +1115,7 @@ function ResilientCatalogImage({ uri, style, resizeMode = "cover" }: {
   useEffect(() => setFailed(false), [normalized]);
   if (!normalized || failed) {
     return <View style={[style, { alignItems: "center", justifyContent: "center", backgroundColor: colors.muted }]}>
-      <Feather name="film" size={30} color={colors.primary} />
+      <Feather name={fallbackIcon} size={30} color={colors.primary} />
     </View>;
   }
   return <Image source={{ uri: normalized }} resizeMode={resizeMode} style={style} onError={() => setFailed(true)} />;
@@ -1260,7 +1253,7 @@ function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel
         style={[compact ? s.homeShelfCardCompact : s.homeShelfCard, { backgroundColor: colors.card, borderColor: colors.border }]}
       >
         <View style={[compact ? s.homeShelfImageCompact : s.homeShelfImage, { backgroundColor: colors.muted }]}> 
-          {item.image ? <Image source={{ uri: item.image }} resizeMode="cover" style={StyleSheet.absoluteFill} /> : <View style={s.homeShelfFallback}><Feather name={compact ? "radio" : "play-circle"} size={28} color={colors.primary} /></View>}
+          <ResilientCatalogImage uri={item.image} resizeMode="cover" style={StyleSheet.absoluteFill} fallbackIcon={compact ? "radio" : "play-circle"} />
           {!Platform.isTV && item.onRemove ? <Pressable onPress={item.onRemove} hitSlop={8} style={s.homeShelfRemove}><Feather name="x" size={14} color="#fff" /></Pressable> : null}
         </View>
         <Text numberOfLines={1} style={[s.homeShelfCardTitle, { color: colors.foreground }]}>{item.title}</Text>

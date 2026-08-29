@@ -110,6 +110,15 @@ export type XtreamCredentials = {
   password: string;
 };
 
+export type XtreamParseMetrics = {
+  bodyReadMs: number;
+  jsonParseMs: number;
+  parseMs: number;
+  responseChars: number;
+};
+
+export type XtreamParseMetricsSink = (metrics: XtreamParseMetrics) => void;
+
 export type EpisodePlaybackItem = {
   id: string;
   title: string;
@@ -188,8 +197,10 @@ const encodeCredentials = (credentials: XtreamCredentials) => ({
   password: credentials.password,
 });
 
-async function parseResponse(response: Response) {
+async function parseResponse(response: Response, onParseMetrics?: XtreamParseMetricsSink) {
+  const bodyReadStartedAt = Date.now();
   const text = await response.text();
+  const bodyReadMs = Date.now() - bodyReadStartedAt;
   await yieldToUi();
 
   if (response.status === 404) {
@@ -209,6 +220,7 @@ async function parseResponse(response: Response) {
   }
 
   let data: unknown;
+  const jsonParseStartedAt = Date.now();
   try {
     data = JSON.parse(text);
   } catch {
@@ -225,6 +237,13 @@ async function parseResponse(response: Response) {
       response.status,
     );
   }
+  const jsonParseMs = Date.now() - jsonParseStartedAt;
+  onParseMetrics?.({
+    bodyReadMs,
+    jsonParseMs,
+    parseMs: bodyReadMs + jsonParseMs,
+    responseChars: text.length,
+  });
   if (!response.ok) {
     const message = (data as any)?.error?.message;
     throw new XtreamCatalogError(
@@ -267,6 +286,7 @@ async function requestNative(
   action: string,
   params: Record<string, string | number | undefined> = {},
   signal?: AbortSignal,
+  onParseMetrics?: XtreamParseMetricsSink,
 ) {
   const normalized = encodeCredentials(credentials);
   const url = new URL("player_api.php", `${normalized.baseUrl}/`);
@@ -286,7 +306,7 @@ async function requestNative(
       },
       signal: requestAbort.signal,
     });
-    return await parseResponse(response);
+    return await parseResponse(response, onParseMetrics);
   } catch (caught) {
     if (signal?.aborted) throw caught;
     throw transportError(caught, "server");
@@ -300,6 +320,7 @@ async function requestWeb(
   action: string,
   params: Record<string, string | number | undefined> = {},
   signal?: AbortSignal,
+  onParseMetrics?: XtreamParseMetricsSink,
 ) {
   const requestAbort = linkedRequestSignal(signal, 25_000);
   try {
@@ -309,7 +330,7 @@ async function requestWeb(
       body: JSON.stringify({ ...encodeCredentials(credentials), action, params }),
       signal: requestAbort.signal,
     });
-    return await parseResponse(response);
+    return await parseResponse(response, onParseMetrics);
   } catch (caught) {
     if (signal?.aborted) throw caught;
     throw transportError(caught, "web proxy");
@@ -323,10 +344,11 @@ async function requestXtream(
   action: string,
   params: Record<string, string | number | undefined> = {},
   signal?: AbortSignal,
+  onParseMetrics?: XtreamParseMetricsSink,
 ) {
   return Platform.OS === "web"
-    ? requestWeb(credentials, action, params, signal)
-    : requestNative(credentials, action, params, signal);
+    ? requestWeb(credentials, action, params, signal, onParseMetrics)
+    : requestNative(credentials, action, params, signal, onParseMetrics);
 }
 
 function requireArray<T>(data: unknown, label: string): T[] {
@@ -365,10 +387,11 @@ export async function getVodStreams(
   credentials: XtreamCredentials,
   categoryId?: string | number,
   signal?: AbortSignal,
+  onParseMetrics?: XtreamParseMetricsSink,
 ) {
   const data = await requestXtream(credentials, "get_vod_streams", {
     category_id: categoryId,
-  }, signal);
+  }, signal, onParseMetrics);
   const rows = requireArray<XtreamVodItem>(data, "VOD streams");
   registerVodQueue(credentials, rows);
   await yieldToUi();
@@ -402,10 +425,11 @@ export async function getSeries(
   credentials: XtreamCredentials,
   categoryId?: string | number,
   signal?: AbortSignal,
+  onParseMetrics?: XtreamParseMetricsSink,
 ) {
   const data = await requestXtream(credentials, "get_series", {
     category_id: categoryId,
-  }, signal);
+  }, signal, onParseMetrics);
   await yieldToUi();
   return requireArray<XtreamSeriesItem>(data, "series catalog");
 }
