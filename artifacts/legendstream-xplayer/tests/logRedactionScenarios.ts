@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { formatCatalogSyncMeasurement } from "../lib/catalogSyncMetrics";
+import { providerListPresentation } from "../lib/providerDisplaySecurity";
 import {
   redactSensitiveText,
   sanitizeErrorForLog,
@@ -141,7 +143,57 @@ test("catalog sync diagnostics output is strict K4 allowlist", () => {
   );
 });
 
-const EXPECTED = 9;
+test("provider list presentation strips query string, scheme, port and path", () => {
+  const output = providerListPresentation({
+    type: "m3u",
+    url: "https://electanextycsy1.xyz:8080/get.php?username=alice&password=hunter2&type=m3u_plus",
+  });
+  assert.equal(output.host, "electanextycsy1.xyz");
+  assert.equal(output.maskedIdentifier, "al**e");
+  assert.doesNotMatch(
+    JSON.stringify(output),
+    /https?:\/\/|:8080|get\.php|\?|username=|password=|type=|hunter2/i,
+  );
+});
+
+test("provider list presentation never serializes password-shaped extra fields", () => {
+  const output = providerListPresentation({
+    type: "xtream",
+    url: "https://tv.example.test/player_api.php?username=sample-user&password=NeverShowMe123",
+    username: "sample-user",
+    password: "NeverShowMe123",
+    credential: "password=NeverShowMe123",
+    streamUrl: "https://tv.example.test/live/sample-user/NeverShowMe123/1.ts",
+  } as any);
+  const rendered = JSON.stringify(output);
+  assert.doesNotMatch(rendered, /NeverShowMe123|password|credential|streamUrl/i);
+});
+
+test("get.php source is represented only by host plus masked account identity", () => {
+  const output = providerListPresentation({
+    type: "m3u",
+    playlistUrl: "http://iptv.example.org/get.php?username=ab12345z&password=p455&type=m3u_plus&output=ts",
+  });
+  assert.deepEqual(output, {
+    host: "iptv.example.org",
+    maskedIdentifier: "ab*****z",
+    meta: "M3U · ab*****z",
+  });
+});
+
+test("provider edit screen keeps editable URL and username with explicit password reveal", () => {
+  const source = readFileSync(
+    new URL("../components/OptimizedHomeScreenV6.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /<Input label=\{t\("serverUrl"\)\} value=\{url\}/);
+  assert.match(source, /<Input label=\{t\("username"\)\} value=\{username\}/);
+  assert.match(source, /secureTextEntry=\{!passwordVisible\}/);
+  assert.match(source, /setPasswordVisible\(\(value\) => !value\)/);
+  assert.match(source, /name=\{passwordVisible \? "eye-off" : "eye"\}/);
+});
+
+const EXPECTED = 13;
 if (scenarios.length !== EXPECTED) {
   throw new Error(`log redaction scenario registration mismatch: ${scenarios.length}/${EXPECTED}`);
 }
