@@ -13,6 +13,7 @@ on:
 # 9.2 catalog gate: runtime catalog rows must pass explicit persisted DTO projection.
 # Catalog category fallback gate: __all__ must stay out of Xtream transport and empty cache must fall back.
 # Catalog availability gate: usable rows stay browsable across cancelled/error refreshes; initial blocking is cache-driven.
+# Provider switch UX gate: target cache handoff, fallback, tap lock, K4 error, active marker and non-empty snapshot must pass.
 # Catalog bulk sync gate: bulk-first, bounded parallel fallback, serial compatibility, cancellation and category mapping must pass.
 # Poster image resilience gate: artwork URLs normalize consistently and blank catalog names never persist.
 # Player live queue gate: stable identity, cache fallback, category scope and boundaries must pass.
@@ -89,6 +90,12 @@ jobs:
           set -euo pipefail
           availability="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-availability 2>&1 | tee /dev/stderr)"
           grep -F 'catalog availability scenarios: 7/7 passed' <<<"$availability"
+      - name: Provider switch UX regressions (6/6 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          provider_switch="$(pnpm --filter @workspace/legendstream-xplayer test:provider-switch 2>&1 | tee /dev/stderr)"
+          grep -F 'provider switch UX scenarios: 6/6 passed' <<<"$provider_switch"
       - name: Catalog bulk sync regressions (7/7 required)
         shell: bash
         run: |
