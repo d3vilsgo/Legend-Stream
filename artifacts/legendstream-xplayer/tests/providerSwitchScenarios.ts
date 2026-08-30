@@ -53,6 +53,13 @@ const scenario = async (name: string, run: () => void | Promise<void>) => {
 };
 
 const zeroRejects = () => emptyM3URefRejectionCounts();
+const completeScan = (total: number) => ({
+  scanTotalCandidateCount: total,
+  scanInspectedCount: total,
+  scanTruncated: false,
+  firstRejectKind: "none" as const,
+  firstRejectReason: "none" as const,
+});
 
 async function main() {
   await scenario("usable target cache selects cache path before blocking provider refetch", () => {
@@ -364,7 +371,7 @@ async function main() {
     assert.match(catalogMetricsSource, /readPersistedCatalogSyncMeasurement/);
   });
 
-  await scenario("M3U measurement output contains timings/counts but no credential or URL fields", () => {
+  await scenario("M3U measurement output separates before and after cache state without credential fields", () => {
     const output = formatM3USwitchMeasurement({
       kind: "m3u-switch",
       startedAt: 1,
@@ -376,8 +383,14 @@ async function main() {
         networkFallbackReason: "none",
         totalSwitchMs: 56,
         itemCounts: { live: 100, vod: 20, series: 10 },
-        cacheRawCounts: { live: 100, vod: 20, series: 10 },
-        cacheSyncPhase: "ready",
+        cacheBefore: {
+          rawCounts: { live: 90, vod: 10, series: 5 },
+          syncPhase: "syncing",
+        },
+        cacheAfter: {
+          rawCounts: { live: 100, vod: 20, series: 10 },
+          syncPhase: "ready",
+        },
       },
     });
     assert.match(output, /m3u\.sqliteReadMs=12/);
@@ -385,8 +398,11 @@ async function main() {
     assert.match(output, /m3u\.networkFallback=false/);
     assert.match(output, /m3u\.totalSwitchMs=56/);
     assert.match(output, /m3u\.itemCounts\.live=100/);
-    assert.match(output, /m3u\.cacheRawCounts\.live=100/);
-    assert.match(output, /m3u\.cacheSyncPhase=ready/);
+    assert.match(output, /m3u\.cacheBefore\.rawCounts\.live=90/);
+    assert.match(output, /m3u\.cacheBefore\.syncPhase=syncing/);
+    assert.match(output, /m3u\.cacheAfter\.rawCounts\.live=100/);
+    assert.match(output, /m3u\.cacheAfter\.syncPhase=ready/);
+    assert.doesNotMatch(output, /m3u\.cacheRawCounts\.|m3u\.cacheSyncPhase=/);
     assert.match(output, /m3u\.writeAttempted=false/);
     assert.doesNotMatch(output, /https?:\/\/|get\.php|username[=:]|password[=:]|token[=:]|provider(name|id)?[=:]/i);
   });
@@ -396,8 +412,10 @@ async function main() {
       kind: "m3u-cache-write",
       startedAt: 1,
       m3u: {
-        cacheRawCounts: { live: 0, vod: 0, series: 0 },
-        cacheSyncPhase: "error",
+        cacheAfter: {
+          rawCounts: { live: 0, vod: 0, series: 0 },
+          syncPhase: "error",
+        },
         write: {
           writeAttempted: true,
           writeOutcome: "sqlite-error",
@@ -406,11 +424,14 @@ async function main() {
           writeSafeCounts: { live: 3, vod: 2, series: 1 },
           writeWrittenCounts: { live: 3, vod: 0, series: 0 },
           writeRejectCounts: zeroRejects(),
+          scan: completeScan(6),
+          cleanupOutcome: "not-required",
+          cleanupStage: "none",
         },
       },
     });
     assert.match(output, /m3u\.writeOutcome=sqlite-error/);
-    assert.match(output, /m3u\.cacheSyncPhase=error/);
+    assert.match(output, /m3u\.cacheAfter\.syncPhase=error/);
     assert.match(writeRunnerSource, /const persisted = await persistM3UProviderCache\(provider, loaded\);/);
     assert.match(writeRunnerSource, /if \(!persisted\)/);
     assert.doesNotMatch(writeRunnerSource, /\.catch\(\(\) => undefined\)/);
@@ -467,11 +488,12 @@ async function main() {
     assert.deepEqual(projection.safeCounts, { live: 1, vod: 1, series: 1 });
     assert.equal(projection.unsafeOutcome, null);
     assert.deepEqual(projection.rejectionCounts, zeroRejects());
+    assert.deepEqual(projection.scan, completeScan(3));
     assert.match(m3uCacheSource, /writtenCounts\.live = await upsertCatalogItems/);
     assert.match(m3uCacheSource, /outcome: "success"/);
   });
 
-  await scenario("unsafe M3U refs produce the correct fail-closed outcome and rejection reason counters", () => {
+  await scenario("unsafe M3U refs fail fast on the first rejection", () => {
     const provider = {
       id: "m3u-provider",
       type: "m3u" as const,
@@ -505,13 +527,20 @@ async function main() {
     assert.deepEqual(projection.safeCounts, { live: 0, vod: 0, series: 0 });
     assert.deepEqual(projection.rejectionCounts, {
       "origin-mismatch": 1,
-      "path-shape": 1,
-      "query-present": 1,
-      "kind-mismatch": 1,
-      "missing-extension": 1,
-      "credential-path-mismatch": 1,
+      "path-shape": 0,
+      "query-present": 0,
+      "kind-mismatch": 0,
+      "missing-extension": 0,
+      "credential-path-mismatch": 0,
     });
-    assert.match(writeProjectionSource, /rejectionCounts\[inspection\.reason\] \+= 1/);
+    assert.deepEqual(projection.scan, {
+      scanTotalCandidateCount: 6,
+      scanInspectedCount: 1,
+      scanTruncated: true,
+      firstRejectKind: "live",
+      firstRejectReason: "origin-mismatch",
+    });
+    assert.match(writeProjectionSource, /if \(!inspection\.ref\) return reject\("live", inspection\.reason\)/);
   });
 
   await scenario("M3U write telemetry is counter-only and contains no URL or credential values", () => {
@@ -519,23 +548,38 @@ async function main() {
       kind: "m3u-cache-write",
       startedAt: 1,
       m3u: {
-        cacheRawCounts: { live: 9, vod: 8, series: 7 },
-        cacheSyncPhase: "error",
+        cacheAfter: {
+          rawCounts: { live: 9, vod: 8, series: 7 },
+          syncPhase: "error",
+        },
         write: {
           writeAttempted: true,
           writeOutcome: "unsafe-live-ref",
           writeMs: 42,
           writeInputCounts: { live: 10, vod: 8, series: 7 },
-          writeSafeCounts: { live: 9, vod: 8, series: 7 },
+          writeSafeCounts: { live: 9, vod: 0, series: 0 },
           writeWrittenCounts: { live: 0, vod: 0, series: 0 },
           writeRejectCounts: {
             ...zeroRejects(),
             "credential-path-mismatch": 1,
           },
+          scan: {
+            scanTotalCandidateCount: 25,
+            scanInspectedCount: 10,
+            scanTruncated: true,
+            firstRejectKind: "live",
+            firstRejectReason: "credential-path-mismatch",
+          },
+          cleanupOutcome: "error",
+          cleanupStage: "delete-catalog",
         },
       },
     });
     assert.match(output, /m3u\.writeRejectCounts\.credential-path-mismatch=1/);
+    assert.match(output, /m3u\.scanInspectedCount=10/);
+    assert.match(output, /m3u\.scanTruncated=true/);
+    assert.match(output, /m3u\.cleanupOutcome=error/);
+    assert.match(output, /m3u\.cleanupStage=delete-catalog/);
     assert.doesNotMatch(
       output,
       /https?:\/\/|get\.php|alice|swordfish|secret\.example|username\s*[=:]|password\s*[=:]|token\s*[=:]|host\s*[=:]/i,
