@@ -6,7 +6,7 @@ export type M3UPathPlaybackRef = {
   type: "m3u-path";
   kind: M3UStreamKind;
   streamId: string;
-  containerExtension: string;
+  containerExtension: string | null;
 };
 
 export type M3UProviderSource = {
@@ -55,17 +55,26 @@ export function buildM3UStreamUrl(
 ): string | null {
   const provider = parseM3UProviderSource(providerSource);
   if (!provider) return null;
-  return `${provider.baseUrl}/${ref.kind}/${encodeURIComponent(provider.username)}/${encodeURIComponent(provider.password)}/${encodeURIComponent(ref.streamId)}.${ref.containerExtension}`;
+  const username = encodeURIComponent(provider.username);
+  const password = encodeURIComponent(provider.password);
+  const streamId = encodeURIComponent(ref.streamId);
+  if (ref.containerExtension === null) {
+    if (ref.kind !== "live") return null;
+    return `${provider.baseUrl}/${username}/${password}/${streamId}`;
+  }
+  return `${provider.baseUrl}/${ref.kind}/${username}/${password}/${streamId}.${ref.containerExtension}`;
 }
 
 export function isSafeM3UPlaybackRef(value: unknown): value is M3UPathPlaybackRef {
   if (!value || typeof value !== "object") return false;
   const ref = value as Partial<M3UPathPlaybackRef>;
+  const extensionIsSafe =
+    (typeof ref.containerExtension === "string" && /^[a-zA-Z0-9]{1,10}$/.test(ref.containerExtension)) ||
+    (ref.kind === "live" && ref.containerExtension === null);
   return (
     ref.type === "m3u-path" &&
     (ref.kind === "live" || ref.kind === "movie" || ref.kind === "series") &&
     typeof ref.streamId === "string" && ref.streamId.length > 0 &&
-    typeof ref.containerExtension === "string" &&
-    /^[a-zA-Z0-9]{1,10}$/.test(ref.containerExtension)
+    extensionIsSafe
   );
 }
