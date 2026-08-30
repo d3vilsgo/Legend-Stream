@@ -10,6 +10,7 @@
     "test:backup": "tsx tests/providerBackupScenarios.ts",
     "test:logging": "tsx tests/logRedactionScenarios.ts && tsx tests/m3uDiagnosticsK4Scenarios.ts",
     "test:m3u-diagnostics": "tsx tests/m3uDiagnosticsScenarios.ts",
+    "test:m3u-classification": "tsx tests/m3uClassificationScenarios.ts",
     "test:catalog-persistence": "tsx tests/catalogPersistenceScenarios.ts",
     "test:catalog-category-fallback": "tsx tests/catalogCategoryFallbackScenarios.ts",
     "test:catalog-availability": "tsx tests/catalogAvailabilityScenarios.ts",
