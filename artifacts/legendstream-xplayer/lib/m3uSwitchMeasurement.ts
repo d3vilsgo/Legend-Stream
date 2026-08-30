@@ -1,3 +1,10 @@
+import {
+  formatM3UCacheWriteFields,
+  type M3UCacheCounts,
+  type M3UCacheSyncPhase,
+  type M3UCacheWriteTelemetry,
+} from "./m3uCacheWriteMeasurement";
+
 export type M3UCacheHydrationOutcome = "hit" | "null" | "error";
 export type M3UCacheHydrationReason =
   | "none"
@@ -15,11 +22,7 @@ export type M3UNetworkFallbackReason =
   | "cache-unavailable"
   | "network-error";
 
-export type M3UItemCounts = {
-  live: number;
-  vod: number;
-  series: number;
-};
+export type M3UItemCounts = M3UCacheCounts;
 
 export type M3USwitchMeasurement = {
   kind: "m3u-switch";
@@ -32,6 +35,9 @@ export type M3USwitchMeasurement = {
     networkFallbackReason: M3UNetworkFallbackReason;
     totalSwitchMs: number;
     itemCounts: M3UItemCounts;
+    cacheRawCounts: M3UItemCounts;
+    cacheSyncPhase: M3UCacheSyncPhase;
+    write?: M3UCacheWriteTelemetry;
   };
 };
 
@@ -68,5 +74,10 @@ export function formatM3USwitchMeasurement(measurement: M3USwitchMeasurement) {
     `m3u.itemCounts.live=${m3u.itemCounts.live}`,
     `m3u.itemCounts.vod=${m3u.itemCounts.vod}`,
     `m3u.itemCounts.series=${m3u.itemCounts.series}`,
+    `m3u.cacheRawCounts.live=${m3u.cacheRawCounts.live}`,
+    `m3u.cacheRawCounts.vod=${m3u.cacheRawCounts.vod}`,
+    `m3u.cacheRawCounts.series=${m3u.cacheRawCounts.series}`,
+    `m3u.cacheSyncPhase=${m3u.cacheSyncPhase}`,
+    ...(m3u.write ? formatM3UCacheWriteFields(m3u.write) : ["m3u.writeAttempted=false"]),
   ].join("\n");
 }

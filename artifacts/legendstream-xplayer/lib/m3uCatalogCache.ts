@@ -1,6 +1,7 @@
 import {
   deleteProviderCatalog,
   getCachedPersistedItems,
+  getCatalogCounts,
   getCatalogSyncState,
   initCatalogCache,
   pruneCatalogKind,
@@ -14,23 +15,30 @@ import {
   type Provider,
   type ProviderLoadResult,
 } from "./iptv";
-import {
-  parseM3UProviderSource,
-  parseM3UStreamRef,
-  type M3UPathPlaybackRef,
-} from "./m3uCatalogRefs";
+import { parseM3UProviderSource } from "./m3uCatalogRefs";
 import {
   projectCatalogItems,
   type PersistedLiveCatalogItem,
-  type PersistedM3UEpisode,
   type PersistedSeriesCatalogItem,
   type PersistedVodCatalogItem,
 } from "./catalogPersistence";
 import { buildM3UDirectHydration } from "./m3uCatalogHydration";
+import { buildM3UCacheWriteProjection } from "./m3uCacheWriteProjection";
+import {
+  emptyM3UCacheCounts,
+  emptyM3URefRejectionCounts,
+  type M3UCacheCounts,
+  type M3UCacheSyncPhase,
+  type M3UCacheWriteOutcome,
+  type M3URefRejectionCounts,
+} from "./m3uCacheWriteMeasurement";
 import {
   noteM3UCacheHydration,
+  noteM3UCacheWriteResult,
+  noteM3UCacheWriteStarted,
   noteM3UNetworkCatalogCounts,
 } from "./m3uSwitchMetrics";
+import { safeLog } from "./safeLog";
 import type { XtreamCategory } from "./xtreamCatalog";
 
 const M3U_CACHE_STAGE_TOTAL = 3;
@@ -84,7 +92,9 @@ export async function hydrateM3UProviderCache(
       reason: "unsupported-source",
       sqliteReadMs: 0,
       runtimeHydrateMs: 0,
-      itemCounts: { live: 0, vod: 0, series: 0 },
+      itemCounts: emptyM3UCacheCounts(),
+      cacheRawCounts: emptyM3UCacheCounts(),
+      cacheSyncPhase: "none",
     });
     return null;
   }
@@ -92,16 +102,21 @@ export async function hydrateM3UProviderCache(
   let phase: "sqlite" | "runtime" = "sqlite";
   let sqliteReadMs = 0;
   let runtimeStartedAt = 0;
+  let cacheRawCounts = emptyM3UCacheCounts();
+  let cacheSyncPhase: M3UCacheSyncPhase = "none";
   try {
     const sqliteStartedAt = Date.now();
     await initCatalogCache();
-    const [rawLive, rawVod, rawSeries, state] = await Promise.all([
+    const [rawLive, rawVod, rawSeries, state, rawCounts] = await Promise.all([
       getCachedPersistedItems(provider.id, "live"),
       getCachedPersistedItems(provider.id, "vod"),
       getCachedPersistedItems(provider.id, "series"),
       getCatalogSyncState(provider.id),
+      getCatalogCounts(provider.id),
     ]);
     sqliteReadMs = Date.now() - sqliteStartedAt;
+    cacheRawCounts = rawCounts;
+    cacheSyncPhase = state?.phase ?? "none";
 
     const liveRows = rawLive.filter(
       (row): row is PersistedLiveCatalogItem => row.catalogKind === "live",
@@ -124,6 +139,8 @@ export async function hydrateM3UProviderCache(
         sqliteReadMs,
         runtimeHydrateMs,
         itemCounts: direct.counts,
+        cacheRawCounts,
+        cacheSyncPhase,
       });
       return null;
     }
@@ -135,6 +152,8 @@ export async function hydrateM3UProviderCache(
       sqliteReadMs,
       runtimeHydrateMs,
       itemCounts: direct.counts,
+      cacheRawCounts,
+      cacheSyncPhase,
     });
     return {
       counts: direct.counts,
@@ -154,63 +173,105 @@ export async function hydrateM3UProviderCache(
       reason: phase === "sqlite" ? "sqlite-read-error" : "runtime-hydrate-error",
       sqliteReadMs,
       runtimeHydrateMs: runtimeStartedAt ? Date.now() - runtimeStartedAt : 0,
-      itemCounts: { live: 0, vod: 0, series: 0 },
+      itemCounts: emptyM3UCacheCounts(),
+      cacheRawCounts,
+      cacheSyncPhase,
     });
     throw caught;
   }
 }
 
-function safeLiveRows(provider: M3UCatalogCacheProvider, loaded: ProviderLoadResult) {
-  const source = providerSource(provider);
-  const input = loaded.liveChannels ?? loaded.channels;
-  return input.map((channel) => {
-    const playbackRef = parseM3UStreamRef(source, channel.streamUrl, "live");
-    return playbackRef ? { ...channel, playbackRef } : null;
-  }).filter((row): row is Channel & { playbackRef: M3UPathPlaybackRef } => Boolean(row));
+async function readWriteCacheState(
+  providerId: string,
+  fallbackPhase: M3UCacheSyncPhase,
+): Promise<{ counts: M3UCacheCounts; phase: M3UCacheSyncPhase }> {
+  try {
+    const [counts, state] = await Promise.all([
+      getCatalogCounts(providerId),
+      getCatalogSyncState(providerId),
+    ]);
+    return { counts, phase: state?.phase ?? fallbackPhase };
+  } catch (caught) {
+    safeLog.error("LS_M3U_CACHE_WRITE_STATE_READ", caught);
+    return { counts: emptyM3UCacheCounts(), phase: fallbackPhase };
+  }
 }
 
-function safeMovieRows(provider: M3UCatalogCacheProvider, loaded: ProviderLoadResult) {
-  const source = providerSource(provider);
-  return (loaded.movieItems ?? []).map((item) => {
-    const playbackRef = parseM3UStreamRef(source, item.streamUrl, "movie");
-    if (!playbackRef) return null;
-    return {
-      stream_id: item.id,
-      name: item.name,
-      stream_icon: item.logoUrl,
-      category_id: item.category,
-      container_extension: playbackRef.containerExtension,
-      playbackRef,
-    };
-  }).filter((row): row is NonNullable<typeof row> => Boolean(row));
+async function markWriteFailureState(providerId: string, outcome: M3UCacheWriteOutcome) {
+  try {
+    await setCatalogSyncState(
+      providerId,
+      "error",
+      0,
+      M3U_CACHE_STAGE_TOTAL,
+      `M3U cache write outcome=${outcome}`,
+    );
+  } catch (caught) {
+    safeLog.error("LS_M3U_CACHE_WRITE_STATE", caught);
+  }
 }
 
-function safeSeriesRows(provider: M3UCatalogCacheProvider, loaded: ProviderLoadResult) {
-  const source = providerSource(provider);
-  return (loaded.seriesGroups ?? []).map((group) => {
-    const allEpisodes = Object.values(group.seasons).flat();
-    const episodes: PersistedM3UEpisode[] = [];
-    for (const episode of allEpisodes) {
-      const playbackRef = parseM3UStreamRef(source, episode.streamUrl, "series");
-      if (!playbackRef) return null;
-      episodes.push({
-        id: episode.id,
-        title: episode.title,
-        category: episode.category,
-        season: episode.season,
-        episode: episode.episode,
-        logoUrl: episode.logoUrl,
-        playbackRef,
-      });
-    }
-    return {
-      series_id: group.id,
-      name: group.name,
-      cover: group.coverUrl,
-      category_id: group.category,
-      m3uEpisodes: episodes,
-    };
-  }).filter((row): row is NonNullable<typeof row> => Boolean(row));
+async function publishWriteObservation(options: {
+  providerId: string;
+  startedAt: number;
+  outcome: M3UCacheWriteOutcome;
+  inputCounts: M3UCacheCounts;
+  safeCounts: M3UCacheCounts;
+  writtenCounts: M3UCacheCounts;
+  rejectionCounts: M3URefRejectionCounts;
+  fallbackPhase: M3UCacheSyncPhase;
+}) {
+  const writeMs = Math.max(0, Date.now() - options.startedAt);
+  const cacheState = await readWriteCacheState(options.providerId, options.fallbackPhase);
+  await noteM3UCacheWriteResult(options.providerId, {
+    startedAt: options.startedAt,
+    cacheRawCounts: cacheState.counts,
+    cacheSyncPhase: cacheState.phase,
+    write: {
+      writeAttempted: true,
+      writeOutcome: options.outcome,
+      writeMs,
+      writeInputCounts: options.inputCounts,
+      writeSafeCounts: options.safeCounts,
+      writeWrittenCounts: options.writtenCounts,
+      writeRejectCounts: options.rejectionCounts,
+    },
+  });
+}
+
+async function failClosedWrite(options: {
+  providerId: string;
+  startedAt: number;
+  outcome: Exclude<M3UCacheWriteOutcome, "success" | "unsupported-source" | "sqlite-error">;
+  inputCounts: M3UCacheCounts;
+  safeCounts: M3UCacheCounts;
+  rejectionCounts: M3URefRejectionCounts;
+}) {
+  try {
+    await deleteProviderCatalog(options.providerId);
+    await setCatalogSyncState(
+      options.providerId,
+      "error",
+      0,
+      M3U_CACHE_STAGE_TOTAL,
+      `M3U cache write outcome=${options.outcome}`,
+    );
+    await publishWriteObservation({
+      ...options,
+      writtenCounts: emptyM3UCacheCounts(),
+      fallbackPhase: "error",
+    });
+  } catch (caught) {
+    safeLog.error("LS_M3U_CACHE_WRITE_DB", caught);
+    await markWriteFailureState(options.providerId, "sqlite-error");
+    await publishWriteObservation({
+      ...options,
+      outcome: "sqlite-error",
+      writtenCounts: emptyM3UCacheCounts(),
+      fallbackPhase: "error",
+    });
+  }
+  return false;
 }
 
 export async function persistM3UProviderCache(
@@ -218,65 +279,112 @@ export async function persistM3UProviderCache(
   loaded: ProviderLoadResult,
 ): Promise<boolean> {
   if (provider.type !== "m3u") return false;
+  const startedAt = Date.now();
   const liveInput = loaded.liveChannels ?? loaded.channels;
   const movieInput = loaded.movieItems ?? [];
   const seriesInput = loaded.seriesGroups ?? [];
-  noteM3UNetworkCatalogCounts({
+  const inputCounts = {
     live: liveInput.length,
     vod: movieInput.length,
     series: seriesInput.length,
-  });
-  if (!parseM3UProviderSource(providerSource(provider))) return false;
+  };
+  noteM3UNetworkCatalogCounts(inputCounts);
+  noteM3UCacheWriteStarted(provider.id);
 
-  const liveRows = safeLiveRows(provider, loaded);
-  const movieRows = safeMovieRows(provider, loaded);
-  const seriesRows = safeSeriesRows(provider, loaded);
-
-  // Fail closed: a partial credential-free projection must never suppress the next
-  // blocking playlist load because it would present an incomplete provider as complete.
-  if (
-    liveRows.length !== liveInput.length ||
-    movieRows.length !== movieInput.length ||
-    seriesRows.length !== seriesInput.length
-  ) {
-    await deleteProviderCatalog(provider.id);
+  const projection = buildM3UCacheWriteProjection(provider, loaded);
+  if (!projection) {
+    await markWriteFailureState(provider.id, "unsupported-source");
+    await publishWriteObservation({
+      providerId: provider.id,
+      startedAt,
+      outcome: "unsupported-source",
+      inputCounts,
+      safeCounts: emptyM3UCacheCounts(),
+      writtenCounts: emptyM3UCacheCounts(),
+      rejectionCounts: emptyM3URefRejectionCounts(),
+      fallbackPhase: "error",
+    });
     return false;
   }
 
-  const persistedLive = projectCatalogItems(provider.id, "live", liveRows as any);
-  const persistedVod = projectCatalogItems(provider.id, "vod", movieRows as any);
-  const persistedSeries = projectCatalogItems(provider.id, "series", seriesRows as any);
-  if (
-    persistedLive.length !== liveRows.length ||
-    persistedVod.length !== movieRows.length ||
-    persistedSeries.length !== seriesRows.length
-  ) {
-    await deleteProviderCatalog(provider.id);
-    return false;
+  if (projection.unsafeOutcome) {
+    return failClosedWrite({
+      providerId: provider.id,
+      startedAt,
+      outcome: projection.unsafeOutcome,
+      inputCounts: projection.inputCounts,
+      safeCounts: projection.safeCounts,
+      rejectionCounts: projection.rejectionCounts,
+    });
   }
 
-  await initCatalogCache();
-  const seenAt = Date.now();
-  await setCatalogSyncState(provider.id, "syncing", 0, M3U_CACHE_STAGE_TOTAL, "M3U cache update started");
-  await upsertCatalogItems(provider.id, "live", persistedLive, { seenAt, markNew: true });
-  await upsertCatalogItems(provider.id, "vod", persistedVod, { seenAt, markNew: true });
-  await upsertCatalogItems(provider.id, "series", persistedSeries, { seenAt, markNew: true });
-  await Promise.all([
-    replaceCatalogCategories(provider.id, "vod", categories(movieInput.map((item) => item.category))),
-    replaceCatalogCategories(provider.id, "series", categories(seriesInput.map((item) => item.category))),
-  ]);
-  await Promise.all([
-    pruneCatalogKind(provider.id, "live", seenAt),
-    pruneCatalogKind(provider.id, "vod", seenAt),
-    pruneCatalogKind(provider.id, "series", seenAt),
-  ]);
-  await setCatalogSyncState(
-    provider.id,
-    "ready",
-    M3U_CACHE_STAGE_TOTAL,
-    M3U_CACHE_STAGE_TOTAL,
-    "M3U cache ready",
-    "background",
-  );
-  return true;
+  const persistedLive = projectCatalogItems(provider.id, "live", projection.liveRows as any);
+  const persistedVod = projectCatalogItems(provider.id, "vod", projection.movieRows as any);
+  const persistedSeries = projectCatalogItems(provider.id, "series", projection.seriesRows as any);
+  if (
+    persistedLive.length !== projection.liveRows.length ||
+    persistedVod.length !== projection.movieRows.length ||
+    persistedSeries.length !== projection.seriesRows.length
+  ) {
+    return failClosedWrite({
+      providerId: provider.id,
+      startedAt,
+      outcome: "projection-drop",
+      inputCounts: projection.inputCounts,
+      safeCounts: projection.safeCounts,
+      rejectionCounts: projection.rejectionCounts,
+    });
+  }
+
+  const writtenCounts = emptyM3UCacheCounts();
+  try {
+    await initCatalogCache();
+    const seenAt = Date.now();
+    await setCatalogSyncState(provider.id, "syncing", 0, M3U_CACHE_STAGE_TOTAL, "M3U cache update started");
+    writtenCounts.live = await upsertCatalogItems(provider.id, "live", persistedLive, { seenAt, markNew: true });
+    writtenCounts.vod = await upsertCatalogItems(provider.id, "vod", persistedVod, { seenAt, markNew: true });
+    writtenCounts.series = await upsertCatalogItems(provider.id, "series", persistedSeries, { seenAt, markNew: true });
+    await Promise.all([
+      replaceCatalogCategories(provider.id, "vod", categories(movieInput.map((item) => item.category))),
+      replaceCatalogCategories(provider.id, "series", categories(seriesInput.map((item) => item.category))),
+    ]);
+    await Promise.all([
+      pruneCatalogKind(provider.id, "live", seenAt),
+      pruneCatalogKind(provider.id, "vod", seenAt),
+      pruneCatalogKind(provider.id, "series", seenAt),
+    ]);
+    await setCatalogSyncState(
+      provider.id,
+      "ready",
+      M3U_CACHE_STAGE_TOTAL,
+      M3U_CACHE_STAGE_TOTAL,
+      "M3U cache ready",
+      "background",
+    );
+    await publishWriteObservation({
+      providerId: provider.id,
+      startedAt,
+      outcome: "success",
+      inputCounts: projection.inputCounts,
+      safeCounts: projection.safeCounts,
+      writtenCounts,
+      rejectionCounts: projection.rejectionCounts,
+      fallbackPhase: "ready",
+    });
+    return true;
+  } catch (caught) {
+    safeLog.error("LS_M3U_CACHE_WRITE_DB", caught);
+    await markWriteFailureState(provider.id, "sqlite-error");
+    await publishWriteObservation({
+      providerId: provider.id,
+      startedAt,
+      outcome: "sqlite-error",
+      inputCounts: projection.inputCounts,
+      safeCounts: projection.safeCounts,
+      writtenCounts,
+      rejectionCounts: projection.rejectionCounts,
+      fallbackPhase: "error",
+    });
+    return false;
+  }
 }

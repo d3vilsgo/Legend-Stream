@@ -27,8 +27,8 @@ import {
   consumeM3UCacheActivation,
   hydrateM3UProviderCache,
   markM3UCacheActivation,
-  persistM3UProviderCache,
 } from "@/lib/m3uCatalogCache";
+import { persistM3ULoadInBackground } from "@/lib/m3uCacheWriteRunner";
 import {
   chooseProviderSwitchPath,
   hasPrimedProviderSwitchSnapshot,
@@ -265,11 +265,6 @@ function toXtreamLoadProvider(provider: Provider): Provider {
         password: parsed.password,
       }
     : provider;
-}
-
-function persistM3ULoadInBackground(provider: Provider, loaded: Awaited<ReturnType<typeof loadProvider>>) {
-  if (provider.type !== "m3u") return;
-  void persistM3UProviderCache(provider, loaded).catch(() => undefined);
 }
 
 async function loadProviderSmart(provider: Provider) {
