@@ -8,6 +8,11 @@ import {
   parseM3UStreamRef,
 } from "../lib/m3uCatalogRefs";
 import { buildM3UDirectHydration } from "../lib/m3uCatalogHydration";
+import { buildM3UCacheWriteProjection } from "../lib/m3uCacheWriteProjection";
+import {
+  emptyM3URefRejectionCounts,
+  formatM3UCacheWriteMeasurement,
+} from "../lib/m3uCacheWriteMeasurement";
 import {
   formatM3USwitchMeasurement,
   resolveM3UNetworkFallback,
@@ -36,6 +41,8 @@ const m3uCacheSource = readFileSync(resolve(ROOT, "lib/m3uCatalogCache.ts"), "ut
 const hydrationSource = readFileSync(resolve(ROOT, "lib/m3uCatalogHydration.ts"), "utf8");
 const m3uSwitchMetricsSource = readFileSync(resolve(ROOT, "lib/m3uSwitchMetrics.ts"), "utf8");
 const catalogMetricsSource = readFileSync(resolve(ROOT, "lib/catalogSyncMetrics.ts"), "utf8");
+const writeRunnerSource = readFileSync(resolve(ROOT, "lib/m3uCacheWriteRunner.ts"), "utf8");
+const writeProjectionSource = readFileSync(resolve(ROOT, "lib/m3uCacheWriteProjection.ts"), "utf8");
 
 let passed = 0;
 const scenario = async (name: string, run: () => void | Promise<void>) => {
@@ -43,6 +50,8 @@ const scenario = async (name: string, run: () => void | Promise<void>) => {
   passed += 1;
   console.log(`ok ${passed} - ${name}`);
 };
+
+const zeroRejects = () => emptyM3URefRejectionCounts();
 
 async function main() {
   await scenario("usable target cache selects cache path before blocking provider refetch", () => {
@@ -290,6 +299,8 @@ async function main() {
         networkFallbackReason: "none",
         totalSwitchMs: 56,
         itemCounts: { live: 100, vod: 20, series: 10 },
+        cacheRawCounts: { live: 100, vod: 20, series: 10 },
+        cacheSyncPhase: "ready",
       },
     });
     assert.match(output, /m3u\.sqliteReadMs=12/);
@@ -297,7 +308,172 @@ async function main() {
     assert.match(output, /m3u\.networkFallback=false/);
     assert.match(output, /m3u\.totalSwitchMs=56/);
     assert.match(output, /m3u\.itemCounts\.live=100/);
-    assert.doesNotMatch(output, /https?:\/\/|get\.php|username|password|credential|token|provider(name|id)?/i);
+    assert.match(output, /m3u\.cacheRawCounts\.live=100/);
+    assert.match(output, /m3u\.cacheSyncPhase=ready/);
+    assert.match(output, /m3u\.writeAttempted=false/);
+    assert.doesNotMatch(output, /https?:\/\/|get\.php|username[=:]|password[=:]|token[=:]|provider(name|id)?[=:]/i);
+  });
+
+  await scenario("M3U write failure is observed and the background caller reads false", () => {
+    const output = formatM3UCacheWriteMeasurement({
+      kind: "m3u-cache-write",
+      startedAt: 1,
+      m3u: {
+        cacheRawCounts: { live: 0, vod: 0, series: 0 },
+        cacheSyncPhase: "error",
+        write: {
+          writeAttempted: true,
+          writeOutcome: "sqlite-error",
+          writeMs: 88,
+          writeInputCounts: { live: 3, vod: 2, series: 1 },
+          writeSafeCounts: { live: 3, vod: 2, series: 1 },
+          writeWrittenCounts: { live: 3, vod: 0, series: 0 },
+          writeRejectCounts: zeroRejects(),
+        },
+      },
+    });
+    assert.match(output, /m3u\.writeOutcome=sqlite-error/);
+    assert.match(output, /m3u\.cacheSyncPhase=error/);
+    assert.match(writeRunnerSource, /const persisted = await persistM3UProviderCache\(provider, loaded\);/);
+    assert.match(writeRunnerSource, /if \(!persisted\)/);
+    assert.doesNotMatch(writeRunnerSource, /\.catch\(\(\) => undefined\)/);
+    assert.match(m3uCacheSource, /noteM3UCacheWriteResult/);
+  });
+
+  await scenario("successful M3U write projection reports exact safe and written counters", () => {
+    const provider = {
+      id: "m3u-provider",
+      type: "m3u" as const,
+      url: "https://iptv.example:8080/get.php?username=alice&password=swordfish&type=m3u_plus&output=ts",
+      createdAt: 1,
+    };
+    const live = {
+      id: "live-1",
+      providerId: provider.id,
+      name: "News",
+      streamUrl: "https://iptv.example:8080/live/alice/swordfish/101.ts",
+      category: "Live",
+      contentType: "live" as const,
+    };
+    const projection = buildM3UCacheWriteProjection(provider, {
+      channels: [live],
+      liveChannels: [live],
+      movieItems: [{
+        id: "movie-1",
+        providerId: provider.id,
+        name: "Movie",
+        streamUrl: "https://iptv.example:8080/movie/alice/swordfish/202.mp4",
+        category: "Movies",
+        contentType: "movie",
+      }],
+      seriesGroups: [{
+        id: "series-1",
+        providerId: provider.id,
+        name: "Series",
+        category: "Drama",
+        contentType: "series",
+        seasons: {
+          "1": [{
+            id: "episode-1",
+            providerId: provider.id,
+            title: "Series S01E01",
+            streamUrl: "https://iptv.example:8080/series/alice/swordfish/303.mkv",
+            category: "Drama",
+            season: 1,
+            episode: 1,
+          }],
+        },
+      }],
+    });
+    assert.ok(projection);
+    assert.deepEqual(projection.inputCounts, { live: 1, vod: 1, series: 1 });
+    assert.deepEqual(projection.safeCounts, { live: 1, vod: 1, series: 1 });
+    assert.equal(projection.unsafeOutcome, null);
+    assert.deepEqual(projection.rejectionCounts, zeroRejects());
+    assert.match(m3uCacheSource, /writtenCounts\.live = await upsertCatalogItems/);
+    assert.match(m3uCacheSource, /outcome: "success"/);
+  });
+
+  await scenario("unsafe M3U refs produce the correct fail-closed outcome and rejection reason counters", () => {
+    const provider = {
+      id: "m3u-provider",
+      type: "m3u" as const,
+      url: "https://iptv.example:8080/get.php?username=alice&password=swordfish&type=m3u_plus&output=ts",
+      createdAt: 1,
+    };
+    const urls = [
+      "https://cdn.example:8080/live/alice/swordfish/1.ts",
+      "https://iptv.example:8080/live/alice/swordfish/extra/2.ts",
+      "https://iptv.example:8080/live/alice/swordfish/3.ts?token=secret",
+      "https://iptv.example:8080/movie/alice/swordfish/4.mp4",
+      "https://iptv.example:8080/live/alice/swordfish/5",
+      "https://iptv.example:8080/live/bob/wrong/6.ts",
+    ];
+    const channels = urls.map((streamUrl, index) => ({
+      id: `live-${index}`,
+      providerId: provider.id,
+      name: `Live ${index}`,
+      streamUrl,
+      category: "Live",
+      contentType: "live" as const,
+    }));
+    const projection = buildM3UCacheWriteProjection(provider, {
+      channels,
+      liveChannels: channels,
+      movieItems: [],
+      seriesGroups: [],
+    });
+    assert.ok(projection);
+    assert.equal(projection.unsafeOutcome, "unsafe-live-ref");
+    assert.deepEqual(projection.safeCounts, { live: 0, vod: 0, series: 0 });
+    assert.deepEqual(projection.rejectionCounts, {
+      "origin-mismatch": 1,
+      "path-shape": 1,
+      "query-present": 1,
+      "kind-mismatch": 1,
+      "missing-extension": 1,
+      "credential-path-mismatch": 1,
+    });
+    assert.match(writeProjectionSource, /rejectionCounts\[inspection\.reason\] \+= 1/);
+  });
+
+  await scenario("M3U write telemetry is counter-only and contains no URL or credential values", () => {
+    const output = formatM3UCacheWriteMeasurement({
+      kind: "m3u-cache-write",
+      startedAt: 1,
+      m3u: {
+        cacheRawCounts: { live: 9, vod: 8, series: 7 },
+        cacheSyncPhase: "error",
+        write: {
+          writeAttempted: true,
+          writeOutcome: "unsafe-live-ref",
+          writeMs: 42,
+          writeInputCounts: { live: 10, vod: 8, series: 7 },
+          writeSafeCounts: { live: 9, vod: 8, series: 7 },
+          writeWrittenCounts: { live: 0, vod: 0, series: 0 },
+          writeRejectCounts: {
+            ...zeroRejects(),
+            "credential-path-mismatch": 1,
+          },
+        },
+      },
+    });
+    assert.match(output, /m3u\.writeRejectCounts\.credential-path-mismatch=1/);
+    assert.doesNotMatch(
+      output,
+      /https?:\/\/|get\.php|alice|swordfish|secret\.example|username\s*[=:]|password\s*[=:]|token\s*[=:]|host\s*[=:]/i,
+    );
+  });
+
+  await scenario("unsafe or projection-dropped M3U cache writes remain all-or-nothing fail-closed", () => {
+    const rejectBranch = m3uCacheSource.indexOf("if (projection.unsafeOutcome)");
+    const failClosed = m3uCacheSource.indexOf("async function failClosedWrite");
+    const deleteCatalog = m3uCacheSource.indexOf("await deleteProviderCatalog(options.providerId)", failClosed);
+    const falseReturn = m3uCacheSource.indexOf("return false;", deleteCatalog);
+    assert.ok(rejectBranch >= 0 && failClosed >= 0 && deleteCatalog > failClosed && falseReturn > deleteCatalog);
+    assert.match(m3uCacheSource, /outcome: "projection-drop"/);
+    assert.match(m3uCacheSource, /return failClosedWrite\(/);
+    assert.doesNotMatch(m3uCacheSource, /writeSafeCounts[\s\S]*upsertCatalogItems\([^)]*projection\./);
   });
 
   await scenario("Xtream branch stays outside M3U measurement and direct hydration changes", () => {
@@ -311,8 +487,8 @@ async function main() {
     assert.match(cacheSource.slice(xtreamGuard), /getCachedSeriesItems\(provider, undefined, HOME_SAMPLE_LIMIT\)/);
   });
 
-  assert.equal(passed, 16);
-  console.log("provider switch UX scenarios: 16/16 passed");
+  assert.equal(passed, 21);
+  console.log("provider switch UX scenarios: 21/21 passed");
 }
 
 void main().catch((error) => {

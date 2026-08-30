@@ -8,6 +8,18 @@ import {
   type M3USwitchMeasurement,
 } from "./m3uSwitchMeasurement";
 import {
+  formatM3UCacheWriteMeasurement,
+  M3U_CACHE_SYNC_PHASES,
+  M3U_REF_REJECTION_REASONS,
+  M3U_WRITE_OUTCOMES,
+  emptyM3URefRejectionCounts,
+  type M3UCacheCounts,
+  type M3UCacheSyncPhase,
+  type M3UCacheWriteMeasurement,
+  type M3UCacheWriteTelemetry,
+  type M3URefRejectionCounts,
+} from "./m3uCacheWriteMeasurement";
+import {
   readCatalogSyncMetricsPayload,
   writeCatalogSyncMetricsPayload,
 } from "./catalogSyncMetricsPersistence";
@@ -22,7 +34,10 @@ export type XtreamCatalogSyncMeasurement = {
   series: CatalogFetchMetrics;
 };
 
-export type CatalogSyncMeasurement = XtreamCatalogSyncMeasurement | M3USwitchMeasurement;
+export type CatalogSyncMeasurement =
+  | XtreamCatalogSyncMeasurement
+  | M3USwitchMeasurement
+  | M3UCacheWriteMeasurement;
 
 let latestMeasurement: CatalogSyncMeasurement | null = null;
 
@@ -40,8 +55,13 @@ function isM3USwitchMeasurement(measurement: CatalogSyncMeasurement): measuremen
   return "kind" in measurement && measurement.kind === "m3u-switch";
 }
 
+function isM3UCacheWriteMeasurement(measurement: CatalogSyncMeasurement): measurement is M3UCacheWriteMeasurement {
+  return "kind" in measurement && measurement.kind === "m3u-cache-write";
+}
+
 export function formatCatalogSyncMeasurement(measurement: CatalogSyncMeasurement) {
   if (isM3USwitchMeasurement(measurement)) return formatM3USwitchMeasurement(measurement);
+  if (isM3UCacheWriteMeasurement(measurement)) return formatM3UCacheWriteMeasurement(measurement);
   return [
     `mode=${measurement.mode}`,
     `totalMs=${measurement.totalMs}`,
@@ -80,28 +100,90 @@ const FETCH_FALLBACK_REASONS = new Set<NonNullable<CatalogFetchMetrics["fallback
   "parallel-error",
 ]);
 
+function normalizeM3UCounts(value: unknown): M3UCacheCounts | null {
+  const raw = objectValue(value);
+  if (!raw) return null;
+  const live = countValue(raw.live);
+  const vod = countValue(raw.vod);
+  const series = countValue(raw.series);
+  return live === null || vod === null || series === null
+    ? null
+    : { live, vod, series };
+}
+
+function normalizeM3USyncPhase(value: unknown): M3UCacheSyncPhase | null {
+  return typeof value === "string" && M3U_CACHE_SYNC_PHASES.has(value as M3UCacheSyncPhase)
+    ? value as M3UCacheSyncPhase
+    : null;
+}
+
+function normalizeM3URejectCounts(value: unknown): M3URefRejectionCounts | null {
+  const raw = objectValue(value);
+  if (!raw) return null;
+  const result = emptyM3URefRejectionCounts();
+  for (const reason of M3U_REF_REJECTION_REASONS) {
+    const count = countValue(raw[reason]);
+    if (count === null) return null;
+    result[reason] = count;
+  }
+  return result;
+}
+
+function normalizeM3UWriteTelemetry(value: unknown): M3UCacheWriteTelemetry | null {
+  const raw = objectValue(value);
+  if (!raw || raw.writeAttempted !== true) return null;
+  const outcome = raw.writeOutcome;
+  const writeMs = finiteNonNegative(raw.writeMs);
+  const writeInputCounts = normalizeM3UCounts(raw.writeInputCounts);
+  const writeSafeCounts = normalizeM3UCounts(raw.writeSafeCounts);
+  const writeWrittenCounts = normalizeM3UCounts(raw.writeWrittenCounts);
+  const writeRejectCounts = normalizeM3URejectCounts(raw.writeRejectCounts);
+  if (
+    typeof outcome !== "string" ||
+    !M3U_WRITE_OUTCOMES.has(outcome as M3UCacheWriteTelemetry["writeOutcome"]) ||
+    writeMs === null ||
+    !writeInputCounts || !writeSafeCounts || !writeWrittenCounts || !writeRejectCounts
+  ) {
+    return null;
+  }
+  return {
+    writeAttempted: true,
+    writeOutcome: outcome as M3UCacheWriteTelemetry["writeOutcome"],
+    writeMs,
+    writeInputCounts,
+    writeSafeCounts,
+    writeWrittenCounts,
+    writeRejectCounts,
+  };
+}
+
 function normalizeM3UMeasurement(raw: Record<string, unknown>): M3USwitchMeasurement | null {
   if (raw.kind !== "m3u-switch") return null;
   const startedAt = finiteNonNegative(raw.startedAt);
   const m3u = objectValue(raw.m3u);
-  const itemCounts = objectValue(m3u?.itemCounts);
+  const itemCounts = normalizeM3UCounts(m3u?.itemCounts);
   const sqliteReadMs = finiteNonNegative(m3u?.sqliteReadMs);
   const runtimeHydrateMs = finiteNonNegative(m3u?.runtimeHydrateMs);
   const totalSwitchMs = finiteNonNegative(m3u?.totalSwitchMs);
-  const live = countValue(itemCounts?.live);
-  const vod = countValue(itemCounts?.vod);
-  const series = countValue(itemCounts?.series);
   const outcome = m3u?.cacheHydrationOutcome as M3UCacheHydrationOutcome;
   const fallbackReason = m3u?.networkFallbackReason as M3UNetworkFallbackReason;
+  const rawCounts = m3u?.cacheRawCounts === undefined
+    ? { live: 0, vod: 0, series: 0 }
+    : normalizeM3UCounts(m3u.cacheRawCounts);
+  const syncPhase = m3u?.cacheSyncPhase === undefined
+    ? "none"
+    : normalizeM3USyncPhase(m3u.cacheSyncPhase);
+  const write = m3u?.write === undefined ? undefined : normalizeM3UWriteTelemetry(m3u.write);
   if (
     startedAt === null ||
     sqliteReadMs === null ||
     runtimeHydrateMs === null ||
     totalSwitchMs === null ||
-    live === null || vod === null || series === null ||
+    !itemCounts || !rawCounts || !syncPhase ||
     !M3U_OUTCOMES.has(outcome) ||
     typeof m3u?.networkFallback !== "boolean" ||
-    !M3U_FALLBACK_REASONS.has(fallbackReason)
+    !M3U_FALLBACK_REASONS.has(fallbackReason) ||
+    (m3u.write !== undefined && !write)
   ) {
     return null;
   }
@@ -115,8 +197,26 @@ function normalizeM3UMeasurement(raw: Record<string, unknown>): M3USwitchMeasure
       networkFallback: m3u.networkFallback,
       networkFallbackReason: fallbackReason,
       totalSwitchMs,
-      itemCounts: { live, vod, series },
+      itemCounts,
+      cacheRawCounts: rawCounts,
+      cacheSyncPhase: syncPhase,
+      write,
     },
+  };
+}
+
+function normalizeM3UCacheWriteMeasurement(raw: Record<string, unknown>): M3UCacheWriteMeasurement | null {
+  if (raw.kind !== "m3u-cache-write") return null;
+  const startedAt = finiteNonNegative(raw.startedAt);
+  const m3u = objectValue(raw.m3u);
+  const cacheRawCounts = normalizeM3UCounts(m3u?.cacheRawCounts);
+  const cacheSyncPhase = normalizeM3USyncPhase(m3u?.cacheSyncPhase);
+  const write = normalizeM3UWriteTelemetry(m3u?.write);
+  if (startedAt === null || !cacheRawCounts || !cacheSyncPhase || !write) return null;
+  return {
+    kind: "m3u-cache-write",
+    startedAt,
+    m3u: { cacheRawCounts, cacheSyncPhase, write },
   };
 }
 
@@ -170,14 +270,19 @@ function normalizeXtreamMeasurement(raw: Record<string, unknown>): XtreamCatalog
 function normalizeStoredMeasurement(value: unknown): CatalogSyncMeasurement | null {
   const raw = objectValue(value);
   if (!raw) return null;
-  return raw.kind === "m3u-switch"
-    ? normalizeM3UMeasurement(raw)
-    : normalizeXtreamMeasurement(raw);
+  if (raw.kind === "m3u-switch") return normalizeM3UMeasurement(raw);
+  if (raw.kind === "m3u-cache-write") return normalizeM3UCacheWriteMeasurement(raw);
+  return normalizeXtreamMeasurement(raw);
 }
 
 export function recordCatalogSyncMeasurement(measurement: CatalogSyncMeasurement) {
   latestMeasurement = measurement;
   void writeCatalogSyncMetricsPayload(AsyncStorage, JSON.stringify(measurement)).catch(() => undefined);
+}
+
+export async function recordCatalogSyncMeasurementPersisted(measurement: CatalogSyncMeasurement) {
+  latestMeasurement = measurement;
+  await writeCatalogSyncMetricsPayload(AsyncStorage, JSON.stringify(measurement));
 }
 
 export async function readPersistedCatalogSyncMeasurement(): Promise<CatalogSyncMeasurement | null> {
