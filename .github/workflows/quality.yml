@@ -8,7 +8,7 @@ on:
 
 # Deterministic, read-only CI: dependency resolution must match pnpm-lock.yaml exactly.
 # Storage security gate: 6 credential scenarios + 24 backup scenarios must all pass.
-# H1 logging gate: mobile 13/13 + M3U diagnostics K4 1/1 + API 4/4 redaction scenarios must pass.
+# H1 logging gate: mobile 13/13 + M3U diagnostics K4 6/6 + API 4/4 redaction scenarios must pass.
 # H2 console gate: direct console.* is forbidden outside tests and __DEV__ guards.
 # M3U diagnostics gate: shape/classification counters, fail-fast validation, primary/cleanup outcome and stale-cache fail-closed invariants must pass.
 # M3U classification gate: structural live signals must beat group-name heuristics without changing Xtream routing.
@@ -61,13 +61,13 @@ jobs:
           grep -F 'credential round-trip: 1/1 passed' <<<"$output"
           grep -F 'security regressions: 14/14 passed' <<<"$output"
           grep -F 'provider backup tests: 24/24 passed' <<<"$output"
-      - name: Log redaction invariants (13/13 mobile + M3U K4 1/1 + 4/4 API required)
+      - name: Log redaction invariants (13/13 mobile + M3U K4 6/6 + 4/4 API required)
         shell: bash
         run: |
           set -euo pipefail
           mobile="$(pnpm --filter @workspace/legendstream-xplayer test:logging 2>&1 | tee /dev/stderr)"
           grep -F 'log redaction scenarios: 13/13 passed' <<<"$mobile"
-          grep -F 'm3u diagnostics K4 scenarios: 1/1 passed' <<<"$mobile"
+          grep -F 'm3u diagnostics K4 scenarios: 6/6 passed' <<<"$mobile"
           api="$(pnpm --filter @workspace/legendstream-xplayer exec tsx "$GITHUB_WORKSPACE/artifacts/api-server/src/lib/logRedaction.test.ts" 2>&1 | tee /dev/stderr)"
           grep -F 'API log redaction scenarios: 4/4 passed' <<<"$api"
       - name: Console usage guard (fail-closed)
