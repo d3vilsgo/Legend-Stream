@@ -22,6 +22,7 @@ import {
   readCatalogSyncMetricsPayload,
   writeCatalogSyncMetricsPayload,
 } from "../lib/catalogSyncMetricsPersistence";
+import { dispatchCatalogTabNavigation } from "../lib/catalogTabNavigation";
 import {
   chooseProviderSwitchPath,
   clearProviderSwitchSnapshot,
@@ -166,6 +167,82 @@ async function main() {
     assert.match(playerSource, /const smart = await loadProviderSmart\(fromProvider\(existing\)\);/);
     const skeletons = screenSource.match(/if \(!loaded\) return <CatalogLoadingSkeleton/g) ?? [];
     assert.ok(skeletons.length >= 2, "Movies and Series must keep skeleton placeholders while M3U has no cache");
+  });
+
+  await scenario("M3U tabs use the ready in-memory catalog instead of the Xtream category loader", () => {
+    const calls: string[] = [];
+    const loaders = {
+      loadLocalMovies: () => { calls.push("local-movies"); },
+      loadLocalSeries: () => { calls.push("local-series"); },
+      loadXtreamMovies: () => { calls.push("xtream-movies"); },
+      loadXtreamSeries: () => { calls.push("xtream-series"); },
+    };
+    dispatchCatalogTabNavigation({
+      providerType: "m3u",
+      target: "movies",
+      m3uCatalogCounts: { movies: 24_457, series: 1_237 },
+      ...loaders,
+    });
+    dispatchCatalogTabNavigation({
+      providerType: "m3u",
+      target: "series",
+      m3uCatalogCounts: { movies: 24_457, series: 1_237 },
+      ...loaders,
+    });
+    assert.deepEqual(calls, ["local-movies", "local-series"]);
+    assert.match(screenSource, /dispatchCatalogTabNavigation\(\{/);
+    assert.match(screenSource, /loadLocalMovies: applyLocalVod/);
+    assert.match(screenSource, /loadLocalSeries: applyLocalSeries/);
+  });
+
+  await scenario("M3U tabs with no in-memory catalog preserve the existing skeleton state", () => {
+    const calls: string[] = [];
+    const loaders = {
+      loadLocalMovies: () => { calls.push("local-movies"); },
+      loadLocalSeries: () => { calls.push("local-series"); },
+      loadXtreamMovies: () => { calls.push("xtream-movies"); },
+      loadXtreamSeries: () => { calls.push("xtream-series"); },
+    };
+    dispatchCatalogTabNavigation({
+      providerType: "m3u",
+      target: "movies",
+      m3uCatalogCounts: { movies: 0, series: 0 },
+      ...loaders,
+    });
+    dispatchCatalogTabNavigation({
+      providerType: "m3u",
+      target: "series",
+      m3uCatalogCounts: { movies: 0, series: 0 },
+      ...loaders,
+    });
+    assert.deepEqual(calls, []);
+    const skeletons = screenSource.match(/if \(!loaded\) return <CatalogLoadingSkeleton/g) ?? [];
+    assert.ok(skeletons.length >= 2);
+  });
+
+  await scenario("Xtream tab navigation keeps the existing category loader path", () => {
+    const calls: string[] = [];
+    const loaders = {
+      loadLocalMovies: () => { calls.push("local-movies"); },
+      loadLocalSeries: () => { calls.push("local-series"); },
+      loadXtreamMovies: () => { calls.push("xtream-movies"); },
+      loadXtreamSeries: () => { calls.push("xtream-series"); },
+    };
+    dispatchCatalogTabNavigation({
+      providerType: "xtream",
+      target: "movies",
+      m3uCatalogCounts: { movies: 0, series: 0 },
+      ...loaders,
+    });
+    dispatchCatalogTabNavigation({
+      providerType: "xtream",
+      target: "series",
+      m3uCatalogCounts: { movies: 0, series: 0 },
+      ...loaders,
+    });
+    assert.deepEqual(calls, ["xtream-movies", "xtream-series"]);
+    assert.match(screenSource, /loadXtreamMovies: \(\) => loadVodCategory\("__all__"\)/);
+    assert.match(screenSource, /loadXtreamSeries: \(\) => loadSeriesCategory\("__all__"\)/);
   });
 
   await scenario("cold-start active M3U hydrates cached counts before the player leaves hydration", () => {
@@ -487,8 +564,8 @@ async function main() {
     assert.match(cacheSource.slice(xtreamGuard), /getCachedSeriesItems\(provider, undefined, HOME_SAMPLE_LIMIT\)/);
   });
 
-  assert.equal(passed, 21);
-  console.log("provider switch UX scenarios: 21/21 passed");
+  assert.equal(passed, 24);
+  console.log("provider switch UX scenarios: 24/24 passed");
 }
 
 void main().catch((error) => {

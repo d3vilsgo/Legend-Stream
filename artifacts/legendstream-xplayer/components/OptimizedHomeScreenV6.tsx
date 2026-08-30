@@ -49,6 +49,7 @@ import { getM3UCatalog } from "@/lib/iptv";
 import { yieldToUi } from "@/lib/cooperative";
 import { normalizeImageUrl } from "@/lib/imageUrl";
 import { providerListPresentation } from "@/lib/providerDisplaySecurity";
+import { dispatchCatalogTabNavigation } from "@/lib/catalogTabNavigation";
 import { prepareProviderSwitchCache, type ProviderSwitchCachePreparation } from "@/lib/providerSwitchCache";
 import {
   clearProviderSwitchSnapshot,
@@ -701,8 +702,19 @@ export default function OptimizedHomeScreenV6() {
 
   const navigate = (target: ContentView) => {
     setView(target);
-    if (target === "movies") void loadVodCategory("__all__");
-    if (target === "series") void loadSeriesCategory("__all__");
+    const local = getM3UCatalog(provider?.id);
+    dispatchCatalogTabNavigation({
+      providerType: effectiveProvider?.type,
+      target,
+      m3uCatalogCounts: {
+        movies: local.movieItems.length,
+        series: local.seriesGroups.length,
+      },
+      loadLocalMovies: applyLocalVod,
+      loadLocalSeries: applyLocalSeries,
+      loadXtreamMovies: () => loadVodCategory("__all__"),
+      loadXtreamSeries: () => loadSeriesCategory("__all__"),
+    });
     if (target !== "series") { setSelectedSeries(null); setSeriesInfo(null); }
   };
 
