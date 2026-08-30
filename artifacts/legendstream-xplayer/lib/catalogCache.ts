@@ -276,7 +276,7 @@ export async function upsertCatalogItems(
       for (const persisted of batch) {
         if (options.isCancelled?.()) break;
         if (persisted.catalogKind !== kind || persisted.providerId !== providerId) {
-throw new Error("Catalog persistence DTO does not match its write target.");
+          throw new Error("Catalog persistence DTO does not match its write target.");
         }
         const id = itemIdentity(persisted);
         await db.runAsync(
@@ -415,9 +415,9 @@ export async function clearNewCatalogFlags(providerId: string) {
 
 export async function deleteProviderCatalog(providerId: string) {
   const db = await database();
-  await db.withTransactionAsync(async () => {
-    await db.runAsync("DELETE FROM catalog_categories WHERE provider_id = ?", providerId);
-    await db.runAsync("DELETE FROM catalog_items WHERE provider_id = ?", providerId);
-    await db.runAsync("DELETE FROM catalog_sync_state WHERE provider_id = ?", providerId);
+  await db.withExclusiveTransactionAsync(async (txn) => {
+    await txn.runAsync("DELETE FROM catalog_categories WHERE provider_id = ?", providerId);
+    await txn.runAsync("DELETE FROM catalog_items WHERE provider_id = ?", providerId);
+    await txn.runAsync("DELETE FROM catalog_sync_state WHERE provider_id = ?", providerId);
   });
 }
