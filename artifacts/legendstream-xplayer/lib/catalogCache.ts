@@ -25,6 +25,21 @@ export type CatalogCounts = {
   series: number;
 };
 
+export type CatalogWriteBatchObservation = {
+  batchIndex: number;
+  batchRows: number;
+  committedRows: number;
+};
+
+type CatalogWriteOptions = {
+  markNew?: boolean;
+  seenAt?: number;
+  onProgress?: (written: number) => void;
+  isCancelled?: () => boolean;
+  onBatchStarted?: (batchIndex: number) => void;
+  onBatchCommitted?: (observation: CatalogWriteBatchObservation) => void;
+};
+
 type CacheRow = {
   payload: string;
 };
@@ -263,7 +278,7 @@ export async function upsertCatalogItems(
   providerId: string,
   kind: CatalogKind,
   items: PersistedCatalogItem[],
-  options: { markNew?: boolean; seenAt?: number; onProgress?: (written: number) => void; isCancelled?: () => boolean } = {},
+  options: CatalogWriteOptions = {},
 ) {
   const db = await database();
   const now = options.seenAt ?? Date.now();
@@ -272,11 +287,13 @@ export async function upsertCatalogItems(
   for (let start = 0; start < items.length; start += WRITE_BATCH_SIZE) {
     if (options.isCancelled?.()) break;
     const batch = items.slice(start, start + WRITE_BATCH_SIZE);
+    const batchIndex = Math.floor(start / WRITE_BATCH_SIZE) + 1;
+    options.onBatchStarted?.(batchIndex);
     await db.withTransactionAsync(async () => {
       for (const persisted of batch) {
         if (options.isCancelled?.()) break;
         if (persisted.catalogKind !== kind || persisted.providerId !== providerId) {
-throw new Error("Catalog persistence DTO does not match its write target.");
+          throw new Error("Catalog persistence DTO does not match its write target.");
         }
         const id = itemIdentity(persisted);
         await db.runAsync(
@@ -306,7 +323,9 @@ throw new Error("Catalog persistence DTO does not match its write target.");
       }
     });
     written += batch.length;
-    options.onProgress?.(Math.min(written, items.length));
+    const committedRows = Math.min(written, items.length);
+    options.onBatchCommitted?.({ batchIndex, batchRows: batch.length, committedRows });
+    options.onProgress?.(committedRows);
     await yieldToUi();
   }
 
