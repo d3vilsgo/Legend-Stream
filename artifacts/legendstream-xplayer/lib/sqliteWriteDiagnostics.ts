@@ -47,9 +47,18 @@ const PRIMARY_CODE_BY_CLASS: Record<Exclude<M3USqliteErrorClass, "UNKNOWN">, num
   SQLITE_CONSTRAINT: 19,
 };
 
-const CLASS_BY_PRIMARY_CODE = new Map<number, M3USqliteErrorClass>(
-  Object.entries(PRIMARY_CODE_BY_CLASS).map(([errorClass, code]) => [code, errorClass as M3USqliteErrorClass]),
-);
+const CLASS_BY_PRIMARY_CODE: Partial<Record<number, M3USqliteErrorClass>> = {
+  1: "SQLITE_ERROR",
+  5: "SQLITE_BUSY",
+  6: "SQLITE_LOCKED",
+  7: "SQLITE_NOMEM",
+  8: "SQLITE_READONLY",
+  10: "SQLITE_IOERR",
+  11: "SQLITE_CORRUPT",
+  13: "SQLITE_FULL",
+  18: "SQLITE_TOOBIG",
+  19: "SQLITE_CONSTRAINT",
+};
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" ? value as Record<string, unknown> : null;
@@ -107,7 +116,7 @@ export function classifyM3USqliteError(caught: unknown): M3USqliteErrorIdentity 
   for (const value of values) {
     const primaryCode = primaryCodeFromNumber(value);
     if (primaryCode === null) continue;
-    const errorClass = CLASS_BY_PRIMARY_CODE.get(primaryCode);
+    const errorClass = CLASS_BY_PRIMARY_CODE[primaryCode];
     if (errorClass) return { sqliteErrorClass: errorClass, sqlitePrimaryCode: primaryCode };
   }
 
@@ -115,7 +124,7 @@ export function classifyM3USqliteError(caught: unknown): M3USqliteErrorIdentity 
     if (typeof value !== "string") continue;
     const primaryCode = labeledCodeFromText(value);
     if (primaryCode !== null) {
-      const errorClass = CLASS_BY_PRIMARY_CODE.get(primaryCode) ?? "UNKNOWN";
+      const errorClass = CLASS_BY_PRIMARY_CODE[primaryCode] ?? "UNKNOWN";
       return { sqliteErrorClass: errorClass, sqlitePrimaryCode: primaryCode };
     }
     const errorClass = classFromText(value);
