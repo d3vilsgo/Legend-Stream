@@ -61,10 +61,10 @@ export type M3UCacheWriteTelemetry = {
   writeInputCounts: M3UCacheCounts;
   writeSafeCounts: M3UCacheCounts;
   writeWrittenCounts: M3UCacheCounts;
-  completedBatchCount: M3UCacheCounts;
-  committedRows: M3UCacheCounts;
-  failedBatchIndex: number;
-  cacheAfterReadOutcome: M3UCacheAfterReadOutcome;
+  completedBatchCount?: M3UCacheCounts;
+  committedRows?: M3UCacheCounts;
+  failedBatchIndex?: number;
+  cacheAfterReadOutcome?: M3UCacheAfterReadOutcome;
   sqliteErrorClass?: M3USqliteErrorClass;
   sqlitePrimaryCode?: number;
   sqliteStage?: M3USqliteStage;
@@ -163,6 +163,8 @@ export function emptyM3UValidationScan(total = 0): M3UCacheValidationScan {
 }
 
 export function formatM3UCacheWriteFields(write: M3UCacheWriteTelemetry) {
+  const completedBatchCount = write.completedBatchCount ?? emptyM3UCacheCounts();
+  const committedRows = write.committedRows ?? emptyM3UCacheCounts();
   return [
     "m3u.writeAttempted=true",
     `m3u.writeOutcome=${write.writeOutcome}`,
@@ -176,14 +178,14 @@ export function formatM3UCacheWriteFields(write: M3UCacheWriteTelemetry) {
     `m3u.writeWrittenCounts.live=${write.writeWrittenCounts.live}`,
     `m3u.writeWrittenCounts.vod=${write.writeWrittenCounts.vod}`,
     `m3u.writeWrittenCounts.series=${write.writeWrittenCounts.series}`,
-    `m3u.completedBatchCount.live=${write.completedBatchCount.live}`,
-    `m3u.completedBatchCount.vod=${write.completedBatchCount.vod}`,
-    `m3u.completedBatchCount.series=${write.completedBatchCount.series}`,
-    `m3u.committedRows.live=${write.committedRows.live}`,
-    `m3u.committedRows.vod=${write.committedRows.vod}`,
-    `m3u.committedRows.series=${write.committedRows.series}`,
-    `m3u.failedBatchIndex=${write.failedBatchIndex}`,
-    `m3u.cacheAfterReadOutcome=${write.cacheAfterReadOutcome}`,
+    `m3u.completedBatchCount.live=${completedBatchCount.live}`,
+    `m3u.completedBatchCount.vod=${completedBatchCount.vod}`,
+    `m3u.completedBatchCount.series=${completedBatchCount.series}`,
+    `m3u.committedRows.live=${committedRows.live}`,
+    `m3u.committedRows.vod=${committedRows.vod}`,
+    `m3u.committedRows.series=${committedRows.series}`,
+    `m3u.failedBatchIndex=${write.failedBatchIndex ?? 0}`,
+    `m3u.cacheAfterReadOutcome=${write.cacheAfterReadOutcome ?? "success"}`,
     ...(write.sqliteErrorClass !== undefined &&
     write.sqlitePrimaryCode !== undefined &&
     write.sqliteStage !== undefined
