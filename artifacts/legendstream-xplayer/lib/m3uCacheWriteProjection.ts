@@ -143,6 +143,7 @@ export function buildM3UCacheWriteProjection(
     scan.scanInspectedCount += 1;
     const inspection = inspectM3UStreamRef(parsedProvider, item.streamUrl, "movie");
     if (!inspection.ref) return reject("vod", inspection.reason);
+    if (inspection.ref.containerExtension === null) return reject("vod", "missing-extension");
     movieRows.push({
       stream_id: item.id,
       name: item.name,
