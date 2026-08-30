@@ -1,3 +1,5 @@
+import { hasCredentialPathLiveShape } from "./m3uStructuralClassification";
+
 export type M3UContentType = "live" | "movie" | "series";
 
 export type M3UClassificationSource =
@@ -6,6 +8,7 @@ export type M3UClassificationSource =
   | "path-series"
   | "extension-live"
   | "extension-movie"
+  | "structural-live"
   | "group-movie"
   | "group-series"
   | "default-live";
@@ -180,6 +183,10 @@ export function classifyM3UContentTypeWithSource(
   if (/\.(mp4|mkv|avi)$/i.test(path)) return { contentType: "movie", source: "extension-movie" };
   if (/\.(ts|m3u8)$/i.test(path)) return { contentType: "live", source: "extension-live" };
 
+  if (hasCredentialPathLiveShape(streamUrl)) {
+    return { contentType: "live", source: "structural-live" };
+  }
+
   const group = groupSignals(category);
   if (group.movie) return { contentType: "movie", source: "group-movie" };
   if (group.series) return { contentType: "series", source: "group-series" };
@@ -222,6 +229,7 @@ function incrementClassification(
     "path-series": "byPathSeries",
     "extension-live": "byExtensionLive",
     "extension-movie": "byExtensionMovie",
+    "structural-live": "byDefaultLive",
     "group-movie": "byGroupMovie",
     "group-series": "byGroupSeries",
     "default-live": "byDefaultLive",
