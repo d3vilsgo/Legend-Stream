@@ -1,4 +1,9 @@
 import { redactSensitiveText } from "./safeLog";
+import {
+  completePendingM3UProviderSwitchMeasurement,
+  failPendingM3UProviderSwitchMeasurement,
+  noteM3UProviderSwitchPath,
+} from "./m3uSwitchMetrics";
 
 export type ProviderSwitchPath = "memory" | "cache" | "network";
 
@@ -13,9 +18,13 @@ export function chooseProviderSwitchPath(options: {
   hasInMemoryChannels: boolean;
   hasUsableCatalogCache: boolean;
 }): ProviderSwitchPath {
-  if (options.hasInMemoryChannels) return "memory";
-  if (options.hasUsableCatalogCache) return "cache";
-  return "network";
+  const path: ProviderSwitchPath = options.hasInMemoryChannels
+    ? "memory"
+    : options.hasUsableCatalogCache
+      ? "cache"
+      : "network";
+  noteM3UProviderSwitchPath(path);
+  return path;
 }
 
 export function tryBeginProviderSwitch(
@@ -29,6 +38,7 @@ export function tryBeginProviderSwitch(
 }
 
 export function safeProviderSwitchError(caught: unknown) {
+  failPendingM3UProviderSwitchMeasurement("network-error");
   const message = caught instanceof Error
     ? caught.message
     : "The saved provider could not be opened.";
@@ -52,6 +62,7 @@ export function clearProviderSwitchSnapshot(providerId?: string) {
   if (!providerId || primedSnapshot?.providerId === providerId) {
     primedSnapshot = null;
   }
+  completePendingM3UProviderSwitchMeasurement(providerId);
 }
 
 export function shouldPreserveProviderSwitchSnapshot(options: {

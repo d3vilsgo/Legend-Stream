@@ -104,6 +104,10 @@ export function getM3UCatalog(providerId?: string): M3UCatalog {
   return m3uCatalogByProvider.get(providerId) ?? { movieItems: [], seriesGroups: [] };
 }
 
+export function installM3UCatalog(providerId: string, catalog: M3UCatalog) {
+  m3uCatalogByProvider.set(providerId, catalog);
+}
+
 const decodeEntities = (value: string) =>
   value
     .replace(/&amp;/g, "&")

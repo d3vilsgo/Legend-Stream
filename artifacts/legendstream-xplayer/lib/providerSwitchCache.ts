@@ -17,6 +17,7 @@ import {
   hydrateM3UProviderCache,
   markM3UCacheActivation,
 } from "./m3uCatalogCache";
+import { beginM3UProviderSwitchMeasurement } from "./m3uSwitchMetrics";
 import { primeProviderSwitchSnapshot } from "./providerSwitchUx";
 import type { Channel } from "./iptv";
 import type { XtreamCategory, XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
@@ -56,6 +57,7 @@ export async function prepareProviderSwitchCache(
   provider: ProviderSwitchCacheProvider,
 ): Promise<ProviderSwitchCachePreparation | null> {
   if (provider.type === "m3u") {
+    beginM3UProviderSwitchMeasurement(provider.id);
     const cached = await hydrateM3UProviderCache(provider as any);
     if (!cached) return null;
     const snapshot: ProviderSwitchCatalogSnapshot = {
