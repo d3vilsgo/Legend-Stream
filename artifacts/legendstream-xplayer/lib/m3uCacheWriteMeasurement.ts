@@ -1,3 +1,9 @@
+import type {
+  M3UCacheAfterReadOutcome,
+  M3USqliteErrorClass,
+  M3USqliteStage,
+} from "./sqliteWriteDiagnostics";
+
 export type M3UCacheWriteOutcome =
   | "success"
   | "unsupported-source"
@@ -55,6 +61,13 @@ export type M3UCacheWriteTelemetry = {
   writeInputCounts: M3UCacheCounts;
   writeSafeCounts: M3UCacheCounts;
   writeWrittenCounts: M3UCacheCounts;
+  completedBatchCount: M3UCacheCounts;
+  committedRows: M3UCacheCounts;
+  failedBatchIndex: number;
+  cacheAfterReadOutcome: M3UCacheAfterReadOutcome;
+  sqliteErrorClass?: M3USqliteErrorClass;
+  sqlitePrimaryCode?: number;
+  sqliteStage?: M3USqliteStage;
   writeRejectCounts: M3URefRejectionCounts;
   scan: M3UCacheValidationScan;
   cleanupOutcome: M3UCleanupOutcome;
@@ -163,6 +176,23 @@ export function formatM3UCacheWriteFields(write: M3UCacheWriteTelemetry) {
     `m3u.writeWrittenCounts.live=${write.writeWrittenCounts.live}`,
     `m3u.writeWrittenCounts.vod=${write.writeWrittenCounts.vod}`,
     `m3u.writeWrittenCounts.series=${write.writeWrittenCounts.series}`,
+    `m3u.completedBatchCount.live=${write.completedBatchCount.live}`,
+    `m3u.completedBatchCount.vod=${write.completedBatchCount.vod}`,
+    `m3u.completedBatchCount.series=${write.completedBatchCount.series}`,
+    `m3u.committedRows.live=${write.committedRows.live}`,
+    `m3u.committedRows.vod=${write.committedRows.vod}`,
+    `m3u.committedRows.series=${write.committedRows.series}`,
+    `m3u.failedBatchIndex=${write.failedBatchIndex}`,
+    `m3u.cacheAfterReadOutcome=${write.cacheAfterReadOutcome}`,
+    ...(write.sqliteErrorClass !== undefined &&
+    write.sqlitePrimaryCode !== undefined &&
+    write.sqliteStage !== undefined
+      ? [
+          `m3u.sqliteErrorClass=${write.sqliteErrorClass}`,
+          `m3u.sqlitePrimaryCode=${write.sqlitePrimaryCode}`,
+          `m3u.sqliteStage=${write.sqliteStage}`,
+        ]
+      : []),
     ...M3U_REF_REJECTION_REASONS.map(
       (reason) => `m3u.writeRejectCounts.${reason}=${write.writeRejectCounts[reason]}`,
     ),
