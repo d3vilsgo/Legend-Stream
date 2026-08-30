@@ -276,7 +276,7 @@ export async function upsertCatalogItems(
       for (const persisted of batch) {
         if (options.isCancelled?.()) break;
         if (persisted.catalogKind !== kind || persisted.providerId !== providerId) {
-          throw new Error("Catalog persistence DTO does not match its write target.");
+throw new Error("Catalog persistence DTO does not match its write target.");
         }
         const id = itemIdentity(persisted);
         await db.runAsync(
