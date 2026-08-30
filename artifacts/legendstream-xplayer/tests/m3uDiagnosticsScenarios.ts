@@ -183,7 +183,7 @@ function main() {
     const failClosedStart = cacheSource.indexOf("async function failClosedWrite");
     const persistStart = cacheSource.indexOf("export async function persistM3UProviderCache", failClosedStart);
     const body = cacheSource.slice(failClosedStart, persistStart);
-    assert.match(body, /outcome: options\.outcome/);
+    assert.match(body, /await publishWriteObservation\(\{\s*\.\.\.options,/s);
     assert.match(body, /cleanupOutcome/);
     assert.match(body, /cleanupStage/);
     assert.doesNotMatch(body, /outcome:\s*"sqlite-error"/);
