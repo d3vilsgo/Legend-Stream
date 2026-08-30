@@ -41,6 +41,18 @@ import {
   type M3URefRejectionCounts,
 } from "./m3uCacheWriteMeasurement";
 import {
+  classifyM3USqliteError,
+  createM3USqliteBatchProgress,
+  failedM3USqliteBatchIndex,
+  noteM3USqliteBatchCommitted,
+  noteM3USqliteBatchStarted,
+  snapshotM3USqliteBatchProgress,
+  type M3UCacheAfterReadOutcome,
+  type M3USqliteErrorIdentity,
+  type M3USqliteStage,
+  type M3USqliteWriteKind,
+} from "./sqliteWriteDiagnostics";
+import {
   noteM3UCacheHydration,
   noteM3UCacheWriteResult,
   noteM3UCacheWriteStarted,
@@ -205,16 +217,20 @@ export async function hydrateM3UProviderCache(
 async function readWriteCacheState(
   providerId: string,
   fallbackPhase: M3UCacheSyncPhase,
-): Promise<{ counts: M3UCacheCounts; phase: M3UCacheSyncPhase }> {
+): Promise<{
+  counts: M3UCacheCounts;
+  phase: M3UCacheSyncPhase;
+  readOutcome: M3UCacheAfterReadOutcome;
+}> {
   try {
     const [counts, state] = await Promise.all([
       getCatalogCounts(providerId),
       getCatalogSyncState(providerId),
     ]);
-    return { counts, phase: state?.phase ?? fallbackPhase };
+    return { counts, phase: state?.phase ?? fallbackPhase, readOutcome: "success" };
   } catch (caught) {
     safeLog.error("LS_M3U_CACHE_WRITE_STATE_READ", caught);
-    return { counts: emptyM3UCacheCounts(), phase: fallbackPhase };
+    return { counts: emptyM3UCacheCounts(), phase: fallbackPhase, readOutcome: "error" };
   }
 }
 
@@ -232,6 +248,10 @@ async function markWriteFailureState(providerId: string, outcome: M3UCacheWriteO
   }
 }
 
+type SqliteFailureObservation = M3USqliteErrorIdentity & {
+  sqliteStage: M3USqliteStage;
+};
+
 async function publishWriteObservation(options: {
   providerId: string;
   startedAt: number;
@@ -239,6 +259,10 @@ async function publishWriteObservation(options: {
   inputCounts: M3UCacheCounts;
   safeCounts: M3UCacheCounts;
   writtenCounts: M3UCacheCounts;
+  completedBatchCount?: M3UCacheCounts;
+  committedRows?: M3UCacheCounts;
+  failedBatchIndex?: number;
+  sqliteFailure?: SqliteFailureObservation;
   rejectionCounts: M3URefRejectionCounts;
   scan: M3UCacheValidationScan;
   cleanupOutcome: M3UCleanupOutcome;
@@ -260,6 +284,11 @@ async function publishWriteObservation(options: {
       writeInputCounts: options.inputCounts,
       writeSafeCounts: options.safeCounts,
       writeWrittenCounts: options.writtenCounts,
+      completedBatchCount: options.completedBatchCount ?? emptyM3UCacheCounts(),
+      committedRows: options.committedRows ?? emptyM3UCacheCounts(),
+      failedBatchIndex: options.failedBatchIndex ?? 0,
+      cacheAfterReadOutcome: cacheState.readOutcome,
+      ...(options.sqliteFailure ?? {}),
       writeRejectCounts: options.rejectionCounts,
       scan: options.scan,
       cleanupOutcome: options.cleanupOutcome,
@@ -380,22 +409,63 @@ export async function persistM3UProviderCache(
   }
 
   const writtenCounts = emptyM3UCacheCounts();
+  const batchProgress = createM3USqliteBatchProgress();
+  let sqliteStage: M3USqliteStage = "set-syncing";
+  const batchCallbacks = (kind: M3USqliteWriteKind) => ({
+    onBatchStarted: (batchIndex: number) => {
+      noteM3USqliteBatchStarted(batchProgress, kind, batchIndex);
+    },
+    onBatchCommitted: (observation: { batchIndex: number; committedRows: number }) => {
+      noteM3USqliteBatchCommitted(
+        batchProgress,
+        kind,
+        observation.batchIndex,
+        observation.committedRows,
+      );
+    },
+  });
+
   try {
     await initCatalogCache();
     const seenAt = Date.now();
+    sqliteStage = "set-syncing";
     await setCatalogSyncState(provider.id, "syncing", 0, M3U_CACHE_STAGE_TOTAL, "M3U cache update started");
-    writtenCounts.live = await upsertCatalogItems(provider.id, "live", persistedLive, { seenAt, markNew: true });
-    writtenCounts.vod = await upsertCatalogItems(provider.id, "vod", persistedVod, { seenAt, markNew: true });
-    writtenCounts.series = await upsertCatalogItems(provider.id, "series", persistedSeries, { seenAt, markNew: true });
+
+    sqliteStage = "upsert-live";
+    writtenCounts.live = await upsertCatalogItems(provider.id, "live", persistedLive, {
+      seenAt,
+      markNew: true,
+      ...batchCallbacks("live"),
+    });
+
+    sqliteStage = "upsert-vod";
+    writtenCounts.vod = await upsertCatalogItems(provider.id, "vod", persistedVod, {
+      seenAt,
+      markNew: true,
+      ...batchCallbacks("vod"),
+    });
+
+    sqliteStage = "upsert-series";
+    writtenCounts.series = await upsertCatalogItems(provider.id, "series", persistedSeries, {
+      seenAt,
+      markNew: true,
+      ...batchCallbacks("series"),
+    });
+
+    sqliteStage = "replace-categories";
     await Promise.all([
       replaceCatalogCategories(provider.id, "vod", categories(movieInput.map((item) => item.category))),
       replaceCatalogCategories(provider.id, "series", categories(seriesInput.map((item) => item.category))),
     ]);
+
+    sqliteStage = "prune";
     await Promise.all([
       pruneCatalogKind(provider.id, "live", seenAt),
       pruneCatalogKind(provider.id, "vod", seenAt),
       pruneCatalogKind(provider.id, "series", seenAt),
     ]);
+
+    sqliteStage = "set-ready";
     await setCatalogSyncState(
       provider.id,
       "ready",
@@ -404,6 +474,7 @@ export async function persistM3UProviderCache(
       "M3U cache ready",
       "background",
     );
+    const progress = snapshotM3USqliteBatchProgress(batchProgress);
     await publishWriteObservation({
       providerId: provider.id,
       startedAt,
@@ -411,6 +482,8 @@ export async function persistM3UProviderCache(
       inputCounts: projection.inputCounts,
       safeCounts: projection.safeCounts,
       writtenCounts,
+      completedBatchCount: progress.completedBatchCount,
+      committedRows: progress.committedRows,
       rejectionCounts: projection.rejectionCounts,
       scan: projection.scan,
       cleanupOutcome: "not-required",
@@ -419,6 +492,12 @@ export async function persistM3UProviderCache(
     });
     return true;
   } catch (caught) {
+    const progress = snapshotM3USqliteBatchProgress(batchProgress);
+    const sqliteFailure = {
+      ...classifyM3USqliteError(caught),
+      sqliteStage,
+    };
+    const failedBatchIndex = failedM3USqliteBatchIndex(batchProgress, sqliteStage);
     safeLog.error("LS_M3U_CACHE_WRITE_DB", caught);
     await markWriteFailureState(provider.id, "sqlite-error");
     await publishWriteObservation({
@@ -428,6 +507,10 @@ export async function persistM3UProviderCache(
       inputCounts: projection.inputCounts,
       safeCounts: projection.safeCounts,
       writtenCounts,
+      completedBatchCount: progress.completedBatchCount,
+      committedRows: progress.committedRows,
+      failedBatchIndex,
+      sqliteFailure,
       rejectionCounts: projection.rejectionCounts,
       scan: projection.scan,
       cleanupOutcome: "not-required",
