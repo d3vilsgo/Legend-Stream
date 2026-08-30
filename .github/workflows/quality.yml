@@ -12,6 +12,7 @@ on:
 # H2 console gate: direct console.* is forbidden outside tests and __DEV__ guards.
 # M3U diagnostics gate: shape/classification counters, fail-fast validation, primary/cleanup outcome and stale-cache fail-closed invariants must pass.
 # M3U classification gate: structural live signals must beat group-name heuristics without changing Xtream routing.
+# M3U playback ref gate: extensionless credential-path live refs, safe reconstruction, and fail-closed cleanup must pass.
 # 9.2 catalog gate: runtime catalog rows must pass explicit persisted DTO projection.
 # Catalog category fallback gate: __all__ must stay out of Xtream transport and empty cache must fall back.
 # Catalog availability gate: usable rows stay browsable across cancelled/error refreshes; initial blocking is cache-driven.
@@ -87,6 +88,12 @@ jobs:
           set -euo pipefail
           classification="$(pnpm --filter @workspace/legendstream-xplayer test:m3u-classification 2>&1 | tee /dev/stderr)"
           grep -F 'm3u classification scenarios: 6/6 passed' <<<"$classification"
+      - name: M3U playback ref regressions (8/8 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          playback_ref="$(pnpm --filter @workspace/legendstream-xplayer test:m3u-playback-ref 2>&1 | tee /dev/stderr)"
+          grep -F 'm3u playback ref scenarios: 8/8 passed' <<<"$playback_ref"
       - name: Catalog persistence invariants (10/10 required)
         shell: bash
         run: |
@@ -161,7 +168,8 @@ jobs:
             exit 1
           fi
           if grep -Ein '(@replit/|stripe-replit-sync)' pnpm-lock.yaml; then
-            echo 'Replit packages remain in pnpm-lock.yaml'
+            echo 'Replit packages remain in pnpm-lock.yaml:'
+            grep -Ein '(@replit/|stripe-replit-sync)' pnpm-lock.yaml
             exit 1
           fi
           echo 'Replit cleanup verification passed.'
