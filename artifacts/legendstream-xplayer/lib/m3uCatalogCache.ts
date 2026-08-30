@@ -15,6 +15,7 @@ import {
   type Provider,
   type ProviderLoadResult,
 } from "./iptv";
+import { hasUsableM3UCacheSnapshot } from "./m3uCacheAvailability";
 import { parseM3UProviderSource } from "./m3uCatalogRefs";
 import {
   projectCatalogItems,
@@ -23,13 +24,20 @@ import {
   type PersistedVodCatalogItem,
 } from "./catalogPersistence";
 import { buildM3UDirectHydration } from "./m3uCatalogHydration";
-import { buildM3UCacheWriteProjection } from "./m3uCacheWriteProjection";
+import {
+  buildM3UCacheWriteProjection,
+  m3uCacheCandidateCount,
+} from "./m3uCacheWriteProjection";
 import {
   emptyM3UCacheCounts,
   emptyM3URefRejectionCounts,
+  emptyM3UValidationScan,
   type M3UCacheCounts,
   type M3UCacheSyncPhase,
+  type M3UCacheValidationScan,
   type M3UCacheWriteOutcome,
+  type M3UCleanupOutcome,
+  type M3UCleanupStage,
   type M3URefRejectionCounts,
 } from "./m3uCacheWriteMeasurement";
 import {
@@ -117,6 +125,19 @@ export async function hydrateM3UProviderCache(
     sqliteReadMs = Date.now() - sqliteStartedAt;
     cacheRawCounts = rawCounts;
     cacheSyncPhase = state?.phase ?? "none";
+
+    if (!hasUsableM3UCacheSnapshot(cacheRawCounts, cacheSyncPhase) && cacheSyncPhase === "error") {
+      noteM3UCacheHydration({
+        outcome: "null",
+        reason: "error-state",
+        sqliteReadMs,
+        runtimeHydrateMs: 0,
+        itemCounts: emptyM3UCacheCounts(),
+        cacheRawCounts,
+        cacheSyncPhase,
+      });
+      return null;
+    }
 
     const liveRows = rawLive.filter(
       (row): row is PersistedLiveCatalogItem => row.catalogKind === "live",
@@ -219,14 +240,19 @@ async function publishWriteObservation(options: {
   safeCounts: M3UCacheCounts;
   writtenCounts: M3UCacheCounts;
   rejectionCounts: M3URefRejectionCounts;
+  scan: M3UCacheValidationScan;
+  cleanupOutcome: M3UCleanupOutcome;
+  cleanupStage: M3UCleanupStage;
   fallbackPhase: M3UCacheSyncPhase;
 }) {
   const writeMs = Math.max(0, Date.now() - options.startedAt);
   const cacheState = await readWriteCacheState(options.providerId, options.fallbackPhase);
   await noteM3UCacheWriteResult(options.providerId, {
     startedAt: options.startedAt,
-    cacheRawCounts: cacheState.counts,
-    cacheSyncPhase: cacheState.phase,
+    cacheAfter: {
+      rawCounts: cacheState.counts,
+      syncPhase: cacheState.phase,
+    },
     write: {
       writeAttempted: true,
       writeOutcome: options.outcome,
@@ -235,6 +261,9 @@ async function publishWriteObservation(options: {
       writeSafeCounts: options.safeCounts,
       writeWrittenCounts: options.writtenCounts,
       writeRejectCounts: options.rejectionCounts,
+      scan: options.scan,
+      cleanupOutcome: options.cleanupOutcome,
+      cleanupStage: options.cleanupStage,
     },
   });
 }
@@ -246,9 +275,20 @@ async function failClosedWrite(options: {
   inputCounts: M3UCacheCounts;
   safeCounts: M3UCacheCounts;
   rejectionCounts: M3URefRejectionCounts;
+  scan: M3UCacheValidationScan;
 }) {
+  let cleanupOutcome: M3UCleanupOutcome = "success";
+  let cleanupStage: M3UCleanupStage = "none";
+
   try {
     await deleteProviderCatalog(options.providerId);
+  } catch (caught) {
+    cleanupOutcome = "error";
+    cleanupStage = "delete-catalog";
+    safeLog.error("LS_M3U_CACHE_WRITE_DB", caught);
+  }
+
+  try {
     await setCatalogSyncState(
       options.providerId,
       "error",
@@ -256,21 +296,19 @@ async function failClosedWrite(options: {
       M3U_CACHE_STAGE_TOTAL,
       `M3U cache write outcome=${options.outcome}`,
     );
-    await publishWriteObservation({
-      ...options,
-      writtenCounts: emptyM3UCacheCounts(),
-      fallbackPhase: "error",
-    });
   } catch (caught) {
-    safeLog.error("LS_M3U_CACHE_WRITE_DB", caught);
-    await markWriteFailureState(options.providerId, "sqlite-error");
-    await publishWriteObservation({
-      ...options,
-      outcome: "sqlite-error",
-      writtenCounts: emptyM3UCacheCounts(),
-      fallbackPhase: "error",
-    });
+    cleanupOutcome = "error";
+    if (cleanupStage === "none") cleanupStage = "set-error-state";
+    safeLog.error("LS_M3U_CACHE_WRITE_STATE", caught);
   }
+
+  await publishWriteObservation({
+    ...options,
+    writtenCounts: emptyM3UCacheCounts(),
+    cleanupOutcome,
+    cleanupStage,
+    fallbackPhase: "error",
+  });
   return false;
 }
 
@@ -288,7 +326,7 @@ export async function persistM3UProviderCache(
     vod: movieInput.length,
     series: seriesInput.length,
   };
-  noteM3UNetworkCatalogCounts(inputCounts);
+  noteM3UNetworkCatalogCounts(inputCounts, loaded.m3uDiagnostics);
   noteM3UCacheWriteStarted(provider.id);
 
   const projection = buildM3UCacheWriteProjection(provider, loaded);
@@ -302,6 +340,9 @@ export async function persistM3UProviderCache(
       safeCounts: emptyM3UCacheCounts(),
       writtenCounts: emptyM3UCacheCounts(),
       rejectionCounts: emptyM3URefRejectionCounts(),
+      scan: emptyM3UValidationScan(m3uCacheCandidateCount(loaded)),
+      cleanupOutcome: "not-required",
+      cleanupStage: "none",
       fallbackPhase: "error",
     });
     return false;
@@ -315,6 +356,7 @@ export async function persistM3UProviderCache(
       inputCounts: projection.inputCounts,
       safeCounts: projection.safeCounts,
       rejectionCounts: projection.rejectionCounts,
+      scan: projection.scan,
     });
   }
 
@@ -333,6 +375,7 @@ export async function persistM3UProviderCache(
       inputCounts: projection.inputCounts,
       safeCounts: projection.safeCounts,
       rejectionCounts: projection.rejectionCounts,
+      scan: projection.scan,
     });
   }
 
@@ -369,6 +412,9 @@ export async function persistM3UProviderCache(
       safeCounts: projection.safeCounts,
       writtenCounts,
       rejectionCounts: projection.rejectionCounts,
+      scan: projection.scan,
+      cleanupOutcome: "not-required",
+      cleanupStage: "none",
       fallbackPhase: "ready",
     });
     return true;
@@ -383,6 +429,9 @@ export async function persistM3UProviderCache(
       safeCounts: projection.safeCounts,
       writtenCounts,
       rejectionCounts: projection.rejectionCounts,
+      scan: projection.scan,
+      cleanupOutcome: "not-required",
+      cleanupStage: "none",
       fallbackPhase: "error",
     });
     return false;

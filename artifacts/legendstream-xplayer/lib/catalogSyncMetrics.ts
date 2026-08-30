@@ -10,15 +10,24 @@ import {
 import {
   formatM3UCacheWriteMeasurement,
   M3U_CACHE_SYNC_PHASES,
+  M3U_CLEANUP_OUTCOMES,
+  M3U_CLEANUP_STAGES,
+  M3U_FIRST_REJECT_KINDS,
   M3U_REF_REJECTION_REASONS,
   M3U_WRITE_OUTCOMES,
   emptyM3URefRejectionCounts,
   type M3UCacheCounts,
+  type M3UCacheSnapshot,
   type M3UCacheSyncPhase,
+  type M3UCacheValidationScan,
   type M3UCacheWriteMeasurement,
   type M3UCacheWriteTelemetry,
+  type M3UCleanupOutcome,
+  type M3UCleanupStage,
   type M3URefRejectionCounts,
+  type M3URefRejectionReason,
 } from "./m3uCacheWriteMeasurement";
+import type { M3UShapeDiagnostics } from "./m3uShapeDiagnostics";
 import {
   readCatalogSyncMetricsPayload,
   writeCatalogSyncMetricsPayload,
@@ -117,6 +126,14 @@ function normalizeM3USyncPhase(value: unknown): M3UCacheSyncPhase | null {
     : null;
 }
 
+function normalizeM3UCacheSnapshot(value: unknown): M3UCacheSnapshot | null {
+  const raw = objectValue(value);
+  if (!raw) return null;
+  const rawCounts = normalizeM3UCounts(raw.rawCounts);
+  const syncPhase = normalizeM3USyncPhase(raw.syncPhase);
+  return rawCounts && syncPhase ? { rawCounts, syncPhase } : null;
+}
+
 function normalizeM3URejectCounts(value: unknown): M3URefRejectionCounts | null {
   const raw = objectValue(value);
   if (!raw) return null;
@@ -129,6 +146,41 @@ function normalizeM3URejectCounts(value: unknown): M3URefRejectionCounts | null 
   return result;
 }
 
+function normalizeM3UValidationScan(value: unknown): M3UCacheValidationScan | null {
+  const raw = objectValue(value);
+  if (!raw) return null;
+  const scanTotalCandidateCount = countValue(raw.scanTotalCandidateCount);
+  const scanInspectedCount = countValue(raw.scanInspectedCount);
+  const firstRejectKind = raw.firstRejectKind;
+  const firstRejectReason = raw.firstRejectReason;
+  if (
+    scanTotalCandidateCount === null ||
+    scanInspectedCount === null ||
+    typeof raw.scanTruncated !== "boolean" ||
+    typeof firstRejectKind !== "string" ||
+    !M3U_FIRST_REJECT_KINDS.has(firstRejectKind as M3UCacheValidationScan["firstRejectKind"]) ||
+    typeof firstRejectReason !== "string" ||
+    (firstRejectReason !== "none" && !M3U_REF_REJECTION_REASONS.includes(firstRejectReason as M3URefRejectionReason))
+  ) return null;
+  return {
+    scanTotalCandidateCount,
+    scanInspectedCount,
+    scanTruncated: raw.scanTruncated,
+    firstRejectKind: firstRejectKind as M3UCacheValidationScan["firstRejectKind"],
+    firstRejectReason: firstRejectReason as M3UCacheValidationScan["firstRejectReason"],
+  };
+}
+
+function legacyM3UValidationScan(): M3UCacheValidationScan {
+  return {
+    scanTotalCandidateCount: 0,
+    scanInspectedCount: 0,
+    scanTruncated: false,
+    firstRejectKind: "none",
+    firstRejectReason: "none",
+  };
+}
+
 function normalizeM3UWriteTelemetry(value: unknown): M3UCacheWriteTelemetry | null {
   const raw = objectValue(value);
   if (!raw || raw.writeAttempted !== true) return null;
@@ -138,11 +190,18 @@ function normalizeM3UWriteTelemetry(value: unknown): M3UCacheWriteTelemetry | nu
   const writeSafeCounts = normalizeM3UCounts(raw.writeSafeCounts);
   const writeWrittenCounts = normalizeM3UCounts(raw.writeWrittenCounts);
   const writeRejectCounts = normalizeM3URejectCounts(raw.writeRejectCounts);
+  const scan = raw.scan === undefined ? legacyM3UValidationScan() : normalizeM3UValidationScan(raw.scan);
+  const cleanupOutcome = raw.cleanupOutcome === undefined ? "not-required" : raw.cleanupOutcome;
+  const cleanupStage = raw.cleanupStage === undefined ? "none" : raw.cleanupStage;
   if (
     typeof outcome !== "string" ||
     !M3U_WRITE_OUTCOMES.has(outcome as M3UCacheWriteTelemetry["writeOutcome"]) ||
     writeMs === null ||
-    !writeInputCounts || !writeSafeCounts || !writeWrittenCounts || !writeRejectCounts
+    !writeInputCounts || !writeSafeCounts || !writeWrittenCounts || !writeRejectCounts || !scan ||
+    typeof cleanupOutcome !== "string" ||
+    !M3U_CLEANUP_OUTCOMES.has(cleanupOutcome as M3UCleanupOutcome) ||
+    typeof cleanupStage !== "string" ||
+    !M3U_CLEANUP_STAGES.has(cleanupStage as M3UCleanupStage)
   ) {
     return null;
   }
@@ -154,6 +213,103 @@ function normalizeM3UWriteTelemetry(value: unknown): M3UCacheWriteTelemetry | nu
     writeSafeCounts,
     writeWrittenCounts,
     writeRejectCounts,
+    scan,
+    cleanupOutcome: cleanupOutcome as M3UCleanupOutcome,
+    cleanupStage: cleanupStage as M3UCleanupStage,
+  };
+}
+
+function normalizedCountObject(value: unknown, keys: readonly string[]) {
+  const raw = objectValue(value);
+  if (!raw) return null;
+  const result: Record<string, number> = {};
+  for (const key of keys) {
+    const count = countValue(raw[key]);
+    if (count === null) return null;
+    result[key] = count;
+  }
+  return result;
+}
+
+function normalizeSegmentHistogram(value: unknown) {
+  const raw = objectValue(value);
+  if (!raw) return null;
+  const result: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!/^\d+$/.test(key)) return null;
+    const count = countValue(value);
+    if (count === null) return null;
+    result[key] = count;
+  }
+  return result;
+}
+
+function normalizeM3UShapeDiagnostics(value: unknown): M3UShapeDiagnostics | null {
+  const raw = objectValue(value);
+  if (!raw) return null;
+  const originCompare = normalizedCountObject(raw.originCompare, [
+    "total",
+    "protocolMatchCount",
+    "hostnameMatchCount",
+    "portMatchCount",
+    "exactOriginMatchCount",
+  ]);
+  const streamOrigin = normalizedCountObject(raw.streamOrigin, ["distinctOriginCount"]);
+  const pathShape = normalizedCountObject(raw.pathShape, [
+    "hasLiveSegmentCount",
+    "hasMovieSegmentCount",
+    "hasSeriesSegmentCount",
+    "noneOfKnownSegmentsCount",
+  ]);
+  const pathShapeRaw = objectValue(raw.pathShape);
+  const segmentCountHistogram = normalizeSegmentHistogram(pathShapeRaw?.segmentCountHistogram);
+  const extension = normalizedCountObject(raw.extension, [
+    "presentCount",
+    "absentCount",
+    "distinctCount",
+    "liveLikeCount",
+    "vodLikeCount",
+    "otherCount",
+  ]);
+  const extinfDuration = normalizedCountObject(raw.extinfDuration, [
+    "negativeOneCount",
+    "positiveCount",
+    "zeroCount",
+    "unparseableCount",
+  ]);
+  const tvgId = normalizedCountObject(raw.tvgId, ["presentCount", "absentCount"]);
+  const classification = normalizedCountObject(raw.classification, [
+    "byPathLive",
+    "byPathMovie",
+    "byPathSeries",
+    "byExtensionLive",
+    "byExtensionMovie",
+    "byGroupMovie",
+    "byGroupSeries",
+    "byDefaultLive",
+  ]);
+  const conflict = normalizedCountObject(raw.conflict, [
+    "pathLive_groupMovie",
+    "durationNegativeOne_groupMovie",
+    "tvgIdPresent_groupMovie",
+    "pathSeries_extensionMovie",
+  ]);
+  if (
+    !originCompare || !streamOrigin || !pathShape || !segmentCountHistogram || !extension ||
+    !extinfDuration || !tvgId || !classification || !conflict
+  ) return null;
+  return {
+    originCompare: originCompare as M3UShapeDiagnostics["originCompare"],
+    streamOrigin: streamOrigin as M3UShapeDiagnostics["streamOrigin"],
+    pathShape: {
+      ...(pathShape as Omit<M3UShapeDiagnostics["pathShape"], "segmentCountHistogram">),
+      segmentCountHistogram,
+    },
+    extension: extension as M3UShapeDiagnostics["extension"],
+    extinfDuration: extinfDuration as M3UShapeDiagnostics["extinfDuration"],
+    tvgId: tvgId as M3UShapeDiagnostics["tvgId"],
+    classification: classification as M3UShapeDiagnostics["classification"],
+    conflict: conflict as M3UShapeDiagnostics["conflict"],
   };
 }
 
@@ -167,22 +323,37 @@ function normalizeM3UMeasurement(raw: Record<string, unknown>): M3USwitchMeasure
   const totalSwitchMs = finiteNonNegative(m3u?.totalSwitchMs);
   const outcome = m3u?.cacheHydrationOutcome as M3UCacheHydrationOutcome;
   const fallbackReason = m3u?.networkFallbackReason as M3UNetworkFallbackReason;
-  const rawCounts = m3u?.cacheRawCounts === undefined
+
+  const legacyRawCounts = m3u?.cacheRawCounts === undefined
     ? { live: 0, vod: 0, series: 0 }
     : normalizeM3UCounts(m3u.cacheRawCounts);
-  const syncPhase = m3u?.cacheSyncPhase === undefined
+  const legacySyncPhase = m3u?.cacheSyncPhase === undefined
     ? "none"
     : normalizeM3USyncPhase(m3u.cacheSyncPhase);
+  const legacySnapshot = legacyRawCounts && legacySyncPhase
+    ? { rawCounts: legacyRawCounts, syncPhase: legacySyncPhase }
+    : null;
+  const cacheBefore = m3u?.cacheBefore === undefined
+    ? legacySnapshot
+    : normalizeM3UCacheSnapshot(m3u.cacheBefore);
+  const cacheAfter = m3u?.cacheAfter === undefined
+    ? cacheBefore
+    : normalizeM3UCacheSnapshot(m3u.cacheAfter);
+
+  const shapeDiagnostics = m3u?.shapeDiagnostics === undefined
+    ? undefined
+    : normalizeM3UShapeDiagnostics(m3u.shapeDiagnostics);
   const write = m3u?.write === undefined ? undefined : normalizeM3UWriteTelemetry(m3u.write);
   if (
     startedAt === null ||
     sqliteReadMs === null ||
     runtimeHydrateMs === null ||
     totalSwitchMs === null ||
-    !itemCounts || !rawCounts || !syncPhase ||
+    !itemCounts || !cacheBefore || !cacheAfter ||
     !M3U_OUTCOMES.has(outcome) ||
     typeof m3u?.networkFallback !== "boolean" ||
     !M3U_FALLBACK_REASONS.has(fallbackReason) ||
+    (m3u.shapeDiagnostics !== undefined && !shapeDiagnostics) ||
     (m3u.write !== undefined && !write)
   ) {
     return null;
@@ -198,8 +369,9 @@ function normalizeM3UMeasurement(raw: Record<string, unknown>): M3USwitchMeasure
       networkFallbackReason: fallbackReason,
       totalSwitchMs,
       itemCounts,
-      cacheRawCounts: rawCounts,
-      cacheSyncPhase: syncPhase,
+      cacheBefore,
+      cacheAfter,
+      shapeDiagnostics: shapeDiagnostics ?? undefined,
       write: write ?? undefined,
     },
   };
@@ -209,14 +381,20 @@ function normalizeM3UCacheWriteMeasurement(raw: Record<string, unknown>): M3UCac
   if (raw.kind !== "m3u-cache-write") return null;
   const startedAt = finiteNonNegative(raw.startedAt);
   const m3u = objectValue(raw.m3u);
-  const cacheRawCounts = normalizeM3UCounts(m3u?.cacheRawCounts);
-  const cacheSyncPhase = normalizeM3USyncPhase(m3u?.cacheSyncPhase);
+  const legacyRawCounts = normalizeM3UCounts(m3u?.cacheRawCounts);
+  const legacySyncPhase = normalizeM3USyncPhase(m3u?.cacheSyncPhase);
+  const legacySnapshot = legacyRawCounts && legacySyncPhase
+    ? { rawCounts: legacyRawCounts, syncPhase: legacySyncPhase }
+    : null;
+  const cacheAfter = m3u?.cacheAfter === undefined
+    ? legacySnapshot
+    : normalizeM3UCacheSnapshot(m3u.cacheAfter);
   const write = normalizeM3UWriteTelemetry(m3u?.write);
-  if (startedAt === null || !cacheRawCounts || !cacheSyncPhase || !write) return null;
+  if (startedAt === null || !cacheAfter || !write) return null;
   return {
     kind: "m3u-cache-write",
     startedAt,
-    m3u: { cacheRawCounts, cacheSyncPhase, write },
+    m3u: { cacheAfter, write },
   };
 }
 

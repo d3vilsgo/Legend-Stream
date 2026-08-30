@@ -1,5 +1,9 @@
 import { Platform } from "react-native";
 import { mapInBatches, yieldToUi } from "./cooperative";
+import {
+  createM3UShapeDiagnosticsObserver,
+  type M3UShapeDiagnostics,
+} from "./m3uShapeDiagnostics";
 
 export type ProviderType = "m3u" | "xtream" | "stalker";
 export type ChannelContentType = "live" | "movie" | "series";
@@ -85,6 +89,7 @@ export interface ProviderLoadResult {
   movieItems?: M3UMovieItem[];
   seriesGroups?: M3USeriesGroup[];
   epgUrl?: string;
+  m3uDiagnostics?: M3UShapeDiagnostics;
 }
 
 export interface ProviderForm {
@@ -164,26 +169,6 @@ const normalizeHint = (value: string) =>
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase();
-
-function inferM3UContentType(streamUrl: string, category: string): ChannelContentType {
-  const lowerUrl = streamUrl.toLowerCase();
-  const path = (() => {
-    try { return new URL(streamUrl).pathname.toLowerCase(); }
-    catch { return lowerUrl.split(/[?#]/, 1)[0]; }
-  })();
-
-  if (/(^|\/)movie\//i.test(path)) return "movie";
-  if (/(^|\/)series\//i.test(path)) return "series";
-  if (/(^|\/)live\//i.test(path)) return "live";
-
-  if (/\.(mp4|mkv|avi)$/i.test(path)) return "movie";
-  if (/\.(ts|m3u8)$/i.test(path)) return "live";
-
-  const group = normalizeHint(category);
-  if (/\b(VOD|MOVIE|MOVIES|FILM|FILMLER|SINEMA|CINEMA)\b/.test(group)) return "movie";
-  if (/\b(SERIES|SERIE|DIZI|DIZILER)\b/.test(group)) return "series";
-  return "live";
-}
 
 function parseSeriesIdentity(name: string) {
   const patterns = [
@@ -270,15 +255,23 @@ function buildM3UCatalog(entries: Channel[], providerId: string): ProviderLoadRe
   return { channels: liveChannels, liveChannels, movieItems, seriesGroups };
 }
 
+type M3UParseState = {
+  pending: {
+    attributes: Record<string, string>;
+    name: string;
+    group?: string;
+    extinfDuration?: string;
+  } | null;
+  nextGroup?: string;
+  epgUrl?: string;
+};
+
 function parseM3ULine(
   line: string,
   providerId: string,
   entries: Channel[],
-  state: {
-    pending: { attributes: Record<string, string>; name: string; group?: string } | null;
-    nextGroup?: string;
-    epgUrl?: string;
-  },
+  state: M3UParseState,
+  diagnostics: ReturnType<typeof createM3UShapeDiagnosticsObserver>,
 ) {
   if (line.startsWith("#EXTM3U")) {
     const attributes = parseAttributes(line);
@@ -288,10 +281,12 @@ function parseM3ULine(
   if (line.startsWith("#EXTINF")) {
     const comma = line.indexOf(",");
     const label = comma >= 0 ? line.slice(comma + 1).trim() : "Untitled channel";
+    const extinfDuration = line.match(/^#EXTINF:([^,\s]+)/i)?.[1];
     state.pending = {
       attributes: parseAttributes(line),
       name: decodeEpgText(label) || "Untitled channel",
       group: state.nextGroup,
+      extinfDuration,
     };
     state.nextGroup = undefined;
     return;
@@ -313,7 +308,13 @@ function parseM3ULine(
     "Uncategorized";
   const streamId = state.pending.attributes["tvg-id"] || state.pending.name;
   const name = state.pending.attributes["tvg-name"] || state.pending.name;
-  const contentType = inferM3UContentType(line, category);
+  const tvgId = state.pending.attributes["tvg-id"] || undefined;
+  const decision = diagnostics.observe({
+    streamUrl: line,
+    category,
+    extinfDuration: state.pending.extinfDuration,
+    tvgId,
+  });
   entries.push({
     id: makeId(providerId, entries.length, streamId),
     providerId,
@@ -321,9 +322,9 @@ function parseM3ULine(
     streamUrl: line,
     logoUrl: state.pending.attributes["tvg-logo"] || undefined,
     category,
-    tvgId: state.pending.attributes["tvg-id"] || undefined,
+    tvgId,
     streamType: state.pending.attributes["type"] || undefined,
-    contentType,
+    contentType: decision.contentType,
   });
   state.pending = null;
 }
@@ -331,44 +332,44 @@ function parseM3ULine(
 export function parseM3U(
   content: string,
   providerId: string,
+  providerSource?: string,
 ): ProviderLoadResult {
   const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
   const entries: Channel[] = [];
-  const state: {
-    pending: { attributes: Record<string, string>; name: string; group?: string } | null;
-    nextGroup?: string;
-    epgUrl?: string;
-  } = { pending: null };
+  const state: M3UParseState = { pending: null };
+  const diagnostics = createM3UShapeDiagnosticsObserver(providerSource);
 
   for (const rawLine of lines) {
     const line = rawLine.trim();
-    if (line) parseM3ULine(line, providerId, entries, state);
+    if (line) parseM3ULine(line, providerId, entries, state, diagnostics);
   }
 
   if (!entries.length) {
     throw new Error("No playable channels were found in this M3U playlist.");
   }
-  return { ...buildM3UCatalog(entries, providerId), epgUrl: state.epgUrl };
+  return {
+    ...buildM3UCatalog(entries, providerId),
+    epgUrl: state.epgUrl,
+    m3uDiagnostics: diagnostics.snapshot(),
+  };
 }
 
 async function parseM3UCooperatively(
   content: string,
   providerId: string,
+  providerSource?: string,
 ): Promise<ProviderLoadResult> {
   const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
   const entries: Channel[] = [];
-  const state: {
-    pending: { attributes: Record<string, string>; name: string; group?: string } | null;
-    nextGroup?: string;
-    epgUrl?: string;
-  } = { pending: null };
+  const state: M3UParseState = { pending: null };
+  const diagnostics = createM3UShapeDiagnosticsObserver(providerSource);
   const batchSize = 500;
 
   for (let start = 0; start < lines.length; start += batchSize) {
     const end = Math.min(start + batchSize, lines.length);
     for (let index = start; index < end; index += 1) {
       const line = lines[index].trim();
-      if (line) parseM3ULine(line, providerId, entries, state);
+      if (line) parseM3ULine(line, providerId, entries, state, diagnostics);
     }
     if (end < lines.length) await yieldToUi();
   }
@@ -377,7 +378,11 @@ async function parseM3UCooperatively(
     throw new Error("No playable channels were found in this M3U playlist.");
   }
   await yieldToUi();
-  return { ...buildM3UCatalog(entries, providerId), epgUrl: state.epgUrl };
+  return {
+    ...buildM3UCatalog(entries, providerId),
+    epgUrl: state.epgUrl,
+    m3uDiagnostics: diagnostics.snapshot(),
+  };
 }
 
 export class ProviderLoadError extends Error {
@@ -530,7 +535,7 @@ async function loadM3U(provider: Provider): Promise<ProviderLoadResult> {
   const content = await fetchProviderText(provider.url, {
     headers: { Accept: "application/vnd.apple.mpegurl,text/plain,*/*" },
   });
-  const result = await parseM3UCooperatively(content, provider.id);
+  const result = await parseM3UCooperatively(content, provider.id, provider.url);
   return { ...result, epgUrl: provider.epgUrl || result.epgUrl };
 }
 
