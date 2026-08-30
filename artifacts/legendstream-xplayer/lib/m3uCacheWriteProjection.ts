@@ -8,7 +8,9 @@ import { parseM3UProviderSource } from "./m3uCatalogRefs";
 import { inspectM3UStreamRef } from "./m3uStreamRefDiagnostics";
 import {
   emptyM3URefRejectionCounts,
+  emptyM3UValidationScan,
   type M3UCacheCounts,
+  type M3UCacheValidationScan,
   type M3UCacheWriteOutcome,
   type M3URefRejectionCounts,
 } from "./m3uCacheWriteMeasurement";
@@ -40,6 +42,7 @@ export type M3UCacheWriteProjection = {
   inputCounts: M3UCacheCounts;
   safeCounts: M3UCacheCounts;
   rejectionCounts: M3URefRejectionCounts;
+  scan: M3UCacheValidationScan;
   unsafeOutcome: Exclude<M3UCacheWriteOutcome, "success" | "unsupported-source" | "projection-drop" | "sqlite-error"> | null;
   liveRows: Array<Channel & { playbackRef: M3UPathPlaybackRef }>;
   movieRows: SafeM3UMovieRow[];
@@ -48,6 +51,28 @@ export type M3UCacheWriteProjection = {
 
 function providerSource(provider: M3UCacheWriteProvider) {
   return provider.url || provider.playlistUrl || "";
+}
+
+function seriesEpisodeCount(loaded: ProviderLoadResult) {
+  return (loaded.seriesGroups ?? []).reduce(
+    (total, group) => total + Object.values(group.seasons).reduce(
+      (groupTotal, episodes) => groupTotal + episodes.length,
+      0,
+    ),
+    0,
+  );
+}
+
+export function m3uCacheCandidateCount(loaded: ProviderLoadResult) {
+  const diagnosticTotal = loaded.m3uDiagnostics?.originCompare.total;
+  if (typeof diagnosticTotal === "number" && Number.isFinite(diagnosticTotal)) {
+    return Math.max(0, Math.trunc(diagnosticTotal));
+  }
+  return (
+    (loaded.liveChannels ?? loaded.channels).length +
+    (loaded.movieItems ?? []).length +
+    seriesEpisodeCount(loaded)
+  );
 }
 
 export function buildM3UCacheWriteProjection(
@@ -62,24 +87,62 @@ export function buildM3UCacheWriteProjection(
   const movieInput = loaded.movieItems ?? [];
   const seriesInput = loaded.seriesGroups ?? [];
   const rejectionCounts = emptyM3URefRejectionCounts();
-
+  const scan = emptyM3UValidationScan(m3uCacheCandidateCount(loaded));
   const liveRows: Array<Channel & { playbackRef: M3UPathPlaybackRef }> = [];
+  const movieRows: SafeM3UMovieRow[] = [];
+  const seriesRows: SafeM3USeriesRow[] = [];
+
+  const inputCounts = {
+    live: liveInput.length,
+    vod: movieInput.length,
+    series: seriesInput.length,
+  };
+
+  const projection = (
+    unsafeOutcome: M3UCacheWriteProjection["unsafeOutcome"],
+  ): M3UCacheWriteProjection => ({
+    inputCounts,
+    safeCounts: {
+      live: liveRows.length,
+      vod: movieRows.length,
+      series: seriesRows.length,
+    },
+    rejectionCounts,
+    scan,
+    unsafeOutcome,
+    liveRows,
+    movieRows,
+    seriesRows,
+  });
+
+  const reject = (
+    kind: Exclude<M3UCacheValidationScan["firstRejectKind"], "none">,
+    reason: Exclude<M3UCacheValidationScan["firstRejectReason"], "none">,
+  ) => {
+    rejectionCounts[reason] += 1;
+    scan.firstRejectKind = kind;
+    scan.firstRejectReason = reason;
+    scan.scanTruncated = scan.scanInspectedCount < scan.scanTotalCandidateCount;
+    return projection(
+      kind === "live"
+        ? "unsafe-live-ref"
+        : kind === "vod"
+          ? "unsafe-vod-ref"
+          : "unsafe-series-ref",
+    );
+  };
+
   for (const channel of liveInput) {
+    scan.scanInspectedCount += 1;
     const inspection = inspectM3UStreamRef(parsedProvider, channel.streamUrl, "live");
-    if (!inspection.ref) {
-      rejectionCounts[inspection.reason] += 1;
-      continue;
-    }
+    if (!inspection.ref) return reject("live", inspection.reason);
     liveRows.push({ ...channel, playbackRef: inspection.ref });
   }
 
-  const movieRows: SafeM3UMovieRow[] = [];
   for (const item of movieInput) {
+    scan.scanInspectedCount += 1;
     const inspection = inspectM3UStreamRef(parsedProvider, item.streamUrl, "movie");
-    if (!inspection.ref) {
-      rejectionCounts[inspection.reason] += 1;
-      continue;
-    }
+    if (!inspection.ref) return reject("vod", inspection.reason);
     movieRows.push({
       stream_id: item.id,
       name: item.name,
@@ -90,18 +153,13 @@ export function buildM3UCacheWriteProjection(
     });
   }
 
-  const seriesRows: SafeM3USeriesRow[] = [];
   for (const group of seriesInput) {
     const allEpisodes = Object.values(group.seasons).flat();
     const episodes: PersistedM3UEpisode[] = [];
-    let unsafe = false;
     for (const episode of allEpisodes) {
+      scan.scanInspectedCount += 1;
       const inspection = inspectM3UStreamRef(parsedProvider, episode.streamUrl, "series");
-      if (!inspection.ref) {
-        rejectionCounts[inspection.reason] += 1;
-        unsafe = true;
-        continue;
-      }
+      if (!inspection.ref) return reject("series", inspection.reason);
       episodes.push({
         id: episode.id,
         title: episode.title,
@@ -112,7 +170,6 @@ export function buildM3UCacheWriteProjection(
         playbackRef: inspection.ref,
       });
     }
-    if (unsafe) continue;
     seriesRows.push({
       series_id: group.id,
       name: group.name,
@@ -122,31 +179,6 @@ export function buildM3UCacheWriteProjection(
     });
   }
 
-  const inputCounts = {
-    live: liveInput.length,
-    vod: movieInput.length,
-    series: seriesInput.length,
-  };
-  const safeCounts = {
-    live: liveRows.length,
-    vod: movieRows.length,
-    series: seriesRows.length,
-  };
-  const unsafeOutcome = safeCounts.live !== inputCounts.live
-    ? "unsafe-live-ref"
-    : safeCounts.vod !== inputCounts.vod
-      ? "unsafe-vod-ref"
-      : safeCounts.series !== inputCounts.series
-        ? "unsafe-series-ref"
-        : null;
-
-  return {
-    inputCounts,
-    safeCounts,
-    rejectionCounts,
-    unsafeOutcome,
-    liveRows,
-    movieRows,
-    seriesRows,
-  };
+  scan.scanTruncated = false;
+  return projection(null);
 }
