@@ -2,7 +2,7 @@
   "expo": {
     "name": "LegendStream XPlayer",
     "slug": "legendstream-xplayer",
-    "version": "1.4.41",
+    "version": "1.4.42",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "legendstream-xplayer",
@@ -18,7 +18,7 @@
     },
     "android": {
       "package": "com.legendstream.xplayer",
-      "versionCode": 58,
+      "versionCode": 59,
       "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
