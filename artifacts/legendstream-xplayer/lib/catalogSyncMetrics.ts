@@ -200,7 +200,7 @@ function normalizeM3UMeasurement(raw: Record<string, unknown>): M3USwitchMeasure
       itemCounts,
       cacheRawCounts: rawCounts,
       cacheSyncPhase: syncPhase,
-      write,
+      write: write ?? undefined,
     },
   };
 }
