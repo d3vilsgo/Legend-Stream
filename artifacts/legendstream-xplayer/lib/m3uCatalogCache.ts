@@ -9,15 +9,12 @@ import {
   upsertCatalogItems,
 } from "./catalogCache";
 import {
-  getM3UCatalog,
-  parseM3U,
+  installM3UCatalog,
   type Channel,
-  type M3UCatalog,
   type Provider,
   type ProviderLoadResult,
 } from "./iptv";
 import {
-  buildM3UStreamUrl,
   parseM3UProviderSource,
   parseM3UStreamRef,
   type M3UPathPlaybackRef,
@@ -29,7 +26,12 @@ import {
   type PersistedSeriesCatalogItem,
   type PersistedVodCatalogItem,
 } from "./catalogPersistence";
-import type { XtreamCategory, XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
+import { buildM3UDirectHydration } from "./m3uCatalogHydration";
+import {
+  noteM3UCacheHydration,
+  noteM3UNetworkCatalogCounts,
+} from "./m3uSwitchMetrics";
+import type { XtreamCategory } from "./xtreamCatalog";
 
 const M3U_CACHE_STAGE_TOTAL = 3;
 const activationProviders = new Set<string>();
@@ -43,11 +45,11 @@ export type M3UCatalogCacheHydration = {
   counts: { live: number; vod: number; series: number };
   ready: boolean;
   live: Channel[];
-  movies: XtreamVodItem[];
-  series: XtreamSeriesItem[];
+  movies: ReturnType<typeof buildM3UDirectHydration>["movies"];
+  series: ReturnType<typeof buildM3UDirectHydration>["series"];
   newChannels: Channel[];
-  newMovies: XtreamVodItem[];
-  newSeries: XtreamSeriesItem[];
+  newMovies: ReturnType<typeof buildM3UDirectHydration>["movies"];
+  newSeries: ReturnType<typeof buildM3UDirectHydration>["series"];
   vodCategories: XtreamCategory[];
   seriesCategories: XtreamCategory[];
 };
@@ -63,111 +65,6 @@ function categories(values: string[]): XtreamCategory[] {
   }));
 }
 
-function xmlAttribute(value: string | undefined) {
-  return (value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/"/g, "&quot;")
-    .replace(/[\r\n]+/g, " ");
-}
-
-function label(value: string) {
-  return value.replace(/[\r\n]+/g, " ").trim() || "Untitled";
-}
-
-function refUrl(provider: M3UCatalogCacheProvider, ref: M3UPathPlaybackRef) {
-  return buildM3UStreamUrl(providerSource(provider), ref);
-}
-
-function originalSeriesIndex(value: string | number) {
-  const match = String(value).match(/:(\d+):/);
-  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
-}
-
-function isM3ULive(row: PersistedLiveCatalogItem) {
-  return row.playbackRef.type === "m3u-path" && row.playbackRef.kind === "live";
-}
-
-function isM3UVod(row: PersistedVodCatalogItem) {
-  return row.playbackRef.type === "m3u-path" && row.playbackRef.kind === "movie";
-}
-
-function safeSeriesEpisodes(row: PersistedSeriesCatalogItem) {
-  return (row.m3uEpisodes ?? []).filter(
-    (episode) => episode.playbackRef.type === "m3u-path" && episode.playbackRef.kind === "series",
-  );
-}
-
-function runtimeLive(provider: M3UCatalogCacheProvider, row: PersistedLiveCatalogItem): Channel | null {
-  if (!isM3ULive(row)) return null;
-  const streamUrl = refUrl(provider, row.playbackRef as M3UPathPlaybackRef);
-  if (!streamUrl) return null;
-  return {
-    id: row.id,
-    providerId: row.providerId,
-    name: row.name,
-    streamUrl,
-    logoUrl: row.logoUrl,
-    category: row.category,
-    tvgId: row.tvgId,
-    streamType: row.streamType,
-    contentType: "live",
-    nowPlaying: row.nowPlaying,
-    nextPlaying: row.nextPlaying,
-  };
-}
-
-function syntheticCatalog(
-  provider: M3UCatalogCacheProvider,
-  liveRows: PersistedLiveCatalogItem[],
-  vodRows: PersistedVodCatalogItem[],
-  seriesRows: PersistedSeriesCatalogItem[],
-) {
-  const lines = ["#EXTM3U"];
-  const push = (name: string, category: string, logo: string | undefined, url: string) => {
-    lines.push(
-      `#EXTINF:-1 tvg-name="${xmlAttribute(name)}" tvg-logo="${xmlAttribute(logo)}" group-title="${xmlAttribute(category)}",${label(name)}`,
-      url,
-    );
-  };
-
-  for (const row of liveRows) {
-    if (!isM3ULive(row)) continue;
-    const url = refUrl(provider, row.playbackRef as M3UPathPlaybackRef);
-    if (url) push(row.name, row.category, row.logoUrl, url);
-  }
-  for (const row of vodRows) {
-    if (!isM3UVod(row)) continue;
-    const url = refUrl(provider, row.playbackRef as M3UPathPlaybackRef);
-    if (url) push(row.name, String(row.category_id ?? "Movies"), row.stream_icon, url);
-  }
-  for (const row of [...seriesRows].sort((a, b) => originalSeriesIndex(a.series_id) - originalSeriesIndex(b.series_id))) {
-    for (const episode of safeSeriesEpisodes(row).sort(
-      (a, b) => a.season - b.season || a.episode - b.episode,
-    )) {
-      const url = refUrl(provider, episode.playbackRef);
-      if (url) push(episode.title, episode.category, episode.logoUrl ?? row.cover, url);
-    }
-  }
-  return lines.join("\n");
-}
-
-function localCatalogRows(catalog: M3UCatalog) {
-  const movies: XtreamVodItem[] = catalog.movieItems.map((item) => ({
-    stream_id: item.id,
-    name: item.name,
-    stream_icon: item.logoUrl,
-    category_id: item.category,
-    direct_source: item.streamUrl,
-  }));
-  const series: XtreamSeriesItem[] = catalog.seriesGroups.map((group) => ({
-    series_id: group.id,
-    name: group.name,
-    cover: group.coverUrl,
-    category_id: group.category,
-  }));
-  return { movies, series };
-}
-
 export function markM3UCacheActivation(providerId: string) {
   activationProviders.add(providerId);
 }
@@ -181,55 +78,86 @@ export function consumeM3UCacheActivation(providerId: string) {
 export async function hydrateM3UProviderCache(
   provider: M3UCatalogCacheProvider,
 ): Promise<M3UCatalogCacheHydration | null> {
-  if (provider.type !== "m3u" || !parseM3UProviderSource(providerSource(provider))) return null;
-  await initCatalogCache();
-  const [rawLive, rawVod, rawSeries, state] = await Promise.all([
-    getCachedPersistedItems(provider.id, "live"),
-    getCachedPersistedItems(provider.id, "vod"),
-    getCachedPersistedItems(provider.id, "series"),
-    getCatalogSyncState(provider.id),
-  ]);
-
-  const liveRows = rawLive.filter(
-    (row): row is PersistedLiveCatalogItem => row.catalogKind === "live" && isM3ULive(row),
-  );
-  const vodRows = rawVod.filter(
-    (row): row is PersistedVodCatalogItem => row.catalogKind === "vod" && isM3UVod(row),
-  );
-  const seriesRows = rawSeries.filter(
-    (row): row is PersistedSeriesCatalogItem =>
-      row.catalogKind === "series" && safeSeriesEpisodes(row).length > 0,
-  );
-  const live = liveRows.map((row) => runtimeLive(provider, row)).filter((row): row is Channel => Boolean(row));
-
-  const source = syntheticCatalog(provider, liveRows, vodRows, seriesRows);
-  let catalog: M3UCatalog;
-  try {
-    parseM3U(source, provider.id);
-    catalog = getM3UCatalog(provider.id);
-  } catch {
+  if (provider.type !== "m3u" || !parseM3UProviderSource(providerSource(provider))) {
+    noteM3UCacheHydration({
+      outcome: "null",
+      reason: "unsupported-source",
+      sqliteReadMs: 0,
+      runtimeHydrateMs: 0,
+      itemCounts: { live: 0, vod: 0, series: 0 },
+    });
     return null;
   }
-  const local = localCatalogRows(catalog);
-  const counts = {
-    live: live.length,
-    vod: catalog.movieItems.length,
-    series: catalog.seriesGroups.length,
-  };
-  if (counts.live === 0 && counts.vod === 0 && counts.series === 0) return null;
 
-  return {
-    counts,
-    ready: state?.phase === "ready",
-    live,
-    movies: local.movies,
-    series: local.series,
-    newChannels: live.slice(0, 24),
-    newMovies: local.movies.slice(0, 24),
-    newSeries: local.series.slice(0, 24),
-    vodCategories: categories(catalog.movieItems.map((item) => item.category)),
-    seriesCategories: categories(catalog.seriesGroups.map((item) => item.category)),
-  };
+  let phase: "sqlite" | "runtime" = "sqlite";
+  let sqliteReadMs = 0;
+  let runtimeStartedAt = 0;
+  try {
+    const sqliteStartedAt = Date.now();
+    await initCatalogCache();
+    const [rawLive, rawVod, rawSeries, state] = await Promise.all([
+      getCachedPersistedItems(provider.id, "live"),
+      getCachedPersistedItems(provider.id, "vod"),
+      getCachedPersistedItems(provider.id, "series"),
+      getCatalogSyncState(provider.id),
+    ]);
+    sqliteReadMs = Date.now() - sqliteStartedAt;
+
+    const liveRows = rawLive.filter(
+      (row): row is PersistedLiveCatalogItem => row.catalogKind === "live",
+    );
+    const vodRows = rawVod.filter(
+      (row): row is PersistedVodCatalogItem => row.catalogKind === "vod",
+    );
+    const seriesRows = rawSeries.filter(
+      (row): row is PersistedSeriesCatalogItem => row.catalogKind === "series",
+    );
+
+    phase = "runtime";
+    runtimeStartedAt = Date.now();
+    const direct = buildM3UDirectHydration(provider, liveRows, vodRows, seriesRows);
+    const runtimeHydrateMs = Date.now() - runtimeStartedAt;
+    if (direct.counts.live === 0 && direct.counts.vod === 0 && direct.counts.series === 0) {
+      noteM3UCacheHydration({
+        outcome: "null",
+        reason: "empty-cache",
+        sqliteReadMs,
+        runtimeHydrateMs,
+        itemCounts: direct.counts,
+      });
+      return null;
+    }
+
+    installM3UCatalog(provider.id, direct.catalog);
+    noteM3UCacheHydration({
+      outcome: "hit",
+      reason: "none",
+      sqliteReadMs,
+      runtimeHydrateMs,
+      itemCounts: direct.counts,
+    });
+    return {
+      counts: direct.counts,
+      ready: state?.phase === "ready",
+      live: direct.live,
+      movies: direct.movies,
+      series: direct.series,
+      newChannels: direct.live.slice(0, 24),
+      newMovies: direct.movies.slice(0, 24),
+      newSeries: direct.series.slice(0, 24),
+      vodCategories: direct.vodCategories,
+      seriesCategories: direct.seriesCategories,
+    };
+  } catch (caught) {
+    noteM3UCacheHydration({
+      outcome: "error",
+      reason: phase === "sqlite" ? "sqlite-read-error" : "runtime-hydrate-error",
+      sqliteReadMs,
+      runtimeHydrateMs: runtimeStartedAt ? Date.now() - runtimeStartedAt : 0,
+      itemCounts: { live: 0, vod: 0, series: 0 },
+    });
+    throw caught;
+  }
 }
 
 function safeLiveRows(provider: M3UCatalogCacheProvider, loaded: ProviderLoadResult) {
@@ -289,10 +217,17 @@ export async function persistM3UProviderCache(
   provider: M3UCatalogCacheProvider,
   loaded: ProviderLoadResult,
 ): Promise<boolean> {
-  if (provider.type !== "m3u" || !parseM3UProviderSource(providerSource(provider))) return false;
+  if (provider.type !== "m3u") return false;
   const liveInput = loaded.liveChannels ?? loaded.channels;
   const movieInput = loaded.movieItems ?? [];
   const seriesInput = loaded.seriesGroups ?? [];
+  noteM3UNetworkCatalogCounts({
+    live: liveInput.length,
+    vod: movieInput.length,
+    series: seriesInput.length,
+  });
+  if (!parseM3UProviderSource(providerSource(provider))) return false;
+
   const liveRows = safeLiveRows(provider, loaded);
   const movieRows = safeMovieRows(provider, loaded);
   const seriesRows = safeSeriesRows(provider, loaded);

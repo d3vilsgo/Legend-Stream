@@ -17,6 +17,7 @@ import { readLatestProviderImportMetrics } from "@/lib/providerImportMetricsStor
 import {
   formatCatalogSyncMeasurement,
   getLatestCatalogSyncMeasurement,
+  readPersistedCatalogSyncMeasurement,
   type CatalogSyncMeasurement,
 } from "@/lib/catalogSyncMetrics";
 import { redactSensitiveText, safeLog } from "@/lib/safeLog";
@@ -63,9 +64,29 @@ export function CredentialDiagnosticsPanel() {
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [catalogCopyMessage, setCatalogCopyMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (getLatestCatalogSyncMeasurement()) return;
+    let active = true;
+    void readPersistedCatalogSyncMeasurement()
+      .then((measurement) => {
+        if (active) setCatalogMeasurement(measurement);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const refreshCatalogMeasurement = () => {
-    setCatalogMeasurement(getLatestCatalogSyncMeasurement());
     setCatalogCopyMessage(null);
+    const current = getLatestCatalogSyncMeasurement();
+    if (current) {
+      setCatalogMeasurement(current);
+      return;
+    }
+    void readPersistedCatalogSyncMeasurement()
+      .then((measurement) => setCatalogMeasurement(measurement))
+      .catch(() => setCatalogMeasurement(null));
   };
 
   const run = async () => {
@@ -74,13 +95,14 @@ export function CredentialDiagnosticsPanel() {
     setCopyMessage(null);
     setCatalogCopyMessage(null);
     try {
-      const [next, latestImportMetrics] = await Promise.all([
+      const [next, latestImportMetrics, persistedCatalogMeasurement] = await Promise.all([
         runCredentialDiagnostics(),
         readLatestProviderImportMetrics().catch(() => null),
+        readPersistedCatalogSyncMeasurement().catch(() => null),
       ]);
       setReport(next);
       setImportMetrics(latestImportMetrics);
-      setCatalogMeasurement(getLatestCatalogSyncMeasurement());
+      setCatalogMeasurement(getLatestCatalogSyncMeasurement() ?? persistedCatalogMeasurement);
       safeLog.info("LS_DIAG", formatDiagnosticsWithCryptoRuntime(next));
     } catch (error) {
       const message = errorMessage(error);
