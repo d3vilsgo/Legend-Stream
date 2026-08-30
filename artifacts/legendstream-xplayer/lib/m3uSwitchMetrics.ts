@@ -57,14 +57,16 @@ function publishMeasurement(measurement: M3USwitchMeasurement) {
 }
 
 export function completePendingM3UProviderSwitchMeasurement(providerId?: string) {
-  if (!pending || !pending.path) return false;
+  if (!pending) return false;
+  const path = pending.path;
+  if (!path) return false;
   if (providerId && pending.providerId !== providerId) return false;
   const value = pending;
   pending = null;
   const fallback = value.fallbackReasonOverride
     ? { used: true, reason: value.fallbackReasonOverride }
     : resolveM3UNetworkFallback(
-        value.path,
+        path,
         value.hydration?.outcome,
         value.hydration?.reason,
       );
