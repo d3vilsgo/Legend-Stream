@@ -16,8 +16,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const catalogCacheSource = readFileSync(resolve(ROOT, "lib/catalogCache.ts"), "utf8");
 const runnerSource = readFileSync(resolve(ROOT, "lib/m3uCacheWriteRunner.ts"), "utf8");
 const providerSource = "https://panel.example/get.php?username=alice&password=secret&type=m3u_plus";
-const provider = parseM3UProviderSource(providerSource);
-assert.ok(provider);
+const provider = parseM3UProviderSource(providerSource)!;
 
 let passed = 0;
 async function scenario(name: string, run: () => void | Promise<void>) {
