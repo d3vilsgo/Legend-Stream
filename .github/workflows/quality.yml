@@ -168,8 +168,7 @@ jobs:
             exit 1
           fi
           if grep -Ein '(@replit/|stripe-replit-sync)' pnpm-lock.yaml; then
-            echo 'Replit packages remain in pnpm-lock.yaml:'
-            grep -Ein '(@replit/|stripe-replit-sync)' pnpm-lock.yaml
+            echo 'Replit packages remain in pnpm-lock.yaml'
             exit 1
           fi
           echo 'Replit cleanup verification passed.'
