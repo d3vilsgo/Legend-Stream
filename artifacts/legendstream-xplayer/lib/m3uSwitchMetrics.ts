@@ -8,10 +8,12 @@ import {
 } from "./m3uSwitchMeasurement";
 import {
   emptyM3UCacheCounts,
+  type M3UCacheSnapshot,
   type M3UCacheSyncPhase,
   type M3UCacheWriteMeasurement,
   type M3UCacheWriteObservation,
 } from "./m3uCacheWriteMeasurement";
+import type { M3UShapeDiagnostics } from "./m3uShapeDiagnostics";
 import { safeLog } from "./safeLog";
 
 export type M3UHydrationObservation = {
@@ -31,6 +33,7 @@ type PendingM3USwitch = {
   path?: "memory" | "cache" | "network";
   fallbackReasonOverride?: M3UNetworkFallbackReason;
   networkCounts?: M3UItemCounts;
+  networkDiagnostics?: M3UShapeDiagnostics;
   writeStarted: boolean;
   write?: M3UCacheWriteObservation;
   switchCompletedAt?: number;
@@ -52,9 +55,13 @@ export function noteM3UProviderSwitchPath(path: "memory" | "cache" | "network") 
   pending.path = path;
 }
 
-export function noteM3UNetworkCatalogCounts(itemCounts: M3UItemCounts) {
+export function noteM3UNetworkCatalogCounts(
+  itemCounts: M3UItemCounts,
+  diagnostics?: M3UShapeDiagnostics,
+) {
   if (!pending) return;
   pending.networkCounts = itemCounts;
+  pending.networkDiagnostics = diagnostics;
 }
 
 export function noteM3UCacheWriteStarted(providerId: string) {
@@ -64,6 +71,13 @@ export function noteM3UCacheWriteStarted(providerId: string) {
 function finalCounts(value: PendingM3USwitch): M3UItemCounts {
   if (value.path === "network" && value.networkCounts) return value.networkCounts;
   return value.hydration?.itemCounts ?? emptyM3UCacheCounts();
+}
+
+function beforeSnapshot(value: PendingM3USwitch): M3UCacheSnapshot {
+  return {
+    rawCounts: value.hydration?.cacheRawCounts ?? emptyM3UCacheCounts(),
+    syncPhase: value.hydration?.cacheSyncPhase ?? "none",
+  };
 }
 
 async function publishMeasurement(measurement: M3USwitchMeasurement | M3UCacheWriteMeasurement) {
@@ -84,6 +98,8 @@ function takePendingMeasurement(value: PendingM3USwitch): M3USwitchMeasurement {
         value.hydration?.reason,
       );
   const completedAt = value.switchCompletedAt ?? Date.now();
+  const cacheBefore = beforeSnapshot(value);
+  const cacheAfter = value.write?.cacheAfter ?? cacheBefore;
   pending = null;
   return {
     kind: "m3u-switch",
@@ -96,8 +112,9 @@ function takePendingMeasurement(value: PendingM3USwitch): M3USwitchMeasurement {
       networkFallbackReason: fallback.reason,
       totalSwitchMs: Math.max(0, completedAt - value.startedAt),
       itemCounts: finalCounts(value),
-      cacheRawCounts: value.hydration?.cacheRawCounts ?? emptyM3UCacheCounts(),
-      cacheSyncPhase: value.hydration?.cacheSyncPhase ?? "none",
+      cacheBefore,
+      cacheAfter,
+      shapeDiagnostics: value.networkDiagnostics,
       write: value.write?.write,
     },
   };
@@ -119,8 +136,7 @@ export async function noteM3UCacheWriteResult(
     kind: "m3u-cache-write",
     startedAt: observation.startedAt,
     m3u: {
-      cacheRawCounts: observation.cacheRawCounts,
-      cacheSyncPhase: observation.cacheSyncPhase,
+      cacheAfter: observation.cacheAfter,
       write: observation.write,
     },
   });
