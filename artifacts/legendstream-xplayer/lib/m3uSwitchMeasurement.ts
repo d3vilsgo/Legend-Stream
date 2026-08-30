@@ -1,15 +1,20 @@
 import {
   formatM3UCacheWriteFields,
   type M3UCacheCounts,
-  type M3UCacheSyncPhase,
+  type M3UCacheSnapshot,
   type M3UCacheWriteTelemetry,
 } from "./m3uCacheWriteMeasurement";
+import {
+  formatM3UShapeDiagnosticsFields,
+  type M3UShapeDiagnostics,
+} from "./m3uShapeDiagnostics";
 
 export type M3UCacheHydrationOutcome = "hit" | "null" | "error";
 export type M3UCacheHydrationReason =
   | "none"
   | "unsupported-source"
   | "empty-cache"
+  | "error-state"
   | "sqlite-read-error"
   | "runtime-hydrate-error";
 
@@ -35,8 +40,9 @@ export type M3USwitchMeasurement = {
     networkFallbackReason: M3UNetworkFallbackReason;
     totalSwitchMs: number;
     itemCounts: M3UItemCounts;
-    cacheRawCounts: M3UItemCounts;
-    cacheSyncPhase: M3UCacheSyncPhase;
+    cacheBefore: M3UCacheSnapshot;
+    cacheAfter: M3UCacheSnapshot;
+    shapeDiagnostics?: M3UShapeDiagnostics;
     write?: M3UCacheWriteTelemetry;
   };
 };
@@ -74,10 +80,15 @@ export function formatM3USwitchMeasurement(measurement: M3USwitchMeasurement) {
     `m3u.itemCounts.live=${m3u.itemCounts.live}`,
     `m3u.itemCounts.vod=${m3u.itemCounts.vod}`,
     `m3u.itemCounts.series=${m3u.itemCounts.series}`,
-    `m3u.cacheRawCounts.live=${m3u.cacheRawCounts.live}`,
-    `m3u.cacheRawCounts.vod=${m3u.cacheRawCounts.vod}`,
-    `m3u.cacheRawCounts.series=${m3u.cacheRawCounts.series}`,
-    `m3u.cacheSyncPhase=${m3u.cacheSyncPhase}`,
+    `m3u.cacheBefore.rawCounts.live=${m3u.cacheBefore.rawCounts.live}`,
+    `m3u.cacheBefore.rawCounts.vod=${m3u.cacheBefore.rawCounts.vod}`,
+    `m3u.cacheBefore.rawCounts.series=${m3u.cacheBefore.rawCounts.series}`,
+    `m3u.cacheBefore.syncPhase=${m3u.cacheBefore.syncPhase}`,
+    `m3u.cacheAfter.rawCounts.live=${m3u.cacheAfter.rawCounts.live}`,
+    `m3u.cacheAfter.rawCounts.vod=${m3u.cacheAfter.rawCounts.vod}`,
+    `m3u.cacheAfter.rawCounts.series=${m3u.cacheAfter.rawCounts.series}`,
+    `m3u.cacheAfter.syncPhase=${m3u.cacheAfter.syncPhase}`,
+    ...(m3u.shapeDiagnostics ? formatM3UShapeDiagnosticsFields(m3u.shapeDiagnostics) : []),
     ...(m3u.write ? formatM3UCacheWriteFields(m3u.write) : ["m3u.writeAttempted=false"]),
   ].join("\n");
 }
