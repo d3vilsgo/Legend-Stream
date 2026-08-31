@@ -6,6 +6,10 @@ import {
   type CatalogKind,
   type PersistedCatalogItem,
 } from "./catalogPersistence";
+import {
+  fingerprintM3USqliteColumnNames,
+  type M3USqliteSchemaFingerprint,
+} from "./sqliteWriteDiagnostics";
 
 export type { CatalogKind } from "./catalogPersistence";
 export type CatalogSyncPhase = "idle" | "preparing" | "syncing" | "ready" | "cancelled" | "error";
@@ -31,6 +35,8 @@ export type CatalogWriteBatchObservation = {
   committedRows: number;
 };
 
+export type CatalogWriteSqliteStage = "begin-transaction" | "insert-statement" | "commit";
+
 type CatalogWriteOptions = {
   markNew?: boolean;
   seenAt?: number;
@@ -38,6 +44,7 @@ type CatalogWriteOptions = {
   isCancelled?: () => boolean;
   onBatchStarted?: (batchIndex: number) => void;
   onBatchCommitted?: (observation: CatalogWriteBatchObservation) => void;
+  onSqliteStage?: (stage: CatalogWriteSqliteStage) => void;
 };
 
 type CacheRow = {
@@ -53,6 +60,11 @@ type CategoryRow = {
   category_id: string;
   category_name: string;
   parent_id: number | null;
+};
+
+type TableInfoRow = {
+  cid: number;
+  name: string;
 };
 
 const DB_NAME = "legendstream-catalog-v1.db";
@@ -164,6 +176,12 @@ function itemAdded(item: PersistedCatalogItem) {
 
 export async function initCatalogCache() {
   await database();
+}
+
+export async function getCatalogItemsSchemaFingerprint(): Promise<M3USqliteSchemaFingerprint> {
+  const db = await database();
+  const rows = await db.getAllAsync<TableInfoRow>("PRAGMA table_info(catalog_items)");
+  return fingerprintM3USqliteColumnNames(rows.map((row) => row.name));
 }
 
 export async function setCatalogSyncState(
@@ -289,7 +307,9 @@ export async function upsertCatalogItems(
     const batch = items.slice(start, start + WRITE_BATCH_SIZE);
     const batchIndex = Math.floor(start / WRITE_BATCH_SIZE) + 1;
     options.onBatchStarted?.(batchIndex);
+    options.onSqliteStage?.("begin-transaction");
     await db.withTransactionAsync(async () => {
+      options.onSqliteStage?.("insert-statement");
       for (const persisted of batch) {
         if (options.isCancelled?.()) break;
         if (persisted.catalogKind !== kind || persisted.providerId !== providerId) {
@@ -321,6 +341,9 @@ export async function upsertCatalogItems(
           options.markNew ? 1 : 0,
         );
       }
+      // withTransactionAsync issues COMMIT after this callback resolves. Mark the
+      // transition immediately before returning so a commit failure is attributed correctly.
+      options.onSqliteStage?.("commit");
     });
     written += batch.length;
     const committedRows = Math.min(written, items.length);
