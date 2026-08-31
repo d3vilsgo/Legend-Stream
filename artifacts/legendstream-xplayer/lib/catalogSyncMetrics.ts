@@ -285,6 +285,7 @@ function normalizeM3UWriteTelemetry(value: unknown): M3UCacheWriteTelemetry | nu
   const sqliteSchemaColumnCount = raw.sqliteSchemaColumnCount === undefined
     ? undefined
     : countValue(raw.sqliteSchemaColumnCount);
+  if (sqliteSchemaColumnCount === null) return null;
   const sqliteSchemaColumnNameHash = raw.sqliteSchemaColumnNameHash === undefined
     ? undefined
     : raw.sqliteSchemaColumnNameHash;
