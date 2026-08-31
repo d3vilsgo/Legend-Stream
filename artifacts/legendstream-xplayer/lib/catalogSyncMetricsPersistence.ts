@@ -35,11 +35,13 @@ export async function readCatalogSyncMetricsSequence(
 
 export async function nextCatalogSyncMetricsSequence(
   storage: CatalogSyncMetricsStorage,
+  minimumCurrent = 0,
 ): Promise<number> {
   const key = storage as object;
   const previous = sequenceTails.get(key) ?? Promise.resolve();
   const run = previous.catch(() => undefined).then(async () => {
-    const current = await readCatalogSyncMetricsSequence(storage);
+    const stored = await readCatalogSyncMetricsSequence(storage);
+    const current = Math.max(stored, Math.max(0, Math.trunc(minimumCurrent)));
     const next = current + 1;
     await storage.setItem(CATALOG_SYNC_METRICS_SEQUENCE_KEY, String(next));
     return next;
