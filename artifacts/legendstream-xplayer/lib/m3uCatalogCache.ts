@@ -2,6 +2,7 @@ import {
   deleteProviderCatalog,
   getCachedPersistedItems,
   getCatalogCounts,
+  getCatalogItemsSchemaFingerprint,
   getCatalogSyncState,
   initCatalogCache,
   pruneCatalogKind,
@@ -49,7 +50,9 @@ import {
   snapshotM3USqliteBatchProgress,
   type M3UCacheAfterReadOutcome,
   type M3USqliteErrorIdentity,
+  type M3USqliteSchemaFingerprint,
   type M3USqliteStage,
+  type M3USqliteTransactionStage,
   type M3USqliteWriteKind,
 } from "./sqliteWriteDiagnostics";
 import {
@@ -248,9 +251,10 @@ async function markWriteFailureState(providerId: string, outcome: M3UCacheWriteO
   }
 }
 
-type SqliteFailureObservation = M3USqliteErrorIdentity & {
-  sqliteStage: M3USqliteStage;
-};
+type SqliteFailureObservation = M3USqliteErrorIdentity &
+  Partial<M3USqliteSchemaFingerprint> & {
+    sqliteStage: M3USqliteStage;
+  };
 
 async function publishWriteObservation(options: {
   providerId: string;
@@ -423,6 +427,9 @@ export async function persistM3UProviderCache(
         observation.committedRows,
       );
     },
+    onSqliteStage: (stage: M3USqliteTransactionStage) => {
+      sqliteStage = stage;
+    },
   });
 
   try {
@@ -431,21 +438,21 @@ export async function persistM3UProviderCache(
     sqliteStage = "set-syncing";
     await setCatalogSyncState(provider.id, "syncing", 0, M3U_CACHE_STAGE_TOTAL, "M3U cache update started");
 
-    sqliteStage = "upsert-live";
+    sqliteStage = "begin-transaction";
     writtenCounts.live = await upsertCatalogItems(provider.id, "live", persistedLive, {
       seenAt,
       markNew: true,
       ...batchCallbacks("live"),
     });
 
-    sqliteStage = "upsert-vod";
+    sqliteStage = "begin-transaction";
     writtenCounts.vod = await upsertCatalogItems(provider.id, "vod", persistedVod, {
       seenAt,
       markNew: true,
       ...batchCallbacks("vod"),
     });
 
-    sqliteStage = "upsert-series";
+    sqliteStage = "begin-transaction";
     writtenCounts.series = await upsertCatalogItems(provider.id, "series", persistedSeries, {
       seenAt,
       markNew: true,
@@ -493,9 +500,16 @@ export async function persistM3UProviderCache(
     return true;
   } catch (caught) {
     const progress = snapshotM3USqliteBatchProgress(batchProgress);
-    const sqliteFailure = {
+    let schemaFingerprint: Partial<M3USqliteSchemaFingerprint> = {};
+    try {
+      schemaFingerprint = await getCatalogItemsSchemaFingerprint();
+    } catch {
+      safeLog.warn("LS_M3U_CACHE_SCHEMA_FINGERPRINT", { result: "unavailable" });
+    }
+    const sqliteFailure: SqliteFailureObservation = {
       ...classifyM3USqliteError(caught),
       sqliteStage,
+      ...schemaFingerprint,
     };
     const failedBatchIndex = failedM3USqliteBatchIndex(batchProgress, sqliteStage);
     safeLog.error("LS_M3U_CACHE_WRITE_DB", caught);
