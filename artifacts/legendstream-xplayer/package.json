@@ -12,6 +12,7 @@
     "test:m3u-diagnostics": "tsx tests/m3uDiagnosticsScenarios.ts",
     "test:m3u-classification": "tsx tests/m3uClassificationScenarios.ts",
     "test:m3u-playback-ref": "tsx tests/m3uPlaybackRefScenarios.ts",
+    "test:sqlite-diagnostics-freshness": "tsx tests/sqliteDiagnosticsFreshnessScenarios.ts",
     "test:catalog-persistence": "tsx tests/catalogPersistenceScenarios.ts",
     "test:catalog-category-fallback": "tsx tests/catalogCategoryFallbackScenarios.ts",
     "test:catalog-availability": "tsx tests/catalogAvailabilityScenarios.ts",
