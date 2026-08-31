@@ -1,0 +1,153 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { enqueueCatalogDbWrite } from "../lib/catalogDbWriter";
+import { buildM3UCacheWriteProjection } from "../lib/m3uCacheWriteProjection";
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const catalogCacheSource = readFileSync(resolve(ROOT, "lib/catalogCache.ts"), "utf8");
+const m3uCatalogCacheSource = readFileSync(resolve(ROOT, "lib/m3uCatalogCache.ts"), "utf8");
+
+let passed = 0;
+async function scenario(name: string, run: () => void | Promise<void>) {
+  await run();
+  passed += 1;
+  console.log(`ok ${passed} - ${name}`);
+}
+
+function functionSource(name: string, nextName?: string) {
+  const start = catalogCacheSource.indexOf(`export async function ${name}`);
+  assert.ok(start >= 0, `${name} export must exist`);
+  const end = nextName
+    ? catalogCacheSource.indexOf(`export async function ${nextName}`, start)
+    : catalogCacheSource.length;
+  return catalogCacheSource.slice(start, end >= 0 ? end : catalogCacheSource.length);
+}
+
+function movie(providerId: string, id: string, streamId: string) {
+  return {
+    id,
+    providerId,
+    name: `Movie ${streamId}`,
+    streamUrl: `https://iptv.example:8080/movie/alice/swordfish/${streamId}.mp4`,
+    category: "Movies",
+    contentType: "movie" as const,
+  };
+}
+
+async function main() {
+  await scenario("shared writer serializes concurrent Xtream and M3U style mutations", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const order: string[] = [];
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((resolve) => { releaseFirst = resolve; });
+
+    const xtream = enqueueCatalogDbWrite(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      order.push("xtream-start");
+      await firstGate;
+      order.push("xtream-end");
+      active -= 1;
+    });
+    const m3u = enqueueCatalogDbWrite(async () => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      order.push("m3u-start");
+      order.push("m3u-end");
+      active -= 1;
+    });
+
+    await Promise.resolve();
+    assert.deepEqual(order, ["xtream-start"]);
+    releaseFirst();
+    await Promise.all([xtream, m3u]);
+    assert.equal(maxActive, 1);
+    assert.deepEqual(order, ["xtream-start", "xtream-end", "m3u-start", "m3u-end"]);
+  });
+
+  await scenario("every exported catalog mutation crosses the shared coordinator", () => {
+    const mutations: Array<[string, string | undefined]> = [
+      ["setCatalogSyncState", "getCatalogSyncState"],
+      ["replaceCatalogCategories", "getCachedCategories"],
+      ["upsertCatalogItems", "replaceCatalogKind"],
+      ["replaceCatalogKind", "pruneCatalogKind"],
+      ["pruneCatalogKind", "replaceProviderCatalogAtomically"],
+      ["replaceProviderCatalogAtomically", "getCachedPersistedItems"],
+      ["clearNewCatalogFlags", "deleteProviderCatalog"],
+      ["deleteProviderCatalog", undefined],
+    ];
+    for (const [name, next] of mutations) {
+      assert.match(functionSource(name, next), /enqueueCatalogDbWrite/, `${name} must use shared writer`);
+    }
+    assert.doesNotMatch(catalogCacheSource, /withTransactionAsync\(/);
+    assert.match(catalogCacheSource, /withExclusiveTransactionAsync\(/);
+  });
+
+  await scenario("stable M3U VOD keys prevent row growth when runtime parser IDs change", () => {
+    const provider = {
+      id: "m3u-provider",
+      type: "m3u" as const,
+      url: "https://iptv.example:8080/get.php?username=alice&password=swordfish&type=m3u_plus&output=ts",
+      createdAt: 1,
+    };
+    const first = buildM3UCacheWriteProjection(provider, {
+      channels: [],
+      liveChannels: [],
+      movieItems: [movie(provider.id, "m3u-provider:10:Movie-101", "101"), movie(provider.id, "m3u-provider:11:Movie-202", "202")],
+      seriesGroups: [],
+    });
+    const second = buildM3UCacheWriteProjection(provider, {
+      channels: [],
+      liveChannels: [],
+      movieItems: [movie(provider.id, "m3u-provider:98:Movie-202", "202"), movie(provider.id, "m3u-provider:99:Movie-101", "101")],
+      seriesGroups: [],
+    });
+    assert.ok(first && second);
+    const firstIds = first.movieRows.map((row) => row.stream_id).sort();
+    const secondIds = second.movieRows.map((row) => row.stream_id).sort();
+    assert.deepEqual(firstIds, ["101", "202"]);
+    assert.deepEqual(secondIds, firstIds);
+    assert.equal(new Set([...firstIds, ...secondIds]).size, firstIds.length);
+  });
+
+  await scenario("M3U full replacement keeps rows categories and ready state in one rollback boundary", () => {
+    const source = functionSource("replaceProviderCatalogAtomically", "getCachedPersistedItems");
+    const transactionStart = source.indexOf("withExclusiveTransactionAsync");
+    const deleteItems = source.indexOf('DELETE FROM catalog_items', transactionStart);
+    const insertRows = source.indexOf("await insertRows", transactionStart);
+    const categories = source.indexOf("await replaceCategories", transactionStart);
+    const ready = source.indexOf('"ready"', categories);
+    const transactionEnd = source.indexOf("});", ready);
+    const committedCallback = source.indexOf("options.onBatchCommitted?.", transactionEnd);
+    assert.ok(transactionStart >= 0 && deleteItems > transactionStart);
+    assert.ok(insertRows > deleteItems);
+    assert.ok(categories > insertRows);
+    assert.ok(ready > categories);
+    assert.ok(transactionEnd > ready);
+    assert.ok(committedCallback > transactionEnd, "committed telemetry must publish only after transaction commit");
+    assert.match(m3uCatalogCacheSource, /replaceProviderCatalogAtomically/);
+  });
+
+  await scenario("batch size and INSERT conflict contract remain unchanged", () => {
+    assert.match(catalogCacheSource, /const WRITE_BATCH_SIZE = 200;/);
+    assert.match(catalogCacheSource, /INSERT INTO catalog_items/);
+    assert.match(catalogCacheSource, /ON CONFLICT\(provider_id, kind, item_id\) DO UPDATE SET/);
+  });
+
+  await scenario("M3U success path has no independent row category or prune mutations", () => {
+    const start = m3uCatalogCacheSource.indexOf("export async function persistM3UProviderCache");
+    const source = m3uCatalogCacheSource.slice(start);
+    assert.match(source, /replaceProviderCatalogAtomically/);
+    assert.doesNotMatch(source, /await upsertCatalogItems/);
+    assert.doesNotMatch(source, /await replaceCatalogCategories/);
+    assert.doesNotMatch(source, /await Promise\.all\(\[\s*pruneCatalogKind/);
+  });
+
+  assert.equal(passed, 6);
+  console.log("catalog DB writer coordination scenarios: 6/6 passed");
+}
+
+void main();

@@ -145,7 +145,10 @@ export function buildM3UCacheWriteProjection(
     if (!inspection.ref) return reject("vod", inspection.reason);
     if (inspection.ref.containerExtension === null) return reject("vod", "missing-extension");
     movieRows.push({
-      stream_id: item.id,
+      // M3U runtime item.id includes parser position and is not a stable catalog key.
+      // The credential-free playback ref streamId is stable across playlist reorderings,
+      // so it is the canonical VOD cache identity used by ON CONFLICT.
+      stream_id: inspection.ref.streamId,
       name: item.name,
       stream_icon: item.logoUrl,
       category_id: item.category,

@@ -5,10 +5,8 @@ import {
   getCatalogItemsSchemaFingerprint,
   getCatalogSyncState,
   initCatalogCache,
-  pruneCatalogKind,
-  replaceCatalogCategories,
+  replaceProviderCatalogAtomically,
   setCatalogSyncState,
-  upsertCatalogItems,
 } from "./catalogCache";
 import {
   installM3UCatalog,
@@ -52,7 +50,6 @@ import {
   type M3USqliteErrorIdentity,
   type M3USqliteSchemaFingerprint,
   type M3USqliteStage,
-  type M3USqliteTransactionStage,
   type M3USqliteWriteKind,
 } from "./sqliteWriteDiagnostics";
 import {
@@ -415,72 +412,41 @@ export async function persistM3UProviderCache(
   const writtenCounts = emptyM3UCacheCounts();
   const batchProgress = createM3USqliteBatchProgress();
   let sqliteStage: M3USqliteStage = "set-syncing";
-  const batchCallbacks = (kind: M3USqliteWriteKind) => ({
-    onBatchStarted: (batchIndex: number) => {
-      noteM3USqliteBatchStarted(batchProgress, kind, batchIndex);
-    },
-    onBatchCommitted: (observation: { batchIndex: number; committedRows: number }) => {
-      noteM3USqliteBatchCommitted(
-        batchProgress,
-        kind,
-        observation.batchIndex,
-        observation.committedRows,
-      );
-    },
-    onSqliteStage: (stage: M3USqliteTransactionStage) => {
-      sqliteStage = stage;
-    },
-  });
 
   try {
     await initCatalogCache();
     const seenAt = Date.now();
-    sqliteStage = "set-syncing";
-    await setCatalogSyncState(provider.id, "syncing", 0, M3U_CACHE_STAGE_TOTAL, "M3U cache update started");
-
-    sqliteStage = "begin-transaction";
-    writtenCounts.live = await upsertCatalogItems(provider.id, "live", persistedLive, {
+    const committedCounts = await replaceProviderCatalogAtomically({
+      providerId: provider.id,
+      live: persistedLive,
+      vod: persistedVod,
+      series: persistedSeries,
+      vodCategories: categories(movieInput.map((item) => item.category)),
+      seriesCategories: categories(seriesInput.map((item) => item.category)),
       seenAt,
       markNew: true,
-      ...batchCallbacks("live"),
+      readyMessage: "M3U cache ready",
+      readyStamp: "background",
+      syncTotal: M3U_CACHE_STAGE_TOTAL,
+      onStage: (stage) => {
+        sqliteStage = stage;
+      },
+      onBatchStarted: (kind, batchIndex) => {
+        noteM3USqliteBatchStarted(batchProgress, kind as M3USqliteWriteKind, batchIndex);
+      },
+      onBatchCommitted: (kind, observation) => {
+        noteM3USqliteBatchCommitted(
+          batchProgress,
+          kind as M3USqliteWriteKind,
+          observation.batchIndex,
+          observation.committedRows,
+        );
+      },
     });
+    writtenCounts.live = committedCounts.live;
+    writtenCounts.vod = committedCounts.vod;
+    writtenCounts.series = committedCounts.series;
 
-    sqliteStage = "begin-transaction";
-    writtenCounts.vod = await upsertCatalogItems(provider.id, "vod", persistedVod, {
-      seenAt,
-      markNew: true,
-      ...batchCallbacks("vod"),
-    });
-
-    sqliteStage = "begin-transaction";
-    writtenCounts.series = await upsertCatalogItems(provider.id, "series", persistedSeries, {
-      seenAt,
-      markNew: true,
-      ...batchCallbacks("series"),
-    });
-
-    sqliteStage = "replace-categories";
-    await Promise.all([
-      replaceCatalogCategories(provider.id, "vod", categories(movieInput.map((item) => item.category))),
-      replaceCatalogCategories(provider.id, "series", categories(seriesInput.map((item) => item.category))),
-    ]);
-
-    sqliteStage = "prune";
-    await Promise.all([
-      pruneCatalogKind(provider.id, "live", seenAt),
-      pruneCatalogKind(provider.id, "vod", seenAt),
-      pruneCatalogKind(provider.id, "series", seenAt),
-    ]);
-
-    sqliteStage = "set-ready";
-    await setCatalogSyncState(
-      provider.id,
-      "ready",
-      M3U_CACHE_STAGE_TOTAL,
-      M3U_CACHE_STAGE_TOTAL,
-      "M3U cache ready",
-      "background",
-    );
     const progress = snapshotM3USqliteBatchProgress(batchProgress);
     await publishWriteObservation({
       providerId: provider.id,
@@ -513,7 +479,10 @@ export async function persistM3UProviderCache(
     };
     const failedBatchIndex = failedM3USqliteBatchIndex(batchProgress, sqliteStage);
     safeLog.error("LS_M3U_CACHE_WRITE_DB", caught);
-    await markWriteFailureState(provider.id, "sqlite-error");
+    // The full M3U replacement is one transaction. A failure rolls back rows,
+    // categories, and the in-transaction syncing/ready state together. Do not
+    // overwrite the restored previous state with error: an older ready cache
+    // must remain usable after a failed background refresh.
     await publishWriteObservation({
       providerId: provider.id,
       startedAt,
