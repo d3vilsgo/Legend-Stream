@@ -1,6 +1,6 @@
 import * as Clipboard from "expo-clipboard";
 import React, { useEffect, useState } from "react";
-import { ScrollView, Text, View } from "react-native";
+import { ActivityIndicator, ScrollView, Text, View } from "react-native";
 import { FocusButton } from "@/components/FocusButton";
 import { useColors } from "@/hooks/useColors";
 import {
@@ -20,6 +20,7 @@ import {
   readCatalogSyncMeasurementDisplay,
   type CatalogSyncMeasurementDisplay,
 } from "@/lib/catalogSyncMetrics";
+import { subscribeCatalogMeasurementFreshness } from "@/lib/catalogMeasurementFreshness";
 import { redactSensitiveText, safeLog } from "@/lib/safeLog";
 
 const formatDiagnosticsWithCryptoRuntime = (report: CredentialDiagnosticsReport) =>
@@ -32,6 +33,12 @@ const fatalDiagnostics = (message: string) => JSON.stringify({
   fatalError: message,
   cryptoAvailable,
   nobleCryptoRuntimeTypes: nobleCryptoRuntimeTypes(),
+});
+
+const emptyCatalogDisplay = (): CatalogSyncMeasurementDisplay => ({
+  state: "empty",
+  metadata: null,
+  measurement: null,
 });
 
 export function useCredentialDiagnosticsStartup() {
@@ -59,28 +66,51 @@ export function CredentialDiagnosticsPanel() {
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [importMetrics, setImportMetrics] = useState<ProviderImportMetricsReport | null>(null);
   const [catalogDisplay, setCatalogDisplay] = useState<CatalogSyncMeasurementDisplay | null>(null);
+  const [catalogRefreshing, setCatalogRefreshing] = useState(true);
+  const [catalogRefreshMessage, setCatalogRefreshMessage] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [catalogCopyMessage, setCatalogCopyMessage] = useState<string | null>(null);
 
+  const loadCatalogMeasurement = async (
+    options: { clearBeforeRead?: boolean; showFeedback?: boolean } = {},
+  ) => {
+    if (options.clearBeforeRead) setCatalogDisplay(null);
+    setCatalogRefreshing(true);
+    setCatalogCopyMessage(null);
+    if (options.showFeedback) setCatalogRefreshMessage("Katalog ölçümü yenileniyor…");
+    try {
+      const display = await readCatalogSyncMeasurementDisplay();
+      setCatalogDisplay(display);
+      if (options.showFeedback) {
+        setCatalogRefreshMessage(
+          display.state === "empty" ? "Henüz katalog ölçümü yok." : "Katalog ölçümü yenilendi.",
+        );
+      }
+    } catch {
+      setCatalogDisplay(emptyCatalogDisplay());
+      if (options.showFeedback) setCatalogRefreshMessage("Katalog ölçümü okunamadı.");
+    } finally {
+      setCatalogRefreshing(false);
+    }
+  };
+
   useEffect(() => {
     let active = true;
-    void readCatalogSyncMeasurementDisplay()
-      .then((display) => {
-        if (active) setCatalogDisplay(display);
-      })
-      .catch(() => {
-        if (active) setCatalogDisplay({ state: "empty", metadata: null, measurement: null });
-      });
+    const refreshFromLifecycle = () => {
+      if (!active) return;
+      void loadCatalogMeasurement();
+    };
+    void loadCatalogMeasurement();
+    const unsubscribe = subscribeCatalogMeasurementFreshness(refreshFromLifecycle);
     return () => {
       active = false;
+      unsubscribe();
     };
   }, []);
 
   const refreshCatalogMeasurement = () => {
-    setCatalogCopyMessage(null);
-    void readCatalogSyncMeasurementDisplay()
-      .then((display) => setCatalogDisplay(display))
-      .catch(() => setCatalogDisplay({ state: "empty", metadata: null, measurement: null }));
+    setCatalogRefreshMessage(null);
+    void loadCatalogMeasurement({ clearBeforeRead: true, showFeedback: true });
   };
 
   const run = async () => {
@@ -92,9 +122,7 @@ export function CredentialDiagnosticsPanel() {
       const [next, latestImportMetrics, latestCatalogDisplay] = await Promise.all([
         runCredentialDiagnostics(),
         readLatestProviderImportMetrics().catch(() => null),
-        readCatalogSyncMeasurementDisplay().catch(
-          (): CatalogSyncMeasurementDisplay => ({ state: "empty", metadata: null, measurement: null }),
-        ),
+        readCatalogSyncMeasurementDisplay().catch(emptyCatalogDisplay),
       ]);
       setReport(next);
       setImportMetrics(latestImportMetrics);
@@ -144,11 +172,18 @@ export function CredentialDiagnosticsPanel() {
         Yalnız performans sayaçları gösterilir. Sağlayıcı kimliği, adı, sunucu adresi, kullanıcı adı, parola, token, credential ve stream URL bilgileri bu çıktıya dahil edilmez.
       </Text>
       <FocusButton
-        label="Katalog Ölçümünü Yenile"
+        label={catalogRefreshing ? "Katalog ölçümü yenileniyor…" : "Katalog Ölçümünü Yenile"}
         icon="refresh-cw"
+        disabled={catalogRefreshing}
         onPress={refreshCatalogMeasurement}
       />
-      {catalogDisplay?.state === "in-progress" && catalogDisplay.metadata ? <>
+      {catalogRefreshMessage ? <Text style={{ color: colors.mutedForeground }}>{catalogRefreshMessage}</Text> : null}
+      {catalogRefreshing && !catalogDisplay ? (
+        <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+          <ActivityIndicator />
+          <Text style={{ color: colors.mutedForeground }}>Katalog ölçümü yükleniyor…</Text>
+        </View>
+      ) : catalogDisplay?.state === "in-progress" && catalogDisplay.metadata ? <>
         <Text style={{ color: colors.mutedForeground }}>
           Yeni katalog ölçümü devam ediyor. Son tamamlanan turun ölçümü bu tur tamamlanana kadar gösterilmez.
         </Text>
@@ -179,7 +214,7 @@ export function CredentialDiagnosticsPanel() {
         </ScrollView>
       </> : (
         <Text style={{ color: colors.mutedForeground }}>
-          Henüz tamamlanmış bir katalog senkronizasyonu ölçümü yok. Senkronizasyon bittikten sonra bu bölümü yenileyin.
+          Henüz katalog ölçümü yok.
         </Text>
       )}
 
