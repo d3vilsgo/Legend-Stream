@@ -14,14 +14,38 @@ export const M3U_SQLITE_ERROR_CLASSES = [
 
 export type M3USqliteErrorClass = (typeof M3U_SQLITE_ERROR_CLASSES)[number];
 
+export const M3U_SQLITE_ERROR_REASONS = [
+  "TOO_MANY_VARIABLES",
+  "NO_SUCH_COLUMN",
+  "NO_SUCH_TABLE",
+  "COLUMN_VALUE_COUNT_MISMATCH",
+  "ON_CONFLICT_MISMATCH",
+  "TRANSACTION_ALREADY_ACTIVE",
+  "NO_ACTIVE_TRANSACTION",
+  "SQL_SYNTAX",
+  "UNKNOWN_SQLITE_ERROR",
+] as const;
+
+export type M3USqliteErrorReason = (typeof M3U_SQLITE_ERROR_REASONS)[number];
+
+export const M3U_SQLITE_TRANSACTION_STAGES = [
+  "begin-transaction",
+  "insert-statement",
+  "commit",
+] as const;
+
+export type M3USqliteTransactionStage = (typeof M3U_SQLITE_TRANSACTION_STAGES)[number];
+
 export const M3U_SQLITE_STAGES = [
   "set-syncing",
-  "upsert-live",
-  "upsert-vod",
-  "upsert-series",
+  ...M3U_SQLITE_TRANSACTION_STAGES,
   "replace-categories",
   "prune",
   "set-ready",
+  // Legacy persisted values remain accepted so older measurements can still be read.
+  "upsert-live",
+  "upsert-vod",
+  "upsert-series",
 ] as const;
 
 export type M3USqliteStage = (typeof M3U_SQLITE_STAGES)[number];
@@ -32,6 +56,12 @@ export type M3USqliteKindCounts = Record<M3USqliteWriteKind, number>;
 export type M3USqliteErrorIdentity = {
   sqliteErrorClass: M3USqliteErrorClass;
   sqlitePrimaryCode: number;
+  sqliteErrorReason: M3USqliteErrorReason;
+};
+
+export type M3USqliteSchemaFingerprint = {
+  sqliteSchemaColumnCount: number;
+  sqliteSchemaColumnNameHash: string;
 };
 
 const PRIMARY_CODE_BY_CLASS: Record<Exclude<M3USqliteErrorClass, "UNKNOWN">, number> = {
@@ -92,9 +122,39 @@ function classFromText(value: string): M3USqliteErrorClass | null {
   return null;
 }
 
+function reasonFromText(value: string): M3USqliteErrorReason | null {
+  const upper = value.toUpperCase();
+  if (/TOO MANY (?:SQL )?VARIABLES/.test(upper)) return "TOO_MANY_VARIABLES";
+  if (/NO SUCH COLUMN\b/.test(upper)) return "NO_SUCH_COLUMN";
+  if (/NO SUCH TABLE\b/.test(upper)) return "NO_SUCH_TABLE";
+  if (
+    /\d+\s+VALUES?\s+FOR\s+\d+\s+COLUMNS?/.test(upper) ||
+    /HAS\s+\d+\s+COLUMNS?\s+BUT\s+\d+\s+VALUES?\s+WERE\s+SUPPLIED/.test(upper) ||
+    /EXPECTED\s+\d+\s+(?:VALUES?|COLUMNS?).*\bGOT\s+\d+/.test(upper)
+  ) return "COLUMN_VALUE_COUNT_MISMATCH";
+  if (/ON CONFLICT CLAUSE DOES NOT MATCH/.test(upper)) return "ON_CONFLICT_MISMATCH";
+  if (/CANNOT START A TRANSACTION WITHIN A TRANSACTION|TRANSACTION ALREADY ACTIVE/.test(upper)) {
+    return "TRANSACTION_ALREADY_ACTIVE";
+  }
+  if (/NO TRANSACTION IS ACTIVE|CANNOT (?:COMMIT|ROLLBACK).*TRANSACTION/.test(upper)) {
+    return "NO_ACTIVE_TRANSACTION";
+  }
+  if (/SYNTAX ERROR/.test(upper)) return "SQL_SYNTAX";
+  return null;
+}
+
 function labeledCodeFromText(value: string): number | null {
   const match = value.match(/(?:sqlite|result|error)[ _-]?code\s*[:=]?\s*(\d+)/i);
   return match ? primaryCodeFromNumber(match[1]) : null;
+}
+
+function classifyReason(values: unknown[]): M3USqliteErrorReason {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const reason = reasonFromText(value);
+    if (reason) return reason;
+  }
+  return "UNKNOWN_SQLITE_ERROR";
 }
 
 export function classifyM3USqliteError(caught: unknown): M3USqliteErrorIdentity {
@@ -112,12 +172,13 @@ export function classifyM3USqliteError(caught: unknown): M3USqliteErrorIdentity 
       record.message,
     );
   }
+  const sqliteErrorReason = classifyReason(values);
 
   for (const value of values) {
     const primaryCode = primaryCodeFromNumber(value);
     if (primaryCode === null) continue;
     const errorClass = CLASS_BY_PRIMARY_CODE[primaryCode];
-    if (errorClass) return { sqliteErrorClass: errorClass, sqlitePrimaryCode: primaryCode };
+    if (errorClass) return { sqliteErrorClass: errorClass, sqlitePrimaryCode: primaryCode, sqliteErrorReason };
   }
 
   for (const value of values) {
@@ -125,18 +186,34 @@ export function classifyM3USqliteError(caught: unknown): M3USqliteErrorIdentity 
     const primaryCode = labeledCodeFromText(value);
     if (primaryCode !== null) {
       const errorClass = CLASS_BY_PRIMARY_CODE[primaryCode] ?? "UNKNOWN";
-      return { sqliteErrorClass: errorClass, sqlitePrimaryCode: primaryCode };
+      return { sqliteErrorClass: errorClass, sqlitePrimaryCode: primaryCode, sqliteErrorReason };
     }
     const errorClass = classFromText(value);
     if (errorClass) {
       return {
         sqliteErrorClass: errorClass,
         sqlitePrimaryCode: PRIMARY_CODE_BY_CLASS[errorClass as Exclude<M3USqliteErrorClass, "UNKNOWN">],
+        sqliteErrorReason,
       };
     }
   }
 
-  return { sqliteErrorClass: "UNKNOWN", sqlitePrimaryCode: -1 };
+  return { sqliteErrorClass: "UNKNOWN", sqlitePrimaryCode: -1, sqliteErrorReason };
+}
+
+export function fingerprintM3USqliteColumnNames(
+  columnNames: readonly string[],
+): M3USqliteSchemaFingerprint {
+  const canonical = [...columnNames].sort((a, b) => a.localeCompare(b)).join("\u001f");
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < canonical.length; index += 1) {
+    hash ^= canonical.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return {
+    sqliteSchemaColumnCount: columnNames.length,
+    sqliteSchemaColumnNameHash: `fnv1a32:${hash.toString(16).padStart(8, "0")}`,
+  };
 }
 
 export type M3USqliteBatchProgress = {
@@ -190,7 +267,10 @@ export function failedM3USqliteBatchIndex(
   progress: M3USqliteBatchProgress,
   stage: M3USqliteStage,
 ) {
-  if (!stage.startsWith("upsert-") || !progress.activeKind) return 0;
+  if (!progress.activeKind) return 0;
+  if (M3U_SQLITE_TRANSACTION_STAGES.includes(stage as M3USqliteTransactionStage)) {
+    return progress.activeBatchIndex;
+  }
   return stage === `upsert-${progress.activeKind}` ? progress.activeBatchIndex : 0;
 }
 
