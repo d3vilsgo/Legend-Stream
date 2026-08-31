@@ -14,6 +14,10 @@ import {
   type M3UCacheWriteObservation,
 } from "./m3uCacheWriteMeasurement";
 import type { M3UShapeDiagnostics } from "./m3uShapeDiagnostics";
+import {
+  beginCatalogMeasurementFreshness,
+  completeCatalogMeasurementFreshness,
+} from "./catalogMeasurementFreshness";
 import { safeLog } from "./safeLog";
 
 export type M3UHydrationObservation = {
@@ -42,7 +46,9 @@ type PendingM3USwitch = {
 let pending: PendingM3USwitch | null = null;
 
 export function beginM3UProviderSwitchMeasurement(providerId: string) {
-  pending = { providerId, startedAt: Date.now(), writeStarted: false };
+  const startedAt = Date.now();
+  pending = { providerId, startedAt, writeStarted: false };
+  beginCatalogMeasurementFreshness(startedAt);
 }
 
 export function noteM3UCacheHydration(observation: M3UHydrationObservation) {
@@ -85,6 +91,7 @@ async function publishMeasurement(measurement: M3USwitchMeasurement | M3UCacheWr
     const { recordCatalogSyncMeasurementPersisted } = await import("./catalogSyncMetrics");
     await recordCatalogSyncMeasurementPersisted(measurement);
   } catch (caught) {
+    completeCatalogMeasurementFreshness(measurement.startedAt);
     safeLog.error("LS_M3U_METRICS_PERSIST", caught);
   }
 }
