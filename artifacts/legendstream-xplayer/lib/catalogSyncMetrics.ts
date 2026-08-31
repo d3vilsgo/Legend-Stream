@@ -246,6 +246,7 @@ function normalizeM3UWriteTelemetry(value: unknown): M3UCacheWriteTelemetry | nu
     ? undefined
     : normalizeM3UCounts(raw.committedRows);
   const failedBatchIndex = raw.failedBatchIndex === undefined ? undefined : countValue(raw.failedBatchIndex);
+  if (failedBatchIndex === null) return null;
   const cacheAfterReadOutcome = raw.cacheAfterReadOutcome === undefined
     ? undefined
     : raw.cacheAfterReadOutcome;
@@ -299,7 +300,6 @@ function normalizeM3UWriteTelemetry(value: unknown): M3UCacheWriteTelemetry | nu
     !writeInputCounts || !writeSafeCounts || !writeWrittenCounts || !writeRejectCounts || !scan ||
     (raw.completedBatchCount !== undefined && !completedBatchCount) ||
     (raw.committedRows !== undefined && !committedRows) ||
-    (raw.failedBatchIndex !== undefined && failedBatchIndex === null) ||
     (cacheAfterReadOutcome !== undefined && cacheAfterReadOutcome !== "success" && cacheAfterReadOutcome !== "error") ||
     (raw.sqliteSchemaColumnCount !== undefined && sqliteSchemaColumnCount === null) ||
     typeof cleanupOutcome !== "string" ||
