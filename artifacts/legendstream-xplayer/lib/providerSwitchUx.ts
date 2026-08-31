@@ -24,6 +24,9 @@ export function chooseProviderSwitchPath(options: {
       ? "cache"
       : "network";
   noteM3UProviderSwitchPath(path);
+  if (path !== "network") {
+    completePendingM3UProviderSwitchMeasurement();
+  }
   return path;
 }
 
