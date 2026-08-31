@@ -479,7 +479,10 @@ export async function persistM3UProviderCache(
     };
     const failedBatchIndex = failedM3USqliteBatchIndex(batchProgress, sqliteStage);
     safeLog.error("LS_M3U_CACHE_WRITE_DB", caught);
-    await markWriteFailureState(provider.id, "sqlite-error");
+    // The full M3U replacement is one transaction. A failure rolls back rows,
+    // categories, and the in-transaction syncing/ready state together. Do not
+    // overwrite the restored previous state with error: an older ready cache
+    // must remain usable after a failed background refresh.
     await publishWriteObservation({
       providerId: provider.id,
       startedAt,
