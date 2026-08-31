@@ -159,21 +159,23 @@ async function main() {
     assert.equal(failedM3USqliteBatchIndex(progress, "commit"), 3);
   });
 
-  await scenario("writer keeps withTransactionAsync while exposing real stages", () => {
+  await scenario("writer is coordinated before exclusive batch transactions while exposing real stages", () => {
     const start = catalogCacheSource.indexOf("export async function upsertCatalogItems");
     const end = catalogCacheSource.indexOf("export async function replaceCatalogKind", start);
     const source = catalogCacheSource.slice(start, end);
+    assert.match(source, /enqueueCatalogDbWrite/);
     assert.match(source, /onSqliteStage\?\.\("begin-transaction"\)/);
-    assert.match(source, /withTransactionAsync\(async \(\) =>/);
+    assert.match(source, /withExclusiveTransactionAsync\(async \(txn\) =>/);
     assert.match(source, /onSqliteStage\?\.\("insert-statement"\)/);
     assert.match(source, /onSqliteStage\?\.\("commit"\)/);
-    assert.doesNotMatch(source, /withExclusiveTransactionAsync/);
+    assert.doesNotMatch(source, /withTransactionAsync/);
     assert.match(source, /WRITE_BATCH_SIZE/);
   });
 
-  await scenario("M3U writer no longer pre-labels failures as upsert-live", () => {
+  await scenario("M3U writer delegates the full successful write to the atomic catalog replacement", () => {
     assert.doesNotMatch(m3uCatalogCacheSource, /sqliteStage\s*=\s*"upsert-live"/);
-    assert.match(m3uCatalogCacheSource, /onSqliteStage:\s*\(stage: M3USqliteTransactionStage\)/);
+    assert.match(m3uCatalogCacheSource, /replaceProviderCatalogAtomically/);
+    assert.match(m3uCatalogCacheSource, /onStage:\s*\(stage\)\s*=>/);
   });
 
   await scenario("schema fingerprint is deterministic", () => {
