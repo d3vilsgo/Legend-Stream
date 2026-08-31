@@ -191,14 +191,15 @@ async function main() {
     assert.match(output, /m3u\.cacheAfterReadOutcome=error/);
   });
 
-  await scenario("measurement does not change catalog transaction or batch policy", () => {
+  await scenario("K4 measurement keeps batch policy while catalog writes are coordinated and exclusive", () => {
     const upsertStart = catalogCacheSource.indexOf("export async function upsertCatalogItems");
     const replaceStart = catalogCacheSource.indexOf("export async function replaceCatalogKind", upsertStart);
     assert.ok(upsertStart >= 0 && replaceStart > upsertStart);
     const upsertSource = catalogCacheSource.slice(upsertStart, replaceStart);
     assert.match(catalogCacheSource, /const WRITE_BATCH_SIZE = 200;/);
-    assert.match(upsertSource, /withTransactionAsync\(async \(\) =>/);
-    assert.doesNotMatch(upsertSource, /withExclusiveTransactionAsync/);
+    assert.match(upsertSource, /enqueueCatalogDbWrite/);
+    assert.match(upsertSource, /withExclusiveTransactionAsync\(async \(txn\) =>/);
+    assert.doesNotMatch(upsertSource, /withTransactionAsync/);
     assert.match(upsertSource, /onBatchStarted/);
     assert.match(upsertSource, /onBatchCommitted/);
   });
