@@ -13,6 +13,7 @@ on:
 # M3U diagnostics gate: shape/classification counters, fail-fast validation, primary/cleanup outcome and stale-cache fail-closed invariants must pass.
 # M3U classification gate: structural live signals must beat group-name heuristics without changing Xtream routing.
 # M3U playback ref gate: extensionless credential-path live refs, safe reconstruction, and fail-closed cleanup must pass.
+# SQLite diagnostics/freshness gate: fixed K4-safe error reasons, real transaction stages, schema fingerprints, and stale measurement suppression must pass.
 # 9.2 catalog gate: runtime catalog rows must pass explicit persisted DTO projection.
 # Catalog category fallback gate: __all__ must stay out of Xtream transport and empty cache must fall back.
 # Catalog availability gate: usable rows stay browsable across cancelled/error refreshes; initial blocking is cache-driven.
@@ -94,6 +95,12 @@ jobs:
           set -euo pipefail
           playback_ref="$(pnpm --filter @workspace/legendstream-xplayer test:m3u-playback-ref 2>&1 | tee /dev/stderr)"
           grep -F 'm3u playback ref scenarios: 8/8 passed' <<<"$playback_ref"
+      - name: SQLite diagnostics + catalog measurement freshness (28/28 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sqlite_diag="$(pnpm --filter @workspace/legendstream-xplayer test:sqlite-diagnostics-freshness 2>&1 | tee /dev/stderr)"
+          grep -F 'sqlite diagnostics freshness scenarios: 28/28 passed' <<<"$sqlite_diag"
       - name: Catalog persistence invariants (10/10 required)
         shell: bash
         run: |
