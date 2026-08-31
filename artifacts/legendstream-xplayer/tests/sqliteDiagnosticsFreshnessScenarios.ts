@@ -168,7 +168,7 @@ async function main() {
     assert.match(source, /onSqliteStage\?\.\("insert-statement"\)/);
     assert.match(source, /onSqliteStage\?\.\("commit"\)/);
     assert.doesNotMatch(source, /withExclusiveTransactionAsync/);
-    assert.match(source, /const WRITE_BATCH_SIZE = 200|WRITE_BATCH_SIZE/);
+    assert.match(source, /WRITE_BATCH_SIZE/);
   });
 
   await scenario("M3U writer no longer pre-labels failures as upsert-live", () => {
@@ -317,8 +317,8 @@ async function main() {
     assert.doesNotMatch(inProgressSource, /Katalog Ölçümünü Kopyala/);
   });
 
-  assert.equal(passed, 27);
-  console.log("sqlite diagnostics freshness scenarios: 27/27 passed");
+  assert.equal(passed, 28);
+  console.log("sqlite diagnostics freshness scenarios: 28/28 passed");
 }
 
 void main();
