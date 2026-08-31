@@ -13,6 +13,7 @@ import {
   classifyM3USqliteError,
   failedM3USqliteBatchIndex,
   M3U_SQLITE_ERROR_CLASSES,
+  M3U_SQLITE_ERROR_REASONS,
   noteM3USqliteBatchCommitted,
   noteM3USqliteBatchStarted,
   snapshotM3USqliteBatchProgress,
@@ -113,20 +114,33 @@ async function main() {
     assert.doesNotMatch(output, /(?:^|[.=])(?:hostname|host|ip|url|pathname|username|password|token|extensionName)(?:[.=]|$)/i);
   });
 
-  await scenario("SQLite classifier emits only allowlisted class and primary code", () => {
+  await scenario("SQLite classifier emits only allowlisted class, primary code and fixed reason", () => {
     const busy = classifyM3USqliteError(
       Object.assign(new Error("database is locked at /data/private.db https://panel.example username=alice password=secret"), {
         code: "SQLITE_BUSY",
       }),
     );
-    assert.deepEqual(busy, { sqliteErrorClass: "SQLITE_BUSY", sqlitePrimaryCode: 5 });
+    assert.deepEqual(busy, {
+      sqliteErrorClass: "SQLITE_BUSY",
+      sqlitePrimaryCode: 5,
+      sqliteErrorReason: "UNKNOWN_SQLITE_ERROR",
+    });
     assert.ok(M3U_SQLITE_ERROR_CLASSES.includes(busy.sqliteErrorClass));
+    assert.ok(M3U_SQLITE_ERROR_REASONS.includes(busy.sqliteErrorReason));
 
     const full = classifyM3USqliteError({ code: 13, message: "database or disk is full" });
-    assert.deepEqual(full, { sqliteErrorClass: "SQLITE_FULL", sqlitePrimaryCode: 13 });
+    assert.deepEqual(full, {
+      sqliteErrorClass: "SQLITE_FULL",
+      sqlitePrimaryCode: 13,
+      sqliteErrorReason: "UNKNOWN_SQLITE_ERROR",
+    });
 
     const unknown = classifyM3USqliteError(new Error("private opaque storage failure"));
-    assert.deepEqual(unknown, { sqliteErrorClass: "UNKNOWN", sqlitePrimaryCode: -1 });
+    assert.deepEqual(unknown, {
+      sqliteErrorClass: "UNKNOWN",
+      sqlitePrimaryCode: -1,
+      sqliteErrorReason: "UNKNOWN_SQLITE_ERROR",
+    });
   });
 
   await scenario("partial batch commits are distinguishable from zero writes", () => {
@@ -149,6 +163,7 @@ async function main() {
 
     assert.match(output, /m3u\.sqliteErrorClass=SQLITE_BUSY/);
     assert.match(output, /m3u\.sqlitePrimaryCode=5/);
+    assert.match(output, /m3u\.sqliteErrorReason=UNKNOWN_SQLITE_ERROR/);
     assert.match(output, /m3u\.sqliteStage=upsert-live/);
     assert.match(output, /m3u\.completedBatchCount\.live=2/);
     assert.match(output, /m3u\.committedRows\.live=400/);

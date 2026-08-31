@@ -16,9 +16,9 @@ import {
 import { readLatestProviderImportMetrics } from "@/lib/providerImportMetricsStore";
 import {
   formatCatalogSyncMeasurement,
-  getLatestCatalogSyncMeasurement,
-  readPersistedCatalogSyncMeasurement,
-  type CatalogSyncMeasurement,
+  formatCatalogSyncMeasurementMetadata,
+  readCatalogSyncMeasurementDisplay,
+  type CatalogSyncMeasurementDisplay,
 } from "@/lib/catalogSyncMetrics";
 import { redactSensitiveText, safeLog } from "@/lib/safeLog";
 
@@ -58,20 +58,19 @@ export function CredentialDiagnosticsPanel() {
   const [busy, setBusy] = useState(false);
   const [fatalError, setFatalError] = useState<string | null>(null);
   const [importMetrics, setImportMetrics] = useState<ProviderImportMetricsReport | null>(null);
-  const [catalogMeasurement, setCatalogMeasurement] = useState<CatalogSyncMeasurement | null>(
-    () => getLatestCatalogSyncMeasurement(),
-  );
+  const [catalogDisplay, setCatalogDisplay] = useState<CatalogSyncMeasurementDisplay | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [catalogCopyMessage, setCatalogCopyMessage] = useState<string | null>(null);
 
   useEffect(() => {
-    if (getLatestCatalogSyncMeasurement()) return;
     let active = true;
-    void readPersistedCatalogSyncMeasurement()
-      .then((measurement) => {
-        if (active) setCatalogMeasurement(measurement);
+    void readCatalogSyncMeasurementDisplay()
+      .then((display) => {
+        if (active) setCatalogDisplay(display);
       })
-      .catch(() => undefined);
+      .catch(() => {
+        if (active) setCatalogDisplay({ state: "empty", metadata: null, measurement: null });
+      });
     return () => {
       active = false;
     };
@@ -79,14 +78,9 @@ export function CredentialDiagnosticsPanel() {
 
   const refreshCatalogMeasurement = () => {
     setCatalogCopyMessage(null);
-    const current = getLatestCatalogSyncMeasurement();
-    if (current) {
-      setCatalogMeasurement(current);
-      return;
-    }
-    void readPersistedCatalogSyncMeasurement()
-      .then((measurement) => setCatalogMeasurement(measurement))
-      .catch(() => setCatalogMeasurement(null));
+    void readCatalogSyncMeasurementDisplay()
+      .then((display) => setCatalogDisplay(display))
+      .catch(() => setCatalogDisplay({ state: "empty", metadata: null, measurement: null }));
   };
 
   const run = async () => {
@@ -95,14 +89,16 @@ export function CredentialDiagnosticsPanel() {
     setCopyMessage(null);
     setCatalogCopyMessage(null);
     try {
-      const [next, latestImportMetrics, persistedCatalogMeasurement] = await Promise.all([
+      const [next, latestImportMetrics, latestCatalogDisplay] = await Promise.all([
         runCredentialDiagnostics(),
         readLatestProviderImportMetrics().catch(() => null),
-        readPersistedCatalogSyncMeasurement().catch(() => null),
+        readCatalogSyncMeasurementDisplay().catch(
+          (): CatalogSyncMeasurementDisplay => ({ state: "empty", metadata: null, measurement: null }),
+        ),
       ]);
       setReport(next);
       setImportMetrics(latestImportMetrics);
-      setCatalogMeasurement(getLatestCatalogSyncMeasurement() ?? persistedCatalogMeasurement);
+      setCatalogDisplay(latestCatalogDisplay);
       safeLog.info("LS_DIAG", formatDiagnosticsWithCryptoRuntime(next));
     } catch (error) {
       const message = errorMessage(error);
@@ -112,6 +108,10 @@ export function CredentialDiagnosticsPanel() {
       setBusy(false);
     }
   };
+
+  const completedCatalogMeasurement = catalogDisplay?.state === "completed"
+    ? catalogDisplay.measurement
+    : null;
 
   return (
     <View style={{ marginTop: 24, gap: 10 }}>
@@ -148,11 +148,23 @@ export function CredentialDiagnosticsPanel() {
         icon="refresh-cw"
         onPress={refreshCatalogMeasurement}
       />
-      {catalogMeasurement ? <>
+      {catalogDisplay?.state === "in-progress" && catalogDisplay.metadata ? <>
+        <Text style={{ color: colors.mutedForeground }}>
+          Yeni katalog ölçümü devam ediyor. Son tamamlanan turun ölçümü bu tur tamamlanana kadar gösterilmez.
+        </Text>
+        <ScrollView
+          nestedScrollEnabled
+          style={{ maxHeight: 180, borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 12 }}
+        >
+          <Text selectable style={{ color: colors.foreground, fontFamily: "monospace", fontSize: 12 }}>
+            {formatCatalogSyncMeasurementMetadata(catalogDisplay.metadata)}
+          </Text>
+        </ScrollView>
+      </> : completedCatalogMeasurement ? <>
         <FocusButton
           label="Katalog Ölçümünü Kopyala"
           icon="copy"
-          onPress={() => void Clipboard.setStringAsync(formatCatalogSyncMeasurement(catalogMeasurement))
+          onPress={() => void Clipboard.setStringAsync(formatCatalogSyncMeasurement(completedCatalogMeasurement))
             .then(() => setCatalogCopyMessage("Katalog ölçümü panoya kopyalandı."))
             .catch(() => setCatalogCopyMessage("Katalog ölçümü panoya kopyalanamadı."))}
         />
@@ -162,7 +174,7 @@ export function CredentialDiagnosticsPanel() {
           style={{ maxHeight: 360, borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 12 }}
         >
           <Text selectable style={{ color: colors.foreground, fontFamily: "monospace", fontSize: 12 }}>
-            {formatCatalogSyncMeasurement(catalogMeasurement)}
+            {formatCatalogSyncMeasurement(completedCatalogMeasurement)}
           </Text>
         </ScrollView>
       </> : (

@@ -1,6 +1,7 @@
 import type {
   M3UCacheAfterReadOutcome,
   M3USqliteErrorClass,
+  M3USqliteErrorReason,
   M3USqliteStage,
 } from "./sqliteWriteDiagnostics";
 
@@ -67,7 +68,10 @@ export type M3UCacheWriteTelemetry = {
   cacheAfterReadOutcome?: M3UCacheAfterReadOutcome;
   sqliteErrorClass?: M3USqliteErrorClass;
   sqlitePrimaryCode?: number;
+  sqliteErrorReason?: M3USqliteErrorReason;
   sqliteStage?: M3USqliteStage;
+  sqliteSchemaColumnCount?: number;
+  sqliteSchemaColumnNameHash?: string;
   writeRejectCounts: M3URefRejectionCounts;
   scan: M3UCacheValidationScan;
   cleanupOutcome: M3UCleanupOutcome;
@@ -192,7 +196,14 @@ export function formatM3UCacheWriteFields(write: M3UCacheWriteTelemetry) {
       ? [
           `m3u.sqliteErrorClass=${write.sqliteErrorClass}`,
           `m3u.sqlitePrimaryCode=${write.sqlitePrimaryCode}`,
+          `m3u.sqliteErrorReason=${write.sqliteErrorReason ?? "UNKNOWN_SQLITE_ERROR"}`,
           `m3u.sqliteStage=${write.sqliteStage}`,
+          ...(write.sqliteSchemaColumnCount !== undefined
+            ? [`m3u.sqliteSchemaColumnCount=${write.sqliteSchemaColumnCount}`]
+            : []),
+          ...(write.sqliteSchemaColumnNameHash !== undefined
+            ? [`m3u.sqliteSchemaColumnNameHash=${write.sqliteSchemaColumnNameHash}`]
+            : []),
         ]
       : []),
     ...M3U_REF_REJECTION_REASONS.map(

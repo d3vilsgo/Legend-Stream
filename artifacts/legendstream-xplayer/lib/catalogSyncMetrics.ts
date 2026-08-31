@@ -2,6 +2,14 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import type { CatalogFetchMetrics } from "./catalogSyncStrategy";
 import type { CatalogSyncMode } from "./catalogAvailability";
 import {
+  completeCatalogMeasurementFreshness,
+  formatCatalogMeasurementMetadata,
+  getCatalogMeasurementInProgress,
+  resolveCatalogMeasurementDisplay,
+  type CatalogMeasurementDisplay,
+  type CatalogMeasurementMetadata,
+} from "./catalogMeasurementFreshness";
+import {
   formatM3USwitchMeasurement,
   type M3UCacheHydrationOutcome,
   type M3UNetworkFallbackReason,
@@ -29,9 +37,19 @@ import {
 } from "./m3uCacheWriteMeasurement";
 import type { M3UShapeDiagnostics } from "./m3uShapeDiagnostics";
 import {
+  nextCatalogSyncMetricsSequence,
   readCatalogSyncMetricsPayload,
+  readCatalogSyncMetricsSequence,
   writeCatalogSyncMetricsPayload,
 } from "./catalogSyncMetricsPersistence";
+import {
+  M3U_SQLITE_ERROR_CLASSES,
+  M3U_SQLITE_ERROR_REASONS,
+  M3U_SQLITE_STAGES,
+  type M3USqliteErrorClass,
+  type M3USqliteErrorReason,
+  type M3USqliteStage,
+} from "./sqliteWriteDiagnostics";
 
 export type XtreamCatalogSyncMeasurement = {
   providerId: string;
@@ -43,12 +61,17 @@ export type XtreamCatalogSyncMeasurement = {
   series: CatalogFetchMetrics;
 };
 
-export type CatalogSyncMeasurement =
+type CatalogSyncMeasurementPayload =
   | XtreamCatalogSyncMeasurement
   | M3USwitchMeasurement
   | M3UCacheWriteMeasurement;
 
-let latestMeasurement: CatalogSyncMeasurement | null = null;
+export type CatalogSyncMeasurement = CatalogSyncMeasurementPayload & Partial<CatalogMeasurementMetadata>;
+export type CompletedCatalogSyncMeasurement = CatalogSyncMeasurementPayload &
+  CatalogMeasurementMetadata & { state: "completed" };
+export type CatalogSyncMeasurementDisplay = CatalogMeasurementDisplay<CompletedCatalogSyncMeasurement>;
+
+let latestMeasurement: CompletedCatalogSyncMeasurement | null = null;
 
 const formatFetchMetrics = (label: "vod" | "series", metrics: CatalogFetchMetrics) => [
   `${label}.path=${metrics.path}`,
@@ -60,24 +83,45 @@ const formatFetchMetrics = (label: "vod" | "series", metrics: CatalogFetchMetric
   `${label}.fallbackReason=${metrics.fallbackReason ?? "none"}`,
 ];
 
-function isM3USwitchMeasurement(measurement: CatalogSyncMeasurement): measurement is M3USwitchMeasurement {
+function isM3USwitchMeasurement(
+  measurement: CatalogSyncMeasurement,
+): measurement is M3USwitchMeasurement & Partial<CatalogMeasurementMetadata> {
   return "kind" in measurement && measurement.kind === "m3u-switch";
 }
 
-function isM3UCacheWriteMeasurement(measurement: CatalogSyncMeasurement): measurement is M3UCacheWriteMeasurement {
+function isM3UCacheWriteMeasurement(
+  measurement: CatalogSyncMeasurement,
+): measurement is M3UCacheWriteMeasurement & Partial<CatalogMeasurementMetadata> {
   return "kind" in measurement && measurement.kind === "m3u-cache-write";
 }
 
+function metadataForFormat(measurement: CatalogSyncMeasurement): CatalogMeasurementMetadata {
+  return {
+    startedAt: measurement.startedAt,
+    recordedAt: typeof measurement.recordedAt === "number" ? measurement.recordedAt : measurement.startedAt,
+    sequence: typeof measurement.sequence === "number" ? Math.max(0, Math.trunc(measurement.sequence)) : 0,
+    state: measurement.state === "in-progress" ? "in-progress" : "completed",
+  };
+}
+
 export function formatCatalogSyncMeasurement(measurement: CatalogSyncMeasurement) {
-  if (isM3USwitchMeasurement(measurement)) return formatM3USwitchMeasurement(measurement);
-  if (isM3UCacheWriteMeasurement(measurement)) return formatM3UCacheWriteMeasurement(measurement);
-  return [
-    `mode=${measurement.mode}`,
-    `totalMs=${measurement.totalMs}`,
-    `liveSqliteWriteMs=${measurement.liveSqliteWriteMs}`,
-    ...formatFetchMetrics("vod", measurement.vod),
-    ...formatFetchMetrics("series", measurement.series),
-  ].join("\n");
+  const header = formatCatalogMeasurementMetadata(metadataForFormat(measurement));
+  const body = isM3USwitchMeasurement(measurement)
+    ? formatM3USwitchMeasurement(measurement)
+    : isM3UCacheWriteMeasurement(measurement)
+      ? formatM3UCacheWriteMeasurement(measurement)
+      : [
+          `mode=${measurement.mode}`,
+          `totalMs=${measurement.totalMs}`,
+          `liveSqliteWriteMs=${measurement.liveSqliteWriteMs}`,
+          ...formatFetchMetrics("vod", measurement.vod),
+          ...formatFetchMetrics("series", measurement.series),
+        ].join("\n");
+  return `${header}\n${body}`;
+}
+
+export function formatCatalogSyncMeasurementMetadata(metadata: CatalogMeasurementMetadata) {
+  return formatCatalogMeasurementMetadata(metadata);
 }
 
 const finiteNonNegative = (value: unknown) =>
@@ -86,6 +130,8 @@ const countValue = (value: unknown) => {
   const numeric = finiteNonNegative(value);
   return numeric === null ? null : Math.trunc(numeric);
 };
+const integerAtLeastMinusOne = (value: unknown) =>
+  typeof value === "number" && Number.isInteger(value) && value >= -1 ? value : null;
 const objectValue = (value: unknown) =>
   value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -193,11 +239,69 @@ function normalizeM3UWriteTelemetry(value: unknown): M3UCacheWriteTelemetry | nu
   const scan = raw.scan === undefined ? legacyM3UValidationScan() : normalizeM3UValidationScan(raw.scan);
   const cleanupOutcome = raw.cleanupOutcome === undefined ? "not-required" : raw.cleanupOutcome;
   const cleanupStage = raw.cleanupStage === undefined ? "none" : raw.cleanupStage;
+  const completedBatchCount = raw.completedBatchCount === undefined
+    ? undefined
+    : normalizeM3UCounts(raw.completedBatchCount);
+  const committedRows = raw.committedRows === undefined
+    ? undefined
+    : normalizeM3UCounts(raw.committedRows);
+  const failedBatchIndex = raw.failedBatchIndex === undefined ? undefined : countValue(raw.failedBatchIndex);
+  const cacheAfterReadOutcome = raw.cacheAfterReadOutcome === undefined
+    ? undefined
+    : raw.cacheAfterReadOutcome;
+
+  const hasSqliteIdentity =
+    raw.sqliteErrorClass !== undefined ||
+    raw.sqlitePrimaryCode !== undefined ||
+    raw.sqliteErrorReason !== undefined ||
+    raw.sqliteStage !== undefined;
+  let sqliteErrorClass: M3USqliteErrorClass | undefined;
+  let sqlitePrimaryCode: number | undefined;
+  let sqliteErrorReason: M3USqliteErrorReason | undefined;
+  let sqliteStage: M3USqliteStage | undefined;
+  if (hasSqliteIdentity) {
+    if (
+      typeof raw.sqliteErrorClass !== "string" ||
+      !M3U_SQLITE_ERROR_CLASSES.includes(raw.sqliteErrorClass as M3USqliteErrorClass) ||
+      typeof raw.sqliteStage !== "string" ||
+      !M3U_SQLITE_STAGES.includes(raw.sqliteStage as M3USqliteStage)
+    ) return null;
+    const code = integerAtLeastMinusOne(raw.sqlitePrimaryCode);
+    if (code === null) return null;
+    if (
+      raw.sqliteErrorReason !== undefined &&
+      (typeof raw.sqliteErrorReason !== "string" ||
+        !M3U_SQLITE_ERROR_REASONS.includes(raw.sqliteErrorReason as M3USqliteErrorReason))
+    ) return null;
+    sqliteErrorClass = raw.sqliteErrorClass as M3USqliteErrorClass;
+    sqlitePrimaryCode = code;
+    sqliteErrorReason = raw.sqliteErrorReason === undefined
+      ? "UNKNOWN_SQLITE_ERROR"
+      : raw.sqliteErrorReason as M3USqliteErrorReason;
+    sqliteStage = raw.sqliteStage as M3USqliteStage;
+  }
+
+  const sqliteSchemaColumnCount = raw.sqliteSchemaColumnCount === undefined
+    ? undefined
+    : countValue(raw.sqliteSchemaColumnCount);
+  const sqliteSchemaColumnNameHash = raw.sqliteSchemaColumnNameHash === undefined
+    ? undefined
+    : raw.sqliteSchemaColumnNameHash;
+  if (
+    raw.sqliteSchemaColumnNameHash !== undefined &&
+    (typeof sqliteSchemaColumnNameHash !== "string" || !/^fnv1a32:[0-9a-f]{8}$/.test(sqliteSchemaColumnNameHash))
+  ) return null;
+
   if (
     typeof outcome !== "string" ||
     !M3U_WRITE_OUTCOMES.has(outcome as M3UCacheWriteTelemetry["writeOutcome"]) ||
     writeMs === null ||
     !writeInputCounts || !writeSafeCounts || !writeWrittenCounts || !writeRejectCounts || !scan ||
+    (raw.completedBatchCount !== undefined && !completedBatchCount) ||
+    (raw.committedRows !== undefined && !committedRows) ||
+    (raw.failedBatchIndex !== undefined && failedBatchIndex === null) ||
+    (cacheAfterReadOutcome !== undefined && cacheAfterReadOutcome !== "success" && cacheAfterReadOutcome !== "error") ||
+    (raw.sqliteSchemaColumnCount !== undefined && sqliteSchemaColumnCount === null) ||
     typeof cleanupOutcome !== "string" ||
     !M3U_CLEANUP_OUTCOMES.has(cleanupOutcome as M3UCleanupOutcome) ||
     typeof cleanupStage !== "string" ||
@@ -212,6 +316,18 @@ function normalizeM3UWriteTelemetry(value: unknown): M3UCacheWriteTelemetry | nu
     writeInputCounts,
     writeSafeCounts,
     writeWrittenCounts,
+    ...(completedBatchCount ? { completedBatchCount } : {}),
+    ...(committedRows ? { committedRows } : {}),
+    ...(failedBatchIndex !== undefined ? { failedBatchIndex } : {}),
+    ...(cacheAfterReadOutcome !== undefined ? { cacheAfterReadOutcome } : {}),
+    ...(sqliteErrorClass !== undefined &&
+    sqlitePrimaryCode !== undefined &&
+    sqliteErrorReason !== undefined &&
+    sqliteStage !== undefined
+      ? { sqliteErrorClass, sqlitePrimaryCode, sqliteErrorReason, sqliteStage }
+      : {}),
+    ...(sqliteSchemaColumnCount !== undefined ? { sqliteSchemaColumnCount } : {}),
+    ...(typeof sqliteSchemaColumnNameHash === "string" ? { sqliteSchemaColumnNameHash } : {}),
     writeRejectCounts,
     scan,
     cleanupOutcome: cleanupOutcome as M3UCleanupOutcome,
@@ -445,28 +561,63 @@ function normalizeXtreamMeasurement(raw: Record<string, unknown>): XtreamCatalog
   };
 }
 
-function normalizeStoredMeasurement(value: unknown): CatalogSyncMeasurement | null {
+function normalizeStoredMeasurement(value: unknown): CompletedCatalogSyncMeasurement | null {
   const raw = objectValue(value);
   if (!raw) return null;
-  if (raw.kind === "m3u-switch") return normalizeM3UMeasurement(raw);
-  if (raw.kind === "m3u-cache-write") return normalizeM3UCacheWriteMeasurement(raw);
-  return normalizeXtreamMeasurement(raw);
+  const payload = raw.kind === "m3u-switch"
+    ? normalizeM3UMeasurement(raw)
+    : raw.kind === "m3u-cache-write"
+      ? normalizeM3UCacheWriteMeasurement(raw)
+      : normalizeXtreamMeasurement(raw);
+  if (!payload) return null;
+  const recordedAt = raw.recordedAt === undefined ? payload.startedAt : finiteNonNegative(raw.recordedAt);
+  const sequence = raw.sequence === undefined ? 0 : countValue(raw.sequence);
+  const state = raw.state === undefined ? "completed" : raw.state;
+  if (recordedAt === null || sequence === null || state !== "completed") return null;
+  return {
+    ...payload,
+    startedAt: payload.startedAt,
+    recordedAt,
+    sequence,
+    state: "completed",
+  } as CompletedCatalogSyncMeasurement;
+}
+
+async function persistCompletedMeasurement(
+  measurement: CatalogSyncMeasurement,
+): Promise<CompletedCatalogSyncMeasurement> {
+  const sequenceFloor = Math.max(
+    latestMeasurement?.sequence ?? 0,
+    typeof measurement.sequence === "number" ? Math.max(0, Math.trunc(measurement.sequence)) : 0,
+  );
+  const sequence = await nextCatalogSyncMetricsSequence(AsyncStorage, sequenceFloor);
+  const completed = {
+    ...measurement,
+    startedAt: measurement.startedAt,
+    recordedAt: Date.now(),
+    sequence,
+    state: "completed",
+  } as CompletedCatalogSyncMeasurement;
+  await writeCatalogSyncMetricsPayload(AsyncStorage, JSON.stringify(completed));
+  latestMeasurement = completed;
+  completeCatalogMeasurementFreshness(measurement.startedAt);
+  return completed;
 }
 
 export function recordCatalogSyncMeasurement(measurement: CatalogSyncMeasurement) {
-  latestMeasurement = measurement;
-  void writeCatalogSyncMetricsPayload(AsyncStorage, JSON.stringify(measurement)).catch(() => undefined);
+  void persistCompletedMeasurement(measurement).catch(() => undefined);
 }
 
 export async function recordCatalogSyncMeasurementPersisted(measurement: CatalogSyncMeasurement) {
-  latestMeasurement = measurement;
-  await writeCatalogSyncMetricsPayload(AsyncStorage, JSON.stringify(measurement));
+  await persistCompletedMeasurement(measurement);
 }
 
-export async function readPersistedCatalogSyncMeasurement(): Promise<CatalogSyncMeasurement | null> {
-  if (latestMeasurement) return latestMeasurement;
+export async function readPersistedCatalogSyncMeasurement(): Promise<CompletedCatalogSyncMeasurement | null> {
   const raw = await readCatalogSyncMetricsPayload(AsyncStorage);
-  if (raw === null) return null;
+  if (raw === null) {
+    latestMeasurement = null;
+    return null;
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -477,6 +628,24 @@ export async function readPersistedCatalogSyncMeasurement(): Promise<CatalogSync
   if (!measurement) throw new Error("Stored catalog sync measurement is invalid.");
   latestMeasurement = measurement;
   return measurement;
+}
+
+export async function readCatalogSyncMeasurementDisplay(): Promise<CatalogSyncMeasurementDisplay> {
+  const active = getCatalogMeasurementInProgress();
+  if (active) {
+    const storedSequence = await readCatalogSyncMetricsSequence(AsyncStorage).catch(
+      () => latestMeasurement?.sequence ?? 0,
+    );
+    const nextSequence = Math.max(storedSequence, latestMeasurement?.sequence ?? 0) + 1;
+    return resolveCatalogMeasurementDisplay(active, latestMeasurement, nextSequence);
+  }
+
+  const measurement = await readPersistedCatalogSyncMeasurement();
+  const storedSequence = await readCatalogSyncMetricsSequence(AsyncStorage).catch(
+    () => measurement?.sequence ?? 0,
+  );
+  const nextSequence = Math.max(storedSequence, measurement?.sequence ?? 0) + 1;
+  return resolveCatalogMeasurementDisplay(null, measurement, nextSequence);
 }
 
 export function getLatestCatalogSyncMeasurement() {
