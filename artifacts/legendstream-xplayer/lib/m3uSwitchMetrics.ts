@@ -133,6 +133,11 @@ export async function noteM3UCacheWriteResult(
 ) {
   if (pending?.providerId === providerId) {
     pending.write = observation;
+    if (pending.path === "network") {
+      pending.switchCompletedAt ??= Date.now();
+      await publishMeasurement(takePendingMeasurement(pending));
+      return;
+    }
     if (pending.switchCompletedAt !== undefined && pending.path) {
       await publishMeasurement(takePendingMeasurement(pending));
     }
