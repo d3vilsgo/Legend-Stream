@@ -489,7 +489,11 @@ async function main() {
     assert.equal(projection.unsafeOutcome, null);
     assert.deepEqual(projection.rejectionCounts, zeroRejects());
     assert.deepEqual(projection.scan, completeScan(3));
-    assert.match(m3uCacheSource, /writtenCounts\.live = await upsertCatalogItems/);
+    assert.match(m3uCacheSource, /const committedCounts = await replaceProviderCatalogAtomically\(\{/);
+    assert.match(m3uCacheSource, /writtenCounts\.live = committedCounts\.live/);
+    assert.match(m3uCacheSource, /writtenCounts\.vod = committedCounts\.vod/);
+    assert.match(m3uCacheSource, /writtenCounts\.series = committedCounts\.series/);
+    assert.doesNotMatch(m3uCacheSource, /writtenCounts\.(?:live|vod|series) = await upsertCatalogItems/);
     assert.match(m3uCacheSource, /outcome: "success"/);
   });
 
