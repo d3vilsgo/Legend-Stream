@@ -270,9 +270,14 @@ async function main() {
     );
     const preparationStatements = topLevelStatements(preparationEffect);
     const preparedSnapshotDeclaration = "const preparedSnapshot = prepared?.snapshot ?? null;";
+    const previewOnlyDeclaration = 'const previewOnly = preparedSnapshot?.scope === "preview";';
     assert.ok(
       preparationStatements.includes(preparedSnapshotDeclaration),
       "provider preparation effect must create its null-safe prepared snapshot at top level",
+    );
+    assert.ok(
+      preparationStatements.includes(previewOnlyDeclaration),
+      "provider preparation effect must explicitly distinguish preview from full snapshots",
     );
 
     assertSingleUnconditionalStatement(
@@ -297,7 +302,7 @@ async function main() {
       preparationEffect,
       preparationStatements,
       "setVodLoaded",
-      "setVodLoaded(Boolean(preparedSnapshot && (preparedSnapshot.ready || preparedSnapshot.counts.vod > 0)));",
+      "setVodLoaded(Boolean(preparedSnapshot && !previewOnly && (preparedSnapshot.ready || preparedSnapshot.counts.vod > 0)));",
     );
     assertSingleUnconditionalStatement(
       preparationEffect,
@@ -327,7 +332,7 @@ async function main() {
       preparationEffect,
       preparationStatements,
       "setSeriesLoaded",
-      "setSeriesLoaded(Boolean(preparedSnapshot && (preparedSnapshot.ready || preparedSnapshot.counts.series > 0)));",
+      "setSeriesLoaded(Boolean(preparedSnapshot && !previewOnly && (preparedSnapshot.ready || preparedSnapshot.counts.series > 0)));",
     );
     assertSingleUnconditionalStatement(
       preparationEffect,
@@ -368,16 +373,22 @@ async function main() {
     assert.match(m3uCacheSource, /await buildM3UCacheWriteProjectionCooperatively\(provider, loaded,[\s\S]*batchSize:\s*200[\s\S]*yieldFn:\s*yieldToUi/);
   });
 
-  await scenario("full M3U Movies and Series tab materialization yields in 200-row batches", () => {
+  await scenario("full M3U Movies and Series first-open hydration delegates to cooperative kind cache loading", () => {
     const vodStart = screenSource.indexOf("const applyLocalVod = async () =>");
     const seriesStart = screenSource.indexOf("const applyLocalSeries = async () =>");
-    assert.ok(vodStart >= 0 && seriesStart > vodStart, "async local M3U catalog materializers must exist");
+    const liveStart = screenSource.indexOf("const applyLocalLive = async () =>");
+    assert.ok(vodStart >= 0 && seriesStart > vodStart && liveStart > seriesStart, "async local M3U kind loaders must exist");
     const vodBlock = screenSource.slice(vodStart, seriesStart);
-    const seriesEnd = screenSource.indexOf("const tryCatalogFallbackToM3U", seriesStart);
-    assert.ok(seriesEnd > seriesStart, "series materializer block must be captured");
-    const seriesBlock = screenSource.slice(seriesStart, seriesEnd);
-    assert.match(vodBlock, /await mapInBatches\([\s\S]*local\.movieItems[\s\S]*200/);
-    assert.match(seriesBlock, /await mapInBatches\([\s\S]*local\.seriesGroups[\s\S]*200/);
+    const seriesBlock = screenSource.slice(seriesStart, liveStart);
+    assert.match(vodBlock, /await hydrateM3UProviderKindCache\(provider as any, "vod"\)/);
+    assert.match(seriesBlock, /await hydrateM3UProviderKindCache\(provider as any, "series"\)/);
+
+    const kindStart = m3uCacheSource.indexOf("export async function hydrateM3UProviderKindCache(");
+    const kindEnd = m3uCacheSource.indexOf("async function readWriteCacheState(", kindStart);
+    assert.ok(kindStart >= 0 && kindEnd > kindStart, "cooperative M3U kind cache loader must be captured");
+    const kindBlock = m3uCacheSource.slice(kindStart, kindEnd);
+    assert.match(kindBlock, /getCachedPersistedItems\(provider\.id, kind\)/);
+    assert.match(kindBlock, /await buildM3UDirectHydrationCooperatively\([\s\S]*yieldFn:\s*yieldToUi/);
   });
 
   if (failed > 0) {
