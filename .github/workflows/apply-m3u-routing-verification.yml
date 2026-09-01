@@ -1,0 +1,630 @@
+name: Apply M3U routing verification patch
+
+on:
+  push:
+    branches:
+      - fix/m3u-routing-verification
+    paths:
+      - .github/workflows/apply-m3u-routing-verification.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/m3u-routing-verification
+      - name: Apply exact production patch
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          ROOT = Path('artifacts/legendstream-xplayer')
+
+          def replace_once(path: Path, old: str, new: str):
+              text = path.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{path}: expected exactly one match, found {count}')
+              path.write_text(text.replace(old, new, 1))
+
+          # A) PlayerContext: one shared transport resolver, exposed for saved-provider switch.
+          player = ROOT / 'context/PlayerContext.tsx'
+          replace_once(
+              player,
+              '  setActiveProvider: (providerId: string) => Promise<boolean>;\n',
+              '  resolveProviderForSwitch: (providerId: string) => Promise<ProviderConfig | null>;\n'
+              '  setActiveProvider: (providerId: string) => Promise<boolean>;\n',
+          )
+          replace_once(
+              player,
+              'async function resolveProviderOnConnect(provider: RoutedProvider): Promise<RoutedProvider> {',
+              'async function resolveProviderTransport(provider: RoutedProvider): Promise<RoutedProvider> {',
+          )
+          replace_once(
+              player,
+              '      const candidate = await resolveProviderOnConnect(rawCandidate);',
+              '      const candidate = await resolveProviderTransport(rawCandidate);',
+          )
+          marker = '  const connectProvider = async (config: ProviderInput) => {\n'
+          resolver_for_switch = '''  const resolveProviderForSwitch = async (providerId: string): Promise<ProviderConfig | null> => {
+    const current = stateRef.current;
+    const existing = current.providers.find((item) => item.id === providerId);
+    if (!existing || existing.needsCredentials) return null;
+
+    const resolved = await resolveProviderTransport(fromProvider(existing));
+    const updated = toProvider({
+      ...resolved,
+      id: existing.id,
+      name: existing.name,
+      createdAt: existing.createdAt,
+      lastLoadedAt: existing.lastLoadedAt,
+      channelCount: existing.channelCount,
+      epgUrl: resolved.epgUrl || existing.epgUrl,
+      loadError: existing.loadError,
+    });
+    await saveProviderSecrets(updated);
+
+    const latest = stateRef.current;
+    await persist({
+      ...latest,
+      providers: latest.providers.map((item) => item.id === providerId ? updated : item),
+      provider: latest.provider?.id === providerId ? updated : latest.provider,
+    });
+    return updated;
+  };
+
+'''
+          replace_once(player, marker, resolver_for_switch + marker)
+          replace_once(
+              player,
+              '      refreshEpg,\n      setActiveProvider,\n',
+              '      refreshEpg,\n      resolveProviderForSwitch,\n      setActiveProvider,\n',
+          )
+
+          # B1) Cooperative M3U catalog construction after line parsing.
+          iptv = ROOT / 'lib/iptv.ts'
+          sync_catalog = '''function buildM3UCatalog(entries: Channel[], providerId: string): ProviderLoadResult {
+  const liveChannels = entries.filter((entry) => entry.contentType === "live");
+  const movieEntries = entries.filter((entry) => entry.contentType === "movie");
+  const seriesEntries = entries.filter((entry) => entry.contentType === "series");
+
+  const movieItems: M3UMovieItem[] = movieEntries.map((entry) => ({
+    id: entry.id,
+    providerId,
+    name: entry.name,
+    streamUrl: entry.streamUrl,
+    logoUrl: entry.logoUrl,
+    category: entry.category,
+    contentType: "movie",
+  }));
+
+  const grouped = new Map<string, M3USeriesGroup>();
+  for (const entry of seriesEntries) {
+    const identity = parseSeriesIdentity(entry.name);
+    const key = `${normalizeHint(identity.seriesName)}::${normalizeHint(entry.category)}`;
+    let group = grouped.get(key);
+    if (!group) {
+      group = {
+        id: makeId(providerId, grouped.size, identity.seriesName),
+        providerId,
+        name: identity.seriesName,
+        category: entry.category,
+        coverUrl: entry.logoUrl,
+        contentType: "series",
+        seasons: {},
+      };
+      grouped.set(key, group);
+    }
+    const seasonKey = String(identity.season);
+    const episodes = group.seasons[seasonKey] ?? (group.seasons[seasonKey] = []);
+    episodes.push({
+      id: entry.id,
+      providerId,
+      title: entry.name,
+      streamUrl: entry.streamUrl,
+      category: entry.category,
+      season: identity.season,
+      episode: identity.episode,
+      logoUrl: entry.logoUrl,
+    });
+  }
+  const seriesGroups = Array.from(grouped.values()).map((group) => ({
+    ...group,
+    seasons: Object.fromEntries(
+      Object.entries(group.seasons).map(([season, episodes]) => [
+        season,
+        episodes.sort((a, b) => a.episode - b.episode),
+      ]),
+    ),
+  }));
+
+  m3uCatalogByProvider.set(providerId, { movieItems, seriesGroups });
+  return { channels: liveChannels, liveChannels, movieItems, seriesGroups };
+}
+'''
+          cooperative_catalog = sync_catalog + '''
+type M3UCatalogCooperativeOptions = {
+  batchSize?: number;
+  yieldFn?: () => Promise<void>;
+};
+
+async function forEachM3UCatalogBatch<T>(
+  input: readonly T[],
+  batchSize: number,
+  yieldFn: () => Promise<void>,
+  visitor: (value: T, index: number) => void,
+) {
+  for (let start = 0; start < input.length; start += batchSize) {
+    const end = Math.min(start + batchSize, input.length);
+    for (let index = start; index < end; index += 1) visitor(input[index], index);
+    if (end < input.length) await yieldFn();
+  }
+}
+
+async function buildM3UCatalogCooperatively(
+  entries: Channel[],
+  providerId: string,
+  options: M3UCatalogCooperativeOptions = {},
+): Promise<ProviderLoadResult> {
+  const batchSize = Math.max(1, options.batchSize ?? 200);
+  const yieldFn = options.yieldFn ?? yieldToUi;
+  const liveChannels: Channel[] = [];
+  const movieEntries: Channel[] = [];
+  const seriesEntries: Channel[] = [];
+
+  await forEachM3UCatalogBatch(entries, batchSize, yieldFn, (entry) => {
+    if (entry.contentType === "live") liveChannels.push(entry);
+    else if (entry.contentType === "movie") movieEntries.push(entry);
+    else if (entry.contentType === "series") seriesEntries.push(entry);
+  });
+
+  const movieItems: M3UMovieItem[] = new Array(movieEntries.length);
+  await forEachM3UCatalogBatch(movieEntries, batchSize, yieldFn, (entry, index) => {
+    movieItems[index] = {
+      id: entry.id,
+      providerId,
+      name: entry.name,
+      streamUrl: entry.streamUrl,
+      logoUrl: entry.logoUrl,
+      category: entry.category,
+      contentType: "movie",
+    };
+  });
+
+  const grouped = new Map<string, M3USeriesGroup>();
+  await forEachM3UCatalogBatch(seriesEntries, batchSize, yieldFn, (entry) => {
+    const identity = parseSeriesIdentity(entry.name);
+    const key = `${normalizeHint(identity.seriesName)}::${normalizeHint(entry.category)}`;
+    let group = grouped.get(key);
+    if (!group) {
+      group = {
+        id: makeId(providerId, grouped.size, identity.seriesName),
+        providerId,
+        name: identity.seriesName,
+        category: entry.category,
+        coverUrl: entry.logoUrl,
+        contentType: "series",
+        seasons: {},
+      };
+      grouped.set(key, group);
+    }
+    const seasonKey = String(identity.season);
+    const episodes = group.seasons[seasonKey] ?? (group.seasons[seasonKey] = []);
+    episodes.push({
+      id: entry.id,
+      providerId,
+      title: entry.name,
+      streamUrl: entry.streamUrl,
+      category: entry.category,
+      season: identity.season,
+      episode: identity.episode,
+      logoUrl: entry.logoUrl,
+    });
+  });
+
+  const groupValues = Array.from(grouped.values());
+  const seriesGroups: M3USeriesGroup[] = new Array(groupValues.length);
+  await forEachM3UCatalogBatch(groupValues, batchSize, yieldFn, (group, index) => {
+    seriesGroups[index] = {
+      ...group,
+      seasons: Object.fromEntries(
+        Object.entries(group.seasons).map(([season, episodes]) => [
+          season,
+          episodes.sort((a, b) => a.episode - b.episode),
+        ]),
+      ),
+    };
+  });
+
+  m3uCatalogByProvider.set(providerId, { movieItems, seriesGroups });
+  return { channels: liveChannels, liveChannels, movieItems, seriesGroups };
+}
+'''
+          replace_once(iptv, sync_catalog, cooperative_catalog)
+          replace_once(
+              iptv,
+              '''  await yieldToUi();
+  return {
+    ...buildM3UCatalog(entries, providerId),
+    epgUrl: state.epgUrl,
+    m3uDiagnostics: diagnostics.snapshot(),
+  };
+''',
+              '''  await yieldToUi();
+  const catalog = await buildM3UCatalogCooperatively(entries, providerId, {
+    batchSize: 200,
+    yieldFn: yieldToUi,
+  });
+  return {
+    ...catalog,
+    epgUrl: state.epgUrl,
+    m3uDiagnostics: diagnostics.snapshot(),
+  };
+''',
+          )
+
+          # B2) Cooperative credential-safe cache projection before SQLite staging.
+          projection_path = ROOT / 'lib/m3uCacheWriteProjection.ts'
+          projection_text = projection_path.read_text()
+          append_marker = '\nexport function buildM3UCacheWriteProjection(\n'
+          if projection_text.count(append_marker) != 1:
+              raise SystemExit('projection marker mismatch')
+          # Append cooperative function after the existing synchronous function to preserve tests/backcompat.
+          cooperative_projection = '''
+
+export async function buildM3UCacheWriteProjectionCooperatively(
+  provider: M3UCacheWriteProvider,
+  loaded: ProviderLoadResult,
+  options: { batchSize?: number; yieldFn: () => Promise<void> },
+): Promise<M3UCacheWriteProjection | null> {
+  const source = providerSource(provider);
+  const parsedProvider = parseM3UProviderSource(source);
+  if (!parsedProvider) return null;
+
+  const liveInput = loaded.liveChannels ?? loaded.channels;
+  const movieInput = loaded.movieItems ?? [];
+  const seriesInput = loaded.seriesGroups ?? [];
+  const rejectionCounts = emptyM3URefRejectionCounts();
+  const scan = emptyM3UValidationScan(m3uCacheCandidateCount(loaded));
+  const liveRows: Array<Channel & { playbackRef: M3UPathPlaybackRef }> = [];
+  const movieRows: SafeM3UMovieRow[] = [];
+  const seriesRows: SafeM3USeriesRow[] = [];
+  const inputCounts = { live: liveInput.length, vod: movieInput.length, series: seriesInput.length };
+  const batchSize = Math.max(1, options.batchSize ?? 200);
+  const actualCandidateCount = liveInput.length + movieInput.length + seriesEpisodeCount(loaded);
+  let inspectedForYield = 0;
+
+  const projection = (
+    unsafeOutcome: M3UCacheWriteProjection["unsafeOutcome"],
+  ): M3UCacheWriteProjection => ({
+    inputCounts,
+    safeCounts: { live: liveRows.length, vod: movieRows.length, series: seriesRows.length },
+    rejectionCounts,
+    scan,
+    unsafeOutcome,
+    liveRows,
+    movieRows,
+    seriesRows,
+  });
+
+  const reject = (
+    kind: Exclude<M3UCacheValidationScan["firstRejectKind"], "none">,
+    reason: Exclude<M3UCacheValidationScan["firstRejectReason"], "none">,
+  ) => {
+    rejectionCounts[reason] += 1;
+    scan.firstRejectKind = kind;
+    scan.firstRejectReason = reason;
+    scan.scanTruncated = scan.scanInspectedCount < scan.scanTotalCandidateCount;
+    return projection(
+      kind === "live" ? "unsafe-live-ref" : kind === "vod" ? "unsafe-vod-ref" : "unsafe-series-ref",
+    );
+  };
+
+  const maybeYield = async () => {
+    inspectedForYield += 1;
+    if (inspectedForYield % batchSize === 0 && inspectedForYield < actualCandidateCount) {
+      await options.yieldFn();
+    }
+  };
+
+  for (const channel of liveInput) {
+    scan.scanInspectedCount += 1;
+    const inspection = inspectM3UStreamRef(parsedProvider, channel.streamUrl, "live");
+    if (!inspection.ref) return reject("live", inspection.reason);
+    liveRows.push({ ...channel, playbackRef: inspection.ref });
+    await maybeYield();
+  }
+
+  for (const item of movieInput) {
+    scan.scanInspectedCount += 1;
+    const inspection = inspectM3UStreamRef(parsedProvider, item.streamUrl, "movie");
+    if (!inspection.ref) return reject("vod", inspection.reason);
+    if (inspection.ref.containerExtension === null) return reject("vod", "missing-extension");
+    movieRows.push({
+      stream_id: inspection.ref.streamId,
+      name: item.name,
+      stream_icon: item.logoUrl,
+      category_id: item.category,
+      container_extension: inspection.ref.containerExtension,
+      playbackRef: inspection.ref,
+    });
+    await maybeYield();
+  }
+
+  for (const group of seriesInput) {
+    const episodes: PersistedM3UEpisode[] = [];
+    for (const seasonEpisodes of Object.values(group.seasons)) {
+      for (const episode of seasonEpisodes) {
+        scan.scanInspectedCount += 1;
+        const inspection = inspectM3UStreamRef(parsedProvider, episode.streamUrl, "series");
+        if (!inspection.ref) return reject("series", inspection.reason);
+        episodes.push({
+          id: episode.id,
+          title: episode.title,
+          category: episode.category,
+          season: episode.season,
+          episode: episode.episode,
+          logoUrl: episode.logoUrl,
+          playbackRef: inspection.ref,
+        });
+        await maybeYield();
+      }
+    }
+    seriesRows.push({
+      series_id: group.id,
+      name: group.name,
+      cover: group.coverUrl,
+      category_id: group.category,
+      m3uEpisodes: episodes,
+    });
+  }
+
+  scan.scanTruncated = false;
+  return projection(null);
+}
+'''
+          # Locate the end of the file's existing export function by appending after all current text.
+          if 'export async function buildM3UCacheWriteProjectionCooperatively' in projection_text:
+              raise SystemExit('cooperative projection already exists')
+          projection_path.write_text(projection_text.rstrip() + cooperative_projection + '\n')
+
+          cache = ROOT / 'lib/m3uCatalogCache.ts'
+          replace_once(
+              cache,
+              '''import {
+  buildM3UCacheWriteProjection,
+  m3uCacheCandidateCount,
+} from "./m3uCacheWriteProjection";''',
+              '''import {
+  buildM3UCacheWriteProjectionCooperatively,
+  m3uCacheCandidateCount,
+} from "./m3uCacheWriteProjection";''',
+          )
+          replace_once(
+              cache,
+              '  const projection = buildM3UCacheWriteProjection(provider, loaded);',
+              '''  const projection = await buildM3UCacheWriteProjectionCooperatively(provider, loaded, {
+    batchSize: 200,
+    yieldFn: yieldToUi,
+  });''',
+          )
+
+          # B3) UI: unconditional handoff state publication and cooperative full local tab materialization.
+          screen = ROOT / 'components/OptimizedHomeScreenV6.tsx'
+          replace_once(
+              screen,
+              'import { yieldToUi } from "@/lib/cooperative";',
+              'import { mapInBatches, yieldToUi } from "@/lib/cooperative";',
+          )
+          replace_once(
+              screen,
+              '    setActiveProvider,\n',
+              '    resolveProviderForSwitch,\n    setActiveProvider,\n',
+          )
+          old_effect = '''  useEffect(() => {
+    const prepared = provider && preparedSwitchRef.current?.snapshot.providerId === provider.id
+      ? preparedSwitchRef.current
+      : null;
+    if (prepared) {
+      setVod(prepared.snapshot.movies);
+      setVodCats(prepared.vodCategories);
+      setVodCache(prepared.snapshot.movies.length ? { __all__: prepared.snapshot.movies } : {});
+      setVodLoaded(prepared.snapshot.ready || prepared.snapshot.counts.vod > 0);
+      setVodLoading(false);
+      setSeries(prepared.snapshot.series);
+      setSeriesCats(prepared.seriesCategories);
+      setSeriesCache(prepared.snapshot.series.length ? { __all__: prepared.snapshot.series } : {});
+      setSeriesLoaded(prepared.snapshot.ready || prepared.snapshot.counts.series > 0);
+      setSeriesLoading(false);
+      setHomeVodCount(prepared.snapshot.counts.vod);
+      setHomeSeriesCount(prepared.snapshot.counts.series);
+      setHomeCatalogProbeLoading(false);
+      setCachedLive(prepared.live);
+      preparedSwitchRef.current = null;
+    } else {
+      setVod([]); setVodCats([]); setVodCache({}); setVodLoaded(false); setVodLoading(false);
+      setSeries([]); setSeriesCats([]); setSeriesCache({}); setSeriesLoaded(false); setSeriesLoading(false);
+      setHomeVodCount(null); setHomeSeriesCount(null); setHomeCatalogProbeLoading(false);
+      setCachedLive([]);
+    }
+    setProviderTypeOverride(null);
+    setSelectedSeries(null); setSeriesInfo(null); setCatalogError(null);
+    catalogCategoryMemory.movies = "__all__";
+    catalogCategoryMemory.series = "__all__";
+  }, [provider?.id]);
+'''
+          new_effect = '''  useEffect(() => {
+    const prepared = provider && preparedSwitchRef.current?.snapshot.providerId === provider.id
+      ? preparedSwitchRef.current
+      : null;
+    const preparedSnapshot = prepared?.snapshot ?? null;
+    setVod(preparedSnapshot?.movies ?? []);
+    setVodCats(prepared?.vodCategories ?? []);
+    setVodCache(preparedSnapshot?.movies.length ? { __all__: preparedSnapshot.movies } : {});
+    setVodLoaded(Boolean(preparedSnapshot && (preparedSnapshot.ready || preparedSnapshot.counts.vod > 0)));
+    setVodLoading(false);
+    setSeries(preparedSnapshot?.series ?? []);
+    setSeriesCats(prepared?.seriesCategories ?? []);
+    setSeriesCache(preparedSnapshot?.series.length ? { __all__: preparedSnapshot.series } : {});
+    setSeriesLoaded(Boolean(preparedSnapshot && (preparedSnapshot.ready || preparedSnapshot.counts.series > 0)));
+    setSeriesLoading(false);
+    setHomeVodCount(preparedSnapshot?.counts.vod ?? null);
+    setHomeSeriesCount(preparedSnapshot?.counts.series ?? null);
+    setHomeCatalogProbeLoading(false);
+    setCachedLive(prepared?.live ?? []);
+    if (prepared) preparedSwitchRef.current = null;
+    setProviderTypeOverride(null);
+    setSelectedSeries(null); setSeriesInfo(null); setCatalogError(null);
+    catalogCategoryMemory.movies = "__all__";
+    catalogCategoryMemory.series = "__all__";
+  }, [provider?.id]);
+'''
+          replace_once(screen, old_effect, new_effect)
+
+          old_local = '''  const applyLocalVod = () => {
+    if (!provider) return;
+    const local = getM3UCatalog(provider.id);
+    const items: XtreamVodItem[] = local.movieItems.map((item) => ({
+      stream_id: item.id,
+      name: item.name,
+      stream_icon: item.logoUrl,
+      category_id: item.category,
+      direct_source: item.streamUrl,
+    }));
+    registerLocalVodQueue(items);
+    setVodCats(categoryRows(local.movieItems.map((item) => item.category)));
+    setVod(items);
+    setVodCache({ __m3u__: items });
+    setHomeVodCount(items.length);
+    setVodLoaded(true);
+  };
+
+  const applyLocalSeries = () => {
+    if (!provider) return;
+    const local = getM3UCatalog(provider.id);
+    const items: XtreamSeriesItem[] = local.seriesGroups.map((group) => ({
+      series_id: group.id,
+      name: group.name,
+      cover: group.coverUrl,
+      category_id: group.category,
+    }));
+    setSeriesCats(categoryRows(local.seriesGroups.map((group) => group.category)));
+    setSeries(items);
+    setSeriesCache({ __m3u__: items });
+    setHomeSeriesCount(items.length);
+    setSeriesLoaded(true);
+  };
+'''
+          new_local = '''  const applyLocalVod = async () => {
+    if (!provider) return;
+    setVodLoading(true);
+    try {
+      const local = getM3UCatalog(provider.id);
+      const items = await mapInBatches(
+        local.movieItems,
+        (item): XtreamVodItem => ({
+          stream_id: item.id,
+          name: item.name,
+          stream_icon: item.logoUrl,
+          category_id: item.category,
+          direct_source: item.streamUrl,
+        }),
+        200,
+      );
+      const categoryNames = await mapInBatches(local.movieItems, (item) => item.category, 200);
+      registerLocalVodQueue(items);
+      setVodCats(categoryRows(categoryNames));
+      setVod(items);
+      setVodCache({ __m3u__: items });
+      setHomeVodCount(items.length);
+      setVodLoaded(true);
+    } finally {
+      setVodLoading(false);
+    }
+  };
+
+  const applyLocalSeries = async () => {
+    if (!provider) return;
+    setSeriesLoading(true);
+    try {
+      const local = getM3UCatalog(provider.id);
+      const items = await mapInBatches(
+        local.seriesGroups,
+        (group): XtreamSeriesItem => ({
+          series_id: group.id,
+          name: group.name,
+          cover: group.coverUrl,
+          category_id: group.category,
+        }),
+        200,
+      );
+      const categoryNames = await mapInBatches(local.seriesGroups, (group) => group.category, 200);
+      setSeriesCats(categoryRows(categoryNames));
+      setSeries(items);
+      setSeriesCache({ __m3u__: items });
+      setHomeSeriesCount(items.length);
+      setSeriesLoaded(true);
+    } finally {
+      setSeriesLoading(false);
+    }
+  };
+'''
+          replace_once(screen, old_local, new_local)
+          replace_once(screen, '      if (target === "movies") applyLocalVod();\n      else applyLocalSeries();', '      if (target === "movies") await applyLocalVod();\n      else await applyLocalSeries();')
+          replace_once(screen, '      applyLocalVod();\n      setVodLoaded(true);', '      await applyLocalVod();\n      setVodLoaded(true);')
+          replace_once(screen, '      applyLocalSeries();\n      setSeriesLoaded(true);', '      await applyLocalSeries();\n      setSeriesLoaded(true);')
+          replace_once(screen, '        applyLocalVod();\n        return;', '        await applyLocalVod();\n        return;')
+          replace_once(screen, '        applyLocalSeries();\n        return;', '        await applyLocalSeries();\n        return;')
+
+          old_switch_prep = '''    try {
+      try {
+        preparedSwitchRef.current = await prepareProviderSwitchCache(target);
+        if (!preparedSwitchRef.current) clearProviderSwitchSnapshot(id);
+      } catch {
+        preparedSwitchRef.current = null;
+        clearProviderSwitchSnapshot(id);
+      }
+
+      const ok = await setActiveProvider(id);
+'''
+          new_switch_prep = '''    try {
+      const routedTarget = await resolveProviderForSwitch(id);
+      if (!routedTarget) {
+        setCatalogError("The saved provider could not be opened.");
+        return;
+      }
+      try {
+        preparedSwitchRef.current = await prepareProviderSwitchCache(routedTarget);
+        if (!preparedSwitchRef.current) clearProviderSwitchSnapshot(id);
+      } catch {
+        preparedSwitchRef.current = null;
+        clearProviderSwitchSnapshot(id);
+      }
+
+      const ok = await setActiveProvider(id);
+'''
+          replace_once(screen, old_switch_prep, new_switch_prep)
+          replace_once(
+              screen,
+              '      loadLocalMovies: applyLocalVod,\n      loadLocalSeries: applyLocalSeries,',
+              '      loadLocalMovies: () => { void applyLocalVod(); },\n      loadLocalSeries: () => { void applyLocalSeries(); },',
+          )
+
+          # Ensure forbidden workflow files were not touched by this patch.
+          PY
+          git diff --check
+          git status --short
+      - name: Commit production patch and self-clean
+        shell: bash
+        run: |
+          rm .github/workflows/apply-m3u-routing-verification.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add artifacts/legendstream-xplayer .github/workflows/apply-m3u-routing-verification.yml
+          git commit -m "fix: resolve saved M3U routing and yield post-paint work"
+          git push origin HEAD:fix/m3u-routing-verification
