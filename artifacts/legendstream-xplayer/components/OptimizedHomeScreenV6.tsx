@@ -46,8 +46,9 @@ import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { DownloadedMedia } from "@/lib/downloads";
 import { getM3UCatalog } from "@/lib/iptv";
+import { hydrateM3UProviderKindCache } from "@/lib/m3uCatalogCache";
 import { parseM3UProviderSource } from "@/lib/m3uCatalogRefs";
-import { mapInBatches, yieldToUi } from "@/lib/cooperative";
+import { yieldToUi } from "@/lib/cooperative";
 import { normalizeImageUrl } from "@/lib/imageUrl";
 import { providerListPresentation } from "@/lib/providerDisplaySecurity";
 import { dispatchCatalogTabNavigation } from "@/lib/catalogTabNavigation";
@@ -82,6 +83,7 @@ type ContentView = Exclude<ViewName, "player">;
 type Credentials = { baseUrl: string; username: string; password: string };
 type CatalogSortMode = "default" | "alphaAsc" | "alphaDesc" | "idAsc" | "idDesc" | "added";
 type CategoryOption = { id: string; name: string };
+type M3UFullKind = "live" | "vod" | "series";
 type Playable = {
   title: string;
   url: string;
@@ -110,12 +112,6 @@ const providerPresentation = (provider: ProviderConfig) =>
 
 const flattenCatalogCache = <T,>(cache: Record<string, T[]>) =>
   Object.values(cache).flat();
-
-const categoryRows = (names: string[]): XtreamCategory[] =>
-  Array.from(new Set(names.filter(Boolean))).map((name) => ({
-    category_id: name,
-    category_name: name,
-  }));
 
 const exactCategoryTotal = (categories: XtreamCategory[]) => {
   if (!categories.length) return 0;
@@ -266,6 +262,13 @@ export default function OptimizedHomeScreenV6() {
   const [switchingProviderId, setSwitchingProviderId] = useState<string | null>(null);
   const switchingProviderRef = useRef<string | null>(null);
   const preparedSwitchRef = useRef<ProviderSwitchCachePreparation | null>(null);
+  const m3uFullLoadedRef = useRef<{ providerId: string | null; live: boolean; vod: boolean; series: boolean }>({
+    providerId: null,
+    live: false,
+    vod: false,
+    series: false,
+  });
+  const m3uFullLoadInFlightRef = useRef(new Set<M3UFullKind>());
 
   const effectiveProvider = useMemo<ProviderConfig | null>(() => {
     if (!provider || !providerTypeOverride) return provider;
@@ -330,15 +333,23 @@ export default function OptimizedHomeScreenV6() {
       ? preparedSwitchRef.current
       : null;
     const preparedSnapshot = prepared?.snapshot ?? null;
+    const previewOnly = preparedSnapshot?.scope === "preview";
+    m3uFullLoadedRef.current = {
+      providerId: provider?.id ?? null,
+      live: false,
+      vod: false,
+      series: false,
+    };
+    m3uFullLoadInFlightRef.current.clear();
     setVod(preparedSnapshot?.movies ?? []);
     setVodCats(prepared?.vodCategories ?? []);
     setVodCache(preparedSnapshot?.movies.length ? { __all__: preparedSnapshot.movies } : {});
-    setVodLoaded(Boolean(preparedSnapshot && (preparedSnapshot.ready || preparedSnapshot.counts.vod > 0)));
+    setVodLoaded(Boolean(preparedSnapshot && !previewOnly && (preparedSnapshot.ready || preparedSnapshot.counts.vod > 0)));
     setVodLoading(false);
     setSeries(preparedSnapshot?.series ?? []);
     setSeriesCats(prepared?.seriesCategories ?? []);
     setSeriesCache(preparedSnapshot?.series.length ? { __all__: preparedSnapshot.series } : {});
-    setSeriesLoaded(Boolean(preparedSnapshot && (preparedSnapshot.ready || preparedSnapshot.counts.series > 0)));
+    setSeriesLoaded(Boolean(preparedSnapshot && !previewOnly && (preparedSnapshot.ready || preparedSnapshot.counts.series > 0)));
     setSeriesLoading(false);
     setHomeVodCount(preparedSnapshot?.counts.vod ?? null);
     setHomeSeriesCount(preparedSnapshot?.counts.series ?? null);
@@ -393,8 +404,8 @@ export default function OptimizedHomeScreenV6() {
     }
     if (effectiveProvider.type === "m3u") {
       const local = getM3UCatalog(effectiveProvider.id);
-      setHomeVodCount(local.movieItems.length);
-      setHomeSeriesCount(local.seriesGroups.length);
+      setHomeVodCount((current) => current ?? local.movieItems.length);
+      setHomeSeriesCount((current) => current ?? local.seriesGroups.length);
       setHomeCatalogProbeLoading(false);
       return;
     }
@@ -445,55 +456,76 @@ export default function OptimizedHomeScreenV6() {
 
   const applyLocalVod = async () => {
     if (!provider) return;
+    const fullState = m3uFullLoadedRef.current;
+    if (fullState.providerId === provider.id && fullState.vod) return;
+    if (m3uFullLoadInFlightRef.current.has("vod")) return;
+    m3uFullLoadInFlightRef.current.add("vod");
     setVodLoading(true);
     try {
-      const local = getM3UCatalog(provider.id);
-      const items = await mapInBatches(
-        local.movieItems,
-        (item): XtreamVodItem => ({
-          stream_id: item.id,
-          name: item.name,
-          stream_icon: item.logoUrl,
-          category_id: item.category,
-          direct_source: item.streamUrl,
-        }),
-        200,
-      );
-      const categoryNames = await mapInBatches(local.movieItems, (item) => item.category, 200);
+      const hydrated = await hydrateM3UProviderKindCache(provider as any, "vod");
+      if (!hydrated) return;
+      const items = hydrated.movies;
       registerLocalVodQueue(items);
-      setVodCats(categoryRows(categoryNames));
+      setVodCats(hydrated.vodCategories);
       setVod(items);
       setVodCache({ __m3u__: items });
       setHomeVodCount(items.length);
       setVodLoaded(true);
+      m3uFullLoadedRef.current = {
+        ...m3uFullLoadedRef.current,
+        providerId: provider.id,
+        vod: true,
+      };
     } finally {
+      m3uFullLoadInFlightRef.current.delete("vod");
       setVodLoading(false);
     }
   };
 
   const applyLocalSeries = async () => {
     if (!provider) return;
+    const fullState = m3uFullLoadedRef.current;
+    if (fullState.providerId === provider.id && fullState.series) return;
+    if (m3uFullLoadInFlightRef.current.has("series")) return;
+    m3uFullLoadInFlightRef.current.add("series");
     setSeriesLoading(true);
     try {
-      const local = getM3UCatalog(provider.id);
-      const items = await mapInBatches(
-        local.seriesGroups,
-        (group): XtreamSeriesItem => ({
-          series_id: group.id,
-          name: group.name,
-          cover: group.coverUrl,
-          category_id: group.category,
-        }),
-        200,
-      );
-      const categoryNames = await mapInBatches(local.seriesGroups, (group) => group.category, 200);
-      setSeriesCats(categoryRows(categoryNames));
+      const hydrated = await hydrateM3UProviderKindCache(provider as any, "series");
+      if (!hydrated) return;
+      const items = hydrated.series;
+      setSeriesCats(hydrated.seriesCategories);
       setSeries(items);
       setSeriesCache({ __m3u__: items });
       setHomeSeriesCount(items.length);
       setSeriesLoaded(true);
+      m3uFullLoadedRef.current = {
+        ...m3uFullLoadedRef.current,
+        providerId: provider.id,
+        series: true,
+      };
     } finally {
+      m3uFullLoadInFlightRef.current.delete("series");
       setSeriesLoading(false);
+    }
+  };
+
+  const applyLocalLive = async () => {
+    if (!provider) return;
+    const fullState = m3uFullLoadedRef.current;
+    if (fullState.providerId === provider.id && fullState.live) return;
+    if (m3uFullLoadInFlightRef.current.has("live")) return;
+    m3uFullLoadInFlightRef.current.add("live");
+    try {
+      const hydrated = await hydrateM3UProviderKindCache(provider as any, "live");
+      if (!hydrated) return;
+      setCachedLive(hydrated.live);
+      m3uFullLoadedRef.current = {
+        ...m3uFullLoadedRef.current,
+        providerId: provider.id,
+        live: true,
+      };
+    } finally {
+      m3uFullLoadInFlightRef.current.delete("live");
     }
   };
 
@@ -731,6 +763,7 @@ export default function OptimizedHomeScreenV6() {
         movies: local.movieItems.length,
         series: local.seriesGroups.length,
       },
+      loadLocalLive: () => { void applyLocalLive(); },
       loadLocalMovies: () => { void applyLocalVod(); },
       loadLocalSeries: () => { void applyLocalSeries(); },
       loadXtreamMovies: () => loadVodCategory("__all__"),
@@ -1103,7 +1136,7 @@ function Home({ provider, live, vod, series, vodCategories, seriesCategories, ca
   const localCatalog = provider.type === "m3u" ? getM3UCatalog(provider.id) : null;
   const homeMovies = useMemo<XtreamVodItem[]>(() => {
     if (cached) return cached.movies;
-    if (!localCatalog) return movies.slice(0, 48);
+    if (!localCatalog?.movieItems.length) return movies.slice(0, 48);
     return localCatalog.movieItems.slice(0, 48).map((item) => ({
       stream_id: item.id, name: item.name, stream_icon: item.logoUrl,
       category_id: item.category, direct_source: item.streamUrl,
@@ -1111,7 +1144,7 @@ function Home({ provider, live, vod, series, vodCategories, seriesCategories, ca
   }, [cached, localCatalog, movies]);
   const homeSeries = useMemo<XtreamSeriesItem[]>(() => {
     if (cached) return cached.series;
-    if (!localCatalog) return seriesItems.slice(0, 48);
+    if (!localCatalog?.seriesGroups.length) return seriesItems.slice(0, 48);
     return localCatalog.seriesGroups.slice(0, 48).map((item) => ({
       series_id: item.id, name: item.name, cover: item.coverUrl, category_id: item.category,
     }));
@@ -1582,7 +1615,7 @@ function Movies({ items, cats, providerType, sortMode, onSort, loading, loaded, 
     return sortCatalogRows(rows, effectiveSort, (item) => item.added, (item) => item.stream_id);
   }, [items, search, category, effectiveSort]);
 
-  if (!loaded) return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
+  if (!loaded && items.length === 0) return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
   return <View {...drawerSwipe.panHandlers}>
     <Catalog title={t("movies")} detail={t("titles", { count: items.length.toLocaleString() })} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={() => onRefresh(category)}>
       <SortControl selected={effectiveSort} supportsAdded={providerType === "xtream"} onSelect={(mode) => { setLimit(60); onSort(mode); }} />
@@ -1663,7 +1696,7 @@ function Series({ items, cats, providerType, sortMode, onSort, loading, loaded, 
     </View>;
   }
 
-  if (!loaded) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
+  if (!loaded && items.length === 0) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
   return <View {...drawerSwipe.panHandlers}>
     <Catalog title={t("series")} detail={t("seriesCount", { count: items.length.toLocaleString() })} search={search} onSearch={(value) => { setSearch(value); setLimit(60); }} loading={loading} onRefresh={() => onRefresh(category)}>
       <SortControl selected={effectiveSort} supportsAdded={providerType === "xtream"} onSelect={(mode) => { setLimit(60); onSort(mode); }} />
