@@ -64,12 +64,10 @@ export function parseM3UStreamRef(
   return inspectM3UStreamRef(provider, streamSource, expectedKind).ref;
 }
 
-export function buildM3UStreamUrl(
-  providerSource: string,
+export function buildM3UStreamUrlFromProvider(
+  provider: M3UProviderSource,
   ref: M3UPathPlaybackRef,
 ): string | null {
-  const provider = parseM3UProviderSource(providerSource);
-  if (!provider) return null;
   const username = encodeURIComponent(provider.username);
   const password = encodeURIComponent(provider.password);
   const streamId = encodeURIComponent(ref.streamId);
@@ -78,6 +76,15 @@ export function buildM3UStreamUrl(
     return `${provider.baseUrl}/${username}/${password}/${streamId}`;
   }
   return `${provider.baseUrl}/${ref.kind}/${username}/${password}/${streamId}.${ref.containerExtension}`;
+}
+
+export function buildM3UStreamUrl(
+  providerSource: string,
+  ref: M3UPathPlaybackRef,
+): string | null {
+  const provider = parseM3UProviderSource(providerSource);
+  if (!provider) return null;
+  return buildM3UStreamUrlFromProvider(provider, ref);
 }
 
 export function isSafeM3UPlaybackRef(value: unknown): value is M3UPathPlaybackRef {
