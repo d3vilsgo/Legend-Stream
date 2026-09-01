@@ -200,8 +200,8 @@ async function main() {
     });
     assert.deepEqual(calls, ["local-movies", "local-series"]);
     assert.match(screenSource, /dispatchCatalogTabNavigation\(\{/);
-    assert.match(screenSource, /loadLocalMovies: applyLocalVod/);
-    assert.match(screenSource, /loadLocalSeries: applyLocalSeries/);
+    assert.match(screenSource, /loadLocalMovies: \(\) => \{ void applyLocalVod\(\); \}/);
+    assert.match(screenSource, /loadLocalSeries: \(\) => \{ void applyLocalSeries\(\); \}/);
   });
 
   await scenario("M3U tabs with no in-memory catalog preserve the existing skeleton state", () => {
