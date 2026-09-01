@@ -32,6 +32,7 @@ import { persistM3ULoadInBackground } from "@/lib/m3uCacheWriteRunner";
 import {
   resolveM3UTransport,
   resolvedProviderTransport,
+  type M3UTransportResolutionReason,
   type ProviderTransport,
 } from "@/lib/m3uTransportRouting";
 import { safeLog } from "@/lib/safeLog";
@@ -210,10 +211,15 @@ const fromProvider = (provider: ProviderConfig): RoutedProvider => ({
 const normalizeUrl = (value: string) =>
   value.trim().replace(/\/+$/, "").toLowerCase();
 
-function logProviderTransport(providerType: ProviderType, resolvedTransport: string | undefined) {
+function logProviderTransport(
+  providerType: ProviderType,
+  resolvedTransport: string | undefined,
+  resolutionReason: M3UTransportResolutionReason,
+) {
   safeLog.info("LS_PROVIDER_TRANSPORT", {
     providerType,
     resolvedTransport: resolvedTransport ?? "unknown",
+    resolutionReason,
   });
 }
 
@@ -272,7 +278,7 @@ async function resolveProviderOnConnect(provider: RoutedProvider): Promise<Route
   if (declaredType === "m3u") {
     const source = provider.playlistUrl || provider.url;
     const resolution = await resolveM3UTransport(source);
-    logProviderTransport(resolution.declaredType, resolution.transport);
+    logProviderTransport(resolution.declaredType, resolution.transport, resolution.reason);
     if (resolution.transport === "xtream" && resolution.credentials) {
       return {
         ...provider,

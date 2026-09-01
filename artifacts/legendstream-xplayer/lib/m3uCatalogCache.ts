@@ -24,7 +24,10 @@ import {
   type PersistedSeriesCatalogItem,
   type PersistedVodCatalogItem,
 } from "./catalogPersistence";
-import { buildM3UDirectHydration } from "./m3uCatalogHydration";
+import {
+  buildM3UDirectHydration,
+  buildM3UDirectHydrationCooperatively,
+} from "./m3uCatalogHydration";
 import {
   buildM3UCacheWriteProjection,
   m3uCacheCandidateCount,
@@ -61,6 +64,7 @@ import {
   noteM3UNetworkCatalogCounts,
 } from "./m3uSwitchMetrics";
 import { safeLog } from "./safeLog";
+import { yieldToUi } from "./cooperative";
 import type { XtreamCategory } from "./xtreamCatalog";
 
 const M3U_CACHE_STAGE_TOTAL = 3;
@@ -165,7 +169,13 @@ export async function hydrateM3UProviderCache(
 
     phase = "runtime";
     runtimeStartedAt = Date.now();
-    const direct = buildM3UDirectHydration(provider, liveRows, vodRows, seriesRows);
+    const direct = await buildM3UDirectHydrationCooperatively(
+      provider,
+      liveRows,
+      vodRows,
+      seriesRows,
+      { yieldFn: yieldToUi },
+    );
     const runtimeHydrateMs = Date.now() - runtimeStartedAt;
     if (direct.counts.live === 0 && direct.counts.vod === 0 && direct.counts.series === 0) {
       noteM3UCacheHydration({

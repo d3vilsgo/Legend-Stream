@@ -74,6 +74,7 @@ async function main() {
     );
     assert.equal(result.declaredType, "m3u");
     assert.equal(result.transport, "xtream");
+    assert.equal(result.reason, "probe-succeeded");
     assert.equal(result.credentials?.username, "alice");
     assert.equal(result.credentials?.password, "swordfish");
     const requestedUrl = new URL(requested);
@@ -98,12 +99,40 @@ async function main() {
     );
     assert.equal(result.declaredType, "m3u");
     assert.equal(result.transport, "m3u");
+    assert.equal(result.reason, "probe-failed");
     assert.equal(result.credentials?.username, "alice");
     assert.equal(result.credentials?.password, "swordfish");
     const requestedUrl = new URL(requested);
     assert.equal(requestedUrl.pathname, "/player_api.php");
     assert.equal(requestedUrl.searchParams.get("username"), "alice");
     assert.equal(requestedUrl.searchParams.get("password"), "swordfish");
+  });
+
+  await scenario("routing reason distinguishes uncredentialed sources from probe timeouts", async () => {
+    const routing = await routingModule();
+    assert.ok(routing, "m3uTransportRouting module must exist");
+    let uncredentialedFetches = 0;
+    const uncredentialed = await routing.resolveM3UTransport(
+      "https://panel.example/playlist.m3u",
+      async () => {
+        uncredentialedFetches += 1;
+        throw new Error("fetch must not run");
+      },
+    );
+    assert.equal(uncredentialed.transport, "m3u");
+    assert.equal(uncredentialed.reason, "url-not-credentialed");
+    assert.equal(uncredentialedFetches, 0);
+
+    const timeout = await routing.resolveM3UTransport(
+      "https://panel.example/get.php?username=alice&password=swordfish&type=m3u_plus",
+      async () => {
+        const error = new Error("timed out");
+        error.name = "TimeoutError";
+        throw error;
+      },
+    );
+    assert.equal(timeout.transport, "m3u");
+    assert.equal(timeout.reason, "probe-timeout");
   });
 
   await scenario("provider model stores declaredType and transport separately", () => {
@@ -123,7 +152,7 @@ async function main() {
     assert.match(screenSource, /providerListPresentation\(\{[^}]*type:\s*[^}]*declaredType/s);
   });
 
-  await scenario("transport diagnostics expose only declared type and resolved transport", () => {
+  await scenario("transport diagnostics expose declared type transport and safe reason only", () => {
     const logStart = playerSource.indexOf("function logProviderTransport(");
     const logEnd = playerSource.indexOf("// Transport diagnostics above", logStart);
     assert.ok(logStart >= 0 && logEnd > logStart, "transport diagnostic function must be fully captured");
@@ -133,17 +162,17 @@ async function main() {
     const payloadFields = [...payload[1].matchAll(/^\s*([A-Za-z_$][\w$]*)(?:\s*:|\s*,)/gm)]
       .map((match) => match[1])
       .sort();
-    assert.deepEqual(payloadFields, ["providerType", "resolvedTransport"]);
+    assert.deepEqual(payloadFields, ["providerType", "resolutionReason", "resolvedTransport"]);
     assert.doesNotMatch(logBlock, /username|password|playlistUrl|\burl\s*:/i);
     assert.match(m3uCacheSource, /cleanupStagingCatalog/);
     assert.match(m3uCacheSource, /swapStagingToProvider/);
   });
 
   if (failed > 0) {
-    throw new Error(`m3u transport routing scenarios: ${passed}/8 passed, ${failed} failed`);
+    throw new Error(`m3u transport routing scenarios: ${passed}/9 passed, ${failed} failed`);
   }
-  assert.equal(passed, 8);
-  console.log("m3u transport routing scenarios: 8/8 passed");
+  assert.equal(passed, 9);
+  console.log("m3u transport routing scenarios: 9/9 passed");
 }
 
 void main().catch((error) => {
