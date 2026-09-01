@@ -91,9 +91,26 @@ type AtomicReplaceOptions = {
   onBatchCommitted?: (kind: CatalogKind, observation: CatalogWriteBatchObservation) => void;
 };
 
+type StagingSwapOptions = {
+  providerId: string;
+  vodCategories: XtreamCategory[];
+  seriesCategories: XtreamCategory[];
+  readyMessage: string;
+  readyStamp?: "full" | "background";
+  syncTotal: number;
+  committedCounts: CatalogCounts;
+  onBatchCommitted?: (kind: CatalogKind, observation: CatalogWriteBatchObservation) => void;
+};
+
 const DB_NAME = "legendstream-catalog-v1.db";
 const WRITE_BATCH_SIZE = 200;
+const STAGING_PROVIDER_PREFIX = "__staging__";
 let databasePromise: ReturnType<typeof SQLite.openDatabaseAsync> | null = null;
+let startupStagingCleanupPromise: Promise<void> | null = null;
+
+function stagingProviderId(providerId: string) {
+  return `${STAGING_PROVIDER_PREFIX}${providerId}`;
+}
 
 async function database() {
   if (!databasePromise) {
@@ -301,7 +318,32 @@ async function insertRows(
 }
 
 export async function initCatalogCache() {
-  await database();
+  const db = await database();
+  if (!startupStagingCleanupPromise) {
+    startupStagingCleanupPromise = enqueueCatalogDbWrite(async () => {
+      await db.withExclusiveTransactionAsync(async (txn) => {
+        await txn.runAsync(
+          "DELETE FROM catalog_items WHERE substr(provider_id, 1, ?) = ?",
+          STAGING_PROVIDER_PREFIX.length,
+          STAGING_PROVIDER_PREFIX,
+        );
+        await txn.runAsync(
+          "DELETE FROM catalog_categories WHERE substr(provider_id, 1, ?) = ?",
+          STAGING_PROVIDER_PREFIX.length,
+          STAGING_PROVIDER_PREFIX,
+        );
+        await txn.runAsync(
+          "DELETE FROM catalog_sync_state WHERE substr(provider_id, 1, ?) = ?",
+          STAGING_PROVIDER_PREFIX.length,
+          STAGING_PROVIDER_PREFIX,
+        );
+      });
+    }).catch((caught) => {
+      startupStagingCleanupPromise = null;
+      throw caught;
+    });
+  }
+  await startupStagingCleanupPromise;
 }
 
 export async function getCatalogItemsSchemaFingerprint(): Promise<M3USqliteSchemaFingerprint> {
@@ -534,6 +576,61 @@ export async function replaceProviderCatalogAtomically(options: AtomicReplaceOpt
       options.onBatchCommitted?.(entry.kind, entry.observation);
     }
     return written;
+  });
+}
+
+export async function cleanupStagingCatalog(providerId: string) {
+  return enqueueCatalogDbWrite(async () => {
+    const db = await database();
+    const stagingId = stagingProviderId(providerId);
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await txn.runAsync("DELETE FROM catalog_items WHERE provider_id = ?", stagingId);
+      await txn.runAsync("DELETE FROM catalog_categories WHERE provider_id = ?", stagingId);
+      await txn.runAsync("DELETE FROM catalog_sync_state WHERE provider_id = ?", stagingId);
+    });
+  });
+}
+
+export async function swapStagingToProvider(options: StagingSwapOptions) {
+  return enqueueCatalogDbWrite(async () => {
+    const db = await database();
+    const stagingId = stagingProviderId(options.providerId);
+
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await txn.runAsync("DELETE FROM catalog_items WHERE provider_id = ?", options.providerId);
+      await txn.runAsync("DELETE FROM catalog_categories WHERE provider_id = ?", options.providerId);
+      await txn.runAsync(
+        "UPDATE catalog_items SET provider_id = ? WHERE provider_id = ?",
+        options.providerId,
+        stagingId,
+      );
+      await replaceCategories(txn, options.providerId, "vod", options.vodCategories);
+      await replaceCategories(txn, options.providerId, "series", options.seriesCategories);
+      await writeSyncState(
+        txn,
+        options.providerId,
+        "ready",
+        options.syncTotal,
+        options.syncTotal,
+        options.readyMessage,
+        options.readyStamp,
+      );
+    });
+
+    for (const kind of ["live", "vod", "series"] as const) {
+      const totalRows = options.committedCounts[kind];
+      const batchCount = Math.ceil(totalRows / WRITE_BATCH_SIZE);
+      for (let batchIndex = 1; batchIndex <= batchCount; batchIndex += 1) {
+        const batchStart = (batchIndex - 1) * WRITE_BATCH_SIZE;
+        options.onBatchCommitted?.(kind, {
+          batchIndex,
+          batchRows: Math.min(WRITE_BATCH_SIZE, totalRows - batchStart),
+          committedRows: Math.min(totalRows, batchIndex * WRITE_BATCH_SIZE),
+        });
+      }
+    }
+
+    return { ...options.committedCounts };
   });
 }
 

@@ -489,7 +489,9 @@ async function main() {
     assert.equal(projection.unsafeOutcome, null);
     assert.deepEqual(projection.rejectionCounts, zeroRejects());
     assert.deepEqual(projection.scan, completeScan(3));
-    assert.match(m3uCacheSource, /const committedCounts = await replaceProviderCatalogAtomically\(\{/);
+    assert.match(m3uCacheSource, /const stagingProviderId = `__staging__\$\{provider\.id\}`;/);
+    assert.match(m3uCacheSource, /const committedCounts = await swapStagingToProvider\(\{/);
+    assert.doesNotMatch(m3uCacheSource, /upsertCatalogItems\(provider\.id/);
     assert.match(m3uCacheSource, /writtenCounts\.live = committedCounts\.live/);
     assert.match(m3uCacheSource, /writtenCounts\.vod = committedCounts\.vod/);
     assert.match(m3uCacheSource, /writtenCounts\.series = committedCounts\.series/);
