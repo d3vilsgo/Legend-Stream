@@ -146,8 +146,22 @@ async function main() {
     assert.doesNotMatch(source, /await Promise\.all\(\[\s*pruneCatalogKind/);
   });
 
-  assert.equal(passed, 6);
-  console.log("catalog DB writer coordination scenarios: 6/6 passed");
+  await scenario("M3U persist success path uses staging namespace and never inserts directly into provider_id", () => {
+    const start = m3uCatalogCacheSource.indexOf("export async function persistM3UProviderCache");
+    const source = m3uCatalogCacheSource.slice(start);
+    assert.match(source, /__staging__/);
+    assert.doesNotMatch(source, /replaceProviderCatalogAtomically/);
+  });
+
+  await scenario("staging swap transaction contains DELETE and UPDATE but no catalog item INSERT", () => {
+    const source = functionSource("swapStagingToProvider", "getCachedPersistedItems");
+    assert.match(source, /DELETE FROM catalog_items/);
+    assert.match(source, /UPDATE catalog_items SET provider_id/);
+    assert.doesNotMatch(source, /INSERT INTO catalog_items/);
+  });
+
+  assert.equal(passed, 8);
+  console.log("catalog DB writer coordination scenarios: 8/8 passed");
 }
 
 void main();
