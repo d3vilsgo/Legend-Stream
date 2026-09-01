@@ -1,12 +1,14 @@
 import {
+  cleanupStagingCatalog,
   deleteProviderCatalog,
   getCachedPersistedItems,
   getCatalogCounts,
   getCatalogItemsSchemaFingerprint,
   getCatalogSyncState,
   initCatalogCache,
-  replaceProviderCatalogAtomically,
   setCatalogSyncState,
+  swapStagingToProvider,
+  upsertCatalogItems,
 } from "./catalogCache";
 import {
   installM3UCatalog,
@@ -409,31 +411,67 @@ export async function persistM3UProviderCache(
     });
   }
 
+  const stagingProviderId = `__staging__${provider.id}`;
+  const stagedLive = persistedLive.map((item) => ({ ...item, providerId: stagingProviderId }));
+  const stagedVod = persistedVod.map((item) => ({ ...item, providerId: stagingProviderId }));
+  const stagedSeries = persistedSeries.map((item) => ({ ...item, providerId: stagingProviderId }));
+  const stagedCounts = emptyM3UCacheCounts();
   const writtenCounts = emptyM3UCacheCounts();
   const batchProgress = createM3USqliteBatchProgress();
   let sqliteStage: M3USqliteStage = "set-syncing";
 
   try {
     await initCatalogCache();
+    await cleanupStagingCatalog(provider.id);
+    await setCatalogSyncState(
+      provider.id,
+      "preparing",
+      0,
+      M3U_CACHE_STAGE_TOTAL,
+      "M3U cache preparing",
+    );
     const seenAt = Date.now();
-    const committedCounts = await replaceProviderCatalogAtomically({
-      providerId: provider.id,
-      live: persistedLive,
-      vod: persistedVod,
-      series: persistedSeries,
-      vodCategories: categories(movieInput.map((item) => item.category)),
-      seriesCategories: categories(seriesInput.map((item) => item.category)),
+
+    stagedCounts.live = await upsertCatalogItems(stagingProviderId, "live", stagedLive, {
       seenAt,
       markNew: true,
+      onBatchStarted: (batchIndex) => {
+        noteM3USqliteBatchStarted(batchProgress, "live", batchIndex);
+      },
+      onSqliteStage: (stage) => {
+        sqliteStage = stage;
+      },
+    });
+    stagedCounts.vod = await upsertCatalogItems(stagingProviderId, "vod", stagedVod, {
+      seenAt,
+      markNew: true,
+      onBatchStarted: (batchIndex) => {
+        noteM3USqliteBatchStarted(batchProgress, "vod", batchIndex);
+      },
+      onSqliteStage: (stage) => {
+        sqliteStage = stage;
+      },
+    });
+    stagedCounts.series = await upsertCatalogItems(stagingProviderId, "series", stagedSeries, {
+      seenAt,
+      markNew: true,
+      onBatchStarted: (batchIndex) => {
+        noteM3USqliteBatchStarted(batchProgress, "series", batchIndex);
+      },
+      onSqliteStage: (stage) => {
+        sqliteStage = stage;
+      },
+    });
+
+    sqliteStage = "set-ready";
+    const committedCounts = await swapStagingToProvider({
+      providerId: provider.id,
+      vodCategories: categories(movieInput.map((item) => item.category)),
+      seriesCategories: categories(seriesInput.map((item) => item.category)),
       readyMessage: "M3U cache ready",
       readyStamp: "background",
       syncTotal: M3U_CACHE_STAGE_TOTAL,
-      onStage: (stage) => {
-        sqliteStage = stage;
-      },
-      onBatchStarted: (kind, batchIndex) => {
-        noteM3USqliteBatchStarted(batchProgress, kind as M3USqliteWriteKind, batchIndex);
-      },
+      committedCounts: stagedCounts,
       onBatchCommitted: (kind, observation) => {
         noteM3USqliteBatchCommitted(
           batchProgress,
@@ -465,6 +503,11 @@ export async function persistM3UProviderCache(
     });
     return true;
   } catch (caught) {
+    try {
+      await cleanupStagingCatalog(provider.id);
+    } catch (cleanupCaught) {
+      safeLog.error("LS_M3U_CACHE_STAGING_CLEANUP", cleanupCaught);
+    }
     const progress = snapshotM3USqliteBatchProgress(batchProgress);
     let schemaFingerprint: Partial<M3USqliteSchemaFingerprint> = {};
     try {
@@ -479,10 +522,9 @@ export async function persistM3UProviderCache(
     };
     const failedBatchIndex = failedM3USqliteBatchIndex(batchProgress, sqliteStage);
     safeLog.error("LS_M3U_CACHE_WRITE_DB", caught);
-    // The full M3U replacement is one transaction. A failure rolls back rows,
-    // categories, and the in-transaction syncing/ready state together. Do not
-    // overwrite the restored previous state with error: an older ready cache
-    // must remain usable after a failed background refresh.
+    // Staging writes never replace the active provider rows until the final swap.
+    // A failed batch or swap therefore leaves the previous cache rows usable;
+    // cleanup above removes only the private staging namespace.
     await publishWriteObservation({
       providerId: provider.id,
       startedAt,
