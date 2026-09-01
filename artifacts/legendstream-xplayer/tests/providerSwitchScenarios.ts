@@ -267,7 +267,7 @@ async function main() {
     assert.match(cacheSource, /getCatalogCounts\(provider\.id\)/);
     assert.match(cacheSource, /getCachedVodItems\(provider, undefined, HOME_SAMPLE_LIMIT\)/);
     assert.match(cacheSource, /getCachedSeriesItems\(provider, undefined, HOME_SAMPLE_LIMIT\)/);
-    assert.match(catalogSource, /if \(!provider \|\| provider\.type !== "xtream"\) return;/);
+    assert.match(catalogSource, /if \(!provider \|\| resolvedProviderTransport\(provider\) !== "xtream"\) return;/);
     assert.equal(
       chooseProviderSwitchPath({ hasInMemoryChannels: false, hasUsableCatalogCache: true }),
       "cache",

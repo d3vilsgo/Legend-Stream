@@ -17,7 +17,7 @@
     "test:catalog-persistence": "tsx tests/catalogPersistenceScenarios.ts",
     "test:catalog-category-fallback": "tsx tests/catalogCategoryFallbackScenarios.ts",
     "test:catalog-availability": "tsx tests/catalogAvailabilityScenarios.ts",
-    "test:provider-switch": "tsx tests/providerSwitchScenarios.ts",
+    "test:provider-switch": "tsx tests/providerSwitchScenarios.ts && tsx tests/m3uTransportRoutingScenarios.ts",
     "test:catalog-bulk-sync": "tsx tests/catalogBulkSyncScenarios.ts",
     "test:poster-image-resilience": "tsx tests/posterImageResilienceScenarios.ts",
     "test:player-live-queue": "tsx tests/playerLiveQueueScenarios.ts",

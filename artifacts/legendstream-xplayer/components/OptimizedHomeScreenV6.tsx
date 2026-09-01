@@ -46,6 +46,7 @@ import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { DownloadedMedia } from "@/lib/downloads";
 import { getM3UCatalog } from "@/lib/iptv";
+import { parseM3UProviderSource } from "@/lib/m3uCatalogRefs";
 import { yieldToUi } from "@/lib/cooperative";
 import { normalizeImageUrl } from "@/lib/imageUrl";
 import { providerListPresentation } from "@/lib/providerDisplaySecurity";
@@ -100,6 +101,12 @@ const catalogCategoryMemory = {
 
 const visibleErrorText = (value?: string | null) =>
   value ? redactSensitiveText(value) : null;
+
+const providerPresentation = (provider: ProviderConfig) =>
+  providerListPresentation({
+    ...provider,
+    type: provider.declaredType ?? provider.type,
+  });
 
 const flattenCatalogCache = <T,>(cache: Record<string, T[]>) =>
   Object.values(cache).flat();
@@ -171,16 +178,8 @@ const sortCatalogRows = <T extends { name: string }>(
   return sorted;
 };
 
-const isGetPhpM3UPlusProvider = (provider: ProviderConfig) => {
-  try {
-    const source = new URL(provider.url || provider.playlistUrl);
-    if (!/\/get\.php$/i.test(source.pathname)) return false;
-    const type = source.searchParams.get("type")?.toLowerCase();
-    return !type || type === "m3u_plus";
-  } catch {
-    return false;
-  }
-};
+const isGetPhpM3UPlusProvider = (provider: ProviderConfig) =>
+  Boolean(parseM3UProviderSource(provider.playlistUrl || provider.url));
 
 async function persistProviderAsM3U(providerId: string) {
   try {
@@ -196,6 +195,8 @@ async function persistProviderAsM3U(providerId: string) {
         ? {
             ...item,
             type: "m3u",
+            declaredType: "m3u",
+            transport: "m3u",
             loadError: undefined,
           }
         : item;
@@ -931,8 +932,8 @@ function SavedAccounts({ providers, busy, switchingProviderId, error, onOpen, on
             <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16, flex: 1 }}>{item.name}</Text>
             {switching ? <ActivityIndicator size="small" color={colors.primary} /> : null}
           </View>
-          <Text style={{ color: item.needsCredentials ? colors.destructive : switching ? colors.primary : colors.mutedForeground }}>{switching ? t("opening") : item.needsCredentials ? t("credentialsMissing") : providerListPresentation(item).meta}</Text>
-          <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{providerListPresentation(item).host}</Text>
+          <Text style={{ color: item.needsCredentials ? colors.destructive : switching ? colors.primary : colors.mutedForeground }}>{switching ? t("opening") : item.needsCredentials ? t("credentialsMissing") : providerPresentation(item).meta}</Text>
+          <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{providerPresentation(item).host}</Text>
         </Pressable>
         <Pressable disabled={busy} onPress={() => onRemove(item.id)} style={s.iconButton}><Feather name="trash-2" size={20} color={colors.mutedForeground} /></Pressable>
       </View>;
@@ -951,7 +952,7 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
 }) {
   const colors = useColors(); const insets = useSafeAreaInsets(); const { t } = useI18n();
   const [name, setName] = useState(existing?.name ?? "My provider");
-  const [type, setType] = useState<ProviderType>(existing?.type ?? "xtream");
+  const [type, setType] = useState<ProviderType>(existing?.declaredType ?? existing?.type ?? "xtream");
   const [url, setUrl] = useState(existing?.playlistUrl || existing?.url || "");
   const [username, setUsername] = useState(existing?.username ?? "");
   const [password, setPassword] = useState(existing?.password ?? "");
@@ -1816,7 +1817,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAd
     <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}> 
       <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16 }}>{t("activeConnection")}</Text>
       <Text style={{ color: colors.foreground }}>{provider.name}</Text>
-      <Text style={{ color: colors.mutedForeground }}>{provider.type.toUpperCase()} · {provider.channelCount ?? 0}</Text>
+      <Text style={{ color: colors.mutedForeground }}>{(provider.declaredType ?? provider.type).toUpperCase()} · {provider.channelCount ?? 0}</Text>
       <View style={s.row}><FocusButton label={t("editSource")} icon="edit-2" onPress={onEdit} /><FocusButton label={t("addAccount")} icon="plus" onPress={onAdd} /><FocusButton label={t("disconnect")} icon="log-out" variant="ghost" onPress={onDisconnect} /></View>
     </View>
     <View style={{ marginTop: 24 }}>
@@ -1837,8 +1838,8 @@ function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAd
               <Text style={{ color: colors.foreground, fontWeight: "800", flex: 1 }}>{item.name}{active ? ` · ${t("active")}` : ""}</Text>
               {switching ? <ActivityIndicator size="small" color={colors.primary} /> : active ? <Feather name="check-circle" size={18} color={colors.primary} /> : null}
             </View>
-            <Text style={{ color: item.needsCredentials ? colors.destructive : switching ? colors.primary : colors.mutedForeground }}>{switching ? t("opening") : item.needsCredentials ? t("credentialsMissing") : providerListPresentation(item).meta}</Text>
-            <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{providerListPresentation(item).host}</Text>
+            <Text style={{ color: item.needsCredentials ? colors.destructive : switching ? colors.primary : colors.mutedForeground }}>{switching ? t("opening") : item.needsCredentials ? t("credentialsMissing") : providerPresentation(item).meta}</Text>
+            <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{providerPresentation(item).host}</Text>
           </Pressable>
           <Pressable disabled={busy} onPress={() => onRemove(item.id)} style={s.iconButton}><Feather name="trash-2" size={20} color={colors.mutedForeground} /></Pressable>
         </View>;
@@ -2013,7 +2014,7 @@ function HomeAccountTile({ item, active = false, add = false, disabled = false, 
           {active ? <View style={[s.accountActivePill, { backgroundColor: `${colors.primary}1C` }]}><View style={[s.dot, { backgroundColor: colors.primary }]} /><Text style={{ color: colors.primary, fontSize: 11, fontWeight: "600" }}>{t("active")}</Text></View> : null}
         </View>
         <Text numberOfLines={1} style={[s.accountNamePremium, { color: colors.foreground }]}>{item?.name}</Text>
-        <Text numberOfLines={1} style={[s.accountMetaPremium, { color: colors.mutedForeground }]}>{item ? `${providerListPresentation(item).host} · ${providerListPresentation(item).meta}` : ""}</Text>
+        <Text numberOfLines={1} style={[s.accountMetaPremium, { color: colors.mutedForeground }]}>{item ? `${providerPresentation(item).host} · ${providerPresentation(item).meta}` : ""}</Text>
       </>}
     </Pressable>
   </Animated.View>;

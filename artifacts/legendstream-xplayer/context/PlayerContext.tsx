@@ -30,6 +30,12 @@ import {
 } from "@/lib/m3uCatalogCache";
 import { persistM3ULoadInBackground } from "@/lib/m3uCacheWriteRunner";
 import {
+  resolveM3UTransport,
+  resolvedProviderTransport,
+  type ProviderTransport,
+} from "@/lib/m3uTransportRouting";
+import { safeLog } from "@/lib/safeLog";
+import {
   chooseProviderSwitchPath,
   hasPrimedProviderSwitchSnapshot,
   peekProviderSwitchSnapshot,
@@ -54,6 +60,8 @@ export interface ProviderConfig {
   id: string;
   name: string;
   type: ProviderType;
+  declaredType?: ProviderType;
+  transport?: ProviderTransport;
   playlistUrl: string;
   url: string;
   username?: string;
@@ -162,18 +170,33 @@ const emptyState: PlayerState = {
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
 
-const toProvider = (provider: Provider): ProviderConfig => ({
+type RoutedProvider = Provider & {
+  declaredType?: ProviderType;
+  transport?: ProviderTransport;
+  playlistUrl?: string;
+};
+
+const toProvider = (provider: RoutedProvider): ProviderConfig => ({
   ...provider,
-  playlistUrl: provider.url,
+  declaredType: provider.declaredType ?? provider.type,
+  transport: provider.transport ?? (
+    provider.type === "xtream" || provider.type === "m3u" ? provider.type : undefined
+  ),
+  playlistUrl: provider.playlistUrl || provider.url,
   connectedAt: new Date(provider.createdAt).toISOString(),
   needsCredentials: false,
 });
 
-const fromProvider = (provider: ProviderConfig): Provider => ({
+const fromProvider = (provider: ProviderConfig): RoutedProvider => ({
   id: provider.id,
   name: provider.name,
   type: provider.type,
+  declaredType: provider.declaredType ?? provider.type,
+  transport: provider.transport ?? (
+    provider.type === "xtream" || provider.type === "m3u" ? provider.type : undefined
+  ),
   url: provider.url || provider.playlistUrl,
+  playlistUrl: provider.playlistUrl || provider.url,
   username: provider.username,
   password: provider.password,
   mac: provider.mac,
@@ -186,6 +209,16 @@ const fromProvider = (provider: ProviderConfig): Provider => ({
 
 const normalizeUrl = (value: string) =>
   value.trim().replace(/\/+$/, "").toLowerCase();
+
+function logProviderTransport(providerType: ProviderType, resolvedTransport: string | undefined) {
+  safeLog.info("LS_PROVIDER_TRANSPORT", {
+    providerType,
+    resolvedTransport: resolvedTransport ?? "unknown",
+  });
+}
+
+// Transport diagnostics above are deliberately identity-free and credential-free.
+// Keep source locations, account fields, and endpoint details outside that event payload.
 
 function parseXtreamGetPhp(value: string) {
   try {
@@ -234,14 +267,47 @@ async function probeXtreamApi(parsed: ParsedGetPhp) {
   }
 }
 
-async function resolveProviderOnConnect(provider: Provider): Promise<Provider> {
-  if (provider.type !== "xtream") return provider;
+async function resolveProviderOnConnect(provider: RoutedProvider): Promise<RoutedProvider> {
+  const declaredType = provider.declaredType ?? provider.type;
+  if (declaredType === "m3u") {
+    const source = provider.playlistUrl || provider.url;
+    const resolution = await resolveM3UTransport(source);
+    logProviderTransport(resolution.declaredType, resolution.transport);
+    if (resolution.transport === "xtream" && resolution.credentials) {
+      return {
+        ...provider,
+        type: "xtream",
+        declaredType: "m3u",
+        transport: "xtream",
+        url: resolution.credentials.baseUrl,
+        playlistUrl: source,
+        username: resolution.credentials.username,
+        password: resolution.credentials.password,
+      };
+    }
+    return {
+      ...provider,
+      type: "m3u",
+      declaredType: "m3u",
+      transport: "m3u",
+      url: source,
+      playlistUrl: source,
+      username: undefined,
+      password: undefined,
+    };
+  }
+
+  if (declaredType !== "xtream") return { ...provider, declaredType };
   const parsed = parseXtreamGetPhp(provider.url);
-  if (!parsed) return provider;
+  if (!parsed) {
+    return { ...provider, type: "xtream", declaredType: "xtream", transport: "xtream" };
+  }
   if (await probeXtreamApi(parsed)) {
     return {
       ...provider,
       type: "xtream",
+      declaredType: "xtream",
+      transport: "xtream",
       username: parsed.username,
       password: parsed.password,
     };
@@ -249,12 +315,14 @@ async function resolveProviderOnConnect(provider: Provider): Promise<Provider> {
   return {
     ...provider,
     type: "m3u",
+    declaredType: "xtream",
+    transport: "m3u",
     username: undefined,
     password: undefined,
   };
 }
 
-function toXtreamLoadProvider(provider: Provider): Provider {
+function toXtreamLoadProvider(provider: RoutedProvider): Provider {
   const parsed = parseXtreamGetPhp(provider.url);
   return parsed
     ? {
@@ -267,8 +335,8 @@ function toXtreamLoadProvider(provider: Provider): Provider {
     : provider;
 }
 
-async function loadProviderSmart(provider: Provider) {
-  if (provider.type !== "xtream") {
+async function loadProviderSmart(provider: RoutedProvider) {
+  if (resolvedProviderTransport(provider) !== "xtream") {
     const loaded = await loadProvider(provider);
     persistM3ULoadInBackground(provider, loaded);
     return { provider, loaded };
@@ -277,9 +345,10 @@ async function loadProviderSmart(provider: Provider) {
   if (!parsed) {
     return { provider, loaded: await loadProvider(provider) };
   }
-  const savedXtream: Provider = {
+  const savedXtream: RoutedProvider = {
     ...provider,
     type: "xtream",
+    transport: "xtream",
     username: parsed.username,
     password: parsed.password,
   };
@@ -289,9 +358,11 @@ async function loadProviderSmart(provider: Provider) {
       loaded: await loadProvider(toXtreamLoadProvider(savedXtream)),
     };
   } catch {
-    const fallback: Provider = {
+    const fallback: RoutedProvider = {
       ...provider,
       type: "m3u",
+      transport: "m3u",
+      url: provider.playlistUrl || provider.url,
       username: undefined,
       password: undefined,
     };
@@ -424,6 +495,10 @@ async function hydrateStoredProvider(
   const url = secrets.url || secrets.playlistUrl || "";
   const provider = {
     ...stored,
+    declaredType: stored.declaredType ?? stored.type,
+    transport: stored.transport ?? (
+      stored.type === "xtream" || stored.type === "m3u" ? stored.type : undefined
+    ),
     url,
     playlistUrl: secrets.playlistUrl || secrets.url || "",
     epgUrl: secrets.epgUrl,
@@ -837,11 +912,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     setError(null);
 
     try {
-      const rawCandidate: Provider = {
+      const sourceUrl = (config.url || config.playlistUrl).trim();
+      const rawCandidate: RoutedProvider = {
         id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
         name: config.name.trim() || "My provider",
         type: config.type,
-        url: (config.url || config.playlistUrl).trim(),
+        declaredType: config.type,
+        url: sourceUrl,
+        playlistUrl: sourceUrl,
         username: config.username?.trim() || undefined,
         password: config.password || undefined,
         mac: config.mac?.trim() || undefined,
