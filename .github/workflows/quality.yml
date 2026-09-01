@@ -102,12 +102,12 @@ jobs:
           set -euo pipefail
           sqlite_diag="$(pnpm --filter @workspace/legendstream-xplayer test:sqlite-diagnostics-freshness 2>&1 | tee /dev/stderr)"
           grep -F 'sqlite diagnostics freshness scenarios: 28/28 passed' <<<"$sqlite_diag"
-      - name: Catalog DB writer coordination regressions (6/6 required)
+      - name: Catalog DB writer coordination regressions (8/8 required)
         shell: bash
         run: |
           set -euo pipefail
           writer="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-db-writer 2>&1 | tee /dev/stderr)"
-          grep -F 'catalog DB writer coordination scenarios: 6/6 passed' <<<"$writer"
+          grep -F 'catalog DB writer coordination scenarios: 8/8 passed' <<<"$writer"
       - name: Catalog persistence invariants (10/10 required)
         shell: bash
         run: |
