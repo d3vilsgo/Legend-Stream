@@ -1,0 +1,40 @@
+name: Apply Provider Switch Transport Test Fix
+
+on:
+  push:
+    branches:
+      - fix/m3u-staging-swap-v2
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/m3u-staging-swap-v2
+      - name: Apply exact assertion replacement
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('artifacts/legendstream-xplayer/tests/providerSwitchScenarios.ts')
+          text = path.read_text()
+          old = 'assert.match(catalogSource, /if \\(!provider \\|\\| provider\\.type !== "xtream"\\) return;/);'
+          new = 'assert.match(catalogSource, /if \\(!provider \\|\\| resolvedProviderTransport\\(provider\\) !== "xtream"\\) return;/);'
+          count = text.count(old)
+          if count != 1:
+              raise SystemExit(f'expected exactly one stale assertion, found {count}')
+          path.write_text(text.replace(old, new, 1))
+          PY
+      - name: Remove temporary workflow and push
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git rm .github/workflows/apply-provider-switch-transport-test-fix.yml
+          git add artifacts/legendstream-xplayer/tests/providerSwitchScenarios.ts
+          git diff --cached --check
+          git commit -m 'test: align provider switch guard with resolved transport'
+          git push origin HEAD:fix/m3u-staging-swap-v2
