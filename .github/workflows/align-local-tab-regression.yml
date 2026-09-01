@@ -24,10 +24,14 @@ jobs:
           from pathlib import Path
           path = Path('artifacts/legendstream-xplayer/tests/providerSwitchScenarios.ts')
           text = path.read_text()
-          old = '''    assert.match(screenSource, /loadLocalMovies: applyLocalVod/);
-    assert.match(screenSource, /loadLocalSeries: applyLocalSeries/);'''
-          new = r'''    assert.match(screenSource, /loadLocalMovies: \(\) => \{ void applyLocalVod\(\); \}/);
-    assert.match(screenSource, /loadLocalSeries: \(\) => \{ void applyLocalSeries\(\); \}/);'''
+          old = (
+              '    assert.match(screenSource, /loadLocalMovies: applyLocalVod/);\n'
+              '    assert.match(screenSource, /loadLocalSeries: applyLocalSeries/);'
+          )
+          new = (
+              r'    assert.match(screenSource, /loadLocalMovies: \(\) => \{ void applyLocalVod\(\); \}/);' + '\n' +
+              r'    assert.match(screenSource, /loadLocalSeries: \(\) => \{ void applyLocalSeries\(\); \}/);'
+          )
           if text.count(old) != 1:
               raise SystemExit(f'expected exactly one stale local-loader assertion block, found {text.count(old)}')
           path.write_text(text.replace(old, new, 1))
