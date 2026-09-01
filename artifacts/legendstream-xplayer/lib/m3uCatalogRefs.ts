@@ -23,12 +23,27 @@ function trimmedBasePath(pathname: string) {
 export function parseM3UProviderSource(value: string): M3UProviderSource | null {
   try {
     const url = new URL(value.trim());
-    if (!/^https?:$/i.test(url.protocol) || !/\/get\.php$/i.test(url.pathname)) return null;
-    const username = url.searchParams.get("username")?.trim();
-    const password = url.searchParams.get("password") ?? "";
-    const type = url.searchParams.get("type")?.toLowerCase();
-    if (!username || !password || (type && type !== "m3u_plus")) return null;
-    const basePath = trimmedBasePath(url.pathname);
+    if (!/^https?:$/i.test(url.protocol)) return null;
+
+    if (/\/get\.php$/i.test(url.pathname)) {
+      const username = url.searchParams.get("username")?.trim();
+      const password = url.searchParams.get("password") ?? "";
+      const type = url.searchParams.get("type")?.toLowerCase();
+      if (!username || !password || (type && type !== "m3u_plus")) return null;
+      const basePath = trimmedBasePath(url.pathname);
+      return {
+        baseUrl: `${url.origin}${basePath}`.replace(/\/+$/, ""),
+        username,
+        password,
+      };
+    }
+
+    const pathMatch = url.pathname.match(/^(.*)\/playlist\/([^/]+)\/([^/]+)\/m3u\/?$/i);
+    if (!pathMatch) return null;
+    const username = decodeURIComponent(pathMatch[2]).trim();
+    const password = decodeURIComponent(pathMatch[3]);
+    if (!username || !password) return null;
+    const basePath = pathMatch[1].replace(/\/+$/, "");
     return {
       baseUrl: `${url.origin}${basePath}`.replace(/\/+$/, ""),
       username,

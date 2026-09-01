@@ -67,6 +67,7 @@ import {
   peekProviderSwitchSnapshot,
 } from "@/lib/providerSwitchUx";
 import type { Channel } from "@/lib/iptv";
+import { resolvedProviderTransport } from "@/lib/m3uTransportRouting";
 
 export type CatalogSnapshot = {
   providerId?: string;
@@ -111,7 +112,7 @@ const SYNC_STAGE_TOTAL = 4;
 const Context = createContext<CatalogSyncContextValue | null>(null);
 
 function providerCredentials(provider: ReturnType<typeof usePlayer>["provider"]): XtreamCredentials | null {
-  if (!provider || provider.type !== "xtream" || !provider.username || !provider.password) return null;
+  if (!provider || resolvedProviderTransport(provider) !== "xtream" || !provider.username || !provider.password) return null;
   return {
     baseUrl: provider.url || provider.playlistUrl,
     username: provider.username,
@@ -123,7 +124,7 @@ function asLoadProvider(provider: NonNullable<ReturnType<typeof usePlayer>["prov
   return {
     id: provider.id,
     name: provider.name,
-    type: provider.type,
+    type: resolvedProviderTransport(provider) === "xtream" ? "xtream" : provider.type,
     url: provider.url || provider.playlistUrl,
     username: provider.username,
     password: provider.password,
@@ -222,7 +223,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const runSync = useCallback(async (mode: CatalogSyncMode) => {
-    if (!provider || provider.type !== "xtream") return;
+    if (!provider || resolvedProviderTransport(provider) !== "xtream") return;
     const credentials = providerCredentials(provider);
     if (!credentials) return;
     if (runningRef.current) return runningRef.current;
@@ -483,7 +484,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         // handoff may already be showing the target cache, so never blank it first.
         await refreshSnapshot();
         clearProviderSwitchSnapshot(active.id);
-        if (disposed || active.type !== "xtream") return;
+        if (disposed || resolvedProviderTransport(active) !== "xtream") return;
 
         // Only a genuinely empty, never-completed cache uses the blocking initial path.
         if (!usable && state?.phase !== "ready") {
@@ -527,7 +528,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
   }), [cacheReady, cancelInitialSync, hasUsableCache, isRefreshing, isSyncing, refreshCatalog, refreshSnapshot, snapshot, syncState]);
 
   const isInitialBlocking =
-    provider?.type === "xtream" &&
+    resolvedProviderTransport(provider) === "xtream" &&
     shouldBlockInitialCatalogSync(hasUsableCache, isInitialSyncRunning, syncState?.phase);
   const progress = syncState && syncState.total > 0
     ? Math.max(0, Math.min(1, syncState.completed / syncState.total))
