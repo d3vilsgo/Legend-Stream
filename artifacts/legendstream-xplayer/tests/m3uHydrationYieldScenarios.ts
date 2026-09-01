@@ -24,6 +24,152 @@ async function scenario(name: string, run: () => void | Promise<void>) {
   }
 }
 
+function extractUseEffectBodyContaining(source: string, marker: string) {
+  const markerIndex = source.indexOf(marker);
+  assert.ok(markerIndex >= 0, `provider preparation marker not found: ${marker}`);
+  const effectStart = source.lastIndexOf("useEffect(() => {", markerIndex);
+  assert.ok(effectStart >= 0, "provider preparation useEffect start must exist");
+  const openBrace = source.indexOf("{", effectStart);
+  assert.ok(openBrace >= 0 && openBrace < markerIndex, "provider preparation useEffect body must open before marker");
+
+  let depth = 0;
+  let quote: "'" | '"' | "`" | null = null;
+  let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
+
+  for (let index = openBrace; index < source.length; index += 1) {
+    const char = source[index];
+    const next = source[index + 1];
+
+    if (lineComment) {
+      if (char === "\n") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (char === "*" && next === "/") {
+        blockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      lineComment = true;
+      index += 1;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      blockComment = true;
+      index += 1;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+      continue;
+    }
+    if (char === "{") {
+      depth += 1;
+      continue;
+    }
+    if (char === "}") {
+      depth -= 1;
+      if (depth === 0) return source.slice(openBrace + 1, index);
+    }
+  }
+
+  throw new Error("provider preparation useEffect body is not balanced");
+}
+
+function topLevelStatements(body: string) {
+  const statements: string[] = [];
+  let start = 0;
+  let curlyDepth = 0;
+  let parenDepth = 0;
+  let bracketDepth = 0;
+  let quote: "'" | '"' | "`" | null = null;
+  let escaped = false;
+  let lineComment = false;
+  let blockComment = false;
+
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    const next = body[index + 1];
+
+    if (lineComment) {
+      if (char === "\n") lineComment = false;
+      continue;
+    }
+    if (blockComment) {
+      if (char === "*" && next === "/") {
+        blockComment = false;
+        index += 1;
+      }
+      continue;
+    }
+    if (quote) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === quote) quote = null;
+      continue;
+    }
+    if (char === "/" && next === "/") {
+      lineComment = true;
+      index += 1;
+      continue;
+    }
+    if (char === "/" && next === "*") {
+      blockComment = true;
+      index += 1;
+      continue;
+    }
+    if (char === "'" || char === '"' || char === "`") {
+      quote = char;
+      continue;
+    }
+
+    if (char === "{") curlyDepth += 1;
+    else if (char === "}") curlyDepth -= 1;
+    else if (char === "(") parenDepth += 1;
+    else if (char === ")") parenDepth -= 1;
+    else if (char === "[") bracketDepth += 1;
+    else if (char === "]") bracketDepth -= 1;
+    else if (char === ";" && curlyDepth === 0 && parenDepth === 0 && bracketDepth === 0) {
+      statements.push(body.slice(start, index + 1));
+      start = index + 1;
+    }
+  }
+
+  return statements.map((statement) => statement.replace(/\s+/g, " ").trim()).filter(Boolean);
+}
+
+function assertSingleUnconditionalStatement(effectBody: string, statements: string[], setter: string, expected: string) {
+  const calls = effectBody.match(new RegExp(`\\b${setter}\\s*\\(`, "g")) ?? [];
+  assert.equal(calls.length, 1, `${setter} must occur exactly once in the provider preparation effect`);
+  const normalizedExpected = expected.replace(/\s+/g, " ").trim();
+  assert.ok(
+    statements.includes(normalizedExpected),
+    `${setter} must be a top-level unconditional statement using the null-safe prepared snapshot`,
+  );
+}
+
 async function main() {
   const hydration = await import("../lib/m3uCatalogHydration") as any;
   assert.equal(
@@ -117,10 +263,102 @@ async function main() {
       158,
       "15,994 VOD rows are traversed in two 80-batch cooperative passes and must yield 79 times per pass",
     );
-    assert.match(screenSource, /const preparedSnapshot = prepared\?\.snapshot \?\? null;/);
-    assert.match(screenSource, /setVod\(preparedSnapshot\?\.movies \?\? \[\]\);/);
-    assert.match(screenSource, /setSeries\(preparedSnapshot\?\.series \?\? \[\]\);/);
-    assert.doesNotMatch(screenSource, /if \(prepared\) \{\s*setVod\(/s);
+
+    const preparationEffect = extractUseEffectBodyContaining(
+      screenSource,
+      "const prepared = provider && preparedSwitchRef.current?.snapshot.providerId === provider.id",
+    );
+    const preparationStatements = topLevelStatements(preparationEffect);
+    const preparedSnapshotDeclaration = "const preparedSnapshot = prepared?.snapshot ?? null;";
+    assert.ok(
+      preparationStatements.includes(preparedSnapshotDeclaration),
+      "provider preparation effect must create its null-safe prepared snapshot at top level",
+    );
+
+    assertSingleUnconditionalStatement(
+      preparationEffect,
+      preparationStatements,
+      "setVod",
+      "setVod(preparedSnapshot?.movies ?? []);",
+    );
+    assertSingleUnconditionalStatement(
+      preparationEffect,
+      preparationStatements,
+      "setVodCats",
+      "setVodCats(prepared?.vodCategories ?? []);",
+    );
+    assertSingleUnconditionalStatement(
+      preparationEffect,
+      preparationStatements,
+      "setVodCache",
+      "setVodCache(preparedSnapshot?.movies.length ? { __all__: preparedSnapshot.movies } : {});",
+    );
+    assertSingleUnconditionalStatement(
+      preparationEffect,
+      preparationStatements,
+      "setVodLoaded",
+      "setVodLoaded(Boolean(preparedSnapshot && (preparedSnapshot.ready || preparedSnapshot.counts.vod > 0)));",
+    );
+    assertSingleUnconditionalStatement(
+      preparationEffect,
+      preparationStatements,
+      "setVodLoading",
+      "setVodLoading(false);",
+    );
+    assertSingleUnconditionalStatement(
+      preparationEffect,
+      preparationStatements,
+      "setSeries",
+      "setSeries(preparedSnapshot?.series ?? []);",
+    );
+    assertSingleUnconditionalStatement(
+      preparationEffect,
+      preparationStatements,
+      "setSeriesCats",
+      "setSeriesCats(prepared?.seriesCategories ?? []);",
+    );
+    assertSingleUnconditionalStatement(
+      preparationEffect,
+      preparationStatements,
+      "setSeriesCache",
+      "setSeriesCache(preparedSnapshot?.series.length ? { __all__: preparedSnapshot.series } : {});",
+    );
+    assertSingleUnconditionalStatement(
+      preparationEffect,
+      preparationStatements,
+      "setSeriesLoaded",
+      "setSeriesLoaded(Boolean(preparedSnapshot && (preparedSnapshot.ready || preparedSnapshot.counts.series > 0)));",
+    );
+    assertSingleUnconditionalStatement(
+      preparationEffect,
+      preparationStatements,
+      "setSeriesLoading",
+      "setSeriesLoading(false);",
+    );
+    assertSingleUnconditionalStatement(
+      preparationEffect,
+      preparationStatements,
+      "setHomeVodCount",
+      "setHomeVodCount(preparedSnapshot?.counts.vod ?? null);",
+    );
+    assertSingleUnconditionalStatement(
+      preparationEffect,
+      preparationStatements,
+      "setHomeSeriesCount",
+      "setHomeSeriesCount(preparedSnapshot?.counts.series ?? null);",
+    );
+    assertSingleUnconditionalStatement(
+      preparationEffect,
+      preparationStatements,
+      "setHomeCatalogProbeLoading",
+      "setHomeCatalogProbeLoading(false);",
+    );
+    assertSingleUnconditionalStatement(
+      preparationEffect,
+      preparationStatements,
+      "setCachedLive",
+      "setCachedLive(prepared?.live ?? []);",
+    );
   });
 
   await scenario("post-first-paint M3U background refresh keeps catalog build and cache projection cooperative", () => {
