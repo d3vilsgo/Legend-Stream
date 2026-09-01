@@ -60,7 +60,7 @@ export async function prepareProviderSwitchCache(
   if (provider.type === "m3u") {
     beginM3UProviderSwitchMeasurement(provider.id);
     const cached = await hydrateM3UProviderCache(provider as any, {
-      initialLimit: HOME_SAMPLE_LIMIT,
+      initialLimit: HOME_SAMPLE_LIMIT
     });
     if (!cached) return null;
     const snapshot: ProviderSwitchCatalogSnapshot = {
