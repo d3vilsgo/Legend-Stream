@@ -111,6 +111,7 @@ async function main() {
   await scenario("cached provider handoff never publishes an empty snapshot first", () => {
     const snapshot = {
       providerId: "provider-b",
+      scope: "full" as const,
       ready: true,
       counts: { live: 3, vod: 2, series: 1 },
       live: [{ id: "live-1" }],
@@ -135,7 +136,7 @@ async function main() {
     assert.doesNotMatch(screenSource, /if \(prepared\) \{\s*setVod\(/s);
   });
 
-  await scenario("M3U cache with safe get.php paths uses credential-free cache handoff", () => {
+  await scenario("M3U cache with safe get.php paths uses a bounded credential-free preview handoff", () => {
     const providerUrl = "https://iptv.example:8080/get.php?username=alice&password=swordfish&type=m3u_plus&output=ts";
     const provider = parseM3UProviderSource(providerUrl);
     assert.ok(provider);
@@ -162,7 +163,10 @@ async function main() {
     const m3uBranch = cacheSource.indexOf('if (provider.type === "m3u")');
     const xtreamGuard = cacheSource.indexOf('if (provider.type !== "xtream") return null;', m3uBranch);
     assert.ok(m3uBranch >= 0 && xtreamGuard > m3uBranch, "M3U cache branch must run before the Xtream-only fallback guard");
-    assert.match(cacheSource, /hydrateM3UProviderCache\(provider as any\)/);
+    assert.match(
+      cacheSource,
+      /hydrateM3UProviderCache\(provider as any,\s*\{\s*initialLimit:\s*HOME_SAMPLE_LIMIT,?\s*\}\)/,
+    );
     assert.match(playerSource, /peekProviderSwitchSnapshot<\{ live\?: Channel\[\] \}>\(providerId\)/);
   });
 
@@ -174,13 +178,14 @@ async function main() {
     assert.match(cacheSource, /if \(!cached\) return null;/);
     assert.match(m3uCacheSource, /return null;/);
     assert.match(playerSource, /const smart = await loadProviderSmart\(fromProvider\(existing\)\);/);
-    const skeletons = screenSource.match(/if \(!loaded\) return <CatalogLoadingSkeleton/g) ?? [];
-    assert.ok(skeletons.length >= 2, "Movies and Series must keep skeleton placeholders while M3U has no cache");
+    const skeletons = screenSource.match(/if \(!loaded && items\.length === 0\) return <CatalogLoadingSkeleton/g) ?? [];
+    assert.ok(skeletons.length >= 2, "Movies and Series must keep skeleton placeholders when no preview or full cache rows exist");
   });
 
-  await scenario("M3U tabs use the ready in-memory catalog instead of the Xtream category loader", () => {
+  await scenario("M3U tabs request local kind loaders instead of the Xtream category loader", () => {
     const calls: string[] = [];
     const loaders = {
+      loadLocalLive: () => { calls.push("local-live"); },
       loadLocalMovies: () => { calls.push("local-movies"); },
       loadLocalSeries: () => { calls.push("local-series"); },
       loadXtreamMovies: () => { calls.push("xtream-movies"); },
@@ -200,13 +205,15 @@ async function main() {
     });
     assert.deepEqual(calls, ["local-movies", "local-series"]);
     assert.match(screenSource, /dispatchCatalogTabNavigation\(\{/);
+    assert.match(screenSource, /loadLocalLive: \(\) => \{ void applyLocalLive\(\); \}/);
     assert.match(screenSource, /loadLocalMovies: \(\) => \{ void applyLocalVod\(\); \}/);
     assert.match(screenSource, /loadLocalSeries: \(\) => \{ void applyLocalSeries\(\); \}/);
   });
 
-  await scenario("M3U tabs with no in-memory catalog preserve the existing skeleton state", () => {
+  await scenario("M3U tabs with no global in-memory catalog still request full SQLite kind loaders", () => {
     const calls: string[] = [];
     const loaders = {
+      loadLocalLive: () => { calls.push("local-live"); },
       loadLocalMovies: () => { calls.push("local-movies"); },
       loadLocalSeries: () => { calls.push("local-series"); },
       loadXtreamMovies: () => { calls.push("xtream-movies"); },
@@ -224,14 +231,21 @@ async function main() {
       m3uCatalogCounts: { movies: 0, series: 0 },
       ...loaders,
     });
-    assert.deepEqual(calls, []);
-    const skeletons = screenSource.match(/if \(!loaded\) return <CatalogLoadingSkeleton/g) ?? [];
+    dispatchCatalogTabNavigation({
+      providerType: "m3u",
+      target: "live",
+      m3uCatalogCounts: { movies: 0, series: 0 },
+      ...loaders,
+    });
+    assert.deepEqual(calls, ["local-movies", "local-series", "local-live"]);
+    const skeletons = screenSource.match(/if \(!loaded && items\.length === 0\) return <CatalogLoadingSkeleton/g) ?? [];
     assert.ok(skeletons.length >= 2);
   });
 
   await scenario("Xtream tab navigation keeps the existing category loader path", () => {
     const calls: string[] = [];
     const loaders = {
+      loadLocalLive: () => { calls.push("local-live"); },
       loadLocalMovies: () => { calls.push("local-movies"); },
       loadLocalSeries: () => { calls.push("local-series"); },
       loadXtreamMovies: () => { calls.push("xtream-movies"); },
@@ -254,14 +268,19 @@ async function main() {
     assert.match(screenSource, /loadXtreamSeries: \(\) => loadSeriesCategory\("__all__"\)/);
   });
 
-  await scenario("cold-start active M3U hydrates cached counts before the player leaves hydration", () => {
+  await scenario("cold-start active M3U hydrates the full cache before the player leaves hydration", () => {
     const hydrateCall = playerSource.indexOf("const cached = await hydrateM3UProviderCache(provider);");
     const installLive = playerSource.indexOf("next.channels = cached.live;", hydrateCall);
     const finishHydration = playerSource.indexOf("setIsHydrating(false);", installLive);
     assert.ok(hydrateCall >= 0 && installLive > hydrateCall && finishHydration > installLive);
     assert.match(playerSource, /markM3UCacheActivation\(provider\.id\);/);
-    assert.match(m3uCacheSource, /installM3UCatalog\(provider\.id, direct\.catalog\);/);
-    assert.match(screenSource, /const local = getM3UCatalog\(effectiveProvider\.id\);\s*setHomeVodCount\(local\.movieItems\.length\);\s*setHomeSeriesCount\(local\.seriesGroups\.length\);/s);
+    assert.match(
+      m3uCacheSource,
+      /if \(options\.initialLimit === undefined\)\s*\{\s*installM3UCatalog\(provider\.id, direct\.catalog\);\s*\}/s,
+    );
+    assert.match(screenSource, /const local = getM3UCatalog\(effectiveProvider\.id\);/);
+    assert.match(screenSource, /setHomeVodCount\(\(current\) => current \?\? local\.movieItems\.length\);/);
+    assert.match(screenSource, /setHomeSeriesCount\(\(current\) => current \?\? local\.seriesGroups\.length\);/);
   });
 
   await scenario("Xtream cache-first behavior remains unchanged", () => {
@@ -283,7 +302,10 @@ async function main() {
       m3uCacheSource,
       /const direct = await buildM3UDirectHydrationCooperatively\(\s*provider,\s*liveRows,\s*vodRows,\s*seriesRows,\s*\{\s*yieldFn:\s*yieldToUi\s*\},\s*\);/s,
     );
-    assert.match(m3uCacheSource, /installM3UCatalog\(provider\.id, direct\.catalog\)/);
+    assert.match(
+      m3uCacheSource,
+      /if \(options\.initialLimit === undefined\)\s*\{\s*installM3UCatalog\(provider\.id, direct\.catalog\);\s*\}/s,
+    );
     assert.doesNotMatch(hydrationSource, /\bparseM3U\s*\(/);
   });
 
