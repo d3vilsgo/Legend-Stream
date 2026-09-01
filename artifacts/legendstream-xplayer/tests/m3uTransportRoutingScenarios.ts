@@ -152,6 +152,21 @@ async function main() {
     assert.match(screenSource, /providerListPresentation\(\{[^}]*type:\s*[^}]*declaredType/s);
   });
 
+  await scenario("saved M3U provider switch resolves transport before cache preparation", () => {
+    assert.match(playerSource, /resolveProviderForSwitch:\s*\(providerId:\s*string\)\s*=>\s*Promise<ProviderConfig\s*\|\s*null>/);
+    assert.match(playerSource, /const resolveProviderForSwitch = async \(providerId: string\)[\s\S]*await resolveProviderTransport\(fromProvider\(existing\)\)/);
+    const switchStart = screenSource.indexOf("const switchProvider = async (id: string) =>");
+    const switchEnd = screenSource.indexOf("const navigate =", switchStart);
+    assert.ok(switchStart >= 0 && switchEnd > switchStart, "provider switch block must be captured");
+    const switchBlock = screenSource.slice(switchStart, switchEnd);
+    assert.match(switchBlock, /const routedTarget = await resolveProviderForSwitch\(id\)/);
+    assert.match(switchBlock, /prepareProviderSwitchCache\(routedTarget\)/);
+    assert.ok(
+      switchBlock.indexOf("resolveProviderForSwitch(id)") < switchBlock.indexOf("prepareProviderSwitchCache(routedTarget)"),
+      "transport resolution must occur before cache preparation",
+    );
+  });
+
   await scenario("transport diagnostics expose declared type transport and safe reason only", () => {
     const logStart = playerSource.indexOf("function logProviderTransport(");
     const logEnd = playerSource.indexOf("// Transport diagnostics above", logStart);
@@ -169,10 +184,10 @@ async function main() {
   });
 
   if (failed > 0) {
-    throw new Error(`m3u transport routing scenarios: ${passed}/9 passed, ${failed} failed`);
+    throw new Error(`m3u transport routing scenarios: ${passed}/10 passed, ${failed} failed`);
   }
-  assert.equal(passed, 9);
-  console.log("m3u transport routing scenarios: 9/9 passed");
+  assert.equal(passed, 10);
+  console.log("m3u transport routing scenarios: 10/10 passed");
 }
 
 void main().catch((error) => {

@@ -255,6 +255,103 @@ function buildM3UCatalog(entries: Channel[], providerId: string): ProviderLoadRe
   return { channels: liveChannels, liveChannels, movieItems, seriesGroups };
 }
 
+type M3UCatalogCooperativeOptions = {
+  batchSize?: number;
+  yieldFn?: () => Promise<void>;
+};
+
+async function forEachM3UCatalogBatch<T>(
+  input: readonly T[],
+  batchSize: number,
+  yieldFn: () => Promise<void>,
+  visitor: (value: T, index: number) => void,
+) {
+  for (let start = 0; start < input.length; start += batchSize) {
+    const end = Math.min(start + batchSize, input.length);
+    for (let index = start; index < end; index += 1) visitor(input[index], index);
+    if (end < input.length) await yieldFn();
+  }
+}
+
+async function buildM3UCatalogCooperatively(
+  entries: Channel[],
+  providerId: string,
+  options: M3UCatalogCooperativeOptions = {},
+): Promise<ProviderLoadResult> {
+  const batchSize = Math.max(1, options.batchSize ?? 200);
+  const yieldFn = options.yieldFn ?? yieldToUi;
+  const liveChannels: Channel[] = [];
+  const movieEntries: Channel[] = [];
+  const seriesEntries: Channel[] = [];
+
+  await forEachM3UCatalogBatch(entries, batchSize, yieldFn, (entry) => {
+    if (entry.contentType === "live") liveChannels.push(entry);
+    else if (entry.contentType === "movie") movieEntries.push(entry);
+    else if (entry.contentType === "series") seriesEntries.push(entry);
+  });
+
+  const movieItems: M3UMovieItem[] = new Array(movieEntries.length);
+  await forEachM3UCatalogBatch(movieEntries, batchSize, yieldFn, (entry, index) => {
+    movieItems[index] = {
+      id: entry.id,
+      providerId,
+      name: entry.name,
+      streamUrl: entry.streamUrl,
+      logoUrl: entry.logoUrl,
+      category: entry.category,
+      contentType: "movie",
+    };
+  });
+
+  const grouped = new Map<string, M3USeriesGroup>();
+  await forEachM3UCatalogBatch(seriesEntries, batchSize, yieldFn, (entry) => {
+    const identity = parseSeriesIdentity(entry.name);
+    const key = `${normalizeHint(identity.seriesName)}::${normalizeHint(entry.category)}`;
+    let group = grouped.get(key);
+    if (!group) {
+      group = {
+        id: makeId(providerId, grouped.size, identity.seriesName),
+        providerId,
+        name: identity.seriesName,
+        category: entry.category,
+        coverUrl: entry.logoUrl,
+        contentType: "series",
+        seasons: {},
+      };
+      grouped.set(key, group);
+    }
+    const seasonKey = String(identity.season);
+    const episodes = group.seasons[seasonKey] ?? (group.seasons[seasonKey] = []);
+    episodes.push({
+      id: entry.id,
+      providerId,
+      title: entry.name,
+      streamUrl: entry.streamUrl,
+      category: entry.category,
+      season: identity.season,
+      episode: identity.episode,
+      logoUrl: entry.logoUrl,
+    });
+  });
+
+  const groupValues = Array.from(grouped.values());
+  const seriesGroups: M3USeriesGroup[] = new Array(groupValues.length);
+  await forEachM3UCatalogBatch(groupValues, batchSize, yieldFn, (group, index) => {
+    seriesGroups[index] = {
+      ...group,
+      seasons: Object.fromEntries(
+        Object.entries(group.seasons).map(([season, episodes]) => [
+          season,
+          episodes.sort((a, b) => a.episode - b.episode),
+        ]),
+      ),
+    };
+  });
+
+  m3uCatalogByProvider.set(providerId, { movieItems, seriesGroups });
+  return { channels: liveChannels, liveChannels, movieItems, seriesGroups };
+}
+
 type M3UParseState = {
   pending: {
     attributes: Record<string, string>;
@@ -378,8 +475,12 @@ async function parseM3UCooperatively(
     throw new Error("No playable channels were found in this M3U playlist.");
   }
   await yieldToUi();
+  const catalog = await buildM3UCatalogCooperatively(entries, providerId, {
+    batchSize: 200,
+    yieldFn: yieldToUi,
+  });
   return {
-    ...buildM3UCatalog(entries, providerId),
+    ...catalog,
     epgUrl: state.epgUrl,
     m3uDiagnostics: diagnostics.snapshot(),
   };

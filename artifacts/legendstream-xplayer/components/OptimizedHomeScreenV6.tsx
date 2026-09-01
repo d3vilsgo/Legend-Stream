@@ -47,7 +47,7 @@ import { useColors } from "@/hooks/useColors";
 import { DownloadedMedia } from "@/lib/downloads";
 import { getM3UCatalog } from "@/lib/iptv";
 import { parseM3UProviderSource } from "@/lib/m3uCatalogRefs";
-import { yieldToUi } from "@/lib/cooperative";
+import { mapInBatches, yieldToUi } from "@/lib/cooperative";
 import { normalizeImageUrl } from "@/lib/imageUrl";
 import { providerListPresentation } from "@/lib/providerDisplaySecurity";
 import { dispatchCatalogTabNavigation } from "@/lib/catalogTabNavigation";
@@ -229,6 +229,7 @@ export default function OptimizedHomeScreenV6() {
     toggleFavorite,
     recordWatched,
     removeWatched,
+    resolveProviderForSwitch,
     setActiveProvider,
     removeProvider,
     disconnectProvider,
@@ -328,28 +329,22 @@ export default function OptimizedHomeScreenV6() {
     const prepared = provider && preparedSwitchRef.current?.snapshot.providerId === provider.id
       ? preparedSwitchRef.current
       : null;
-    if (prepared) {
-      setVod(prepared.snapshot.movies);
-      setVodCats(prepared.vodCategories);
-      setVodCache(prepared.snapshot.movies.length ? { __all__: prepared.snapshot.movies } : {});
-      setVodLoaded(prepared.snapshot.ready || prepared.snapshot.counts.vod > 0);
-      setVodLoading(false);
-      setSeries(prepared.snapshot.series);
-      setSeriesCats(prepared.seriesCategories);
-      setSeriesCache(prepared.snapshot.series.length ? { __all__: prepared.snapshot.series } : {});
-      setSeriesLoaded(prepared.snapshot.ready || prepared.snapshot.counts.series > 0);
-      setSeriesLoading(false);
-      setHomeVodCount(prepared.snapshot.counts.vod);
-      setHomeSeriesCount(prepared.snapshot.counts.series);
-      setHomeCatalogProbeLoading(false);
-      setCachedLive(prepared.live);
-      preparedSwitchRef.current = null;
-    } else {
-      setVod([]); setVodCats([]); setVodCache({}); setVodLoaded(false); setVodLoading(false);
-      setSeries([]); setSeriesCats([]); setSeriesCache({}); setSeriesLoaded(false); setSeriesLoading(false);
-      setHomeVodCount(null); setHomeSeriesCount(null); setHomeCatalogProbeLoading(false);
-      setCachedLive([]);
-    }
+    const preparedSnapshot = prepared?.snapshot ?? null;
+    setVod(preparedSnapshot?.movies ?? []);
+    setVodCats(prepared?.vodCategories ?? []);
+    setVodCache(preparedSnapshot?.movies.length ? { __all__: preparedSnapshot.movies } : {});
+    setVodLoaded(Boolean(preparedSnapshot && (preparedSnapshot.ready || preparedSnapshot.counts.vod > 0)));
+    setVodLoading(false);
+    setSeries(preparedSnapshot?.series ?? []);
+    setSeriesCats(prepared?.seriesCategories ?? []);
+    setSeriesCache(preparedSnapshot?.series.length ? { __all__: preparedSnapshot.series } : {});
+    setSeriesLoaded(Boolean(preparedSnapshot && (preparedSnapshot.ready || preparedSnapshot.counts.series > 0)));
+    setSeriesLoading(false);
+    setHomeVodCount(preparedSnapshot?.counts.vod ?? null);
+    setHomeSeriesCount(preparedSnapshot?.counts.series ?? null);
+    setHomeCatalogProbeLoading(false);
+    setCachedLive(prepared?.live ?? []);
+    if (prepared) preparedSwitchRef.current = null;
     setProviderTypeOverride(null);
     setSelectedSeries(null); setSeriesInfo(null); setCatalogError(null);
     catalogCategoryMemory.movies = "__all__";
@@ -448,38 +443,58 @@ export default function OptimizedHomeScreenV6() {
     };
   }, [effectiveProvider, credentials, hasUsableCache, snapshot.providerId, snapshot.counts.vod, snapshot.counts.series]);
 
-  const applyLocalVod = () => {
+  const applyLocalVod = async () => {
     if (!provider) return;
-    const local = getM3UCatalog(provider.id);
-    const items: XtreamVodItem[] = local.movieItems.map((item) => ({
-      stream_id: item.id,
-      name: item.name,
-      stream_icon: item.logoUrl,
-      category_id: item.category,
-      direct_source: item.streamUrl,
-    }));
-    registerLocalVodQueue(items);
-    setVodCats(categoryRows(local.movieItems.map((item) => item.category)));
-    setVod(items);
-    setVodCache({ __m3u__: items });
-    setHomeVodCount(items.length);
-    setVodLoaded(true);
+    setVodLoading(true);
+    try {
+      const local = getM3UCatalog(provider.id);
+      const items = await mapInBatches(
+        local.movieItems,
+        (item): XtreamVodItem => ({
+          stream_id: item.id,
+          name: item.name,
+          stream_icon: item.logoUrl,
+          category_id: item.category,
+          direct_source: item.streamUrl,
+        }),
+        200,
+      );
+      const categoryNames = await mapInBatches(local.movieItems, (item) => item.category, 200);
+      registerLocalVodQueue(items);
+      setVodCats(categoryRows(categoryNames));
+      setVod(items);
+      setVodCache({ __m3u__: items });
+      setHomeVodCount(items.length);
+      setVodLoaded(true);
+    } finally {
+      setVodLoading(false);
+    }
   };
 
-  const applyLocalSeries = () => {
+  const applyLocalSeries = async () => {
     if (!provider) return;
-    const local = getM3UCatalog(provider.id);
-    const items: XtreamSeriesItem[] = local.seriesGroups.map((group) => ({
-      series_id: group.id,
-      name: group.name,
-      cover: group.coverUrl,
-      category_id: group.category,
-    }));
-    setSeriesCats(categoryRows(local.seriesGroups.map((group) => group.category)));
-    setSeries(items);
-    setSeriesCache({ __m3u__: items });
-    setHomeSeriesCount(items.length);
-    setSeriesLoaded(true);
+    setSeriesLoading(true);
+    try {
+      const local = getM3UCatalog(provider.id);
+      const items = await mapInBatches(
+        local.seriesGroups,
+        (group): XtreamSeriesItem => ({
+          series_id: group.id,
+          name: group.name,
+          cover: group.coverUrl,
+          category_id: group.category,
+        }),
+        200,
+      );
+      const categoryNames = await mapInBatches(local.seriesGroups, (group) => group.category, 200);
+      setSeriesCats(categoryRows(categoryNames));
+      setSeries(items);
+      setSeriesCache({ __m3u__: items });
+      setHomeSeriesCount(items.length);
+      setSeriesLoaded(true);
+    } finally {
+      setSeriesLoading(false);
+    }
   };
 
   const tryCatalogFallbackToM3U = async (caught: unknown, target: "movies" | "series") => {
@@ -510,16 +525,16 @@ export default function OptimizedHomeScreenV6() {
     if (migrated) {
       clearError();
       setCatalogError(null);
-      if (target === "movies") applyLocalVod();
-      else applyLocalSeries();
+      if (target === "movies") await applyLocalVod();
+      else await applyLocalSeries();
       return true;
     }
 
     if (target === "movies") {
-      applyLocalVod();
+      await applyLocalVod();
       setVodLoaded(true);
     } else {
-      applyLocalSeries();
+      await applyLocalSeries();
       setSeriesLoaded(true);
     }
     return true;
@@ -530,7 +545,7 @@ export default function OptimizedHomeScreenV6() {
     setVodLoading(true); setCatalogError(null);
     try {
       if (effectiveProvider?.type === "m3u") {
-        applyLocalVod();
+        await applyLocalVod();
         return;
       }
       if (!credentials || effectiveProvider?.type !== "xtream") return;
@@ -596,7 +611,7 @@ export default function OptimizedHomeScreenV6() {
     setSeriesLoading(true); setCatalogError(null);
     try {
       if (effectiveProvider?.type === "m3u") {
-        applyLocalSeries();
+        await applyLocalSeries();
         return;
       }
       if (!credentials || effectiveProvider?.type !== "xtream") return;
@@ -675,8 +690,13 @@ export default function OptimizedHomeScreenV6() {
     clearError();
     setCatalogError(null);
     try {
+      const routedTarget = await resolveProviderForSwitch(id);
+      if (!routedTarget) {
+        setCatalogError("The saved provider could not be opened.");
+        return;
+      }
       try {
-        preparedSwitchRef.current = await prepareProviderSwitchCache(target);
+        preparedSwitchRef.current = await prepareProviderSwitchCache(routedTarget);
         if (!preparedSwitchRef.current) clearProviderSwitchSnapshot(id);
       } catch {
         preparedSwitchRef.current = null;
@@ -711,8 +731,8 @@ export default function OptimizedHomeScreenV6() {
         movies: local.movieItems.length,
         series: local.seriesGroups.length,
       },
-      loadLocalMovies: applyLocalVod,
-      loadLocalSeries: applyLocalSeries,
+      loadLocalMovies: () => { void applyLocalVod(); },
+      loadLocalSeries: () => { void applyLocalSeries(); },
       loadXtreamMovies: () => loadVodCategory("__all__"),
       loadXtreamSeries: () => loadSeriesCategory("__all__"),
     });
