@@ -17,7 +17,6 @@ import type {
   PersistedSeriesCatalogItem,
   PersistedVodCatalogItem,
 } from "./catalogPersistence";
-import { yieldToUi } from "./cooperative";
 import type { XtreamCategory, XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
 
 const M3U_HYDRATION_BATCH_SIZE = 200;
@@ -42,7 +41,7 @@ export type M3UDirectHydration = {
 
 export type M3UDirectHydrationOptions = {
   batchSize?: number;
-  yieldFn?: () => Promise<void>;
+  yieldFn: () => Promise<void>;
 };
 
 export class M3UDirectHydrationError extends Error {
@@ -228,10 +227,10 @@ export async function buildM3UDirectHydrationCooperatively(
   liveRows: PersistedLiveCatalogItem[],
   vodRows: PersistedVodCatalogItem[],
   seriesRows: PersistedSeriesCatalogItem[],
-  options: M3UDirectHydrationOptions = {},
+  options: M3UDirectHydrationOptions,
 ): Promise<M3UDirectHydration> {
   const batchSize = Math.max(1, options.batchSize ?? M3U_HYDRATION_BATCH_SIZE);
-  const yieldFn = options.yieldFn ?? yieldToUi;
+  const yieldFn = options.yieldFn;
   const buildUrl = runtimeUrlBuilder(provider);
 
   const live = await mapCooperatively(
