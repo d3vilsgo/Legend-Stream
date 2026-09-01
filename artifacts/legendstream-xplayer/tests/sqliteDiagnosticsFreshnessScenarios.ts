@@ -174,8 +174,11 @@ async function main() {
 
   await scenario("M3U writer delegates the full successful write to the atomic catalog replacement", () => {
     assert.doesNotMatch(m3uCatalogCacheSource, /sqliteStage\s*=\s*"upsert-live"/);
-    assert.match(m3uCatalogCacheSource, /replaceProviderCatalogAtomically/);
-    assert.match(m3uCatalogCacheSource, /onStage:\s*\(stage\)\s*=>/);
+    assert.match(m3uCatalogCacheSource, /const stagingProviderId = `__staging__\$\{provider\.id\}`;/);
+    assert.match(m3uCatalogCacheSource, /await upsertCatalogItems\(stagingProviderId,\s*"live"/);
+    assert.match(m3uCatalogCacheSource, /const committedCounts = await swapStagingToProvider\(\{/);
+    assert.doesNotMatch(m3uCatalogCacheSource, /replaceProviderCatalogAtomically/);
+    assert.match(m3uCatalogCacheSource, /onSqliteStage:\s*\(stage\)\s*=>/);
   });
 
   await scenario("schema fingerprint is deterministic", () => {
