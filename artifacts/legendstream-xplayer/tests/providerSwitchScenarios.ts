@@ -130,7 +130,9 @@ async function main() {
     clearProviderSwitchSnapshot("provider-b");
     assert.equal(peekProviderSwitchSnapshot("provider-b"), null);
     assert.match(catalogSource, /if \(primedSnapshot\) \{\s*setSnapshot\(primedSnapshot\);\s*setHasUsableCache\(true\);\s*\} else \{\s*setSnapshot\(EMPTY_SNAPSHOT\);/s);
-    assert.match(screenSource, /if \(prepared\) \{\s*setVod\(prepared\.snapshot\.movies\);/s);
+    assert.match(screenSource, /const preparedSnapshot = prepared\?\.snapshot \?\? null;/);
+    assert.match(screenSource, /setVod\(preparedSnapshot\?\.movies \?\? \[\]\);/);
+    assert.doesNotMatch(screenSource, /if \(prepared\) \{\s*setVod\(/s);
   });
 
   await scenario("M3U cache with safe get.php paths uses credential-free cache handoff", () => {
