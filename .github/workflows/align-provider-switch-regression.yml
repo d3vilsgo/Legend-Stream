@@ -24,10 +24,12 @@ jobs:
           from pathlib import Path
           path = Path('artifacts/legendstream-xplayer/tests/providerSwitchScenarios.ts')
           text = path.read_text()
-          old = r'''    assert.match(screenSource, /if \(prepared\) \{\s*setVod\(prepared\.snapshot\.movies\);/s);'''
-          new = r'''    assert.match(screenSource, /const preparedSnapshot = prepared\?\.snapshot \?\? null;/);
-    assert.match(screenSource, /setVod\(preparedSnapshot\?\.movies \?\? \[\]\);/);
-    assert.doesNotMatch(screenSource, /if \(prepared\) \{\s*setVod\(/s);'''
+          old = r'    assert.match(screenSource, /if \(prepared\) \{\s*setVod\(prepared\.snapshot\.movies\);/s);'
+          new = (
+              r'    assert.match(screenSource, /const preparedSnapshot = prepared\?\.snapshot \?\? null;/);' + '\n' +
+              r'    assert.match(screenSource, /setVod\(preparedSnapshot\?\.movies \?\? \[\]\);/);' + '\n' +
+              r'    assert.doesNotMatch(screenSource, /if \(prepared\) \{\s*setVod\(/s);'
+          )
           if text.count(old) != 1:
               raise SystemExit(f'expected exactly one stale assertion, found {text.count(old)}')
           path.write_text(text.replace(old, new, 1))
