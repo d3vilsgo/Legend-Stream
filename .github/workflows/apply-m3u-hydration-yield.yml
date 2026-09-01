@@ -1,0 +1,113 @@
+name: Apply M3U Hydration Integration Patch
+
+on:
+  push:
+    branches:
+      - fix/m3u-hydration-yield
+    paths:
+      - .github/workflows/apply-m3u-hydration-yield.yml
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/m3u-hydration-yield
+      - name: Apply exact integration replacements
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one match, found {count}")
+              p.write_text(text.replace(old, new, 1))
+
+          replace_exact(
+              "artifacts/legendstream-xplayer/lib/m3uCatalogCache.ts",
+              'import { buildM3UDirectHydration } from "./m3uCatalogHydration";',
+              'import {\n  buildM3UDirectHydration,\n  buildM3UDirectHydrationCooperatively,\n} from "./m3uCatalogHydration";',
+          )
+          replace_exact(
+              "artifacts/legendstream-xplayer/lib/m3uCatalogCache.ts",
+              '    const direct = buildM3UDirectHydration(provider, liveRows, vodRows, seriesRows);',
+              '    const direct = await buildM3UDirectHydrationCooperatively(provider, liveRows, vodRows, seriesRows);',
+          )
+          replace_exact(
+              "artifacts/legendstream-xplayer/lib/m3uCatalogHydration.ts",
+              '  const movies = await mapCooperatively<XtreamVodItem | M3UMovieItem, XtreamVodItem>(',
+              '  const movies = await mapCooperatively<M3UMovieItem, XtreamVodItem>(',
+          )
+          replace_exact(
+              "artifacts/legendstream-xplayer/context/PlayerContext.tsx",
+              '  type ProviderTransport,\n} from "@/lib/m3uTransportRouting";',
+              '  type M3UTransportResolutionReason,\n  type ProviderTransport,\n} from "@/lib/m3uTransportRouting";',
+          )
+          replace_exact(
+              "artifacts/legendstream-xplayer/context/PlayerContext.tsx",
+              'function logProviderTransport(providerType: ProviderType, resolvedTransport: string | undefined) {\n  safeLog.info("LS_PROVIDER_TRANSPORT", {\n    providerType,\n    resolvedTransport: resolvedTransport ?? "unknown",\n  });\n}',
+              'function logProviderTransport(\n  providerType: ProviderType,\n  resolvedTransport: string | undefined,\n  resolutionReason: M3UTransportResolutionReason,\n) {\n  safeLog.info("LS_PROVIDER_TRANSPORT", {\n    providerType,\n    resolvedTransport: resolvedTransport ?? "unknown",\n    resolutionReason,\n  });\n}',
+          )
+          replace_exact(
+              "artifacts/legendstream-xplayer/context/PlayerContext.tsx",
+              '    logProviderTransport(resolution.declaredType, resolution.transport);',
+              '    logProviderTransport(resolution.declaredType, resolution.transport, resolution.reason);',
+          )
+
+          test_path = Path("artifacts/legendstream-xplayer/tests/m3uTransportRoutingScenarios.ts")
+          text = test_path.read_text()
+          text = text.replace(
+              '    assert.equal(result.transport, "xtream");\n    assert.equal(result.credentials?.username, "alice");',
+              '    assert.equal(result.transport, "xtream");\n    assert.equal(result.reason, "probe-succeeded");\n    assert.equal(result.credentials?.username, "alice");',
+              1,
+          )
+          text = text.replace(
+              '    assert.equal(result.transport, "m3u");\n    assert.equal(result.credentials?.username, "alice");',
+              '    assert.equal(result.transport, "m3u");\n    assert.equal(result.reason, "probe-failed");\n    assert.equal(result.credentials?.username, "alice");',
+              1,
+          )
+          marker = '  await scenario("provider model stores declaredType and transport separately", () => {'
+          if text.count(marker) != 1:
+              raise SystemExit("routing test: provider model marker mismatch")
+          scenario = '''  await scenario("routing reason distinguishes uncredentialed sources from probe timeouts", async () => {\n    const routing = await routingModule();\n    assert.ok(routing, "m3uTransportRouting module must exist");\n    let uncredentialedFetches = 0;\n    const uncredentialed = await routing.resolveM3UTransport(\n      "https://panel.example/playlist.m3u",\n      async () => {\n        uncredentialedFetches += 1;\n        throw new Error("fetch must not run");\n      },\n    );\n    assert.equal(uncredentialed.transport, "m3u");\n    assert.equal(uncredentialed.reason, "url-not-credentialed");\n    assert.equal(uncredentialedFetches, 0);\n\n    const timeout = await routing.resolveM3UTransport(\n      "https://panel.example/get.php?username=alice&password=swordfish&type=m3u_plus",\n      async () => {\n        const error = new Error("timed out");\n        error.name = "TimeoutError";\n        throw error;\n      },\n    );\n    assert.equal(timeout.transport, "m3u");\n    assert.equal(timeout.reason, "probe-timeout");\n  });\n\n'''
+          text = text.replace(marker, scenario + marker, 1)
+          text = text.replace(
+              '  await scenario("transport diagnostics expose only declared type and resolved transport", () => {',
+              '  await scenario("transport diagnostics expose declared type transport and safe reason only", () => {',
+              1,
+          )
+          text = text.replace(
+              '    assert.deepEqual(payloadFields, ["providerType", "resolvedTransport"]);',
+              '    assert.deepEqual(payloadFields, ["providerType", "resolutionReason", "resolvedTransport"]);',
+              1,
+          )
+          text = text.replace(
+              '    throw new Error(`m3u transport routing scenarios: ${passed}/8 passed, ${failed} failed`);\n  }\n  assert.equal(passed, 8);\n  console.log("m3u transport routing scenarios: 8/8 passed");',
+              '    throw new Error(`m3u transport routing scenarios: ${passed}/9 passed, ${failed} failed`);\n  }\n  assert.equal(passed, 9);\n  console.log("m3u transport routing scenarios: 9/9 passed");',
+              1,
+          )
+          if 'm3u transport routing scenarios: 9/9 passed' not in text:
+              raise SystemExit("routing test count replacement failed")
+          test_path.write_text(text)
+          PY
+      - name: Remove temporary workflow and push
+        shell: bash
+        run: |
+          rm .github/workflows/apply-m3u-hydration-yield.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add artifacts/legendstream-xplayer/lib/m3uCatalogCache.ts \
+                  artifacts/legendstream-xplayer/lib/m3uCatalogHydration.ts \
+                  artifacts/legendstream-xplayer/context/PlayerContext.tsx \
+                  artifacts/legendstream-xplayer/tests/m3uTransportRoutingScenarios.ts \
+                  .github/workflows/apply-m3u-hydration-yield.yml
+          git commit -m "fix: yield during M3U cache hydration"
+          git push origin HEAD:fix/m3u-hydration-yield
