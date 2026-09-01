@@ -36,6 +36,7 @@ export type ProviderSwitchCacheProvider = {
 
 export type ProviderSwitchCatalogSnapshot = {
   providerId: string;
+  scope: "preview" | "full";
   ready: boolean;
   counts: { live: number; vod: number; series: number };
   live: Channel[];
@@ -58,10 +59,13 @@ export async function prepareProviderSwitchCache(
 ): Promise<ProviderSwitchCachePreparation | null> {
   if (provider.type === "m3u") {
     beginM3UProviderSwitchMeasurement(provider.id);
-    const cached = await hydrateM3UProviderCache(provider as any);
+    const cached = await hydrateM3UProviderCache(provider as any, {
+      initialLimit: HOME_SAMPLE_LIMIT,
+    });
     if (!cached) return null;
     const snapshot: ProviderSwitchCatalogSnapshot = {
       providerId: provider.id,
+      scope: cached.scope,
       ready: cached.ready,
       counts: cached.counts,
       live: cached.live,
@@ -111,6 +115,7 @@ export async function prepareProviderSwitchCache(
 
   const snapshot: ProviderSwitchCatalogSnapshot = {
     providerId: provider.id,
+    scope: "full",
     ready: state?.phase === "ready",
     counts,
     live: live.slice(0, HOME_SAMPLE_LIMIT),
