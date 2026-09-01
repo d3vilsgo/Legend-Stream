@@ -76,20 +76,34 @@ async function main() {
     assert.equal(result.transport, "xtream");
     assert.equal(result.credentials?.username, "alice");
     assert.equal(result.credentials?.password, "swordfish");
-    assert.match(requested, /\/player_api\.php\?/);
+    const requestedUrl = new URL(requested);
+    assert.equal(requestedUrl.pathname, "/player_api.php");
+    assert.equal(requestedUrl.searchParams.get("username"), "alice");
+    assert.equal(requestedUrl.searchParams.get("password"), "swordfish");
   });
 
-  await scenario("failed player_api probe preserves M3U fallback transport", async () => {
+  await scenario("unauthenticated player_api probe preserves M3U fallback transport", async () => {
     const routing = await routingModule();
     assert.ok(routing, "m3uTransportRouting module must exist");
+    let requested = "";
     const result = await routing.resolveM3UTransport(
       "https://panel.example/playlist/alice/swordfish/m3u",
-      async () => ({ ok: false, text: async () => "" }) as Response,
+      async (input: RequestInfo | URL) => {
+        requested = String(input);
+        return {
+          ok: true,
+          text: async () => JSON.stringify({ user_info: { auth: 0, status: "Disabled" } }),
+        } as Response;
+      },
     );
     assert.equal(result.declaredType, "m3u");
     assert.equal(result.transport, "m3u");
     assert.equal(result.credentials?.username, "alice");
     assert.equal(result.credentials?.password, "swordfish");
+    const requestedUrl = new URL(requested);
+    assert.equal(requestedUrl.pathname, "/player_api.php");
+    assert.equal(requestedUrl.searchParams.get("username"), "alice");
+    assert.equal(requestedUrl.searchParams.get("password"), "swordfish");
   });
 
   await scenario("provider model stores declaredType and transport separately", () => {
@@ -110,12 +124,16 @@ async function main() {
   });
 
   await scenario("transport diagnostics expose only declared type and resolved transport", () => {
-    assert.match(playerSource, /LS_PROVIDER_TRANSPORT/);
-    assert.match(playerSource, /providerType:\s*[^,]+/);
-    assert.match(playerSource, /resolvedTransport:\s*[^,}\n]+/);
-    const logStart = playerSource.indexOf("LS_PROVIDER_TRANSPORT");
-    assert.ok(logStart >= 0);
-    const logBlock = playerSource.slice(logStart, logStart + 240);
+    const logStart = playerSource.indexOf("function logProviderTransport(");
+    const logEnd = playerSource.indexOf("// Transport diagnostics above", logStart);
+    assert.ok(logStart >= 0 && logEnd > logStart, "transport diagnostic function must be fully captured");
+    const logBlock = playerSource.slice(logStart, logEnd);
+    const payload = logBlock.match(/safeLog\.info\("LS_PROVIDER_TRANSPORT",\s*\{([\s\S]*?)\}\s*\);/);
+    assert.ok(payload, "LS_PROVIDER_TRANSPORT payload must be present");
+    const payloadFields = [...payload[1].matchAll(/^\s*([A-Za-z_$][\w$]*)(?:\s*:|\s*,)/gm)]
+      .map((match) => match[1])
+      .sort();
+    assert.deepEqual(payloadFields, ["providerType", "resolvedTransport"]);
     assert.doesNotMatch(logBlock, /username|password|playlistUrl|\burl\s*:/i);
     assert.match(m3uCacheSource, /cleanupStagingCatalog/);
     assert.match(m3uCacheSource, /swapStagingToProvider/);
