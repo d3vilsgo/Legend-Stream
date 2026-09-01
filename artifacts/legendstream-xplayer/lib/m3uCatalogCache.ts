@@ -29,7 +29,7 @@ import {
   buildM3UDirectHydrationCooperatively,
 } from "./m3uCatalogHydration";
 import {
-  buildM3UCacheWriteProjection,
+  buildM3UCacheWriteProjectionCooperatively,
   m3uCacheCandidateCount,
 } from "./m3uCacheWriteProjection";
 import {
@@ -371,7 +371,10 @@ export async function persistM3UProviderCache(
   noteM3UNetworkCatalogCounts(inputCounts, loaded.m3uDiagnostics);
   noteM3UCacheWriteStarted(provider.id);
 
-  const projection = buildM3UCacheWriteProjection(provider, loaded);
+  const projection = await buildM3UCacheWriteProjectionCooperatively(provider, loaded, {
+    batchSize: 200,
+    yieldFn: yieldToUi,
+  });
   if (!projection) {
     await markWriteFailureState(provider.id, "unsupported-source");
     await publishWriteObservation({

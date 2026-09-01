@@ -186,3 +186,114 @@ export function buildM3UCacheWriteProjection(
   scan.scanTruncated = false;
   return projection(null);
 }
+
+export async function buildM3UCacheWriteProjectionCooperatively(
+  provider: M3UCacheWriteProvider,
+  loaded: ProviderLoadResult,
+  options: { batchSize?: number; yieldFn: () => Promise<void> },
+): Promise<M3UCacheWriteProjection | null> {
+  const source = providerSource(provider);
+  const parsedProvider = parseM3UProviderSource(source);
+  if (!parsedProvider) return null;
+
+  const liveInput = loaded.liveChannels ?? loaded.channels;
+  const movieInput = loaded.movieItems ?? [];
+  const seriesInput = loaded.seriesGroups ?? [];
+  const rejectionCounts = emptyM3URefRejectionCounts();
+  const scan = emptyM3UValidationScan(m3uCacheCandidateCount(loaded));
+  const liveRows: Array<Channel & { playbackRef: M3UPathPlaybackRef }> = [];
+  const movieRows: SafeM3UMovieRow[] = [];
+  const seriesRows: SafeM3USeriesRow[] = [];
+  const inputCounts = { live: liveInput.length, vod: movieInput.length, series: seriesInput.length };
+  const batchSize = Math.max(1, options.batchSize ?? 200);
+  const actualCandidateCount = liveInput.length + movieInput.length + seriesEpisodeCount(loaded);
+  let inspectedForYield = 0;
+
+  const projection = (
+    unsafeOutcome: M3UCacheWriteProjection["unsafeOutcome"],
+  ): M3UCacheWriteProjection => ({
+    inputCounts,
+    safeCounts: { live: liveRows.length, vod: movieRows.length, series: seriesRows.length },
+    rejectionCounts,
+    scan,
+    unsafeOutcome,
+    liveRows,
+    movieRows,
+    seriesRows,
+  });
+
+  const reject = (
+    kind: Exclude<M3UCacheValidationScan["firstRejectKind"], "none">,
+    reason: Exclude<M3UCacheValidationScan["firstRejectReason"], "none">,
+  ) => {
+    rejectionCounts[reason] += 1;
+    scan.firstRejectKind = kind;
+    scan.firstRejectReason = reason;
+    scan.scanTruncated = scan.scanInspectedCount < scan.scanTotalCandidateCount;
+    return projection(
+      kind === "live" ? "unsafe-live-ref" : kind === "vod" ? "unsafe-vod-ref" : "unsafe-series-ref",
+    );
+  };
+
+  const maybeYield = async () => {
+    inspectedForYield += 1;
+    if (inspectedForYield % batchSize === 0 && inspectedForYield < actualCandidateCount) {
+      await options.yieldFn();
+    }
+  };
+
+  for (const channel of liveInput) {
+    scan.scanInspectedCount += 1;
+    const inspection = inspectM3UStreamRef(parsedProvider, channel.streamUrl, "live");
+    if (!inspection.ref) return reject("live", inspection.reason);
+    liveRows.push({ ...channel, playbackRef: inspection.ref });
+    await maybeYield();
+  }
+
+  for (const item of movieInput) {
+    scan.scanInspectedCount += 1;
+    const inspection = inspectM3UStreamRef(parsedProvider, item.streamUrl, "movie");
+    if (!inspection.ref) return reject("vod", inspection.reason);
+    if (inspection.ref.containerExtension === null) return reject("vod", "missing-extension");
+    movieRows.push({
+      stream_id: inspection.ref.streamId,
+      name: item.name,
+      stream_icon: item.logoUrl,
+      category_id: item.category,
+      container_extension: inspection.ref.containerExtension,
+      playbackRef: inspection.ref,
+    });
+    await maybeYield();
+  }
+
+  for (const group of seriesInput) {
+    const episodes: PersistedM3UEpisode[] = [];
+    for (const seasonEpisodes of Object.values(group.seasons)) {
+      for (const episode of seasonEpisodes) {
+        scan.scanInspectedCount += 1;
+        const inspection = inspectM3UStreamRef(parsedProvider, episode.streamUrl, "series");
+        if (!inspection.ref) return reject("series", inspection.reason);
+        episodes.push({
+          id: episode.id,
+          title: episode.title,
+          category: episode.category,
+          season: episode.season,
+          episode: episode.episode,
+          logoUrl: episode.logoUrl,
+          playbackRef: inspection.ref,
+        });
+        await maybeYield();
+      }
+    }
+    seriesRows.push({
+      series_id: group.id,
+      name: group.name,
+      cover: group.coverUrl,
+      category_id: group.category,
+      m3uEpisodes: episodes,
+    });
+  }
+
+  scan.scanTruncated = false;
+  return projection(null);
+}

@@ -152,6 +152,7 @@ interface PlayerContextValue extends PlayerState {
   disconnectProvider: () => Promise<void>;
   refreshProvider: (providerId?: string) => Promise<void>;
   refreshEpg: (providerId?: string, channelId?: string) => Promise<void>;
+  resolveProviderForSwitch: (providerId: string) => Promise<ProviderConfig | null>;
   setActiveProvider: (providerId: string) => Promise<boolean>;
   toggleFavorite: (channelId: string) => Promise<void>;
   recordWatched: (channelId: string) => Promise<void>;
@@ -273,7 +274,7 @@ async function probeXtreamApi(parsed: ParsedGetPhp) {
   }
 }
 
-async function resolveProviderOnConnect(provider: RoutedProvider): Promise<RoutedProvider> {
+async function resolveProviderTransport(provider: RoutedProvider): Promise<RoutedProvider> {
   const declaredType = provider.declaredType ?? provider.type;
   if (declaredType === "m3u") {
     const source = provider.playlistUrl || provider.url;
@@ -913,6 +914,33 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
   };
 
+  const resolveProviderForSwitch = async (providerId: string): Promise<ProviderConfig | null> => {
+    const current = stateRef.current;
+    const existing = current.providers.find((item) => item.id === providerId);
+    if (!existing || existing.needsCredentials) return null;
+
+    const resolved = await resolveProviderTransport(fromProvider(existing));
+    const updated = toProvider({
+      ...resolved,
+      id: existing.id,
+      name: existing.name,
+      createdAt: existing.createdAt,
+      lastLoadedAt: existing.lastLoadedAt,
+      channelCount: existing.channelCount,
+      epgUrl: resolved.epgUrl || existing.epgUrl,
+      loadError: existing.loadError,
+    });
+    await saveProviderSecrets(updated);
+
+    const latest = stateRef.current;
+    await persist({
+      ...latest,
+      providers: latest.providers.map((item) => item.id === providerId ? updated : item),
+      provider: latest.provider?.id === providerId ? updated : latest.provider,
+    });
+    return updated;
+  };
+
   const connectProvider = async (config: ProviderInput) => {
     setIsLoading(true);
     setError(null);
@@ -932,7 +960,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         epgUrl: config.epgUrl?.trim() || undefined,
         createdAt: Date.now(),
       };
-      const candidate = await resolveProviderOnConnect(rawCandidate);
+      const candidate = await resolveProviderTransport(rawCandidate);
       const current = stateRef.current;
       const duplicate = config.providerId
         ? current.providers.find((item) => item.id === config.providerId)
@@ -1400,6 +1428,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       disconnectProvider,
       refreshProvider,
       refreshEpg,
+      resolveProviderForSwitch,
       setActiveProvider,
       toggleFavorite,
       recordWatched,
