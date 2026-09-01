@@ -19,8 +19,13 @@ jobs:
           ref: fix/m3u-routing-verification
       - name: Apply exact production patch
         run: python scripts/apply_m3u_routing_verification.py
-      - name: Validate patch
+      - name: Normalize and validate patch
         run: |
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('artifacts/legendstream-xplayer/lib/m3uCacheWriteProjection.ts')
+          path.write_text(path.read_text().rstrip() + '\n')
+          PY
           git diff --check
           git status --short
       - name: Commit and self-clean
