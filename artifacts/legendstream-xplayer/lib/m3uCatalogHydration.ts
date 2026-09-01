@@ -252,7 +252,7 @@ export async function buildM3UDirectHydrationCooperatively(
     batchSize,
     yieldFn,
   );
-  const movies = await mapCooperatively<XtreamVodItem | M3UMovieItem, XtreamVodItem>(
+  const movies = await mapCooperatively<M3UMovieItem, XtreamVodItem>(
     movieItems,
     (item) => ({
       stream_id: item.id,

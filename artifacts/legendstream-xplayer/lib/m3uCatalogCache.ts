@@ -24,7 +24,10 @@ import {
   type PersistedSeriesCatalogItem,
   type PersistedVodCatalogItem,
 } from "./catalogPersistence";
-import { buildM3UDirectHydration } from "./m3uCatalogHydration";
+import {
+  buildM3UDirectHydration,
+  buildM3UDirectHydrationCooperatively,
+} from "./m3uCatalogHydration";
 import {
   buildM3UCacheWriteProjection,
   m3uCacheCandidateCount,
@@ -165,7 +168,7 @@ export async function hydrateM3UProviderCache(
 
     phase = "runtime";
     runtimeStartedAt = Date.now();
-    const direct = buildM3UDirectHydration(provider, liveRows, vodRows, seriesRows);
+    const direct = await buildM3UDirectHydrationCooperatively(provider, liveRows, vodRows, seriesRows);
     const runtimeHydrateMs = Date.now() - runtimeStartedAt;
     if (direct.counts.live === 0 && direct.counts.vod === 0 && direct.counts.series === 0) {
       noteM3UCacheHydration({
