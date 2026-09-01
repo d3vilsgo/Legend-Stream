@@ -277,7 +277,10 @@ async function main() {
   await scenario("M3U cache hydration does not call parseM3U or rebuild synthetic playlist text", () => {
     assert.doesNotMatch(m3uCacheSource, /\bparseM3U\s*\(/);
     assert.doesNotMatch(m3uCacheSource, /syntheticCatalog|#EXTM3U|#EXTINF/);
-    assert.match(m3uCacheSource, /buildM3UDirectHydration\(provider, liveRows, vodRows, seriesRows\)/);
+    assert.match(
+      m3uCacheSource,
+      /const direct = await buildM3UDirectHydrationCooperatively\(\s*provider,\s*liveRows,\s*vodRows,\s*seriesRows,\s*\{\s*yieldFn:\s*yieldToUi\s*\},\s*\);/s,
+    );
     assert.match(m3uCacheSource, /installM3UCatalog\(provider\.id, direct\.catalog\)/);
     assert.doesNotMatch(hydrationSource, /\bparseM3U\s*\(/);
   });
