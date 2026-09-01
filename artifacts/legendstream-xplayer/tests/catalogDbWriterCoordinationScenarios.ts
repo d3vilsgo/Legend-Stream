@@ -75,7 +75,9 @@ async function main() {
       ["upsertCatalogItems", "replaceCatalogKind"],
       ["replaceCatalogKind", "pruneCatalogKind"],
       ["pruneCatalogKind", "replaceProviderCatalogAtomically"],
-      ["replaceProviderCatalogAtomically", "getCachedPersistedItems"],
+      ["replaceProviderCatalogAtomically", "cleanupStagingCatalog"],
+      ["cleanupStagingCatalog", "swapStagingToProvider"],
+      ["swapStagingToProvider", "getCachedPersistedItems"],
       ["clearNewCatalogFlags", "deleteProviderCatalog"],
       ["deleteProviderCatalog", undefined],
     ];
@@ -113,22 +115,22 @@ async function main() {
     assert.equal(new Set([...firstIds, ...secondIds]).size, firstIds.length);
   });
 
-  await scenario("M3U full replacement keeps rows categories and ready state in one rollback boundary", () => {
-    const source = functionSource("replaceProviderCatalogAtomically", "getCachedPersistedItems");
+  await scenario("M3U staging swap keeps delete move categories and ready state in one rollback boundary", () => {
+    const source = functionSource("swapStagingToProvider", "getCachedPersistedItems");
     const transactionStart = source.indexOf("withExclusiveTransactionAsync");
-    const deleteItems = source.indexOf('DELETE FROM catalog_items', transactionStart);
-    const insertRows = source.indexOf("await insertRows", transactionStart);
-    const categories = source.indexOf("await replaceCategories", transactionStart);
+    const deleteItems = source.indexOf("DELETE FROM catalog_items", transactionStart);
+    const updateItems = source.indexOf("UPDATE catalog_items SET provider_id", deleteItems);
+    const categories = source.indexOf("await replaceCategories", updateItems);
     const ready = source.indexOf('"ready"', categories);
     const transactionEnd = source.indexOf("});", ready);
     const committedCallback = source.indexOf("options.onBatchCommitted?.", transactionEnd);
     assert.ok(transactionStart >= 0 && deleteItems > transactionStart);
-    assert.ok(insertRows > deleteItems);
-    assert.ok(categories > insertRows);
+    assert.ok(updateItems > deleteItems);
+    assert.ok(categories > updateItems);
     assert.ok(ready > categories);
     assert.ok(transactionEnd > ready);
-    assert.ok(committedCallback > transactionEnd, "committed telemetry must publish only after transaction commit");
-    assert.match(m3uCatalogCacheSource, /replaceProviderCatalogAtomically/);
+    assert.ok(committedCallback > transactionEnd, "committed telemetry must publish only after swap commit");
+    assert.doesNotMatch(source.slice(transactionStart, transactionEnd), /INSERT INTO catalog_items/);
   });
 
   await scenario("batch size and INSERT conflict contract remain unchanged", () => {
@@ -137,11 +139,17 @@ async function main() {
     assert.match(catalogCacheSource, /ON CONFLICT\(provider_id, kind, item_id\) DO UPDATE SET/);
   });
 
-  await scenario("M3U success path has no independent row category or prune mutations", () => {
+  await scenario("M3U success path stages sequential batches before the final swap", () => {
     const start = m3uCatalogCacheSource.indexOf("export async function persistM3UProviderCache");
     const source = m3uCatalogCacheSource.slice(start);
-    assert.match(source, /replaceProviderCatalogAtomically/);
-    assert.doesNotMatch(source, /await upsertCatalogItems/);
+    assert.match(source, /__staging__/);
+    assert.match(source, /await cleanupStagingCatalog\(provider\.id\)/);
+    const liveWrite = source.indexOf('await upsertCatalogItems(stagingProviderId, "live"');
+    const vodWrite = source.indexOf('await upsertCatalogItems(stagingProviderId, "vod"');
+    const seriesWrite = source.indexOf('await upsertCatalogItems(stagingProviderId, "series"');
+    const swap = source.indexOf("await swapStagingToProvider");
+    assert.ok(liveWrite >= 0 && vodWrite > liveWrite && seriesWrite > vodWrite && swap > seriesWrite);
+    assert.doesNotMatch(source, /replaceProviderCatalogAtomically/);
     assert.doesNotMatch(source, /await replaceCatalogCategories/);
     assert.doesNotMatch(source, /await Promise\.all\(\[\s*pruneCatalogKind/);
   });
@@ -150,6 +158,7 @@ async function main() {
     const start = m3uCatalogCacheSource.indexOf("export async function persistM3UProviderCache");
     const source = m3uCatalogCacheSource.slice(start);
     assert.match(source, /__staging__/);
+    assert.match(source, /upsertCatalogItems\(stagingProviderId/);
     assert.doesNotMatch(source, /replaceProviderCatalogAtomically/);
   });
 
