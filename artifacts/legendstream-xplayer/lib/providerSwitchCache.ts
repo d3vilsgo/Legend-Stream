@@ -103,7 +103,7 @@ export async function prepareProviderSwitchCache(
     vodCategories,
     seriesCategories,
   ] = await Promise.all([
-    getCachedLiveItems(provider),
+    getCachedLiveItems(provider, undefined, HOME_SAMPLE_LIMIT),
     getCachedVodItems(provider, undefined, HOME_SAMPLE_LIMIT),
     getCachedSeriesItems(provider, undefined, HOME_SAMPLE_LIMIT),
     getNewCachedLiveItems(provider, NEW_SAMPLE_LIMIT),
@@ -118,7 +118,7 @@ export async function prepareProviderSwitchCache(
     scope: "full",
     ready: state?.phase === "ready",
     counts,
-    live: live.slice(0, HOME_SAMPLE_LIMIT),
+    live,
     movies,
     series,
     newChannels,
