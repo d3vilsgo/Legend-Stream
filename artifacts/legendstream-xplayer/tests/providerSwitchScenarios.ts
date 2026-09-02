@@ -128,9 +128,9 @@ async function main() {
     assert.doesNotMatch(JSON.stringify(ref), /alice|swordfish|username|password/i);
     assert.equal(buildM3UStreamUrl(providerUrl, ref!), "https://iptv.example:8080/live/alice/swordfish/991.ts");
     assert.match(cacheSource, /const HOME_SAMPLE_LIMIT = 48/);
-    assert.match(cacheSource, /initialLimit:\s*HOME_SAMPLE_LIMIT/);
+    assert.match(cacheSource, /hydrateM3UProviderCache\(provider\)/);
     assert.match(m3uCacheSource, /export const M3U_HOME_PREVIEW_LIMIT = 48/);
-    assert.doesNotMatch(cacheSource, /installFullCatalog:\s*true/);
+    assert.doesNotMatch(cacheSource, /initialLimit|installFullCatalog/);
   });
 
   await scenario("M3U without usable cache keeps network fallback and paged initial skeleton", () => {
@@ -163,10 +163,9 @@ async function main() {
     const hydrateCall = playerSource.indexOf("const cached = await hydrateM3UProviderCache(provider);");
     const installLive = playerSource.indexOf("next.channels = cached.live;", hydrateCall);
     assert.ok(hydrateCall >= 0 && installLive > hydrateCall);
-    assert.match(m3uCacheSource, /const initialLimit = options\.initialLimit \?\? M3U_HOME_PREVIEW_LIMIT/);
-    assert.match(m3uCacheSource, /if \(options\.installFullCatalog === true\)/);
-    assert.match(m3uCacheSource, /scope: options\.installFullCatalog === true \? "full" : "preview"/);
-    assert.doesNotMatch(playerSource, /installFullCatalog:\s*true/);
+    assert.match(m3uCacheSource, /getCachedPersistedItems\(provider\.id, "live", undefined, M3U_HOME_PREVIEW_LIMIT\)/);
+    assert.match(m3uCacheSource, /scope:\s*"preview"/);
+    assert.doesNotMatch(m3uCacheSource, /installM3UCatalog|getM3UCatalog|installFullCatalog/);
   });
 
   await scenario("Xtream cache-first behavior remains bounded and API ingest semantics stay separate", () => {

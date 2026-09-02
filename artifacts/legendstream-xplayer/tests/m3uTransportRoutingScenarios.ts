@@ -7,7 +7,7 @@ import { parseM3UProviderSource } from "../lib/m3uCatalogRefs";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const playerSource = readFileSync(resolve(ROOT, "context/PlayerContext.tsx"), "utf8");
 const catalogSource = readFileSync(resolve(ROOT, "context/CatalogSyncContext.tsx"), "utf8");
-const screenSource = readFileSync(resolve(ROOT, "components/OptimizedHomeScreenV6.tsx"), "utf8");
+const screenSource = readFileSync(resolve(ROOT, "components/OptimizedHomeScreenPaged.tsx"), "utf8");
 const m3uCacheSource = readFileSync(resolve(ROOT, "lib/m3uCatalogCache.ts"), "utf8");
 
 let passed = 0;

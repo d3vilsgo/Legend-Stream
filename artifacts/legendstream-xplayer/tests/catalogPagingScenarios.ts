@@ -285,11 +285,10 @@ async function main() {
 
   await scenario("M3U provider switch preview stays max 48 and cannot install partial global catalog", () => {
     assert.match(providerSwitchSource, /const HOME_SAMPLE_LIMIT = 48/);
-    assert.match(providerSwitchSource, /initialLimit:\s*HOME_SAMPLE_LIMIT/);
+    assert.match(providerSwitchSource, /hydrateM3UProviderCache\(provider\)/);
     assert.match(m3uCacheSource, /export const M3U_HOME_PREVIEW_LIMIT = 48/);
-    assert.match(m3uCacheSource, /const initialLimit = options\.initialLimit \?\? M3U_HOME_PREVIEW_LIMIT/);
-    assert.match(m3uCacheSource, /if \(options\.installFullCatalog === true\)/);
-    assert.doesNotMatch(providerSwitchSource, /installFullCatalog:\s*true/);
+    assert.match(m3uCacheSource, /getCachedPersistedItems\(provider\.id, "vod", undefined, M3U_HOME_PREVIEW_LIMIT\)/);
+    assert.doesNotMatch(m3uCacheSource, /installM3UCatalog|getM3UCatalog|installFullCatalog/);
   });
 
   await scenario("Xtream cached UI uses persisted page repository without server pagination assumptions", () => {
@@ -337,14 +336,6 @@ async function main() {
     assert.match(m3uHydrationSource, /M3U_HYDRATION_BATCH_SIZE = 200/);
     assert.match(m3uCacheSource, /buildM3UCacheWriteProjectionCooperatively\(provider, loaded, \{\s*batchSize: 200,\s*yieldFn: yieldToUi/s);
     assert.match(packageSource, /m3uHydrationYieldScenarios\.ts/);
-  });
-
-  await scenario("active M3U cold start inherits bounded 48-row hydration and no implicit full install", () => {
-    assert.match(playerSource, /const cached = await hydrateM3UProviderCache\(provider\);/);
-    assert.match(m3uCacheSource, /export const M3U_HOME_PREVIEW_LIMIT = 48/);
-    assert.match(m3uCacheSource, /options\.initialLimit \?\? M3U_HOME_PREVIEW_LIMIT/);
-    assert.match(m3uCacheSource, /scope: options\.installFullCatalog === true \? "full" : "preview"/);
-    assert.doesNotMatch(playerSource, /installFullCatalog:\s*true/);
   });
 
   await scenario("source guards prove count page search sort category and infinite scroll are page-owned", () => {

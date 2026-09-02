@@ -4,164 +4,99 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const cacheSource = readFileSync(resolve(ROOT, "lib/m3uCatalogCache.ts"), "utf8");
-const switchSource = readFileSync(resolve(ROOT, "lib/providerSwitchCache.ts"), "utf8");
-const screenSource = readFileSync(resolve(ROOT, "components/OptimizedHomeScreenV6.tsx"), "utf8");
-const navigationSource = readFileSync(resolve(ROOT, "lib/catalogTabNavigation.ts"), "utf8");
+const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
+const cacheSource = source("lib/m3uCatalogCache.ts");
+const switchSource = source("lib/providerSwitchCache.ts");
+const screenSource = source("components/OptimizedHomeScreenPaged.tsx");
+const viewsSource = source("components/catalog/PagedCatalogViews.tsx");
+const hookSource = source("hooks/useCatalogPage.ts");
+const repositorySource = source("lib/catalogPageRepository.ts");
+const pagingSource = source("lib/catalogPaging.ts");
+const playerSource = source("context/PlayerContext.tsx");
+const iptvSource = source("lib/iptv.ts");
+const projectionSource = source("lib/m3uCacheWriteProjection.ts");
 
 let passed = 0;
-let failed = 0;
 
 async function scenario(name: string, run: () => void | Promise<void>) {
-  try {
-    await run();
-    passed += 1;
-    console.log(`ok ${passed + failed} - ${name}`);
-  } catch (error) {
-    failed += 1;
-    console.error(`not ok ${passed + failed} - ${name}`);
-    console.error(error);
-  }
-}
-
-function block(source: string, startMarker: string, endMarker: string) {
-  const start = source.indexOf(startMarker);
-  assert.ok(start >= 0, `start marker missing: ${startMarker}`);
-  const end = source.indexOf(endMarker, start + startMarker.length);
-  assert.ok(end > start, `end marker missing after ${startMarker}: ${endMarker}`);
-  return source.slice(start, end);
+  await run();
+  passed += 1;
+  console.log(`ok ${passed} - ${name}`);
 }
 
 async function main() {
-  await scenario("M3U provider switch requests only a 48-row preview for every catalog kind", () => {
-    assert.match(
-      switchSource,
-      /hydrateM3UProviderCache\(provider as any,\s*\{\s*initialLimit:\s*HOME_SAMPLE_LIMIT\s*\}\)/,
-    );
-    const hydrationBlock = block(
-      cacheSource,
-      "export async function hydrateM3UProviderCache(",
-      "async function readWriteCacheState(",
-    );
-    assert.match(hydrationBlock, /options:\s*\{\s*initialLimit\?:\s*number\s*\}\s*=\s*\{\}/);
+  await scenario("M3U provider switch reads at most the 48-row Home preview for every kind", () => {
+    assert.match(cacheSource, /export const M3U_HOME_PREVIEW_LIMIT = 48/);
     for (const kind of ["live", "vod", "series"] as const) {
       assert.match(
-        hydrationBlock,
-        new RegExp(`getCachedPersistedItems\\(provider\\.id,\\s*"${kind}",\\s*undefined,\\s*options\\.initialLimit\\)`),
+        cacheSource,
+        new RegExp(`getCachedPersistedItems\\(provider\\.id,\\s*"${kind}",\\s*undefined,\\s*M3U_HOME_PREVIEW_LIMIT\\)`),
       );
     }
+    assert.match(switchSource, /const HOME_SAMPLE_LIMIT = 48/);
+    assert.match(switchSource, /hydrateM3UProviderCache\(provider\)/);
+    assert.match(switchSource, /cached\.movies\.slice\(0, HOME_SAMPLE_LIMIT\)/);
+    assert.match(switchSource, /cached\.series\.slice\(0, HOME_SAMPLE_LIMIT\)/);
   });
 
-  await scenario("preview hydration preserves full SQLite counts separately from hydrated row counts", () => {
-    const hydrationBlock = block(
-      cacheSource,
-      "export async function hydrateM3UProviderCache(",
-      "async function readWriteCacheState(",
-    );
-    assert.match(hydrationBlock, /counts:\s*cacheRawCounts/);
-    assert.match(hydrationBlock, /hydratedCounts:\s*direct\.counts/);
+  await scenario("persisted full counts stay separate from preview row counts", () => {
+    assert.match(cacheSource, /getCatalogCounts\(provider\.id\)/);
+    assert.match(cacheSource, /counts:\s*cacheRawCounts/);
+    assert.match(cacheSource, /hydratedCounts:\s*direct\.counts/);
     assert.match(switchSource, /counts:\s*cached\.counts/);
   });
 
-  await scenario("preview hydration is explicit and never overwrites the global full M3U catalog", () => {
-    const hydrationBlock = block(
-      cacheSource,
-      "export async function hydrateM3UProviderCache(",
-      "async function readWriteCacheState(",
-    );
-    assert.match(hydrationBlock, /scope:\s*options\.initialLimit === undefined \? "full" : "preview"/);
-    assert.match(
-      hydrationBlock,
-      /if \(options\.initialLimit === undefined\)\s*\{\s*installM3UCatalog\(provider\.id, direct\.catalog\);\s*\}/s,
-    );
+  await scenario("M3U preview never installs or exposes a partial global full catalog", () => {
+    assert.doesNotMatch(cacheSource, /installM3UCatalog|getM3UCatalog|installFullCatalog/);
+    assert.match(cacheSource, /scope:\s*"preview"/);
     assert.match(switchSource, /scope:\s*cached\.scope/);
   });
 
-  await scenario("M3U Movies Series and Live first-open loaders hydrate only the requested full kind", () => {
-    assert.match(cacheSource, /export async function hydrateM3UProviderKindCache\(/);
-    const kindBlock = block(
-      cacheSource,
-      "export async function hydrateM3UProviderKindCache(",
-      "async function readWriteCacheState(",
-    );
-    assert.match(kindBlock, /getCachedPersistedItems\(provider\.id, kind\)/);
-    assert.match(kindBlock, /buildM3UDirectHydrationCooperatively\(/);
-    assert.match(kindBlock, /yieldFn:\s*yieldToUi/);
-
-    const vodBlock = block(screenSource, "const applyLocalVod = async () =>", "const applyLocalSeries = async () =>");
-    const seriesBlock = block(screenSource, "const applyLocalSeries = async () =>", "const applyLocalLive = async () =>");
-    const liveBlock = block(screenSource, "const applyLocalLive = async () =>", "const tryCatalogFallbackToM3U");
-    assert.match(vodBlock, /hydrateM3UProviderKindCache\(provider as any,\s*"vod"\)/);
-    assert.match(seriesBlock, /hydrateM3UProviderKindCache\(provider as any,\s*"series"\)/);
-    assert.match(liveBlock, /hydrateM3UProviderKindCache\(provider as any,\s*"live"\)/);
-    assert.doesNotMatch(vodBlock, /getM3UCatalog\(/);
-    assert.doesNotMatch(seriesBlock, /getM3UCatalog\(/);
+  await scenario("Movies Series and Live first-open never run full-kind hydration", () => {
+    for (const activeSource of [screenSource, viewsSource]) {
+      assert.doesNotMatch(
+        activeSource,
+        /hydrateM3UProviderKindCache|getM3UCatalog|applyLocalVod|applyLocalSeries|applyLocalLive|preparedSwitchRef/,
+      );
+    }
+    assert.match(viewsSource, /useCatalogPage\(/);
+    assert.match(hookSource, /getCachedCatalogPage\(provider, request\)/);
   });
 
-  await scenario("preview state does not make Movies or Series look fully loaded and navigation is not count-gated", () => {
-    const effectBlock = block(
-      screenSource,
-      "const prepared = provider && preparedSwitchRef.current?.snapshot.providerId === provider.id",
-      "}, [provider?.id]);",
-    );
-    assert.match(effectBlock, /const previewOnly = preparedSnapshot\?\.scope === "preview"/);
-    assert.match(effectBlock, /setVodLoaded\(Boolean\(preparedSnapshot && !previewOnly/);
-    assert.match(effectBlock, /setSeriesLoaded\(Boolean\(preparedSnapshot && !previewOnly/);
-
-    const localBranch = block(
-      navigationSource,
-      'if (options.providerType === "m3u") {',
-      'if (options.providerType !== "xtream") return;',
-    );
-    assert.match(localBranch, /options\.target === "movies"[\s\S]*options\.loadLocalMovies\(\)/);
-    assert.match(localBranch, /options\.target === "series"[\s\S]*options\.loadLocalSeries\(\)/);
-    assert.match(localBranch, /options\.target === "live"[\s\S]*options\.loadLocalLive\(\)/);
-    assert.doesNotMatch(localBranch, /m3uCatalogCounts/);
+  await scenario("first-open uses persisted paging with a 100-row page and 200-row hard max", () => {
+    assert.match(hookSource, /limit:\s*100/);
+    assert.match(pagingSource, /DEFAULT_CATALOG_PAGE_SIZE = 100/);
+    assert.match(pagingSource, /MAX_CATALOG_PAGE_SIZE = 200/);
+    assert.match(repositorySource, /plan\.pageSql/);
+    assert.doesNotMatch(repositorySource, /getCachedPersistedItems\(provider\.id,\s*request\.kind\)/);
   });
 
-  await scenario("15,994 VOD full hydration remains cooperative in 200-row batches", async () => {
-    const hydration = await import("../lib/m3uCatalogHydration") as any;
-    const provider = {
-      id: "provider-large-vod",
-      url: "https://panel.example/get.php?username=alice&password=swordfish&type=m3u_plus&output=ts",
-    };
-    const vodRows = Array.from({ length: 15_994 }, (_, index) => ({
-      schemaVersion: 1,
-      catalogKind: "vod",
-      id: `vod-${index}`,
-      providerId: provider.id,
-      stream_id: String(index + 1),
-      name: `Movie ${index}`,
-      category_id: "Movies",
-      container_extension: "mp4",
-      playbackRef: {
-        type: "m3u-path",
-        kind: "movie",
-        streamId: String(index + 1),
-        containerExtension: "mp4",
-      },
-    }));
-
-    let yieldCount = 0;
-    const result = await hydration.buildM3UDirectHydrationCooperatively(
-      provider,
-      [],
-      vodRows,
-      [],
-      {
-        batchSize: 200,
-        yieldFn: async () => { yieldCount += 1; },
-      },
-    );
-    assert.equal(result.movies.length, 15_994);
-    assert.equal(yieldCount, 158);
+  await scenario("catalog navigation is independent of any full catalog count", () => {
+    const navigateStart = screenSource.indexOf("const navigate = (target: ContentView) => {");
+    const navigateEnd = screenSource.indexOf("\n  };", navigateStart);
+    assert.ok(navigateStart >= 0 && navigateEnd > navigateStart);
+    const navigateBlock = screenSource.slice(navigateStart, navigateEnd);
+    assert.match(navigateBlock, /setView\(target\)/);
+    assert.doesNotMatch(navigateBlock, /count|catalog|hydrate|load/);
+    assert.match(viewsSource, /enabled:\s*providerType !== null/);
   });
 
-  if (failed > 0) {
-    throw new Error(`m3u preview hydration scenarios: ${passed}/6 passed, ${failed} failed`);
-  }
-  assert.equal(passed, 6);
-  console.log("m3u preview hydration scenarios: 6/6 passed");
+  await scenario("active M3U cold start hydrates only the bounded preview", () => {
+    assert.match(playerSource, /const cached = await hydrateM3UProviderCache\(provider\);/);
+    assert.match(cacheSource, /M3U_HOME_PREVIEW_LIMIT/);
+    assert.doesNotMatch(playerSource, /hydrateM3UProviderKindCache|installFullCatalog/);
+  });
+
+  await scenario("cooperative M3U ingest and hydration coverage remains wired", () => {
+    assert.match(cacheSource, /buildM3UDirectHydrationCooperatively/);
+    assert.match(cacheSource, /yieldFn:\s*yieldToUi/);
+    assert.match(iptvSource, /async function buildM3UCatalogCooperatively\(/);
+    assert.match(projectionSource, /buildM3UCacheWriteProjectionCooperatively/);
+    assert.match(projectionSource, /options\.batchSize \?\? 200/);
+  });
+
+  assert.equal(passed, 8);
+  console.log("m3u preview hydration scenarios: 8/8 passed");
 }
 
 void main().catch((error) => {
