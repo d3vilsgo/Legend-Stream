@@ -4,6 +4,7 @@ import {
   catalogPageQueryKey,
   mergeCatalogPageItems,
   resolveCatalogTotalCount,
+  resolveCatalogTotalCountUpdate,
   type CatalogPageKind,
   type CatalogPageProviderType,
   type CatalogPageRequest,
@@ -137,31 +138,22 @@ export function useCatalogPage<K extends CatalogPageKind>({
     try {
       const result = await getCachedCatalogPage(provider, request);
       if (generationRef.current !== generation) return;
-      const totalCount = resolveCatalogTotalCount({
-        persistedTotal: result.totalCount,
-        persistedCountKnown: result.countKnown,
-        snapshotTotal: snapshotCount?.totalCount ?? null,
-        snapshotCountKnown: snapshotCount?.countKnown ?? false,
-      });
-      const countKnown = totalCount !== null;
-      const nextItems = mode === "more"
-        ? mergeCatalogPageItems(
-            state.items,
-            result.items,
-            (item) => itemKey(kind, item),
-          )
-        : result.items;
-      const hasMore = countKnown
-        ? nextItems.length < (totalCount ?? 0) && (result.hasMore || result.nextCursor !== null)
-        : result.hasMore;
-
       pendingCommitRef.current = {
         startedAt: Date.now(),
         request,
         rowsReturned: result.items.length,
-        hasMore,
+        hasMore: result.hasMore,
       };
       setState((current) => {
+        const totalCount = resolveCatalogTotalCountUpdate({
+          currentTotal: current.totalCount,
+          currentCountKnown: current.countKnown,
+          persistedTotal: result.totalCount,
+          persistedCountKnown: result.countKnown,
+          snapshotTotal: snapshotCount?.totalCount ?? null,
+          snapshotCountKnown: snapshotCount?.countKnown ?? false,
+        });
+        const countKnown = totalCount !== null;
         const mergedItems = mode === "more"
           ? mergeCatalogPageItems(
               current.items,

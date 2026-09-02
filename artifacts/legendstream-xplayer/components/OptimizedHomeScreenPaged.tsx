@@ -145,6 +145,8 @@ export default function OptimizedHomeScreenPaged() {
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
   const [switchingProviderId, setSwitchingProviderId] = useState<string | null>(null);
   const switchingProviderRef = useRef<string | null>(null);
+  const activeProviderIdRef = useRef<string | null>(provider?.id ?? null);
+  const seriesRequestGenerationRef = useRef(0);
 
   React.useEffect(() => {
     let cancelled = false;
@@ -162,6 +164,8 @@ export default function OptimizedHomeScreenPaged() {
   }, []);
 
   React.useEffect(() => {
+    activeProviderIdRef.current = provider?.id ?? null;
+    seriesRequestGenerationRef.current += 1;
     setSelectedSeries(null);
     setSeriesInfo(null);
     setCatalogError(null);
@@ -231,6 +235,7 @@ export default function OptimizedHomeScreenPaged() {
     const gate = tryBeginProviderSwitch(switchingProviderRef.current, id);
     if (!gate.started) return;
 
+    seriesRequestGenerationRef.current += 1;
     switchingProviderRef.current = id;
     setSwitchingProviderId(id);
     clearError();
@@ -266,6 +271,7 @@ export default function OptimizedHomeScreenPaged() {
   const navigate = (target: ContentView) => {
     setView(target);
     if (target !== "series") {
+      seriesRequestGenerationRef.current += 1;
       setSelectedSeries(null);
       setSeriesInfo(null);
     }
@@ -348,24 +354,34 @@ export default function OptimizedHomeScreenPaged() {
     }
   };
 
+  const isCurrentSeriesRequest = (providerId: string, generation: number) =>
+    activeProviderIdRef.current === providerId && seriesRequestGenerationRef.current === generation;
+
   const openSeries = async (item: XtreamSeriesItem) => {
+    const requestProviderId = provider.id;
+    const requestGeneration = ++seriesRequestGenerationRef.current;
     setSelectedSeries(item);
     setSeriesInfo(null);
     setCatalogError(null);
     try {
       if (provider.type === "m3u") {
         const info = await loadM3USeriesInfoFromCache(provider, item.series_id);
+        if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return;
         if (!info) {
           setCatalogError(t("loadingEpisodes"));
           return;
         }
+        if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return;
         registerLocalEpisodeQueue(info);
         setSeriesInfo(info);
         return;
       }
       if (!credentials) return;
-      setSeriesInfo(await getSeriesInfo(credentials, item.series_id));
+      const info = await getSeriesInfo(credentials, item.series_id);
+      if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return;
+      setSeriesInfo(info);
     } catch (caught) {
+      if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return;
       setCatalogError(caught instanceof Error ? caught.message : t("loadingEpisodes"));
     }
   };
@@ -496,6 +512,7 @@ export default function OptimizedHomeScreenPaged() {
       info={seriesInfo}
       onOpen={(item) => void openSeries(item)}
       onBack={() => {
+        seriesRequestGenerationRef.current += 1;
         setSelectedSeries(null);
         setSeriesInfo(null);
       }}

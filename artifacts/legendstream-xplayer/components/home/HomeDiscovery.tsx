@@ -2,6 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Image, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import type { ImageStyle, StyleProp, ViewStyle } from "react-native";
 import type { ProviderConfig } from "@/context/PlayerContext";
 import type { MediaProgress } from "@/context/MediaLibraryContext";
 import { useMediaLibrary } from "@/context/MediaLibraryContext";
@@ -31,6 +32,8 @@ type HomeShelfEntry = {
   onPress: () => void;
   onRemove?: () => void;
 };
+
+type CatalogImageStyle = StyleProp<ImageStyle & ViewStyle>;
 
 export function HomeDiscovery({
   provider,
@@ -256,7 +259,7 @@ function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = fal
   onPress: () => void;
   onLongPress?: () => void;
   preferredFocus?: boolean;
-  style?: unknown;
+  style?: StyleProp<ViewStyle>;
   onFocus?: () => void;
 }) {
   const colors = useColors();
@@ -281,7 +284,7 @@ function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = fal
 
 function ResilientCatalogImage({ uri, style, resizeMode = "cover", fallbackIcon = "film" }: {
   uri?: string;
-  style: unknown;
+  style: CatalogImageStyle;
   resizeMode?: "cover" | "contain" | "stretch" | "repeat" | "center";
   fallbackIcon?: keyof typeof Feather.glyphMap;
 }) {

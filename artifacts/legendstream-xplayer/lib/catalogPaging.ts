@@ -61,6 +61,11 @@ export type CatalogCountResolution = {
   snapshotCountKnown: boolean;
 };
 
+export type CatalogCountUpdateResolution = CatalogCountResolution & {
+  currentTotal: number | null;
+  currentCountKnown: boolean;
+};
+
 const EFFECTIVE_ORDER_SQL = "CASE WHEN added_at > 0 THEN added_at ELSE first_seen_at END";
 const NUMERIC_ID_SQL = "CASE WHEN item_id <> '' AND item_id NOT GLOB '*[^0-9]*' THEN CAST(item_id AS INTEGER) ELSE 9223372036854775807 END";
 const ADDED_FALLBACK_SQL = "CASE WHEN added_at = 0 THEN first_seen_at ELSE 0 END";
@@ -175,6 +180,15 @@ export function resolveCatalogTotalCount(input: CatalogCountResolution): number 
     return Math.max(0, Math.trunc(input.snapshotTotal));
   }
   return null;
+}
+
+export function resolveCatalogTotalCountUpdate(input: CatalogCountUpdateResolution): number | null {
+  const incoming = resolveCatalogTotalCount(input);
+  if (input.persistedCountKnown) return incoming;
+  if (input.currentCountKnown && input.currentTotal !== null) {
+    return Math.max(0, Math.trunc(input.currentTotal));
+  }
+  return incoming;
 }
 
 export function mergeCatalogPageItems<T>(
