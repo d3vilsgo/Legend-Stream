@@ -2,6 +2,21 @@ import type { CatalogCounts, CatalogSyncPhase, CatalogSyncState } from "./catalo
 
 export type CatalogRunState = CatalogSyncState & { runId: number };
 export type CatalogSyncMode = "initial" | "background" | "manual";
+export type CatalogSyncOwnership = {
+  providerId: string | null;
+  generation: number;
+};
+
+export function isCatalogSyncOwnershipCurrent(
+  currentProviderId: string | null,
+  currentGeneration: number,
+  target: CatalogSyncOwnership,
+) {
+  return (
+    currentProviderId === target.providerId &&
+    currentGeneration === target.generation
+  );
+}
 
 export function hasUsableCatalogCache(counts: CatalogCounts) {
   return counts.live > 0 || counts.vod > 0 || counts.series > 0;

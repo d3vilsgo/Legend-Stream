@@ -17,7 +17,7 @@
     "test:catalog-persistence": "tsx tests/catalogPersistenceScenarios.ts && tsx tests/catalogPagingScenarios.ts",
     "test:catalog-parity": "tsx tests/catalogParityScenarios.ts && tsx tests/pagedCatalogRemediationScenarios.ts && tsx tests/historyFavoritesResolutionScenarios.ts",
     "test:catalog-category-fallback": "tsx tests/catalogCategoryFallbackScenarios.ts",
-    "test:catalog-availability": "tsx tests/catalogAvailabilityScenarios.ts",
+    "test:catalog-availability": "tsx tests/catalogAvailabilityScenarios.ts && tsx tests/catalogSyncIsolationScenarios.ts",
     "test:provider-switch": "tsx tests/m3uPreviewHydrationScenarios.ts && tsx tests/providerSwitchScenarios.ts && tsx tests/m3uHydrationYieldScenarios.ts && tsx tests/m3uTransportRoutingScenarios.ts",
     "test:catalog-bulk-sync": "tsx tests/catalogBulkSyncScenarios.ts",
     "test:poster-image-resilience": "tsx tests/posterImageResilienceScenarios.ts",

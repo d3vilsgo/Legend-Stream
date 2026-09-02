@@ -18,7 +18,7 @@ const contextSource = fs.readFileSync(
   "utf8",
 );
 const homeSource = fs.readFileSync(
-  path.join(process.cwd(), "components/OptimizedHomeScreenV6.tsx"),
+  path.join(process.cwd(), "components/OptimizedHomeScreenPaged.tsx"),
   "utf8",
 );
 const xtreamSource = fs.readFileSync(
@@ -57,11 +57,16 @@ expect(
 );
 
 expect(
-  homeSource.includes('const { snapshot, hasUsableCache } = useCatalogSync();') &&
-  homeSource.includes('snapshot.providerId === provider.id && hasUsableCache ? snapshot : null') &&
-  homeSource.includes("const homeCatalogLoading = isSyncing || homeCatalogProbeLoading;") &&
-  homeSource.includes("const effectiveLoading = catalogLoading && !hasUsableCache;"),
-  "Home shelves and loading must use usable-cache and real CatalogSync activity",
+  homeSource.includes("const activeSnapshot = provider && snapshot.providerId === provider.id ? snapshot : null;") &&
+  homeSource.includes("snapshotCount(provider.id, snapshot.providerId, snapshot.counts.live, snapshot.ready, hasUsableCache)") &&
+  contextSource.includes("getCatalogCounts(active.id)") &&
+  contextSource.includes("hasUsableCatalogCache(counts)") &&
+  contextSource.includes("isCatalogSyncOwnershipCurrent(") &&
+  contextSource.includes("const HOME_SAMPLE_LIMIT = 48;") &&
+  contextSource.includes("const NEW_SAMPLE_LIMIT = 24;") &&
+  !shouldBlockInitialCatalogSync(true, true, "syncing") &&
+  shouldBlockInitialCatalogSync(false, true, "preparing"),
+  "Home availability must be current-provider scoped, persisted-count driven, preview bounded, and cache-aware",
 );
 
 let aborted = false;
