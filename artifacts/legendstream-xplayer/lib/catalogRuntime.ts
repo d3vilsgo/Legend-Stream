@@ -27,6 +27,8 @@ export type CatalogRuntimeProvider = {
   password?: string;
 };
 
+export type CatalogPageRuntimeItem = Channel | XtreamVodItem | XtreamSeriesItem;
+
 function normalizeCatalogRuntimeBaseUrl(value: string) {
   const normalized = normalizeXtreamBaseUrl(value);
   try {
@@ -60,7 +62,7 @@ function providerSource(provider: CatalogRuntimeProvider) {
   return provider.url || provider.playlistUrl || "";
 }
 
-function liveRuntimeItem(
+export function liveRuntimeItem(
   persisted: PersistedLiveCatalogItem,
   provider: CatalogRuntimeProvider,
 ): Channel {
@@ -92,7 +94,7 @@ function liveRuntimeItem(
   };
 }
 
-function vodRuntimeItem(
+export function vodRuntimeItem(
   persisted: PersistedVodCatalogItem,
   provider: CatalogRuntimeProvider,
 ): XtreamVodItem {
@@ -125,7 +127,7 @@ function vodRuntimeItem(
   };
 }
 
-function seriesRuntimeItem(persisted: PersistedSeriesCatalogItem): XtreamSeriesItem {
+export function seriesRuntimeItem(persisted: PersistedSeriesCatalogItem): XtreamSeriesItem {
   return {
     series_id: persisted.series_id,
     name: persisted.name,
