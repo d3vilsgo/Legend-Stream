@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -23,6 +23,12 @@ import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { useCatalogPage } from "@/hooks/useCatalogPage";
 import { getCachedCatalogCategories } from "@/lib/catalogPageRepository";
+import {
+  readCatalogCategorySelection,
+  rememberCatalogCategorySelection,
+  validateCatalogCategorySelection,
+  type CatalogCategoryMemoryKind,
+} from "@/lib/catalogCategoryMemory";
 import type { CatalogPageProviderType, CatalogPageSort } from "@/lib/catalogPaging";
 import type { Channel } from "@/lib/iptv";
 import type {
@@ -50,26 +56,69 @@ function allOnlySnapshotCount(
 }
 
 function useCategories(providerId: string, kind: "live" | "vod" | "series") {
-  const [categories, setCategories] = useState<XtreamCategory[]>([]);
+  const [result, setResult] = useState<{
+    providerId: string | null;
+    categories: XtreamCategory[];
+  }>({ providerId: null, categories: [] });
   const generationRef = useRef(0);
   const reload = () => {
     const generation = ++generationRef.current;
     void getCachedCatalogCategories(providerId, kind)
       .then((next) => {
-        if (generationRef.current === generation) setCategories(next);
+        if (generationRef.current === generation) {
+          setResult({ providerId, categories: next });
+        }
       })
       .catch(() => {
-        if (generationRef.current === generation) setCategories([]);
+        if (generationRef.current === generation) {
+          setResult({ providerId, categories: [] });
+        }
       });
   };
   useEffect(() => {
-    setCategories([]);
+    setResult({ providerId: null, categories: [] });
     reload();
     return () => {
       generationRef.current += 1;
     };
   }, [providerId, kind]);
-  return { categories, reload };
+  const ready = result.providerId === providerId;
+  return {
+    categories: ready ? result.categories : [],
+    ready,
+    reload,
+  };
+}
+
+function useRememberedCategory(
+  providerId: string,
+  kind: CatalogCategoryMemoryKind,
+  categories: XtreamCategory[],
+  categoriesReady: boolean,
+) {
+  const [category, setCategoryState] = useState(() =>
+    readCatalogCategorySelection(providerId, kind),
+  );
+
+  useEffect(() => {
+    setCategoryState(readCatalogCategorySelection(providerId, kind));
+  }, [providerId, kind]);
+
+  useEffect(() => {
+    if (!categoriesReady) return;
+    const valid = validateCatalogCategorySelection(
+      providerId,
+      kind,
+      categories.map((item) => String(item.category_id)),
+    );
+    setCategoryState((current) => current === valid ? current : valid);
+  }, [providerId, kind, categories, categoriesReady]);
+
+  const setCategory = useCallback((categoryId: string) => {
+    setCategoryState(rememberCatalogCategorySelection(providerId, kind, categoryId));
+  }, [providerId, kind]);
+
+  return [category, setCategory] as const;
 }
 
 function countText(totalCount: number | null, countKnown: boolean) {
@@ -369,10 +418,10 @@ export function PagedLiveCatalog({
   const colors = useColors();
   const { t } = useI18n();
   const [search, setSearch] = useState("");
-  const [category, setCategory] = useState("__all__");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [epgClock, setEpgClock] = useState(() => Date.now());
-  const { categories, reload: reloadCategories } = useCategories(provider.id, "live");
+  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "live");
+  const [category, setCategory] = useRememberedCategory(provider.id, "live", categories, categoriesReady);
   const providerType = pagedProviderType(provider.type);
   const page = useCatalogPage({
     provider,
@@ -396,12 +445,6 @@ export function PagedLiveCatalog({
     return () => clearInterval(timer);
   }, []);
   useEffect(() => setEpgClock(Date.now()), [category, search]);
-  useEffect(() => {
-    if (category !== "__all__" && categories.length > 0 && !categories.some((item) => String(item.category_id) === category)) {
-      setCategory("__all__");
-    }
-  }, [category, categories]);
-
   const initialEmpty = page.loadingInitial && page.items.length === 0;
   if (initialEmpty) return <CatalogLoadingSkeleton text={t("loading")} />;
 
@@ -489,9 +532,9 @@ export function PagedMoviesCatalog({
   const { t } = useI18n();
   const { width } = useWindowDimensions();
   const [search, setSearch] = useState("");
-  const [category, setCategory] = useState("__all__");
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const { categories, reload: reloadCategories } = useCategories(provider.id, "vod");
+  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "vod");
+  const [category, setCategory] = useRememberedCategory(provider.id, "vod", categories, categoriesReady);
   const providerType = pagedProviderType(provider.type);
   const effectiveSort: CatalogSortMode = provider.type === "m3u" && sortMode === "added" ? "default" : sortMode;
   const page = useCatalogPage({
@@ -510,12 +553,6 @@ export function PagedMoviesCatalog({
 
   useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
-  useEffect(() => {
-    if (category !== "__all__" && categories.length > 0 && !categories.some((item) => String(item.category_id) === category)) {
-      setCategory("__all__");
-    }
-  }, [category, categories]);
-
   if (page.loadingInitial && page.items.length === 0) return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
 
   return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
@@ -590,9 +627,9 @@ export function PagedSeriesCatalog({
   const { t } = useI18n();
   const { width } = useWindowDimensions();
   const [search, setSearch] = useState("");
-  const [category, setCategory] = useState("__all__");
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const { categories, reload: reloadCategories } = useCategories(provider.id, "series");
+  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "series");
+  const [category, setCategory] = useRememberedCategory(provider.id, "series", categories, categoriesReady);
   const providerType = pagedProviderType(provider.type);
   const effectiveSort: CatalogSortMode = provider.type === "m3u" && sortMode === "added" ? "default" : sortMode;
   const page = useCatalogPage({
@@ -611,12 +648,6 @@ export function PagedSeriesCatalog({
 
   useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
-  useEffect(() => {
-    if (category !== "__all__" && categories.length > 0 && !categories.some((item) => String(item.category_id) === category)) {
-      setCategory("__all__");
-    }
-  }, [category, categories]);
-
   if (selected) {
     const groups = Object.entries(info?.episodes || {});
     return <View style={s.seriesDetail}>
