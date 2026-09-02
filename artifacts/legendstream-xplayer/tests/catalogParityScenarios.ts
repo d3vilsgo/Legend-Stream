@@ -4,7 +4,6 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   LIVE_ID_LOOKUP_CHUNK_SIZE,
-  MAX_LIVE_ID_LOOKUP_IDS,
   chunkLiveIdentityIds,
   normalizeLiveIdentityIds,
 } from "../lib/catalogLiveIdentity";
@@ -63,13 +62,15 @@ async function main() {
     assert.match(catalogPagingSource, /MAX_CATALOG_PAGE_SIZE = 200/);
   });
 
-  await scenario("live identity lookup deduplicates and hard-bounds requested ids", () => {
-    const ids = Array.from({ length: MAX_LIVE_ID_LOOKUP_IDS + 50 }, (_, index) => `live-${index}`);
-    ids.splice(2, 0, "live-1");
+  await scenario("live identity normalization deduplicates without truncating valid requested ids", () => {
+    const expected = Array.from({ length: 650 }, (_, index) => `live-${index}`);
+    const ids = ["  ", ` ${expected[0]} `, ...expected.slice(1), "live-1", ""];
     const normalized = normalizeLiveIdentityIds(ids);
-    assert.equal(normalized.length, MAX_LIVE_ID_LOOKUP_IDS);
+    assert.equal(normalized.length, 650);
+    assert.deepEqual(normalized, expected);
     assert.equal(normalized[0], "live-0");
     assert.equal(normalized[1], "live-1");
+    assert.equal(normalized.at(-1), "live-649");
     assert.equal(new Set(normalized).size, normalized.length);
   });
 
@@ -89,7 +90,10 @@ async function main() {
     assert.match(identityRepositorySource, /item_id IN/);
     assert.match(identityRepositorySource, /normalizeLiveIdentityIds/);
     assert.doesNotMatch(identityRepositorySource, /getCachedLiveItems\(|SELECT[\s\S]*FROM catalog_items[\s\S]*kind = 'live'[\s\S]*ORDER BY/s);
-    assert.match(screenSource, /history[\s\S]*favorites[\s\S]*resolvedLiveIdentityChannels/s);
+    assert.match(
+      screenSource,
+      /const fullHistoryIdentityIds[\s\S]*view === "history" \? \[\.\.\.history, \.\.\.favorites\] : \[\][\s\S]*const resolvedFullHistoryIdentityChannels = useResolvedLiveIdentityChannels/s,
+    );
   });
 
   await scenario("persisted live identity lookup remains provider-isolated and input-order preserving", () => {
