@@ -1,54 +1,33 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { DatabaseSync } from "node:sqlite";
+import {
+  buildCatalogPageSql,
+  catalogPageCursorFromRow,
+  CatalogPageFlightGuard,
+  DEFAULT_CATALOG_PAGE_SIZE,
+  MAX_CATALOG_PAGE_SIZE,
+  normalizeCatalogPageLimit,
+  resolveCatalogTotalCount,
+  type CatalogPageRequest,
+} from "../lib/catalogPaging";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const readSource = (path: string) => {
-  const target = resolve(ROOT, path);
-  return existsSync(target) ? readFileSync(target, "utf8") : "";
-};
-
-const screenSource = readSource("components/OptimizedHomeScreenV6.tsx");
-const playerSource = readSource("context/PlayerContext.tsx");
-const catalogCacheSource = readSource("lib/catalogCache.ts");
-const catalogRuntimeSource = readSource("lib/catalogRuntime.ts");
-const repositorySource = readSource("lib/catalogPageRepository.ts");
-const pagingSource = readSource("lib/catalogPaging.ts");
-const providerSwitchSource = readSource("lib/providerSwitchCache.ts");
-const m3uCacheSource = readSource("lib/m3uCatalogCache.ts");
-const m3uHydrationSource = readSource("lib/m3uCatalogHydration.ts");
-const xtreamSource = readSource("lib/xtreamCatalog.ts");
-const videoPlayerSource = readSource("components/CompatibilityVideoPlayerV2.tsx");
-const packageSource = readSource("package.json");
-
-let pagingModule: typeof import("../lib/catalogPaging") | null = null;
-try {
-  pagingModule = await import("../lib/catalogPaging");
-} catch {
-  pagingModule = null;
-}
-
-let passed = 0;
-let failed = 0;
-
-async function scenario(name: string, run: () => void | Promise<void>) {
-  try {
-    await run();
-    passed += 1;
-    console.log(`ok ${passed + failed} - ${name}`);
-  } catch (error) {
-    failed += 1;
-    console.error(`not ok ${passed + failed} - ${name}`);
-    console.error(error);
-  }
-}
-
-function paging() {
-  assert.ok(pagingModule, "catalogPaging module must exist");
-  return pagingModule;
-}
+const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
+const screenEntrySource = source("components/OptimizedHomeScreenV6.tsx");
+const screenSource = source("components/OptimizedHomeScreenPaged.tsx");
+const viewsSource = source("components/catalog/PagedCatalogViews.tsx");
+const hookSource = source("hooks/useCatalogPage.ts");
+const repositorySource = source("lib/catalogPageRepository.ts");
+const providerSwitchSource = source("lib/providerSwitchCache.ts");
+const m3uCacheSource = source("lib/m3uCatalogCache.ts");
+const m3uHydrationSource = source("lib/m3uCatalogHydration.ts");
+const xtreamSource = source("lib/xtreamCatalog.ts");
+const videoPlayerSource = source("components/CompatibilityVideoPlayerV2.tsx");
+const playerSource = source("context/PlayerContext.tsx");
+const packageSource = source("package.json");
 
 type SqlPlan = {
   countSql: string;
@@ -56,8 +35,14 @@ type SqlPlan = {
   pageSql: string;
   pageArgs: Array<string | number>;
 };
-
 type PageRow = Record<string, string | number | null>;
+
+let passed = 0;
+async function scenario(name: string, run: () => void | Promise<void>) {
+  await run();
+  passed += 1;
+  console.log(`ok ${passed} - ${name}`);
+}
 
 let fixture: DatabaseSync | null = null;
 function fixtureDb() {
@@ -90,7 +75,7 @@ function fixtureDb() {
     providerId: string,
     kind: "live" | "vod" | "series",
     total: number,
-    namePrefix: string,
+    prefix: string,
   ) => {
     for (let index = 1; index <= total; index += 1) {
       const category = kind === "live"
@@ -101,7 +86,7 @@ function fixtureDb() {
         kind,
         String(index),
         category,
-        `${namePrefix} ${String(index).padStart(5, "0")}`,
+        `${prefix} ${String(index).padStart(5, "0")}`,
         kind === "live" ? 0 : index,
         1_700_000_000_000 + index,
         1_700_000_000_000 + index,
@@ -119,6 +104,20 @@ function fixtureDb() {
   return db;
 }
 
+function request(
+  kind: "live" | "vod" | "series",
+  overrides: Partial<CatalogPageRequest> = {},
+): CatalogPageRequest {
+  return {
+    providerId: "provider-a",
+    providerType: "m3u",
+    kind,
+    sort: "default",
+    limit: 100,
+    ...overrides,
+  };
+}
+
 function runPlan(plan: SqlPlan) {
   const db = fixtureDb();
   const countRow = db.prepare(plan.countSql).get(...plan.countArgs) as { count: number } | undefined;
@@ -126,169 +125,146 @@ function runPlan(plan: SqlPlan) {
   return { count: Number(countRow?.count ?? 0), rows };
 }
 
-function request(
-  kind: "live" | "vod" | "series",
-  overrides: Record<string, unknown> = {},
-) {
-  return {
-    providerId: "provider-a",
-    providerType: "m3u" as const,
-    kind,
-    sort: "default" as const,
-    limit: 100,
-    ...overrides,
-  };
-}
-
-function cursorAfter(
-  req: ReturnType<typeof request>,
-  rows: PageRow[],
-  previousCursor?: string,
-) {
-  const module = paging();
+function cursorAfter(req: CatalogPageRequest, rows: PageRow[], previousCursor?: string) {
   assert.ok(rows.length > 0);
-  return module.catalogPageCursorFromRow(req, rows[rows.length - 1], previousCursor);
+  return catalogPageCursorFromRow(req, rows[rows.length - 1], previousCursor, rows.length);
 }
 
 async function main() {
-  await scenario("total count is independent from loaded page length for VOD, Series and Live", () => {
-    const module = paging();
-    assert.equal(module.resolveCatalogTotalCount({ persistedTotal: 8_400, persistedCountKnown: true, snapshotTotal: 100, snapshotCountKnown: true }), 8_400);
-    assert.equal(module.resolveCatalogTotalCount({ persistedTotal: 8_779, persistedCountKnown: true, snapshotTotal: 100, snapshotCountKnown: true }), 8_779);
-    assert.equal(module.resolveCatalogTotalCount({ persistedTotal: 12_116, persistedCountKnown: true, snapshotTotal: 48, snapshotCountKnown: true }), 12_116);
+  await scenario("total count is independent from loaded page length for VOD Series and Live", () => {
+    assert.equal(resolveCatalogTotalCount({ persistedTotal: 8_400, persistedCountKnown: true, snapshotTotal: 100, snapshotCountKnown: true }), 8_400);
+    assert.equal(resolveCatalogTotalCount({ persistedTotal: 8_779, persistedCountKnown: true, snapshotTotal: 48, snapshotCountKnown: true }), 8_779);
+    assert.equal(resolveCatalogTotalCount({ persistedTotal: 12_116, persistedCountKnown: true, snapshotTotal: 100, snapshotCountKnown: true }), 12_116);
     assert.doesNotMatch(screenSource, /setHomeVodCount\(items\.length\)|setHomeSeriesCount\(items\.length\)/);
+    assert.match(hookSource, /totalCount/);
+    assert.match(hookSource, /countKnown/);
   });
 
-  await scenario("unknown count remains unknown instead of displaying a false zero", () => {
-    const module = paging();
-    assert.equal(module.resolveCatalogTotalCount({ persistedTotal: 0, persistedCountKnown: false, snapshotTotal: 0, snapshotCountKnown: false }), null);
-    assert.equal(module.resolveCatalogTotalCount({ persistedTotal: 0, persistedCountKnown: true, snapshotTotal: null, snapshotCountKnown: false }), 0);
-    assert.match(screenSource, /countKnown/);
+  await scenario("unknown total stays nullable while verified empty catalog can be zero", () => {
+    assert.equal(resolveCatalogTotalCount({ persistedTotal: 0, persistedCountKnown: false, snapshotTotal: 0, snapshotCountKnown: false }), null);
+    assert.equal(resolveCatalogTotalCount({ persistedTotal: 0, persistedCountKnown: true, snapshotTotal: null, snapshotCountKnown: false }), 0);
+    assert.match(viewsSource, /countKnown && totalCount !== null/);
   });
 
-  await scenario("M3U Movies first-open query is bounded to 100 rows while count stays 8400", () => {
-    const module = paging();
-    const plan = module.buildCatalogPageSql(request("vod"));
-    const result = runPlan(plan);
+  await scenario("M3U Movies first-open is count plus at most 100 rows", () => {
+    const result = runPlan(buildCatalogPageSql(request("vod")));
     assert.equal(result.count, 8_400);
     assert.equal(result.rows.length, 100);
-    assert.equal(module.DEFAULT_CATALOG_PAGE_SIZE, 100);
-    assert.ok(module.normalizeCatalogPageLimit(10_000) <= module.MAX_CATALOG_PAGE_SIZE);
+    assert.equal(DEFAULT_CATALOG_PAGE_SIZE, 100);
+    assert.equal(MAX_CATALOG_PAGE_SIZE, 200);
+    assert.equal(normalizeCatalogPageLimit(10_000), 200);
   });
 
-  await scenario("M3U Series first-open query is bounded to 100 top-level rows", () => {
-    const module = paging();
-    const plan = module.buildCatalogPageSql(request("series"));
+  await scenario("M3U Series first-open is bounded and suppresses episode payloads", () => {
+    const plan = buildCatalogPageSql(request("series"));
     const result = runPlan(plan);
     assert.equal(result.count, 8_779);
     assert.equal(result.rows.length, 100);
-    assert.match(plan.pageSql, /NULL AS payload/i, "Series list page must not deserialize episode payloads");
+    assert.match(plan.pageSql, /NULL AS payload/i);
+    assert.match(repositorySource, /persistedSeriesRow\(providerId: string, seriesId: string\)/);
   });
 
-  await scenario("M3U Live first-open query is bounded to 100 rows", () => {
-    const module = paging();
-    const plan = module.buildCatalogPageSql(request("live"));
-    const result = runPlan(plan);
+  await scenario("M3U Live first-open is count plus at most 100 rows", () => {
+    const result = runPlan(buildCatalogPageSql(request("live")));
     assert.equal(result.count, 12_116);
     assert.equal(result.rows.length, 100);
   });
 
-  await scenario("keyset next-page loading returns 100 then 200 without duplicate or skip", () => {
-    const module = paging();
+  await scenario("next page moves 100 to 200 without duplicate skip or OFFSET", () => {
     const firstRequest = request("vod");
-    const firstPlan = module.buildCatalogPageSql(firstRequest);
-    const first = runPlan(firstPlan).rows;
-    assert.equal(first.length, 100);
+    const first = runPlan(buildCatalogPageSql(firstRequest)).rows;
     const cursor = cursorAfter(firstRequest, first);
     const secondRequest = request("vod", { cursor });
-    const second = runPlan(module.buildCatalogPageSql(secondRequest)).rows;
+    const secondPlan = buildCatalogPageSql(secondRequest);
+    const second = runPlan(secondPlan).rows;
+    assert.equal(first.length, 100);
     assert.equal(second.length, 100);
-    const combined = [...first, ...second].map((row) => String(row.item_id));
-    assert.equal(new Set(combined).size, 200);
-    assert.equal(combined.length, 200);
-    assert.doesNotMatch(module.buildCatalogPageSql(secondRequest).pageSql, /\bOFFSET\b/i);
+    const ids = [...first, ...second].map((row) => String(row.item_id));
+    assert.equal(ids.length, 200);
+    assert.equal(new Set(ids).size, 200);
+    assert.doesNotMatch(secondPlan.pageSql, /\bOFFSET\b/i);
   });
 
-  await scenario("repeated load-more triggers are single-flight for the same page", () => {
-    const module = paging();
-    const guard = new module.CatalogPageFlightGuard();
-    const key = "provider-a|vod|default|page-2";
-    assert.equal(guard.tryStart(key), true);
-    assert.equal(guard.tryStart(key), false);
-    guard.finish(key);
-    assert.equal(guard.tryStart(key), true);
+  await scenario("repeated load-more is protected by single-flight", () => {
+    const guard = new CatalogPageFlightGuard();
+    assert.equal(guard.tryStart("same-page"), true);
+    assert.equal(guard.tryStart("same-page"), false);
+    guard.finish("same-page");
+    assert.equal(guard.tryStart("same-page"), true);
+    assert.match(hookSource, /CatalogPageFlightGuard/);
+    assert.match(viewsSource, /onEndReached=\{page\.loadMore\}/);
   });
 
-  await scenario("category paging keeps category-specific count and cursor constraints", () => {
-    const module = paging();
+  await scenario("category count and pages keep the same category constraint", () => {
     const firstRequest = request("vod", { categoryId: "cat-a" });
-    const first = runPlan(module.buildCatalogPageSql(firstRequest));
+    const first = runPlan(buildCatalogPageSql(firstRequest));
     assert.equal(first.count, 4_200);
     assert.equal(first.rows.length, 100);
     assert.ok(first.rows.every((row) => row.category_id === "cat-a"));
     const cursor = cursorAfter(firstRequest, first.rows);
-    const second = runPlan(module.buildCatalogPageSql(request("vod", { categoryId: "cat-a", cursor })));
+    const second = runPlan(buildCatalogPageSql(request("vod", { categoryId: "cat-a", cursor })));
     assert.ok(second.rows.every((row) => row.category_id === "cat-a"));
     assert.equal(new Set([...first.rows, ...second.rows].map((row) => row.item_id)).size, 200);
+    assert.match(viewsSource, /getCachedCatalogCategories/);
   });
 
-  await scenario("search is SQL-paged, resets cursor identity and never requires full hydration", () => {
-    const module = paging();
-    const defaultRequest = request("vod");
-    const firstRows = runPlan(module.buildCatalogPageSql(defaultRequest)).rows;
-    const staleCursor = cursorAfter(defaultRequest, firstRows);
-    const searchRequest = request("vod", { search: "Movie 00" });
-    const searched = runPlan(module.buildCatalogPageSql(searchRequest));
-    assert.ok(searched.count > 100 && searched.count < 8_400);
+  await scenario("search is SQL-paged and stale pre-search cursor is rejected", () => {
+    const initial = request("vod");
+    const rows = runPlan(buildCatalogPageSql(initial)).rows;
+    const staleCursor = cursorAfter(initial, rows);
+    const searchedRequest = request("vod", { search: "Movie 00" });
+    const searched = runPlan(buildCatalogPageSql(searchedRequest));
     assert.equal(searched.rows.length, 100);
+    assert.ok(searched.count > 100 && searched.count < 8_400);
     assert.ok(searched.rows.every((row) => String(row.name).toLowerCase().includes("movie 00")));
-    assert.throws(() => module.buildCatalogPageSql(request("vod", { search: "Movie 00", cursor: staleCursor })), /cursor/i);
-    assert.doesNotMatch(screenSource, /const rows = items\.filter\([\s\S]*sortCatalogRows\(/s);
+    assert.throws(() => buildCatalogPageSql(request("vod", { search: "Movie 00", cursor: staleCursor })), /cursor/i);
+    assert.doesNotMatch(viewsSource, /items\.filter\(/);
   });
 
-  await scenario("sort changes reset cursor identity and ordering is executed in SQL", () => {
-    const module = paging();
-    const defaultRequest = request("vod");
-    const firstRows = runPlan(module.buildCatalogPageSql(defaultRequest)).rows;
-    const staleCursor = cursorAfter(defaultRequest, firstRows);
-    const alpha = runPlan(module.buildCatalogPageSql(request("vod", { sort: "alphaAsc" })));
+  await scenario("sort is SQL-paged and stale pre-sort cursor is rejected", () => {
+    const initial = request("vod");
+    const rows = runPlan(buildCatalogPageSql(initial)).rows;
+    const staleCursor = cursorAfter(initial, rows);
+    const alpha = runPlan(buildCatalogPageSql(request("vod", { sort: "alphaAsc" })));
+    const idDesc = runPlan(buildCatalogPageSql(request("vod", { sort: "idDesc" })));
     assert.equal(alpha.rows[0]?.name, "Movie 00001");
-    const idDesc = runPlan(module.buildCatalogPageSql(request("vod", { sort: "idDesc" })));
     assert.equal(String(idDesc.rows[0]?.item_id), "8400");
-    assert.throws(() => module.buildCatalogPageSql(request("vod", { sort: "alphaAsc", cursor: staleCursor })), /cursor/i);
-    assert.doesNotMatch(screenSource, /sortCatalogRows\(rows/);
+    assert.throws(() => buildCatalogPageSql(request("vod", { sort: "alphaAsc", cursor: staleCursor })), /cursor/i);
+    assert.doesNotMatch(viewsSource, /sortCatalogRows/);
+    assert.match(viewsSource, /supportsAdded=\{provider\.type === "xtream"\}/);
   });
 
-  await scenario("provider id is part of cursor/query identity and pages never leak across providers", () => {
-    const module = paging();
+  await scenario("provider identity is part of cursor and old provider cursor cannot leak", () => {
     const providerA = request("vod");
-    const rowsA = runPlan(module.buildCatalogPageSql(providerA)).rows;
+    const rowsA = runPlan(buildCatalogPageSql(providerA)).rows;
     const cursorA = cursorAfter(providerA, rowsA);
-    assert.throws(
-      () => module.buildCatalogPageSql(request("vod", { providerId: "provider-b", cursor: cursorA })),
-      /cursor/i,
-    );
-    const providerB = runPlan(module.buildCatalogPageSql(request("vod", { providerId: "provider-b" })));
+    assert.throws(() => buildCatalogPageSql(request("vod", { providerId: "provider-b", cursor: cursorA })), /cursor/i);
+    const providerB = runPlan(buildCatalogPageSql(request("vod", { providerId: "provider-b" })));
     assert.equal(providerB.count, 3);
     assert.ok(providerB.rows.every((row) => row.provider_id === "provider-b"));
+    assert.match(hookSource, /providerId/);
   });
 
-  await scenario("M3U provider-switch preview remains max 48 per kind and never installs a partial global catalog", () => {
-    assert.match(providerSwitchSource, /initialLimit:\s*HOME_SAMPLE_LIMIT/);
+  await scenario("M3U provider switch preview stays max 48 and cannot install partial global catalog", () => {
     assert.match(providerSwitchSource, /const HOME_SAMPLE_LIMIT = 48/);
-    assert.match(m3uCacheSource, /if \(options\.initialLimit === undefined\)\s*\{\s*installM3UCatalog\(provider\.id, direct\.catalog\);\s*\}/s);
-    assert.match(m3uCacheSource, /counts:\s*cacheRawCounts/);
+    assert.match(providerSwitchSource, /initialLimit:\s*HOME_SAMPLE_LIMIT/);
+    assert.match(m3uCacheSource, /export const M3U_HOME_PREVIEW_LIMIT = 48/);
+    assert.match(m3uCacheSource, /const initialLimit = options\.initialLimit \?\? M3U_HOME_PREVIEW_LIMIT/);
+    assert.match(m3uCacheSource, /if \(options\.installFullCatalog === true\)/);
+    assert.doesNotMatch(providerSwitchSource, /installFullCatalog:\s*true/);
   });
 
-  await scenario("Xtream cached screens page from persisted SQLite without inventing server pagination", () => {
-    assert.match(repositorySource, /getCachedCatalogPage/);
-    assert.doesNotMatch(repositorySource, /getVodStreams|getSeries\(/);
-    assert.match(screenSource, /loadCatalogKindPage/);
-    assert.doesNotMatch(screenSource, /getCachedVodItems\(provider, categoryId\)|getCachedSeriesItems\(provider, categoryId\)/);
-    assert.match(catalogRuntimeSource, /CatalogPage/);
+  await scenario("Xtream cached UI uses persisted page repository without server pagination assumptions", () => {
+    assert.match(screenEntrySource, /OptimizedHomeScreenPaged/);
+    assert.match(screenSource, /PagedMoviesCatalog/);
+    assert.match(screenSource, /PagedSeriesCatalog/);
+    assert.match(screenSource, /PagedLiveCatalog/);
+    assert.match(hookSource, /getCachedCatalogPage/);
+    assert.doesNotMatch(screenSource, /getCachedVodItems|getCachedSeriesItems|getCachedLiveItems/);
+    assert.doesNotMatch(viewsSource, /getVodStreams|getSeries\(/);
   });
 
-  await scenario("Xtream transport query semantics remain category-only with no page limit or offset parameters", () => {
+  await scenario("Xtream network API compatibility keeps category-only query semantics", () => {
     const vodStart = xtreamSource.indexOf("export async function getVodStreams(");
     const seriesStart = xtreamSource.indexOf("export async function getSeries(");
     const vodBlock = xtreamSource.slice(vodStart, seriesStart);
@@ -301,47 +277,50 @@ async function main() {
     assert.doesNotMatch(seriesBlock, /\b(page|limit|offset)\s*:/i);
   });
 
-  await scenario("paged playback keeps VOD play, lazy M3U Series details and bounded Live navigation", () => {
-    assert.match(screenSource, /buildVodStreamUrl\(credentials, item\)/);
-    assert.match(screenSource, /loadM3USeriesInfoFromCache/);
-    const openSeriesStart = screenSource.indexOf("const openSeries = async");
-    const playEpisodeStart = screenSource.indexOf("const playEpisode", openSeriesStart);
-    assert.ok(openSeriesStart >= 0 && playEpisodeStart > openSeriesStart);
-    assert.doesNotMatch(screenSource.slice(openSeriesStart, playEpisodeStart), /getM3UCatalog\(/);
+  await scenario("playback uses typed VOD identity lazy Series row and bounded Live VOD windows", () => {
+    assert.match(screenSource, /vodIdentity:\s*\{ providerId: provider\.id, itemId: String\(item\.stream_id\) \}/);
+    assert.match(screenSource, /vodIdentity=\{playable\.vodIdentity\}/);
+    assert.match(screenSource, /loadM3USeriesInfoFromCache\(provider, item\.series_id\)/);
+    assert.doesNotMatch(screenSource, /getM3UCatalog\(/);
     assert.match(videoPlayerSource, /getCachedLivePlaybackWindow/);
+    assert.match(videoPlayerSource, /getCachedVodPlaybackWindow/);
     assert.doesNotMatch(videoPlayerSource, /getCachedLiveItems\(provider\)/);
   });
 
-  await scenario("catalog screen entry never calls full-kind M3U hydration and Live never falls back to global getM3UCatalog", () => {
-    assert.doesNotMatch(screenSource, /hydrateM3UProviderKindCache\(/);
-    const liveStart = screenSource.indexOf("const applyLocalLive");
-    const liveEnd = screenSource.indexOf("const tryCatalogFallbackToM3U", liveStart);
-    if (liveStart >= 0 && liveEnd > liveStart) {
-      assert.doesNotMatch(screenSource.slice(liveStart, liveEnd), /getM3UCatalog\(/);
-    }
-    assert.match(providerSwitchSource, /hydrateM3UProviderCache\([\s\S]*initialLimit:\s*HOME_SAMPLE_LIMIT/);
+  await scenario("active catalog screen never invokes unbounded M3U full-kind hydration or global catalog", () => {
+    assert.doesNotMatch(screenEntrySource, /hydrateM3UProviderKindCache|getM3UCatalog/);
+    assert.doesNotMatch(screenSource, /hydrateM3UProviderKindCache|getM3UCatalog/);
+    assert.doesNotMatch(viewsSource, /hydrateM3UProviderKindCache|getM3UCatalog/);
+    assert.match(hookSource, /limit:\s*100/);
   });
 
-  await scenario("existing cooperative M3U ingest and hydration invariants remain wired", () => {
+  await scenario("existing cooperative M3U ingest and hydration invariants stay intact", () => {
     assert.match(m3uHydrationSource, /buildM3UDirectHydrationCooperatively/);
     assert.match(m3uHydrationSource, /M3U_HYDRATION_BATCH_SIZE = 200/);
-    assert.match(m3uCacheSource, /buildM3UCacheWriteProjectionCooperatively\([\s\S]*batchSize:\s*200[\s\S]*yieldFn:\s*yieldToUi/s);
+    assert.match(m3uCacheSource, /buildM3UCacheWriteProjectionCooperatively\(provider, loaded, \{\s*batchSize: 200,\s*yieldFn: yieldToUi/s);
     assert.match(packageSource, /m3uHydrationYieldScenarios\.ts/);
   });
 
-  await scenario("cold-start active M3U hydration is bounded and cannot reinstall the full runtime catalog", () => {
-    assert.match(
-      playerSource,
-      /hydrateM3UProviderCache\(provider,\s*\{\s*initialLimit:\s*48\s*\}\)/s,
-    );
-    assert.doesNotMatch(playerSource, /const cached = await hydrateM3UProviderCache\(provider\);/);
-    assert.match(catalogCacheSource, /getCatalogCounts/);
-    assert.match(pagingSource, /MAX_CATALOG_PAGE_SIZE/);
+  await scenario("active M3U cold start inherits bounded 48-row hydration and no implicit full install", () => {
+    assert.match(playerSource, /const cached = await hydrateM3UProviderCache\(provider\);/);
+    assert.match(m3uCacheSource, /export const M3U_HOME_PREVIEW_LIMIT = 48/);
+    assert.match(m3uCacheSource, /options\.initialLimit \?\? M3U_HOME_PREVIEW_LIMIT/);
+    assert.match(m3uCacheSource, /scope: options\.installFullCatalog === true \? "full" : "preview"/);
+    assert.doesNotMatch(playerSource, /installFullCatalog:\s*true/);
   });
 
-  if (failed > 0) {
-    throw new Error(`catalog paging scenarios: ${passed}/18 passed, ${failed} failed`);
-  }
+  await scenario("source guards prove count page search sort category and infinite scroll are page-owned", () => {
+    const endReachedMatches = viewsSource.match(/onEndReached=\{page\.loadMore\}/g) ?? [];
+    assert.equal(endReachedMatches.length, 3);
+    assert.match(viewsSource, /categoryId:\s*category/);
+    assert.match(hookSource, /queryKey/);
+    assert.match(hookSource, /nextCursor/);
+    assert.match(hookSource, /loadingInitial/);
+    assert.match(hookSource, /loadingMore/);
+    assert.match(hookSource, /hasMore/);
+    assert.doesNotMatch(screenSource, /setHomeVodCount|setHomeSeriesCount/);
+  });
+
   assert.equal(passed, 18);
   console.log("catalog paging scenarios: 18/18 passed");
 }
