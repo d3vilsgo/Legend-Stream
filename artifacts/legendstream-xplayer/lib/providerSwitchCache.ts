@@ -32,6 +32,7 @@ export type ProviderSwitchCacheProvider = {
   playlistUrl?: string;
   username?: string;
   password?: string;
+  createdAt: number;
 };
 
 export type ProviderSwitchCatalogSnapshot = {
@@ -59,8 +60,8 @@ export async function prepareProviderSwitchCache(
 ): Promise<ProviderSwitchCachePreparation | null> {
   if (provider.type === "m3u") {
     beginM3UProviderSwitchMeasurement(provider.id);
-    const cached = await hydrateM3UProviderCache(provider as any, {
-      initialLimit: HOME_SAMPLE_LIMIT
+    const cached = await hydrateM3UProviderCache(provider, {
+      initialLimit: HOME_SAMPLE_LIMIT,
     });
     if (!cached) return null;
     const snapshot: ProviderSwitchCatalogSnapshot = {
