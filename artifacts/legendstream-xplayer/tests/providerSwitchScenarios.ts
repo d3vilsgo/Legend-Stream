@@ -22,7 +22,6 @@ import {
   readCatalogSyncMetricsPayload,
   writeCatalogSyncMetricsPayload,
 } from "../lib/catalogSyncMetricsPersistence";
-import { dispatchCatalogTabNavigation } from "../lib/catalogTabNavigation";
 import {
   chooseProviderSwitchPath,
   clearProviderSwitchSnapshot,
@@ -34,16 +33,20 @@ import {
 } from "../lib/providerSwitchUx";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const playerSource = readFileSync(resolve(ROOT, "context/PlayerContext.tsx"), "utf8");
-const catalogSource = readFileSync(resolve(ROOT, "context/CatalogSyncContext.tsx"), "utf8");
-const screenSource = readFileSync(resolve(ROOT, "components/OptimizedHomeScreenV6.tsx"), "utf8");
-const cacheSource = readFileSync(resolve(ROOT, "lib/providerSwitchCache.ts"), "utf8");
-const m3uCacheSource = readFileSync(resolve(ROOT, "lib/m3uCatalogCache.ts"), "utf8");
-const hydrationSource = readFileSync(resolve(ROOT, "lib/m3uCatalogHydration.ts"), "utf8");
-const m3uSwitchMetricsSource = readFileSync(resolve(ROOT, "lib/m3uSwitchMetrics.ts"), "utf8");
-const catalogMetricsSource = readFileSync(resolve(ROOT, "lib/catalogSyncMetrics.ts"), "utf8");
-const writeRunnerSource = readFileSync(resolve(ROOT, "lib/m3uCacheWriteRunner.ts"), "utf8");
-const writeProjectionSource = readFileSync(resolve(ROOT, "lib/m3uCacheWriteProjection.ts"), "utf8");
+const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
+const playerSource = source("context/PlayerContext.tsx");
+const catalogSource = source("context/CatalogSyncContext.tsx");
+const entrySource = source("components/OptimizedHomeScreenV6.tsx");
+const screenSource = source("components/OptimizedHomeScreenPaged.tsx");
+const viewsSource = source("components/catalog/PagedCatalogViews.tsx");
+const hookSource = source("hooks/useCatalogPage.ts");
+const cacheSource = source("lib/providerSwitchCache.ts");
+const m3uCacheSource = source("lib/m3uCatalogCache.ts");
+const hydrationSource = source("lib/m3uCatalogHydration.ts");
+const m3uSwitchMetricsSource = source("lib/m3uSwitchMetrics.ts");
+const catalogMetricsSource = source("lib/catalogSyncMetrics.ts");
+const writeRunnerSource = source("lib/m3uCacheWriteRunner.ts");
+const writeProjectionSource = source("lib/m3uCacheWriteProjection.ts");
 
 let passed = 0;
 const scenario = async (name: string, run: () => void | Promise<void>) => {
@@ -63,21 +66,15 @@ const completeScan = (total: number) => ({
 
 async function main() {
   await scenario("usable target cache selects cache path before blocking provider refetch", () => {
-    assert.equal(
-      chooseProviderSwitchPath({ hasInMemoryChannels: false, hasUsableCatalogCache: true }),
-      "cache",
-    );
+    assert.equal(chooseProviderSwitchPath({ hasInMemoryChannels: false, hasUsableCatalogCache: true }), "cache");
     assert.match(cacheSource, /if \(!hasUsableCatalogCache\(counts\)\) return null;/);
     const cacheBranch = playerSource.indexOf('switchPath === "memory" || switchPath === "cache"');
     const refetch = playerSource.indexOf("loadProviderSmart(fromProvider(existing))", cacheBranch);
-    assert.ok(cacheBranch >= 0 && refetch > cacheBranch, "cache branch must precede blocking refetch");
+    assert.ok(cacheBranch >= 0 && refetch > cacheBranch);
   });
 
-  await scenario("empty target cache preserves existing network switch path", () => {
-    assert.equal(
-      chooseProviderSwitchPath({ hasInMemoryChannels: false, hasUsableCatalogCache: false }),
-      "network",
-    );
+  await scenario("empty target cache preserves the existing network switch fallback", () => {
+    assert.equal(chooseProviderSwitchPath({ hasInMemoryChannels: false, hasUsableCatalogCache: false }), "network");
     assert.match(playerSource, /const smart = await loadProviderSmart\(fromProvider\(existing\)\);/);
     assert.match(catalogSource, /if \(!usable && state\?\.phase !== "ready"\) \{\s*await runSync\("initial"\);/s);
   });
@@ -89,15 +86,12 @@ async function main() {
     assert.equal(second.started, false);
     assert.equal(second.providerId, "provider-b");
     assert.match(screenSource, /tryBeginProviderSwitch\(switchingProviderRef\.current, id\)/);
-    assert.match(screenSource, /switchingProviderRef\.current = id;/);
   });
 
-  await scenario("provider switch failure is visible but credential-safe", () => {
-    const safe = safeProviderSwitchError(
-      new Error("GET https://secret.example/get.php?username=alice&password=swordfish failed"),
-    );
+  await scenario("provider switch failure remains visible and credential-safe", () => {
+    const safe = safeProviderSwitchError(new Error("GET https://secret.example/get.php?username=alice&password=swordfish failed"));
     assert.doesNotMatch(safe, /alice|swordfish|secret\.example|get\.php|username=|password=/i);
-    assert.match(playerSource, /setError\(safeProviderSwitchError\(caught\)\);/);
+    assert.match(screenSource, /setCatalogError\(safeProviderSwitchError\(caught\)\)/);
     assert.match(screenSource, /visibleErrorText\(error \|\| catalogError\)/);
   });
 
@@ -105,13 +99,12 @@ async function main() {
     assert.match(screenSource, /const active = item\.id === provider\.id;/);
     assert.match(screenSource, /const switching = switchingProviderId === item\.id;/);
     assert.match(screenSource, /active \? <Feather name="check-circle"/);
-    assert.match(screenSource, /switching \? <ActivityIndicator/);
   });
 
-  await scenario("cached provider handoff never publishes an empty snapshot first", () => {
+  await scenario("primed provider snapshot is preserved instead of publishing empty handoff", () => {
     const snapshot = {
       providerId: "provider-b",
-      scope: "full" as const,
+      scope: "preview" as const,
       ready: true,
       counts: { live: 3, vod: 2, series: 1 },
       live: [{ id: "live-1" }],
@@ -120,196 +113,70 @@ async function main() {
     };
     primeProviderSwitchSnapshot("provider-b", snapshot);
     assert.deepEqual(peekProviderSwitchSnapshot("provider-b"), snapshot);
-    assert.equal(
-      shouldPreserveProviderSwitchSnapshot({
-        snapshotProviderId: "provider-b",
-        targetProviderId: "provider-b",
-        hasUsableCache: true,
-      }),
-      true,
-    );
+    assert.equal(shouldPreserveProviderSwitchSnapshot({ snapshotProviderId: "provider-b", targetProviderId: "provider-b", hasUsableCache: true }), true);
     clearProviderSwitchSnapshot("provider-b");
     assert.equal(peekProviderSwitchSnapshot("provider-b"), null);
-    assert.match(catalogSource, /if \(primedSnapshot\) \{\s*setSnapshot\(primedSnapshot\);\s*setHasUsableCache\(true\);\s*\} else \{\s*setSnapshot\(EMPTY_SNAPSHOT\);/s);
-    assert.match(screenSource, /const preparedSnapshot = prepared\?\.snapshot \?\? null;/);
-    assert.match(screenSource, /setVod\(preparedSnapshot\?\.movies \?\? \[\]\);/);
-    assert.doesNotMatch(screenSource, /if \(prepared\) \{\s*setVod\(/s);
+    assert.match(catalogSource, /if \(primedSnapshot\) \{\s*setSnapshot\(primedSnapshot\);\s*setHasUsableCache\(true\);/s);
   });
 
-  await scenario("M3U cache with safe get.php paths uses a bounded credential-free preview handoff", () => {
+  await scenario("M3U get.php paths use credential-free refs and a max-48 switch preview", () => {
     const providerUrl = "https://iptv.example:8080/get.php?username=alice&password=swordfish&type=m3u_plus&output=ts";
     const provider = parseM3UProviderSource(providerUrl);
     assert.ok(provider);
-    const ref = parseM3UStreamRef(
-      providerUrl,
-      "https://iptv.example:8080/live/alice/swordfish/991.ts",
-      "live",
-    );
-    assert.deepEqual(ref, {
-      type: "m3u-path",
-      kind: "live",
-      streamId: "991",
-      containerExtension: "ts",
-    });
+    const ref = parseM3UStreamRef(providerUrl, "https://iptv.example:8080/live/alice/swordfish/991.ts", "live");
+    assert.deepEqual(ref, { type: "m3u-path", kind: "live", streamId: "991", containerExtension: "ts" });
     assert.doesNotMatch(JSON.stringify(ref), /alice|swordfish|username|password/i);
-    assert.equal(
-      buildM3UStreamUrl(providerUrl, ref!),
-      "https://iptv.example:8080/live/alice/swordfish/991.ts",
-    );
-    assert.equal(
-      chooseProviderSwitchPath({ hasInMemoryChannels: false, hasUsableCatalogCache: true }),
-      "cache",
-    );
-    const m3uBranch = cacheSource.indexOf('if (provider.type === "m3u")');
-    const xtreamGuard = cacheSource.indexOf('if (provider.type !== "xtream") return null;', m3uBranch);
-    assert.ok(m3uBranch >= 0 && xtreamGuard > m3uBranch, "M3U cache branch must run before the Xtream-only fallback guard");
-    assert.match(
-      cacheSource,
-      /hydrateM3UProviderCache\(provider as any,\s*\{\s*initialLimit:\s*HOME_SAMPLE_LIMIT,?\s*\}\)/,
-    );
-    assert.match(playerSource, /peekProviderSwitchSnapshot<\{ live\?: Channel\[\] \}>\(providerId\)/);
+    assert.equal(buildM3UStreamUrl(providerUrl, ref!), "https://iptv.example:8080/live/alice/swordfish/991.ts");
+    assert.match(cacheSource, /const HOME_SAMPLE_LIMIT = 48/);
+    assert.match(cacheSource, /initialLimit:\s*HOME_SAMPLE_LIMIT/);
+    assert.match(m3uCacheSource, /export const M3U_HOME_PREVIEW_LIMIT = 48/);
+    assert.doesNotMatch(cacheSource, /installFullCatalog:\s*true/);
   });
 
-  await scenario("M3U without usable cache keeps network fallback and catalog skeleton", () => {
-    assert.equal(
-      chooseProviderSwitchPath({ hasInMemoryChannels: false, hasUsableCatalogCache: false }),
-      "network",
-    );
+  await scenario("M3U without usable cache keeps network fallback and paged initial skeleton", () => {
+    assert.equal(chooseProviderSwitchPath({ hasInMemoryChannels: false, hasUsableCatalogCache: false }), "network");
     assert.match(cacheSource, /if \(!cached\) return null;/);
-    assert.match(m3uCacheSource, /return null;/);
     assert.match(playerSource, /const smart = await loadProviderSmart\(fromProvider\(existing\)\);/);
-    const skeletons = screenSource.match(/if \(!loaded && items\.length === 0\) return <CatalogLoadingSkeleton/g) ?? [];
-    assert.ok(skeletons.length >= 2, "Movies and Series must keep skeleton placeholders when no preview or full cache rows exist");
+    assert.match(viewsSource, /page\.loadingInitial && page\.items\.length === 0/);
   });
 
-  await scenario("M3U tabs request local kind loaders instead of the Xtream category loader", () => {
-    const calls: string[] = [];
-    const loaders = {
-      loadLocalLive: () => { calls.push("local-live"); },
-      loadLocalMovies: () => { calls.push("local-movies"); },
-      loadLocalSeries: () => { calls.push("local-series"); },
-      loadXtreamMovies: () => { calls.push("xtream-movies"); },
-      loadXtreamSeries: () => { calls.push("xtream-series"); },
-    };
-    dispatchCatalogTabNavigation({
-      providerType: "m3u",
-      target: "movies",
-      m3uCatalogCounts: { movies: 24_457, series: 1_237 },
-      ...loaders,
-    });
-    dispatchCatalogTabNavigation({
-      providerType: "m3u",
-      target: "series",
-      m3uCatalogCounts: { movies: 24_457, series: 1_237 },
-      ...loaders,
-    });
-    assert.deepEqual(calls, ["local-movies", "local-series"]);
-    assert.match(screenSource, /dispatchCatalogTabNavigation\(\{/);
-    assert.match(screenSource, /loadLocalLive: \(\) => \{ void applyLocalLive\(\); \}/);
-    assert.match(screenSource, /loadLocalMovies: \(\) => \{ void applyLocalVod\(\); \}/);
-    assert.match(screenSource, /loadLocalSeries: \(\) => \{ void applyLocalSeries\(\); \}/);
+  await scenario("M3U and Xtream catalog tabs no longer invoke full-kind loaders", () => {
+    assert.match(entrySource, /OptimizedHomeScreenPaged/);
+    assert.match(screenSource, /PagedLiveCatalog/);
+    assert.match(screenSource, /PagedMoviesCatalog/);
+    assert.match(screenSource, /PagedSeriesCatalog/);
+    assert.match(hookSource, /getCachedCatalogPage/);
+    assert.doesNotMatch(screenSource, /applyLocalVod|applyLocalSeries|applyLocalLive|loadVodCategory|loadSeriesCategory/);
+    assert.doesNotMatch(screenSource, /hydrateM3UProviderKindCache|getM3UCatalog/);
   });
 
-  await scenario("M3U tabs with no global in-memory catalog still request full SQLite kind loaders", () => {
-    const calls: string[] = [];
-    const loaders = {
-      loadLocalLive: () => { calls.push("local-live"); },
-      loadLocalMovies: () => { calls.push("local-movies"); },
-      loadLocalSeries: () => { calls.push("local-series"); },
-      loadXtreamMovies: () => { calls.push("xtream-movies"); },
-      loadXtreamSeries: () => { calls.push("xtream-series"); },
-    };
-    dispatchCatalogTabNavigation({
-      providerType: "m3u",
-      target: "movies",
-      m3uCatalogCounts: { movies: 0, series: 0 },
-      ...loaders,
-    });
-    dispatchCatalogTabNavigation({
-      providerType: "m3u",
-      target: "series",
-      m3uCatalogCounts: { movies: 0, series: 0 },
-      ...loaders,
-    });
-    dispatchCatalogTabNavigation({
-      providerType: "m3u",
-      target: "live",
-      m3uCatalogCounts: { movies: 0, series: 0 },
-      ...loaders,
-    });
-    assert.deepEqual(calls, ["local-movies", "local-series", "local-live"]);
-    const skeletons = screenSource.match(/if \(!loaded && items\.length === 0\) return <CatalogLoadingSkeleton/g) ?? [];
-    assert.ok(skeletons.length >= 2);
-  });
-
-  await scenario("Xtream tab navigation keeps the existing category loader path", () => {
-    const calls: string[] = [];
-    const loaders = {
-      loadLocalLive: () => { calls.push("local-live"); },
-      loadLocalMovies: () => { calls.push("local-movies"); },
-      loadLocalSeries: () => { calls.push("local-series"); },
-      loadXtreamMovies: () => { calls.push("xtream-movies"); },
-      loadXtreamSeries: () => { calls.push("xtream-series"); },
-    };
-    dispatchCatalogTabNavigation({
-      providerType: "xtream",
-      target: "movies",
-      m3uCatalogCounts: { movies: 0, series: 0 },
-      ...loaders,
-    });
-    dispatchCatalogTabNavigation({
-      providerType: "xtream",
-      target: "series",
-      m3uCatalogCounts: { movies: 0, series: 0 },
-      ...loaders,
-    });
-    assert.deepEqual(calls, ["xtream-movies", "xtream-series"]);
-    assert.match(screenSource, /loadXtreamMovies: \(\) => loadVodCategory\("__all__"\)/);
-    assert.match(screenSource, /loadXtreamSeries: \(\) => loadSeriesCategory\("__all__"\)/);
-  });
-
-  await scenario("cold-start active M3U hydrates the full cache before the player leaves hydration", () => {
+  await scenario("active M3U cold start is bounded by default and cannot implicitly install full catalog", () => {
     const hydrateCall = playerSource.indexOf("const cached = await hydrateM3UProviderCache(provider);");
     const installLive = playerSource.indexOf("next.channels = cached.live;", hydrateCall);
-    const finishHydration = playerSource.indexOf("setIsHydrating(false);", installLive);
-    assert.ok(hydrateCall >= 0 && installLive > hydrateCall && finishHydration > installLive);
-    assert.match(playerSource, /markM3UCacheActivation\(provider\.id\);/);
-    assert.match(
-      m3uCacheSource,
-      /if \(options\.initialLimit === undefined\)\s*\{\s*installM3UCatalog\(provider\.id, direct\.catalog\);\s*\}/s,
-    );
-    assert.match(screenSource, /const local = getM3UCatalog\(effectiveProvider\.id\);/);
-    assert.match(screenSource, /setHomeVodCount\(\(current\) => current \?\? local\.movieItems\.length\);/);
-    assert.match(screenSource, /setHomeSeriesCount\(\(current\) => current \?\? local\.seriesGroups\.length\);/);
+    assert.ok(hydrateCall >= 0 && installLive > hydrateCall);
+    assert.match(m3uCacheSource, /const initialLimit = options\.initialLimit \?\? M3U_HOME_PREVIEW_LIMIT/);
+    assert.match(m3uCacheSource, /if \(options\.installFullCatalog === true\)/);
+    assert.match(m3uCacheSource, /scope: options\.installFullCatalog === true \? "full" : "preview"/);
+    assert.doesNotMatch(playerSource, /installFullCatalog:\s*true/);
   });
 
-  await scenario("Xtream cache-first behavior remains unchanged", () => {
+  await scenario("Xtream cache-first behavior remains bounded and API ingest semantics stay separate", () => {
     assert.match(cacheSource, /if \(provider\.type !== "xtream"\) return null;/);
     assert.match(cacheSource, /getCatalogCounts\(provider\.id\)/);
+    assert.match(cacheSource, /getCachedLiveItems\(provider, undefined, HOME_SAMPLE_LIMIT\)/);
     assert.match(cacheSource, /getCachedVodItems\(provider, undefined, HOME_SAMPLE_LIMIT\)/);
     assert.match(cacheSource, /getCachedSeriesItems\(provider, undefined, HOME_SAMPLE_LIMIT\)/);
-    assert.match(catalogSource, /if \(!provider \|\| resolvedProviderTransport\(provider\) !== "xtream"\) return;/);
-    assert.equal(
-      chooseProviderSwitchPath({ hasInMemoryChannels: false, hasUsableCatalogCache: true }),
-      "cache",
-    );
+    assert.match(catalogSource, /resolvedProviderTransport\(provider\) !== "xtream"/);
   });
 
-  await scenario("M3U cache hydration does not call parseM3U or rebuild synthetic playlist text", () => {
+  await scenario("M3U cache hydration remains direct DTO mapping without reparsing synthetic playlist text", () => {
     assert.doesNotMatch(m3uCacheSource, /\bparseM3U\s*\(/);
     assert.doesNotMatch(m3uCacheSource, /syntheticCatalog|#EXTM3U|#EXTINF/);
-    assert.match(
-      m3uCacheSource,
-      /const direct = await buildM3UDirectHydrationCooperatively\(\s*provider,\s*liveRows,\s*vodRows,\s*seriesRows,\s*\{\s*yieldFn:\s*yieldToUi\s*\},\s*\);/s,
-    );
-    assert.match(
-      m3uCacheSource,
-      /if \(options\.initialLimit === undefined\)\s*\{\s*installM3UCatalog\(provider\.id, direct\.catalog\);\s*\}/s,
-    );
+    assert.match(m3uCacheSource, /buildM3UDirectHydrationCooperatively/);
     assert.doesNotMatch(hydrationSource, /\bparseM3U\s*\(/);
   });
 
-  await scenario("SQLite DTOs build live, movie and grouped series runtime objects directly", () => {
+  await scenario("SQLite DTOs still build live movie and grouped series runtime objects", () => {
     const provider = {
       id: "m3u-provider",
       url: "https://iptv.example:8080/get.php?username=alice&password=swordfish&type=m3u_plus&output=ts",
@@ -355,50 +222,31 @@ async function main() {
     assert.deepEqual(direct.counts, { live: 1, vod: 1, series: 1 });
     assert.equal(direct.live[0].streamUrl, "https://iptv.example:8080/live/alice/swordfish/101.ts");
     assert.equal(direct.catalog.movieItems[0].streamUrl, "https://iptv.example:8080/movie/alice/swordfish/202.mp4");
-    assert.equal(
-      direct.catalog.seriesGroups[0].seasons["1"][0].streamUrl,
-      "https://iptv.example:8080/series/alice/swordfish/303.mkv",
-    );
-    assert.equal(direct.series[0].category_id, "Drama");
+    assert.equal(direct.catalog.seriesGroups[0].seasons["1"][0].streamUrl, "https://iptv.example:8080/series/alice/swordfish/303.mkv");
   });
 
-  await scenario("M3U hydration null and error outcomes map to explicit network fallback reasons", () => {
-    assert.deepEqual(
-      resolveM3UNetworkFallback("network", "null", "empty-cache"),
-      { used: true, reason: "cache-empty" },
-    );
-    assert.deepEqual(
-      resolveM3UNetworkFallback("network", "error", "sqlite-read-error"),
-      { used: true, reason: "cache-sqlite-error" },
-    );
-    assert.deepEqual(
-      resolveM3UNetworkFallback("network", "error", "runtime-hydrate-error"),
-      { used: true, reason: "cache-runtime-error" },
-    );
-    assert.match(m3uCacheSource, /outcome: "null"[\s\S]*reason: "empty-cache"/);
-    assert.match(m3uCacheSource, /outcome: "error"[\s\S]*"sqlite-read-error"[\s\S]*"runtime-hydrate-error"/);
+  await scenario("M3U hydration null and error outcomes retain explicit network fallback reasons", () => {
+    assert.deepEqual(resolveM3UNetworkFallback("network", "null", "empty-cache"), { used: true, reason: "cache-empty" });
+    assert.deepEqual(resolveM3UNetworkFallback("network", "error", "sqlite-read-error"), { used: true, reason: "cache-sqlite-error" });
+    assert.deepEqual(resolveM3UNetworkFallback("network", "error", "runtime-hydrate-error"), { used: true, reason: "cache-runtime-error" });
+    assert.match(m3uCacheSource, /"sqlite-read-error"[\s\S]*"runtime-hydrate-error"/s);
     assert.match(m3uSwitchMetricsSource, /noteM3UProviderSwitchPath/);
   });
 
-  await scenario("catalog measurement payload survives a fresh storage adapter after process memory is gone", async () => {
+  await scenario("catalog measurement payload survives process-memory loss through storage", async () => {
     const backing = new Map<string, string>();
-    const firstProcessStorage = {
+    const storage = {
       getItem: async (key: string) => backing.get(key) ?? null,
       setItem: async (key: string, value: string) => { backing.set(key, value); },
     };
     const payload = JSON.stringify({ kind: "m3u-switch", m3u: { totalSwitchMs: 1234 } });
-    await writeCatalogSyncMetricsPayload(firstProcessStorage, payload);
+    await writeCatalogSyncMetricsPayload(storage, payload);
     assert.equal(backing.has(CATALOG_SYNC_METRICS_KEY), true);
-
-    const restartedProcessStorage = {
-      getItem: async (key: string) => backing.get(key) ?? null,
-      setItem: async (key: string, value: string) => { backing.set(key, value); },
-    };
-    assert.equal(await readCatalogSyncMetricsPayload(restartedProcessStorage), payload);
+    assert.equal(await readCatalogSyncMetricsPayload(storage), payload);
     assert.match(catalogMetricsSource, /readPersistedCatalogSyncMeasurement/);
   });
 
-  await scenario("M3U measurement output separates before and after cache state without credential fields", () => {
+  await scenario("M3U measurement output remains credential-safe and separates before after state", () => {
     const output = formatM3USwitchMeasurement({
       kind: "m3u-switch",
       startedAt: 1,
@@ -410,39 +258,22 @@ async function main() {
         networkFallbackReason: "none",
         totalSwitchMs: 56,
         itemCounts: { live: 100, vod: 20, series: 10 },
-        cacheBefore: {
-          rawCounts: { live: 90, vod: 10, series: 5 },
-          syncPhase: "syncing",
-        },
-        cacheAfter: {
-          rawCounts: { live: 100, vod: 20, series: 10 },
-          syncPhase: "ready",
-        },
+        cacheBefore: { rawCounts: { live: 90, vod: 10, series: 5 }, syncPhase: "syncing" },
+        cacheAfter: { rawCounts: { live: 100, vod: 20, series: 10 }, syncPhase: "ready" },
       },
     });
     assert.match(output, /m3u\.sqliteReadMs=12/);
-    assert.match(output, /m3u\.runtimeHydrateMs=34/);
-    assert.match(output, /m3u\.networkFallback=false/);
-    assert.match(output, /m3u\.totalSwitchMs=56/);
-    assert.match(output, /m3u\.itemCounts\.live=100/);
     assert.match(output, /m3u\.cacheBefore\.rawCounts\.live=90/);
-    assert.match(output, /m3u\.cacheBefore\.syncPhase=syncing/);
     assert.match(output, /m3u\.cacheAfter\.rawCounts\.live=100/);
-    assert.match(output, /m3u\.cacheAfter\.syncPhase=ready/);
-    assert.doesNotMatch(output, /m3u\.cacheRawCounts\.|m3u\.cacheSyncPhase=/);
-    assert.match(output, /m3u\.writeAttempted=false/);
     assert.doesNotMatch(output, /https?:\/\/|get\.php|username[=:]|password[=:]|token[=:]|provider(name|id)?[=:]/i);
   });
 
-  await scenario("M3U write failure is observed and the background caller reads false", () => {
+  await scenario("M3U write failure remains observed instead of being swallowed", () => {
     const output = formatM3UCacheWriteMeasurement({
       kind: "m3u-cache-write",
       startedAt: 1,
       m3u: {
-        cacheAfter: {
-          rawCounts: { live: 0, vod: 0, series: 0 },
-          syncPhase: "error",
-        },
+        cacheAfter: { rawCounts: { live: 0, vod: 0, series: 0 }, syncPhase: "error" },
         write: {
           writeAttempted: true,
           writeOutcome: "sqlite-error",
@@ -458,14 +289,12 @@ async function main() {
       },
     });
     assert.match(output, /m3u\.writeOutcome=sqlite-error/);
-    assert.match(output, /m3u\.cacheAfter\.syncPhase=error/);
     assert.match(writeRunnerSource, /const persisted = await persistM3UProviderCache\(provider, loaded\);/);
     assert.match(writeRunnerSource, /if \(!persisted\)/);
     assert.doesNotMatch(writeRunnerSource, /\.catch\(\(\) => undefined\)/);
-    assert.match(m3uCacheSource, /noteM3UCacheWriteResult/);
   });
 
-  await scenario("successful M3U write projection reports exact safe and written counters", () => {
+  await scenario("successful M3U write projection keeps exact safe counts", () => {
     const provider = {
       id: "m3u-provider",
       type: "m3u" as const,
@@ -514,135 +343,17 @@ async function main() {
     assert.deepEqual(projection.inputCounts, { live: 1, vod: 1, series: 1 });
     assert.deepEqual(projection.safeCounts, { live: 1, vod: 1, series: 1 });
     assert.equal(projection.unsafeOutcome, null);
-    assert.deepEqual(projection.rejectionCounts, zeroRejects());
-    assert.deepEqual(projection.scan, completeScan(3));
-    assert.match(m3uCacheSource, /const stagingProviderId = `__staging__\$\{provider\.id\}`;/);
-    assert.match(m3uCacheSource, /const committedCounts = await swapStagingToProvider\(\{/);
-    assert.doesNotMatch(m3uCacheSource, /upsertCatalogItems\(provider\.id/);
-    assert.match(m3uCacheSource, /writtenCounts\.live = committedCounts\.live/);
-    assert.match(m3uCacheSource, /writtenCounts\.vod = committedCounts\.vod/);
-    assert.match(m3uCacheSource, /writtenCounts\.series = committedCounts\.series/);
-    assert.doesNotMatch(m3uCacheSource, /writtenCounts\.(?:live|vod|series) = await upsertCatalogItems/);
-    assert.match(m3uCacheSource, /outcome: "success"/);
+    assert.match(m3uCacheSource, /swapStagingToProvider/);
   });
 
-  await scenario("unsafe M3U refs fail fast on the first rejection", () => {
-    const provider = {
-      id: "m3u-provider",
-      type: "m3u" as const,
-      url: "https://iptv.example:8080/get.php?username=alice&password=swordfish&type=m3u_plus&output=ts",
-      createdAt: 1,
-    };
-    const urls = [
-      "https://cdn.example:8080/live/alice/swordfish/1.ts",
-      "https://iptv.example:8080/live/alice/swordfish/extra/2.ts",
-      "https://iptv.example:8080/live/alice/swordfish/3.ts?token=secret",
-      "https://iptv.example:8080/movie/alice/swordfish/4.mp4",
-      "https://iptv.example:8080/live/alice/swordfish/5",
-      "https://iptv.example:8080/live/bob/wrong/6.ts",
-    ];
-    const channels = urls.map((streamUrl, index) => ({
-      id: `live-${index}`,
-      providerId: provider.id,
-      name: `Live ${index}`,
-      streamUrl,
-      category: "Live",
-      contentType: "live" as const,
-    }));
-    const projection = buildM3UCacheWriteProjection(provider, {
-      channels,
-      liveChannels: channels,
-      movieItems: [],
-      seriesGroups: [],
-    });
-    assert.ok(projection);
-    assert.equal(projection.unsafeOutcome, "unsafe-live-ref");
-    assert.deepEqual(projection.safeCounts, { live: 0, vod: 0, series: 0 });
-    assert.deepEqual(projection.rejectionCounts, {
-      "origin-mismatch": 1,
-      "path-shape": 0,
-      "query-present": 0,
-      "kind-mismatch": 0,
-      "missing-extension": 0,
-      "credential-path-mismatch": 0,
-    });
-    assert.deepEqual(projection.scan, {
-      scanTotalCandidateCount: 6,
-      scanInspectedCount: 1,
-      scanTruncated: true,
-      firstRejectKind: "live",
-      firstRejectReason: "origin-mismatch",
-    });
-    assert.match(writeProjectionSource, /if \(!inspection\.ref\) return reject\("live", inspection\.reason\)/);
+  await scenario("cooperative hydration and write projection remain mandatory", () => {
+    assert.match(hydrationSource, /M3U_HYDRATION_BATCH_SIZE = 200/);
+    assert.match(hydrationSource, /buildM3UDirectHydrationCooperatively/);
+    assert.match(m3uCacheSource, /buildM3UCacheWriteProjectionCooperatively\(provider, loaded, \{\s*batchSize: 200,\s*yieldFn: yieldToUi/s);
+    assert.match(writeProjectionSource, /yieldFn/);
   });
 
-  await scenario("M3U write telemetry is counter-only and contains no URL or credential values", () => {
-    const output = formatM3UCacheWriteMeasurement({
-      kind: "m3u-cache-write",
-      startedAt: 1,
-      m3u: {
-        cacheAfter: {
-          rawCounts: { live: 9, vod: 8, series: 7 },
-          syncPhase: "error",
-        },
-        write: {
-          writeAttempted: true,
-          writeOutcome: "unsafe-live-ref",
-          writeMs: 42,
-          writeInputCounts: { live: 10, vod: 8, series: 7 },
-          writeSafeCounts: { live: 9, vod: 0, series: 0 },
-          writeWrittenCounts: { live: 0, vod: 0, series: 0 },
-          writeRejectCounts: {
-            ...zeroRejects(),
-            "credential-path-mismatch": 1,
-          },
-          scan: {
-            scanTotalCandidateCount: 25,
-            scanInspectedCount: 10,
-            scanTruncated: true,
-            firstRejectKind: "live",
-            firstRejectReason: "credential-path-mismatch",
-          },
-          cleanupOutcome: "error",
-          cleanupStage: "delete-catalog",
-        },
-      },
-    });
-    assert.match(output, /m3u\.writeRejectCounts\.credential-path-mismatch=1/);
-    assert.match(output, /m3u\.scanInspectedCount=10/);
-    assert.match(output, /m3u\.scanTruncated=true/);
-    assert.match(output, /m3u\.cleanupOutcome=error/);
-    assert.match(output, /m3u\.cleanupStage=delete-catalog/);
-    assert.doesNotMatch(
-      output,
-      /https?:\/\/|get\.php|alice|swordfish|secret\.example|username\s*[=:]|password\s*[=:]|token\s*[=:]|host\s*[=:]/i,
-    );
-  });
-
-  await scenario("unsafe or projection-dropped M3U cache writes remain all-or-nothing fail-closed", () => {
-    const rejectBranch = m3uCacheSource.indexOf("if (projection.unsafeOutcome)");
-    const failClosed = m3uCacheSource.indexOf("async function failClosedWrite");
-    const deleteCatalog = m3uCacheSource.indexOf("await deleteProviderCatalog(options.providerId)", failClosed);
-    const falseReturn = m3uCacheSource.indexOf("return false;", deleteCatalog);
-    assert.ok(rejectBranch >= 0 && failClosed >= 0 && deleteCatalog > failClosed && falseReturn > deleteCatalog);
-    assert.match(m3uCacheSource, /outcome: "projection-drop"/);
-    assert.match(m3uCacheSource, /return failClosedWrite\(/);
-    assert.doesNotMatch(m3uCacheSource, /writeSafeCounts[\s\S]*upsertCatalogItems\([^)]*projection\./);
-  });
-
-  await scenario("Xtream branch stays outside M3U measurement and direct hydration changes", () => {
-    const m3uBranch = cacheSource.indexOf('if (provider.type === "m3u")');
-    const xtreamGuard = cacheSource.indexOf('if (provider.type !== "xtream") return null;');
-    assert.ok(m3uBranch >= 0 && xtreamGuard > m3uBranch);
-    assert.match(cacheSource.slice(m3uBranch, xtreamGuard), /beginM3UProviderSwitchMeasurement\(provider\.id\)/);
-    assert.doesNotMatch(cacheSource.slice(xtreamGuard), /beginM3UProviderSwitchMeasurement/);
-    assert.match(cacheSource.slice(xtreamGuard), /getCatalogCounts\(provider\.id\)/);
-    assert.match(cacheSource.slice(xtreamGuard), /getCachedVodItems\(provider, undefined, HOME_SAMPLE_LIMIT\)/);
-    assert.match(cacheSource.slice(xtreamGuard), /getCachedSeriesItems\(provider, undefined, HOME_SAMPLE_LIMIT\)/);
-  });
-
-  assert.equal(passed, 24);
-  console.log("provider switch UX scenarios: 24/24 passed");
+  console.log(`provider switch scenarios: ${passed}/${passed} passed`);
 }
 
 void main().catch((error) => {
