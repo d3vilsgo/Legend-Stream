@@ -14,7 +14,7 @@
     "test:m3u-playback-ref": "tsx tests/m3uPlaybackRefScenarios.ts",
     "test:sqlite-diagnostics-freshness": "tsx tests/sqliteDiagnosticsFreshnessScenarios.ts",
     "test:catalog-db-writer": "tsx tests/catalogDbWriterCoordinationScenarios.ts",
-    "test:catalog-persistence": "tsx tests/catalogPersistenceScenarios.ts",
+    "test:catalog-persistence": "tsx tests/catalogPersistenceScenarios.ts && tsx tests/catalogPagingScenarios.ts",
     "test:catalog-category-fallback": "tsx tests/catalogCategoryFallbackScenarios.ts",
     "test:catalog-availability": "tsx tests/catalogAvailabilityScenarios.ts",
     "test:provider-switch": "tsx tests/m3uPreviewHydrationScenarios.ts && tsx tests/providerSwitchScenarios.ts && tsx tests/m3uHydrationYieldScenarios.ts && tsx tests/m3uTransportRoutingScenarios.ts",
@@ -49,6 +49,7 @@
     "expo-brightness": "~14.0.8",
     "expo-build-properties": "~1.0.10",
     "expo-constants": "~18.0.11",
+    "expo-document-picker": "~14.0.8",
     "expo-file-system": "~19.0.23",
     "expo-font": "~14.0.10",
     "expo-glass-effect": "~0.1.4",
@@ -62,6 +63,8 @@
     "expo-location": "~19.0.8",
     "expo-router": "~6.0.17",
     "expo-screen-orientation": "~9.0.9",
+    "expo-secure-store": "~15.0.9",
+    "expo-sharing": "~14.0.8",
     "expo-splash-screen": "~31.0.12",
     "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~3.0.9",
@@ -76,6 +79,7 @@
     "react-native-screens": "~4.16.0",
     "react-native-svg": "15.12.1",
     "react-native-web": "^0.21.0",
+    "react-native-vlc-media-player": "1.0.98",
     "tsx": "^4.23.12",
     "typescript": "~5.9.2",
     "zod": "catalog:",
@@ -87,10 +91,6 @@
     "@noble/hashes": "2.3.0",
     "diceware-wordlist-en-eff": "1.0.1",
     "expo-clipboard": "~8.0.8",
-    "expo-crypto": "~15.0.9",
-    "expo-document-picker": "~14.0.8",
-    "expo-secure-store": "~15.0.8",
-    "expo-sharing": "~14.0.8",
-    "react-native-vlc-media-player": "1.0.98"
+    "expo-crypto": "~15.0.9"
   }
 }
