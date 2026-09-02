@@ -5,6 +5,8 @@ export type LiveChannelIdentity = Readonly<{
   channelId: string;
 }>;
 
+const LIVE_QUEUE_WINDOW_MAX = 500;
+
 const isLiveChannel = (channel: Channel) =>
   (channel.contentType ?? "live") === "live";
 
@@ -23,6 +25,18 @@ export function liveQueueIndex(
   return queue.findIndex((channel) => matchesLiveChannel(channel, identity));
 }
 
+function boundedAroundCurrent(
+  rows: readonly Channel[],
+  identity: LiveChannelIdentity,
+) {
+  if (rows.length <= LIVE_QUEUE_WINDOW_MAX) return [...rows];
+  const index = liveQueueIndex(rows, identity);
+  if (index < 0) return [];
+  const before = Math.floor((LIVE_QUEUE_WINDOW_MAX - 1) / 2);
+  const start = Math.max(0, Math.min(index - before, rows.length - LIVE_QUEUE_WINDOW_MAX));
+  return rows.slice(start, start + LIVE_QUEUE_WINDOW_MAX);
+}
+
 export function buildLiveQueue(
   channels: readonly Channel[],
   identity: LiveChannelIdentity | null | undefined,
@@ -37,7 +51,10 @@ export function buildLiveQueue(
   const sameCategory = providerChannels.filter(
     (channel) => channel.category === active.category,
   );
-  return sameCategory.length ? sameCategory : providerChannels;
+  return boundedAroundCurrent(
+    sameCategory.length ? sameCategory : providerChannels,
+    identity,
+  );
 }
 
 export function resolveLiveQueue(
@@ -47,9 +64,8 @@ export function resolveLiveQueue(
 ) {
   if (!identity) return [];
 
-  // Prefer the connected in-memory catalog when it contains the exact stable
-  // identity. After a cold restart PlayerContext intentionally starts with an
-  // empty channel array, so fall back to the persisted catalog projection.
+  // Prefer the connected/bounded window when it contains the exact stable identity.
+  // Any legacy in-memory fallback is bounded around the current channel as well.
   if (liveQueueIndex(connectedChannels, identity) >= 0) {
     return buildLiveQueue(connectedChannels, identity);
   }
