@@ -1,4 +1,5 @@
 export const LIVE_ID_LOOKUP_CHUNK_SIZE = 200;
+export const HOME_LIVE_IDENTITY_PREVIEW_LIMIT = 14;
 
 export function normalizeLiveIdentityIds(ids: readonly string[]) {
   const normalized: string[] = [];
@@ -10,6 +11,10 @@ export function normalizeLiveIdentityIds(ids: readonly string[]) {
     normalized.push(id);
   }
   return normalized;
+}
+
+export function homeLiveIdentityPreviewIds(history: readonly string[]) {
+  return normalizeLiveIdentityIds(history).slice(0, HOME_LIVE_IDENTITY_PREVIEW_LIMIT);
 }
 
 export function chunkLiveIdentityIds(ids: readonly string[]) {

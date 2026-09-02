@@ -7,6 +7,7 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  SectionList,
   StyleSheet,
   Text,
   TextInput,
@@ -41,6 +42,11 @@ import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { useResolvedLiveIdentityChannels } from "@/hooks/useResolvedLiveIdentityChannels";
 import type { DownloadedMedia } from "@/lib/downloads";
+import { homeLiveIdentityPreviewIds } from "@/lib/catalogLiveIdentity";
+import {
+  indexLiveChannelsByProviderAndId,
+  resolveLiveIdentityPresentationRows,
+} from "@/lib/historyFavoritesPresentation";
 import type { LiveChannelIdentity } from "@/lib/playerLiveQueue";
 import {
   getCachedCatalogCategoryMetadata,
@@ -231,13 +237,22 @@ export default function OptimizedHomeScreenPaged() {
       : [],
     [channels, provider],
   );
-  const liveIdentityIds = useMemo(
-    () => [...history, ...favorites],
-    [history, favorites],
+  const homeIdentityIds = useMemo(
+    () => homeLiveIdentityPreviewIds(history),
+    [history],
   );
-  const resolvedLiveIdentityChannels = useResolvedLiveIdentityChannels(
+  const resolvedHomeIdentityChannels = useResolvedLiveIdentityChannels(
     provider,
-    liveIdentityIds,
+    homeIdentityIds,
+    playerLiveChannels,
+  );
+  const fullHistoryIdentityIds = useMemo(
+    () => view === "history" ? [...history, ...favorites] : [],
+    [view, history, favorites],
+  );
+  const resolvedFullHistoryIdentityChannels = useResolvedLiveIdentityChannels(
+    provider,
+    fullHistoryIdentityIds,
     playerLiveChannels,
   );
 
@@ -246,11 +261,11 @@ export default function OptimizedHomeScreenPaged() {
   const homeIdentityChannels = useMemo(() => {
     const byId = new Map<string, Channel>();
     for (const channel of homeChannels) byId.set(channel.id, channel);
-    for (const channel of resolvedLiveIdentityChannels) {
+    for (const channel of resolvedHomeIdentityChannels) {
       if (!byId.has(channel.id)) byId.set(channel.id, channel);
     }
     return [...byId.values()];
-  }, [homeChannels, resolvedLiveIdentityChannels]);
+  }, [homeChannels, resolvedHomeIdentityChannels]);
   const homeMovies = activeSnapshot?.movies ?? [];
   const homeSeries = activeSnapshot?.series ?? [];
   const liveCount = provider
@@ -602,7 +617,16 @@ export default function OptimizedHomeScreenPaged() {
       onDrawerVisibilityChange={setCatalogDrawerOpen}
     /> : null}
 
-    {view !== "live" && view !== "movies" && view !== "series" ? <ScrollView
+    {view === "history" ? <HistoryView
+      providerId={provider.id}
+      channels={resolvedFullHistoryIdentityChannels}
+      favorites={favorites}
+      history={history}
+      onOpen={openLive}
+      onOpenMedia={openProgress}
+    /> : null}
+
+    {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? <ScrollView
       style={{ flex: 1 }}
       contentContainerStyle={s.content}
       keyboardShouldPersistTaps="handled"
@@ -630,13 +654,6 @@ export default function OptimizedHomeScreenPaged() {
         onOpenSeries={(item) => void openSeries(item)}
         onOpenMedia={openProgress}
         onRemoveLive={(id) => void removeWatched(id)}
-      /> : null}
-      {view === "history" ? <HistoryView
-        channels={homeIdentityChannels}
-        favorites={favorites}
-        history={history}
-        onOpen={openLive}
-        onOpenMedia={openProgress}
       /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
       {view === "settings" ? <Settings
@@ -779,7 +796,10 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   </KeyboardAvoidingView>;
 }
 
-function HistoryView({ channels, favorites, history, onOpen, onOpenMedia }: {
+type HistorySectionRow = { key: string; channel: Channel };
+
+function HistoryView({ providerId, channels, favorites, history, onOpen, onOpenMedia }: {
+  providerId: string;
   channels: Channel[];
   favorites: string[];
   history: string[];
@@ -788,24 +808,49 @@ function HistoryView({ channels, favorites, history, onOpen, onOpenMedia }: {
 }) {
   const colors = useColors();
   const { t } = useI18n();
-  const recent = history.map((id) => channels.find((channel) => channel.id === id)).filter((item): item is Channel => Boolean(item));
-  const favs = favorites.map((id) => channels.find((channel) => channel.id === id)).filter((item): item is Channel => Boolean(item));
-  const section = (title: string, rows: Channel[]) => <View style={{ marginBottom: 28 }}>
-    <Text style={[s.section, { color: colors.foreground, marginBottom: 10 }]}>{title}</Text>
-    {rows.length ? rows.map((channel) => <Pressable key={`${title}-${channel.id}`} onPress={() => onOpen(channel)} style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}> 
+  const channelIndex = useMemo(() => indexLiveChannelsByProviderAndId(channels), [channels]);
+  const recent = useMemo(
+    () => resolveLiveIdentityPresentationRows(providerId, history, channelIndex)
+      .map((channel, index) => ({ key: `history:${index}:${channel.id}`, channel })),
+    [providerId, history, channelIndex],
+  );
+  const favs = useMemo(
+    () => resolveLiveIdentityPresentationRows(providerId, favorites, channelIndex)
+      .map((channel, index) => ({ key: `favorite:${index}:${channel.id}`, channel })),
+    [providerId, favorites, channelIndex],
+  );
+  const sections = useMemo(
+    () => [
+      { title: t("recentlyWatched"), data: recent },
+      { title: t("favorites"), data: favs },
+    ],
+    [recent, favs, t],
+  );
+  return <SectionList<HistorySectionRow>
+    style={{ flex: 1 }}
+    contentContainerStyle={s.content}
+    sections={sections}
+    keyExtractor={(item) => item.key}
+    ListHeaderComponent={<View>
+      <Text style={[s.title, { color: colors.foreground }]}>{t("history")}</Text>
+      <View style={{ marginBottom: 30 }}><ContinueWatchingView onOpen={onOpenMedia} /></View>
+    </View>}
+    renderSectionHeader={({ section }) => <Text style={[s.section, { color: colors.foreground, marginBottom: 10 }]}>{section.title}</Text>}
+    renderItem={({ item }) => <Pressable onPress={() => onOpen(item.channel)} style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <View style={{ flex: 1 }}>
-        <Text style={{ color: colors.foreground, fontWeight: "700" }}>{channel.name}</Text>
-        <Text style={{ color: colors.mutedForeground }}>{channel.category}</Text>
+        <Text style={{ color: colors.foreground, fontWeight: "700" }}>{item.channel.name}</Text>
+        <Text style={{ color: colors.mutedForeground }}>{item.channel.category}</Text>
       </View>
       <Feather name="play" size={20} color={colors.primary} />
-    </Pressable>) : <Text style={{ color: colors.mutedForeground }}>{t("nothingYet")}</Text>}
-  </View>;
-  return <View>
-    <Text style={[s.title, { color: colors.foreground }]}>{t("history")}</Text>
-    <View style={{ marginBottom: 30 }}><ContinueWatchingView onOpen={onOpenMedia} /></View>
-    {section(t("recentlyWatched"), recent)}
-    {section(t("favorites"), favs)}
-  </View>;
+    </Pressable>}
+    ListEmptyComponent={<Text style={{ color: colors.mutedForeground }}>{t("nothingYet")}</Text>}
+    initialNumToRender={24}
+    maxToRenderPerBatch={24}
+    windowSize={9}
+    removeClippedSubviews={Platform.OS !== "web"}
+    keyboardShouldPersistTaps="handled"
+    showsVerticalScrollIndicator={false}
+  />;
 }
 
 function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAdd, onSwitch, onDisconnect, onRemove }: {
