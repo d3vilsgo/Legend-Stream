@@ -1,5 +1,4 @@
 export const LIVE_ID_LOOKUP_CHUNK_SIZE = 200;
-export const MAX_LIVE_ID_LOOKUP_IDS = 500;
 
 export function normalizeLiveIdentityIds(ids: readonly string[]) {
   const normalized: string[] = [];
@@ -9,7 +8,6 @@ export function normalizeLiveIdentityIds(ids: readonly string[]) {
     if (!id || seen.has(id)) continue;
     seen.add(id);
     normalized.push(id);
-    if (normalized.length >= MAX_LIVE_ID_LOOKUP_IDS) break;
   }
   return normalized;
 }
