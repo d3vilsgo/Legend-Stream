@@ -140,14 +140,23 @@ async function main() {
     assert.match(viewsSource, /page\.loadingInitial && page\.items\.length === 0/);
   });
 
-  await scenario("M3U and Xtream catalog tabs no longer invoke full-kind loaders", () => {
+  await scenario("M3U catalog tabs use persisted pages and never invoke full-kind runtime loaders", () => {
     assert.match(entrySource, /OptimizedHomeScreenPaged/);
     assert.match(screenSource, /PagedLiveCatalog/);
     assert.match(screenSource, /PagedMoviesCatalog/);
     assert.match(screenSource, /PagedSeriesCatalog/);
     assert.match(hookSource, /getCachedCatalogPage/);
-    assert.doesNotMatch(screenSource, /applyLocalVod|applyLocalSeries|applyLocalLive|loadVodCategory|loadSeriesCategory/);
+    assert.doesNotMatch(screenSource, /applyLocalVod|applyLocalSeries|applyLocalLive/);
     assert.doesNotMatch(screenSource, /hydrateM3UProviderKindCache|getM3UCatalog/);
+  });
+
+  await scenario("Xtream catalog tabs use persisted pages without restoring category-wide runtime loaders", () => {
+    assert.match(screenSource, /PagedMoviesCatalog/);
+    assert.match(screenSource, /PagedSeriesCatalog/);
+    assert.match(screenSource, /PagedLiveCatalog/);
+    assert.match(hookSource, /getCachedCatalogPage/);
+    assert.doesNotMatch(screenSource, /loadVodCategory|loadSeriesCategory/);
+    assert.doesNotMatch(viewsSource, /getVodStreams|getSeries\(/);
   });
 
   await scenario("active M3U cold start is bounded by default and cannot implicitly install full catalog", () => {
@@ -294,7 +303,7 @@ async function main() {
     assert.doesNotMatch(writeRunnerSource, /\.catch\(\(\) => undefined\)/);
   });
 
-  await scenario("successful M3U write projection keeps exact safe counts", () => {
+  await scenario("successful M3U write projection reports exact safe and committed counters", () => {
     const provider = {
       id: "m3u-provider",
       type: "m3u" as const,
@@ -343,7 +352,121 @@ async function main() {
     assert.deepEqual(projection.inputCounts, { live: 1, vod: 1, series: 1 });
     assert.deepEqual(projection.safeCounts, { live: 1, vod: 1, series: 1 });
     assert.equal(projection.unsafeOutcome, null);
-    assert.match(m3uCacheSource, /swapStagingToProvider/);
+    assert.deepEqual(projection.rejectionCounts, zeroRejects());
+    assert.deepEqual(projection.scan, completeScan(3));
+    assert.match(m3uCacheSource, /const stagingProviderId = `__staging__\$\{provider\.id\}`;/);
+    assert.match(m3uCacheSource, /const committedCounts = await swapStagingToProvider\(\{/);
+    assert.doesNotMatch(m3uCacheSource, /upsertCatalogItems\(provider\.id/);
+    assert.match(m3uCacheSource, /writtenCounts\.live = committedCounts\.live/);
+    assert.match(m3uCacheSource, /writtenCounts\.vod = committedCounts\.vod/);
+    assert.match(m3uCacheSource, /writtenCounts\.series = committedCounts\.series/);
+    assert.match(m3uCacheSource, /outcome: "success"/);
+  });
+
+  await scenario("unsafe M3U refs fail fast on the first rejection", () => {
+    const provider = {
+      id: "m3u-provider",
+      type: "m3u" as const,
+      url: "https://iptv.example:8080/get.php?username=alice&password=swordfish&type=m3u_plus&output=ts",
+      createdAt: 1,
+    };
+    const urls = [
+      "https://cdn.example:8080/live/alice/swordfish/1.ts",
+      "https://iptv.example:8080/live/alice/swordfish/extra/2.ts",
+      "https://iptv.example:8080/live/alice/swordfish/3.ts?token=secret",
+      "https://iptv.example:8080/movie/alice/swordfish/4.mp4",
+      "https://iptv.example:8080/live/alice/swordfish/5",
+      "https://iptv.example:8080/live/bob/wrong/6.ts",
+    ];
+    const channels = urls.map((streamUrl, index) => ({
+      id: `live-${index}`,
+      providerId: provider.id,
+      name: `Live ${index}`,
+      streamUrl,
+      category: "Live",
+      contentType: "live" as const,
+    }));
+    const projection = buildM3UCacheWriteProjection(provider, {
+      channels,
+      liveChannels: channels,
+      movieItems: [],
+      seriesGroups: [],
+    });
+    assert.ok(projection);
+    assert.equal(projection.unsafeOutcome, "unsafe-live-ref");
+    assert.deepEqual(projection.safeCounts, { live: 0, vod: 0, series: 0 });
+    assert.deepEqual(projection.rejectionCounts, {
+      "origin-mismatch": 1,
+      "path-shape": 0,
+      "query-present": 0,
+      "kind-mismatch": 0,
+      "missing-extension": 0,
+      "credential-path-mismatch": 0,
+    });
+    assert.deepEqual(projection.scan, {
+      scanTotalCandidateCount: 6,
+      scanInspectedCount: 1,
+      scanTruncated: true,
+      firstRejectKind: "live",
+      firstRejectReason: "origin-mismatch",
+    });
+    assert.match(writeProjectionSource, /if \(!inspection\.ref\) return reject\("live", inspection\.reason\)/);
+  });
+
+  await scenario("M3U write telemetry is counter-only and contains no URL or credential values", () => {
+    const output = formatM3UCacheWriteMeasurement({
+      kind: "m3u-cache-write",
+      startedAt: 1,
+      m3u: {
+        cacheAfter: { rawCounts: { live: 9, vod: 8, series: 7 }, syncPhase: "error" },
+        write: {
+          writeAttempted: true,
+          writeOutcome: "unsafe-live-ref",
+          writeMs: 42,
+          writeInputCounts: { live: 10, vod: 8, series: 7 },
+          writeSafeCounts: { live: 9, vod: 0, series: 0 },
+          writeWrittenCounts: { live: 0, vod: 0, series: 0 },
+          writeRejectCounts: { ...zeroRejects(), "credential-path-mismatch": 1 },
+          scan: {
+            scanTotalCandidateCount: 25,
+            scanInspectedCount: 10,
+            scanTruncated: true,
+            firstRejectKind: "live",
+            firstRejectReason: "credential-path-mismatch",
+          },
+          cleanupOutcome: "error",
+          cleanupStage: "delete-catalog",
+        },
+      },
+    });
+    assert.match(output, /m3u\.writeRejectCounts\.credential-path-mismatch=1/);
+    assert.match(output, /m3u\.scanInspectedCount=10/);
+    assert.match(output, /m3u\.scanTruncated=true/);
+    assert.match(output, /m3u\.cleanupOutcome=error/);
+    assert.match(output, /m3u\.cleanupStage=delete-catalog/);
+    assert.doesNotMatch(output, /https?:\/\/|get\.php|alice|swordfish|secret\.example|username\s*[=:]|password\s*[=:]|token\s*[=:]|host\s*[=:]/i);
+  });
+
+  await scenario("unsafe or projection-dropped M3U cache writes remain all-or-nothing fail-closed", () => {
+    const rejectBranch = m3uCacheSource.indexOf("if (projection.unsafeOutcome)");
+    const failClosed = m3uCacheSource.indexOf("async function failClosedWrite");
+    const deleteCatalog = m3uCacheSource.indexOf("await deleteProviderCatalog(options.providerId)", failClosed);
+    const falseReturn = m3uCacheSource.indexOf("return false;", deleteCatalog);
+    assert.ok(rejectBranch >= 0 && failClosed >= 0 && deleteCatalog > failClosed && falseReturn > deleteCatalog);
+    assert.match(m3uCacheSource, /outcome: "projection-drop"/);
+    assert.match(m3uCacheSource, /return failClosedWrite\(/);
+    assert.doesNotMatch(m3uCacheSource, /writeSafeCounts[\s\S]*upsertCatalogItems\([^)]*projection\./);
+  });
+
+  await scenario("Xtream branch stays outside M3U measurement and direct hydration changes", () => {
+    const m3uBranch = cacheSource.indexOf('if (provider.type === "m3u")');
+    const xtreamGuard = cacheSource.indexOf('if (provider.type !== "xtream") return null;');
+    assert.ok(m3uBranch >= 0 && xtreamGuard > m3uBranch);
+    assert.match(cacheSource.slice(m3uBranch, xtreamGuard), /beginM3UProviderSwitchMeasurement\(provider\.id\)/);
+    assert.doesNotMatch(cacheSource.slice(xtreamGuard), /beginM3UProviderSwitchMeasurement/);
+    assert.match(cacheSource.slice(xtreamGuard), /getCatalogCounts\(provider\.id\)/);
+    assert.match(cacheSource.slice(xtreamGuard), /getCachedVodItems\(provider, undefined, HOME_SAMPLE_LIMIT\)/);
+    assert.match(cacheSource.slice(xtreamGuard), /getCachedSeriesItems\(provider, undefined, HOME_SAMPLE_LIMIT\)/);
   });
 
   await scenario("cooperative hydration and write projection remain mandatory", () => {
@@ -353,7 +476,8 @@ async function main() {
     assert.match(writeProjectionSource, /yieldFn/);
   });
 
-  console.log(`provider switch scenarios: ${passed}/${passed} passed`);
+  assert.equal(passed, 24);
+  console.log("provider switch UX scenarios: 24/24 passed");
 }
 
 void main().catch((error) => {

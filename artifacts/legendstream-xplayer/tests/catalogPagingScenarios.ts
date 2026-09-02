@@ -11,6 +11,7 @@ import {
   MAX_CATALOG_PAGE_SIZE,
   normalizeCatalogPageLimit,
   resolveCatalogTotalCount,
+  resolveCatalogTotalCountUpdate,
   type CatalogPageRequest,
 } from "../lib/catalogPaging";
 
@@ -144,6 +145,43 @@ async function main() {
     assert.equal(resolveCatalogTotalCount({ persistedTotal: 0, persistedCountKnown: false, snapshotTotal: 0, snapshotCountKnown: false }), null);
     assert.equal(resolveCatalogTotalCount({ persistedTotal: 0, persistedCountKnown: true, snapshotTotal: null, snapshotCountKnown: false }), 0);
     assert.match(viewsSource, /countKnown && totalCount !== null/);
+  });
+
+  await scenario("known total cannot be downgraded by a stale unknown page response", () => {
+    assert.equal(resolveCatalogTotalCountUpdate({
+      currentTotal: 8_400,
+      currentCountKnown: true,
+      persistedTotal: null,
+      persistedCountKnown: false,
+      snapshotTotal: null,
+      snapshotCountKnown: false,
+    }), 8_400);
+    assert.equal(resolveCatalogTotalCountUpdate({
+      currentTotal: 48,
+      currentCountKnown: true,
+      persistedTotal: 8_400,
+      persistedCountKnown: true,
+      snapshotTotal: 48,
+      snapshotCountKnown: true,
+    }), 8_400);
+    assert.equal(resolveCatalogTotalCountUpdate({
+      currentTotal: null,
+      currentCountKnown: false,
+      persistedTotal: null,
+      persistedCountKnown: false,
+      snapshotTotal: 8_400,
+      snapshotCountKnown: true,
+    }), 8_400);
+    assert.match(hookSource, /resolveCatalogTotalCountUpdate/);
+  });
+
+  await scenario("M3U Series lazy detail drops stale provider or request generations", () => {
+    assert.match(screenSource, /const activeProviderIdRef = useRef<string \| null>/);
+    assert.match(screenSource, /const seriesRequestGenerationRef = useRef\(0\)/);
+    assert.match(screenSource, /const requestProviderId = provider\.id;/);
+    assert.match(screenSource, /const requestGeneration = \+\+seriesRequestGenerationRef\.current;/);
+    const guards = screenSource.match(/if \(!isCurrentSeriesRequest\(requestProviderId, requestGeneration\)\) return;/g) ?? [];
+    assert.ok(guards.length >= 3, "Series async success, queue publication, and error publication must all be stale-safe");
   });
 
   await scenario("M3U Movies first-open is count plus at most 100 rows", () => {
@@ -321,8 +359,8 @@ async function main() {
     assert.doesNotMatch(screenSource, /setHomeVodCount|setHomeSeriesCount/);
   });
 
-  assert.equal(passed, 18);
-  console.log("catalog paging scenarios: 18/18 passed");
+  assert.equal(passed, 20);
+  console.log("catalog paging scenarios: 20/20 passed");
 }
 
 void main().catch((error) => {
