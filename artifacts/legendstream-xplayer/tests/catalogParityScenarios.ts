@@ -18,7 +18,7 @@ import {
   rememberCatalogCategorySelection,
   validateCatalogCategorySelection,
 } from "../lib/catalogCategoryMemory";
-import { XtreamCatalogError } from "../lib/xtreamCatalog";
+import { XtreamCatalogError } from "../lib/xtreamCatalogErrors";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");

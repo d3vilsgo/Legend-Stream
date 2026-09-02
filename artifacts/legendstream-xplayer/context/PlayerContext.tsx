@@ -53,6 +53,10 @@ import {
   removeLiveHistory,
   type LiveHistoryV2,
 } from "@/lib/liveHistory";
+import {
+  LegacyCatalogFallbackAttemptGuard,
+  shouldFallbackLegacyXtreamCatalogToM3U,
+} from "@/lib/legacyCatalogFallback";
 
 export { ProviderType };
 export type { Channel, EpgProgram };
@@ -151,6 +155,7 @@ interface PlayerContextValue extends PlayerState {
   removeProvider: (providerId?: string) => Promise<void>;
   disconnectProvider: () => Promise<void>;
   refreshProvider: (providerId?: string) => Promise<void>;
+  recoverLegacyCatalogFallback: (providerId: string, error: unknown) => Promise<boolean>;
   refreshEpg: (providerId?: string, channelId?: string) => Promise<void>;
   resolveProviderForSwitch: (providerId: string) => Promise<ProviderConfig | null>;
   setActiveProvider: (providerId: string) => Promise<boolean>;
@@ -810,6 +815,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     new Map<string, { loadedAt: number; channelCount: number }>(),
   );
   const bulkEpgPromiseRef = useRef(new Map<string, Promise<void>>());
+  const legacyCatalogFallbackGuardRef = useRef(new LegacyCatalogFallbackAttemptGuard());
 
   useEffect(() => {
     stateRef.current = state;
@@ -1052,6 +1058,59 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const recoverLegacyCatalogFallback = async (providerId: string, caught: unknown) => {
+    const current = stateRef.current;
+    const existing = current.providers.find((item) => item.id === providerId);
+    if (
+      !existing ||
+      !shouldFallbackLegacyXtreamCatalogToM3U(existing, caught) ||
+      !legacyCatalogFallbackGuardRef.current.tryStart(providerId)
+    ) {
+      return false;
+    }
+
+    const source = existing.playlistUrl || existing.url;
+    const fallback: RoutedProvider = {
+      ...fromProvider(existing),
+      type: "m3u",
+      declaredType: existing.declaredType ?? "xtream",
+      transport: "m3u",
+      url: source,
+      playlistUrl: source,
+      username: undefined,
+      password: undefined,
+    };
+
+    try {
+      const loaded = await loadProvider(fallback);
+      persistM3ULoadInBackground(fallback, loaded);
+      const updated = toProvider({
+        ...fallback,
+        lastLoadedAt: Date.now(),
+        channelCount: loaded.channels.length,
+        epgUrl: fallback.epgUrl || loaded.epgUrl,
+        loadError: undefined,
+      });
+      await saveProviderSecrets(updated);
+
+      const latest = stateRef.current;
+      if (!latest.providers.some((item) => item.id === providerId)) return false;
+      epgCacheRef.current.delete(providerId);
+      await persist({
+        ...latest,
+        provider: latest.provider?.id === providerId ? updated : latest.provider,
+        providers: latest.providers.map((item) => item.id === providerId ? updated : item),
+        channels: [
+          ...latest.channels.filter((channel) => channel.providerId !== providerId),
+          ...loaded.channels,
+        ],
+      });
+      return true;
+    } catch {
+      return false;
     }
   };
 
@@ -1427,6 +1486,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       removeProvider,
       disconnectProvider,
       refreshProvider,
+      recoverLegacyCatalogFallback,
       refreshEpg,
       resolveProviderForSwitch,
       setActiveProvider,

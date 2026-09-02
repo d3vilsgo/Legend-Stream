@@ -117,6 +117,7 @@ export default function OptimizedHomeScreenPaged() {
     error,
     connectProvider,
     refreshProvider,
+    recoverLegacyCatalogFallback,
     toggleFavorite,
     recordWatched,
     removeWatched,
@@ -403,6 +404,13 @@ export default function OptimizedHomeScreenPaged() {
       setSeriesInfo(info);
     } catch (caught) {
       if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return;
+      if (await recoverLegacyCatalogFallback(requestProviderId, caught)) {
+        if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return;
+        setSelectedSeries(null);
+        setSeriesInfo(null);
+        setView("home");
+        return;
+      }
       setCatalogError(caught instanceof Error ? caught.message : t("loadingEpisodes"));
     }
   };

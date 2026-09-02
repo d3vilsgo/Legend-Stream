@@ -138,7 +138,7 @@ function asLoadProvider(provider: NonNullable<ReturnType<typeof usePlayer>["prov
 }
 
 export function CatalogSyncProvider({ children }: { children: ReactNode }) {
-  const { provider, channels } = usePlayer();
+  const { provider, channels, recoverLegacyCatalogFallback } = usePlayer();
   const colors = useColors();
   const { language } = useI18n();
   const [syncState, setSyncStateLocal] = useState<CatalogSyncState | CatalogRunState | null>(null);
@@ -410,6 +410,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           await refreshSnapshot();
           return;
         }
+        if (await recoverLegacyCatalogFallback(provider.id, caught)) return;
         const message = caught instanceof Error ? caught.message : "Catalog synchronization failed";
         // Failure describes the refresh attempt only; availability remains count-driven.
         await publishState(provider.id, "error", completed, total, message, undefined, generation);
@@ -429,7 +430,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
 
     runningRef.current = task;
     return task;
-  }, [channels, provider, publishState, refreshSnapshot]);
+  }, [channels, provider, publishState, recoverLegacyCatalogFallback, refreshSnapshot]);
 
   const refreshCatalog = useCallback(async () => {
     await runSync("manual");
