@@ -25,6 +25,7 @@ import {
   PagedSeriesCatalog,
   type CatalogSortMode,
 } from "@/components/catalog/PagedCatalogViews";
+import { StalkerLiveCatalog } from "@/components/catalog/StalkerLiveCatalog";
 import { PlayerChromeTimeoutSetting } from "@/components/PlayerChromeTimeoutSetting";
 import { ProviderBackupPanel } from "@/components/ProviderBackupPanel";
 import { ProviderSubscriptionChip } from "@/components/ProviderSubscriptionChip";
@@ -38,6 +39,7 @@ import { type MediaProgress, useMediaLibrary } from "@/context/MediaLibraryConte
 import { useCatalogSync } from "@/context/CatalogSyncContext";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
+import { useResolvedLiveIdentityChannels } from "@/hooks/useResolvedLiveIdentityChannels";
 import type { DownloadedMedia } from "@/lib/downloads";
 import type { LiveChannelIdentity } from "@/lib/playerLiveQueue";
 import {
@@ -194,9 +196,26 @@ export default function OptimizedHomeScreenPaged() {
       : [],
     [channels, provider],
   );
+  const liveIdentityIds = useMemo(
+    () => [...history, ...favorites],
+    [history, favorites],
+  );
+  const resolvedLiveIdentityChannels = useResolvedLiveIdentityChannels(
+    provider,
+    liveIdentityIds,
+    playerLiveChannels,
+  );
 
   const activeSnapshot = provider && snapshot.providerId === provider.id ? snapshot : null;
   const homeChannels = activeSnapshot?.live.length ? activeSnapshot.live : playerLiveChannels.slice(0, 48);
+  const homeIdentityChannels = useMemo(() => {
+    const byId = new Map<string, Channel>();
+    for (const channel of homeChannels) byId.set(channel.id, channel);
+    for (const channel of resolvedLiveIdentityChannels) {
+      if (!byId.has(channel.id)) byId.set(channel.id, channel);
+    }
+    return [...byId.values()];
+  }, [homeChannels, resolvedLiveIdentityChannels]);
   const homeMovies = activeSnapshot?.movies ?? [];
   const homeSeries = activeSnapshot?.series ?? [];
   const liveCount = provider
@@ -217,6 +236,8 @@ export default function OptimizedHomeScreenPaged() {
       await refreshProvider();
       await yieldToUi();
       await refreshSnapshot();
+    } else if (provider.type === "stalker") {
+      await refreshProvider();
     }
   };
 
@@ -490,6 +511,18 @@ export default function OptimizedHomeScreenPaged() {
       onDrawerVisibilityChange={setCatalogDrawerOpen}
     /> : null}
 
+    {view === "live" && provider.type === "stalker" ? <StalkerLiveCatalog
+      providerId={provider.id}
+      channels={playerLiveChannels}
+      epgByChannel={epgByChannel}
+      favorites={favorites}
+      epgLoading={isEpgLoading}
+      refreshing={isLoading}
+      onRefresh={refreshPagedCatalog}
+      onOpen={openLive}
+      onFavorite={(id) => void toggleFavorite(id)}
+    /> : null}
+
     {view === "movies" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedMoviesCatalog
       provider={provider}
       snapshotCount={vodCount}
@@ -535,7 +568,7 @@ export default function OptimizedHomeScreenPaged() {
         vodCategories={0}
         seriesCategories={0}
         catalogLoading={isSyncing}
-        channels={homeChannels}
+        channels={homeIdentityChannels}
         history={history}
         movies={homeMovies}
         seriesItems={homeSeries}
@@ -550,7 +583,7 @@ export default function OptimizedHomeScreenPaged() {
         onRemoveLive={(id) => void removeWatched(id)}
       /> : null}
       {view === "history" ? <HistoryView
-        channels={homeChannels}
+        channels={homeIdentityChannels}
         favorites={favorites}
         history={history}
         onOpen={openLive}
