@@ -59,7 +59,6 @@ export async function getCachedLiveItemsByIds(
     }
   }
 
-  return requestedIds
-    .map((id) => resolved.get(id))
+  return requestedIds.map((id) => resolved.get(id))
     .filter((item): item is Channel => Boolean(item));
 }
