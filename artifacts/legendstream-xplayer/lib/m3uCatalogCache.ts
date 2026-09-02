@@ -69,6 +69,7 @@ import { yieldToUi } from "./cooperative";
 import type { XtreamCategory } from "./xtreamCatalog";
 
 const M3U_CACHE_STAGE_TOTAL = 3;
+export const M3U_HOME_PREVIEW_LIMIT = 48;
 const activationProviders = new Set<string>();
 
 export type M3UCatalogCacheProvider = Pick<
@@ -120,7 +121,7 @@ export function consumeM3UCacheActivation(providerId: string) {
 
 export async function hydrateM3UProviderCache(
   provider: M3UCatalogCacheProvider,
-  options: { initialLimit?: number } = {},
+  options: { initialLimit?: number; installFullCatalog?: boolean } = {},
 ): Promise<M3UCatalogCacheHydration | null> {
   if (provider.type !== "m3u" || !parseM3UProviderSource(providerSource(provider))) {
     noteM3UCacheHydration({
@@ -135,6 +136,7 @@ export async function hydrateM3UProviderCache(
     return null;
   }
 
+  const initialLimit = options.initialLimit ?? M3U_HOME_PREVIEW_LIMIT;
   let phase: "sqlite" | "runtime" = "sqlite";
   let sqliteReadMs = 0;
   let runtimeStartedAt = 0;
@@ -144,9 +146,9 @@ export async function hydrateM3UProviderCache(
     const sqliteStartedAt = Date.now();
     await initCatalogCache();
     const [rawLive, rawVod, rawSeries, state, rawCounts] = await Promise.all([
-      getCachedPersistedItems(provider.id, "live", undefined, options.initialLimit),
-      getCachedPersistedItems(provider.id, "vod", undefined, options.initialLimit),
-      getCachedPersistedItems(provider.id, "series", undefined, options.initialLimit),
+      getCachedPersistedItems(provider.id, "live", undefined, initialLimit),
+      getCachedPersistedItems(provider.id, "vod", undefined, initialLimit),
+      getCachedPersistedItems(provider.id, "series", undefined, initialLimit),
       getCatalogSyncState(provider.id),
       getCatalogCounts(provider.id),
     ]);
@@ -200,7 +202,7 @@ export async function hydrateM3UProviderCache(
       return null;
     }
 
-    if (options.initialLimit === undefined) {
+    if (options.installFullCatalog === true) {
       installM3UCatalog(provider.id, direct.catalog);
     }
     noteM3UCacheHydration({
@@ -213,7 +215,7 @@ export async function hydrateM3UProviderCache(
       cacheSyncPhase,
     });
     return {
-      scope: options.initialLimit === undefined ? "full" : "preview",
+      scope: options.installFullCatalog === true ? "full" : "preview",
       counts: cacheRawCounts,
       hydratedCounts: direct.counts,
       ready: state?.phase === "ready",
