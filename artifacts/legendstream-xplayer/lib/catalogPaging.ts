@@ -69,6 +69,7 @@ export type CatalogCountUpdateResolution = CatalogCountResolution & {
 const EFFECTIVE_ORDER_SQL = "CASE WHEN added_at > 0 THEN added_at ELSE first_seen_at END";
 const NUMERIC_ID_SQL = "CASE WHEN item_id <> '' AND item_id NOT GLOB '*[^0-9]*' THEN CAST(item_id AS INTEGER) ELSE 9223372036854775807 END";
 const ADDED_FALLBACK_SQL = "CASE WHEN added_at = 0 THEN first_seen_at ELSE 0 END";
+const TURKISH_SEARCH_NAME_SQL = "LOWER(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(name, 'İ', 'i'), 'I', 'ı'), 'Ğ', 'ğ'), 'Ü', 'ü'), 'Ş', 'ş'), 'Ö', 'ö'), 'Ç', 'ç'))";
 
 export function normalizeCatalogPageLimit(value?: number) {
   const numeric = Number(value ?? DEFAULT_CATALOG_PAGE_SIZE);
@@ -81,8 +82,8 @@ function normalizedCategory(value?: string) {
   return !category || category === "__all__" ? "" : category;
 }
 
-function normalizedSearch(value?: string) {
-  return value?.trim().toLocaleLowerCase("tr") ?? "";
+export function normalizeCatalogSearchText(value?: string) {
+  return value?.trim().normalize("NFC").toLocaleLowerCase("tr") ?? "";
 }
 
 export function catalogPageQueryKey(request: CatalogPageRequest) {
@@ -91,7 +92,7 @@ export function catalogPageQueryKey(request: CatalogPageRequest) {
     providerType: request.providerType,
     kind: request.kind,
     categoryId: normalizedCategory(request.categoryId),
-    search: normalizedSearch(request.search),
+    search: normalizeCatalogSearchText(request.search),
     sort: request.sort,
     limit: normalizeCatalogPageLimit(request.limit),
   });
@@ -240,8 +241,8 @@ function filters(request: CatalogPageRequest) {
   }
   const search = request.search?.trim();
   if (search) {
-    clauses.push("name LIKE ? ESCAPE '\\' COLLATE NOCASE");
-    args.push(`%${escapeLike(search)}%`);
+    clauses.push(`(name LIKE ? ESCAPE '\\' COLLATE NOCASE OR ${TURKISH_SEARCH_NAME_SQL} LIKE ? ESCAPE '\\')`);
+    args.push(`%${escapeLike(search)}%`, `%${escapeLike(normalizeCatalogSearchText(search))}%`);
   }
   return { clauses, args };
 }

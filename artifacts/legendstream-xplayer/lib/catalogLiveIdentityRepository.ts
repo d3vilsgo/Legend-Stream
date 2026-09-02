@@ -47,11 +47,11 @@ export async function getCachedLiveItemsByIds(
       if (!row.payload) continue;
       try {
         const persisted = normalizePersistedCatalogPayload(
-          JSON.parse(row.payload),
           provider.id,
           "live",
+          JSON.parse(row.payload),
         );
-        if (persisted.catalogKind !== "live" || persisted.providerId !== provider.id) continue;
+        if (persisted?.catalogKind !== "live" || persisted.providerId !== provider.id) continue;
         resolved.set(row.item_id, liveRuntimeItem(persisted, provider));
       } catch {
         // Malformed persisted rows are skipped without widening the requested ID set.

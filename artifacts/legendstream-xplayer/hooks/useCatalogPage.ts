@@ -13,11 +13,11 @@ import {
 import {
   getCachedCatalogPage,
   noteCatalogPageCommit,
-  type CatalogPageItems,
+  type CatalogPageItem,
 } from "@/lib/catalogPageRepository";
 import type { CatalogRuntimeProvider } from "@/lib/catalogRuntime";
 
-type ItemForKind<K extends CatalogPageKind> = CatalogPageItems[K] extends Array<infer T> ? T : never;
+type ItemForKind<K extends CatalogPageKind> = CatalogPageItem<K>;
 
 export type CatalogPageState<T> = {
   items: T[];

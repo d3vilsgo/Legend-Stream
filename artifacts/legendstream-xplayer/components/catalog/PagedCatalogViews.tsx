@@ -395,6 +395,7 @@ function GridCard({ title, image, onPress }: { title: string; image?: string; on
 export function PagedLiveCatalog({
   provider,
   snapshotCount,
+  hasMeaningfulM3ULiveGroups,
   epgByChannel,
   favorites,
   epgLoading,
@@ -406,6 +407,7 @@ export function PagedLiveCatalog({
 }: {
   provider: ProviderConfig;
   snapshotCount: SnapshotCount;
+  hasMeaningfulM3ULiveGroups: boolean | null;
   epgByChannel: ReadonlyMap<string, readonly EpgProgram[]>;
   favorites: string[];
   epgLoading: boolean;
@@ -466,7 +468,11 @@ export function PagedLiveCatalog({
             page.reload();
           });
         }}
-      />}
+      >
+        {provider.type === "m3u" && page.countKnown && hasMeaningfulM3ULiveGroups === false
+          ? <Text style={[s.m3uHint, { color: colors.mutedForeground }]}>{t("m3uNoGroups")}</Text>
+          : null}
+      </CatalogHeader>}
       ListEmptyComponent={<Text style={{ color: colors.mutedForeground, textAlign: "center", paddingVertical: 30 }}>—</Text>}
       ListFooterComponent={<PageFooter loading={page.loadingMore} />}
       onEndReached={page.loadMore}
@@ -716,6 +722,7 @@ export function PagedSeriesCatalog({
 
 const s = StyleSheet.create({
   catalogHeaderRoot: { paddingBottom: 4 },
+  m3uHint: { marginTop: 10, fontSize: 13 },
   catalogHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 12 },
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },
   section: { fontSize: 20, fontWeight: "800" },

@@ -43,8 +43,10 @@ import { useResolvedLiveIdentityChannels } from "@/hooks/useResolvedLiveIdentity
 import type { DownloadedMedia } from "@/lib/downloads";
 import type { LiveChannelIdentity } from "@/lib/playerLiveQueue";
 import {
+  getCachedCatalogCategoryMetadata,
   loadM3USeriesInfoFromCache,
   type CatalogPlaybackIdentity,
+  type CatalogCategoryMetadata,
 } from "@/lib/catalogPageRepository";
 import { providerListPresentation } from "@/lib/providerDisplaySecurity";
 import { prepareProviderSwitchCache } from "@/lib/providerSwitchCache";
@@ -146,6 +148,10 @@ export default function OptimizedHomeScreenPaged() {
   const [selectedSeries, setSelectedSeries] = useState<XtreamSeriesItem | null>(null);
   const [seriesInfo, setSeriesInfo] = useState<XtreamSeriesInfo | null>(null);
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
+  const [categoryMetadataRefresh, setCategoryMetadataRefresh] = useState(0);
+  const [categoryMetadata, setCategoryMetadata] = useState<
+    (CatalogCategoryMetadata & { providerId: string }) | null
+  >(null);
   const [switchingProviderId, setSwitchingProviderId] = useState<string | null>(null);
   const switchingProviderRef = useRef<string | null>(null);
   const activeProviderIdRef = useRef<string | null>(provider?.id ?? null);
@@ -174,6 +180,34 @@ export default function OptimizedHomeScreenPaged() {
     setCatalogError(null);
     setCatalogDrawerOpen(false);
   }, [provider?.id]);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    if (!provider || (provider.type !== "m3u" && provider.type !== "xtream")) {
+      setCategoryMetadata(null);
+      return () => { cancelled = true; };
+    }
+    const providerId = provider.id;
+    void getCachedCatalogCategoryMetadata(providerId)
+      .then((metadata) => {
+        if (!cancelled && activeProviderIdRef.current === providerId) {
+          setCategoryMetadata({ providerId, ...metadata });
+        }
+      })
+      .catch(() => {
+        if (!cancelled && activeProviderIdRef.current === providerId) setCategoryMetadata(null);
+      });
+    return () => { cancelled = true; };
+  }, [
+    provider?.id,
+    provider?.type,
+    categoryMetadataRefresh,
+    snapshot.providerId,
+    snapshot.ready,
+    snapshot.counts.live,
+    snapshot.counts.vod,
+    snapshot.counts.series,
+  ]);
 
   const changeCatalogSort = (mode: CatalogSortMode) => {
     setCatalogSort(mode);
@@ -231,14 +265,18 @@ export default function OptimizedHomeScreenPaged() {
 
   const refreshPagedCatalog = async () => {
     if (!provider) return;
-    if (provider.type === "xtream") {
-      await refreshCatalog();
-    } else if (provider.type === "m3u") {
-      await refreshProvider();
-      await yieldToUi();
-      await refreshSnapshot();
-    } else if (provider.type === "stalker") {
-      await refreshProvider();
+    try {
+      if (provider.type === "xtream") {
+        await refreshCatalog();
+      } else if (provider.type === "m3u") {
+        await refreshProvider();
+        await yieldToUi();
+        await refreshSnapshot();
+      } else if (provider.type === "stalker") {
+        await refreshProvider();
+      }
+    } finally {
+      setCategoryMetadataRefresh((value) => value + 1);
     }
   };
 
@@ -509,6 +547,9 @@ export default function OptimizedHomeScreenPaged() {
     {view === "live" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedLiveCatalog
       provider={provider}
       snapshotCount={liveCount}
+      hasMeaningfulM3ULiveGroups={categoryMetadata?.providerId === provider.id
+        ? categoryMetadata.hasMeaningfulM3ULiveGroups
+        : null}
       epgByChannel={epgByChannel}
       favorites={favorites}
       epgLoading={isEpgLoading}
@@ -573,8 +614,8 @@ export default function OptimizedHomeScreenPaged() {
         live={countKnown ? snapshot.counts.live : (provider.type === "stalker" ? playerLiveChannels.length : null)}
         vod={vodCount.totalCount}
         series={seriesCount.totalCount}
-        vodCategories={0}
-        seriesCategories={0}
+        vodCategories={categoryMetadata?.providerId === provider.id ? categoryMetadata.vodCategories : 0}
+        seriesCategories={categoryMetadata?.providerId === provider.id ? categoryMetadata.seriesCategories : 0}
         catalogLoading={isSyncing}
         channels={homeIdentityChannels}
         history={history}
@@ -716,7 +757,13 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
           value={password}
           onChangeText={setPassword}
           secureTextEntry={!passwordVisible}
-          trailingAction={<Pressable onPress={() => setPasswordVisible((value) => !value)} style={s.iconButton}>
+          trailingAction={<Pressable
+            accessibilityRole="button"
+            accessibilityLabel={passwordVisible ? "Şifreyi gizle" : "Şifreyi göster"}
+            hitSlop={8}
+            onPress={() => setPasswordVisible((value) => !value)}
+            style={s.iconButton}
+          >
             <Feather name={passwordVisible ? "eye-off" : "eye"} size={20} color={colors.mutedForeground} />
           </Pressable>}
         />

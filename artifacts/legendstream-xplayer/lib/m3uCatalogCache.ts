@@ -11,8 +11,6 @@ import {
   upsertCatalogItems,
 } from "./catalogCache";
 import {
-  getM3UCatalog,
-  installM3UCatalog,
   type Channel,
   type Provider,
   type ProviderLoadResult,
@@ -72,13 +70,13 @@ const M3U_CACHE_STAGE_TOTAL = 3;
 export const M3U_HOME_PREVIEW_LIMIT = 48;
 const activationProviders = new Set<string>();
 
-export type M3UCatalogCacheProvider = Pick<
+export type M3UCatalogCacheProvider = Omit<Pick<
   Provider,
   "id" | "type" | "url" | "username" | "password" | "createdAt"
-> & { playlistUrl?: string };
+>, "url"> & { url?: string; playlistUrl?: string };
 
 export type M3UCatalogCacheHydration = {
-  scope: "preview" | "full";
+  scope: "preview";
   counts: { live: number; vod: number; series: number };
   hydratedCounts: { live: number; vod: number; series: number };
   ready: boolean;
@@ -91,12 +89,6 @@ export type M3UCatalogCacheHydration = {
   vodCategories: XtreamCategory[];
   seriesCategories: XtreamCategory[];
 };
-
-export type M3UCatalogKind = "live" | "vod" | "series";
-export type M3UCatalogKindHydration = Pick<
-  M3UCatalogCacheHydration,
-  "live" | "movies" | "series" | "vodCategories" | "seriesCategories"
->;
 
 function providerSource(provider: M3UCatalogCacheProvider) {
   return provider.url || provider.playlistUrl || "";
@@ -121,7 +113,6 @@ export function consumeM3UCacheActivation(providerId: string) {
 
 export async function hydrateM3UProviderCache(
   provider: M3UCatalogCacheProvider,
-  options: { initialLimit?: number; installFullCatalog?: boolean } = {},
 ): Promise<M3UCatalogCacheHydration | null> {
   if (provider.type !== "m3u" || !parseM3UProviderSource(providerSource(provider))) {
     noteM3UCacheHydration({
@@ -136,7 +127,6 @@ export async function hydrateM3UProviderCache(
     return null;
   }
 
-  const initialLimit = options.initialLimit ?? M3U_HOME_PREVIEW_LIMIT;
   let phase: "sqlite" | "runtime" = "sqlite";
   let sqliteReadMs = 0;
   let runtimeStartedAt = 0;
@@ -146,9 +136,9 @@ export async function hydrateM3UProviderCache(
     const sqliteStartedAt = Date.now();
     await initCatalogCache();
     const [rawLive, rawVod, rawSeries, state, rawCounts] = await Promise.all([
-      getCachedPersistedItems(provider.id, "live", undefined, initialLimit),
-      getCachedPersistedItems(provider.id, "vod", undefined, initialLimit),
-      getCachedPersistedItems(provider.id, "series", undefined, initialLimit),
+      getCachedPersistedItems(provider.id, "live", undefined, M3U_HOME_PREVIEW_LIMIT),
+      getCachedPersistedItems(provider.id, "vod", undefined, M3U_HOME_PREVIEW_LIMIT),
+      getCachedPersistedItems(provider.id, "series", undefined, M3U_HOME_PREVIEW_LIMIT),
       getCatalogSyncState(provider.id),
       getCatalogCounts(provider.id),
     ]);
@@ -202,9 +192,6 @@ export async function hydrateM3UProviderCache(
       return null;
     }
 
-    if (options.installFullCatalog === true) {
-      installM3UCatalog(provider.id, direct.catalog);
-    }
     noteM3UCacheHydration({
       outcome: "hit",
       reason: "none",
@@ -215,7 +202,7 @@ export async function hydrateM3UProviderCache(
       cacheSyncPhase,
     });
     return {
-      scope: options.installFullCatalog === true ? "full" : "preview",
+      scope: "preview",
       counts: cacheRawCounts,
       hydratedCounts: direct.counts,
       ready: state?.phase === "ready",
@@ -240,49 +227,6 @@ export async function hydrateM3UProviderCache(
     });
     throw caught;
   }
-}
-
-export async function hydrateM3UProviderKindCache(
-  provider: M3UCatalogCacheProvider,
-  kind: M3UCatalogKind,
-): Promise<M3UCatalogKindHydration | null> {
-  if (provider.type !== "m3u" || !parseM3UProviderSource(providerSource(provider))) return null;
-
-  await initCatalogCache();
-  const raw = await getCachedPersistedItems(provider.id, kind);
-  const liveRows = kind === "live"
-    ? raw.filter((row): row is PersistedLiveCatalogItem => row.catalogKind === "live")
-    : [];
-  const vodRows = kind === "vod"
-    ? raw.filter((row): row is PersistedVodCatalogItem => row.catalogKind === "vod")
-    : [];
-  const seriesRows = kind === "series"
-    ? raw.filter((row): row is PersistedSeriesCatalogItem => row.catalogKind === "series")
-    : [];
-
-  const direct = await buildM3UDirectHydrationCooperatively(
-    provider,
-    liveRows,
-    vodRows,
-    seriesRows,
-    { yieldFn: yieldToUi },
-  );
-
-  if (kind === "vod" || kind === "series") {
-    const current = getM3UCatalog(provider.id);
-    installM3UCatalog(provider.id, {
-      movieItems: kind === "vod" ? direct.catalog.movieItems : current.movieItems,
-      seriesGroups: kind === "series" ? direct.catalog.seriesGroups : current.seriesGroups,
-    });
-  }
-
-  return {
-    live: direct.live,
-    movies: direct.movies,
-    series: direct.series,
-    vodCategories: direct.vodCategories,
-    seriesCategories: direct.seriesCategories,
-  };
 }
 
 async function readWriteCacheState(

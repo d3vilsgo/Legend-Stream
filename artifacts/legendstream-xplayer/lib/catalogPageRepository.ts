@@ -59,9 +59,17 @@ export type CatalogPageItems = {
   series: XtreamSeriesItem[];
 };
 
+export type CatalogPageItem<K extends CatalogPageKind> = CatalogPageItems[K][number];
+
 export type CatalogPlaybackIdentity = {
   providerId: string;
   itemId: string;
+};
+
+export type CatalogCategoryMetadata = {
+  vodCategories: number;
+  seriesCategories: number;
+  hasMeaningfulM3ULiveGroups: boolean;
 };
 
 async function pageDatabase() {
@@ -101,9 +109,9 @@ function safePayload(
   if (!row.payload) return null;
   try {
     return normalizePersistedCatalogPayload(
-      JSON.parse(row.payload),
       row.provider_id,
       row.kind,
+      JSON.parse(row.payload),
     );
   } catch {
     return null;
@@ -156,7 +164,7 @@ function compatibleProvider(provider: CatalogRuntimeProvider, request: CatalogPa
 export async function getCachedCatalogPage<K extends CatalogPageKind>(
   provider: CatalogRuntimeProvider,
   request: CatalogPageRequest & { kind: K },
-): Promise<CatalogPageResult<CatalogPageItems[K] extends Array<infer T> ? T : never>> {
+): Promise<CatalogPageResult<CatalogPageItem<K>>> {
   if (!compatibleProvider(provider, request)) {
     throw new Error("Catalog page provider does not match the active request.");
   }
@@ -175,7 +183,7 @@ export async function getCachedCatalogPage<K extends CatalogPageKind>(
   const catalogPageReadMs = Date.now() - pageReadStartedAt;
 
   const pageMapStartedAt = Date.now();
-  const items = mapRows(provider, request, rows) as CatalogPageItems[K] extends Array<infer T> ? T[] : never;
+  const items = mapRows(provider, request, rows) as CatalogPageItem<K>[];
   const catalogPageMapMs = Date.now() - pageMapStartedAt;
 
   const seen = catalogPageCursorSeen(request.cursor) + rows.length;
@@ -246,6 +254,39 @@ export async function getCachedCatalogCategories(
   }));
 }
 
+export async function getCachedCatalogCategoryMetadata(
+  providerId: string,
+): Promise<CatalogCategoryMetadata> {
+  const db = await pageDatabase();
+  const row = await db.getFirstAsync<{
+    vod_categories: number;
+    series_categories: number;
+    meaningful_live_groups: number;
+  }>(
+    `SELECT
+       (SELECT COUNT(*) FROM catalog_categories WHERE provider_id = ? AND kind = 'vod') AS vod_categories,
+       (SELECT COUNT(*) FROM catalog_categories WHERE provider_id = ? AND kind = 'series') AS series_categories,
+       EXISTS(
+         SELECT 1
+           FROM catalog_items
+          WHERE provider_id = ?
+            AND kind = 'live'
+            AND category_id IS NOT NULL
+            AND TRIM(category_id) <> ''
+            AND LOWER(TRIM(category_id)) NOT IN ('uncategorized', 'live tv')
+          LIMIT 1
+       ) AS meaningful_live_groups`,
+    providerId,
+    providerId,
+    providerId,
+  );
+  return {
+    vodCategories: Math.max(0, Number(row?.vod_categories ?? 0)),
+    seriesCategories: Math.max(0, Number(row?.series_categories ?? 0)),
+    hasMeaningfulM3ULiveGroups: Number(row?.meaningful_live_groups ?? 0) === 1,
+  };
+}
+
 async function persistedSeriesRow(providerId: string, seriesId: string) {
   const db = await pageDatabase();
   const row = await db.getFirstAsync<{ payload: string }>(
@@ -259,11 +300,11 @@ async function persistedSeriesRow(providerId: string, seriesId: string) {
   if (!row?.payload) return null;
   try {
     const persisted = normalizePersistedCatalogPayload(
-      JSON.parse(row.payload),
       providerId,
       "series",
+      JSON.parse(row.payload),
     );
-    return persisted.catalogKind === "series" ? persisted : null;
+    return persisted?.catalogKind === "series" ? persisted : null;
   } catch {
     return null;
   }
@@ -368,8 +409,8 @@ export async function getCachedLivePlaybackWindow(
   const channels: Channel[] = [];
   for (const row of payloads) {
     try {
-      const persisted = normalizePersistedCatalogPayload(JSON.parse(row.payload), provider.id, "live");
-      if (persisted.catalogKind === "live") channels.push(liveRuntimeItem(persisted, provider));
+      const persisted = normalizePersistedCatalogPayload(provider.id, "live", JSON.parse(row.payload));
+      if (persisted?.catalogKind === "live") channels.push(liveRuntimeItem(persisted, provider));
     } catch {
       // Skip malformed persisted rows without widening the bounded playback window.
     }
@@ -438,8 +479,8 @@ export async function getCachedVodPlaybackWindow(
   const items: XtreamVodItem[] = [];
   for (const row of payloads) {
     try {
-      const persisted = normalizePersistedCatalogPayload(JSON.parse(row.payload), provider.id, "vod");
-      if (persisted.catalogKind === "vod") items.push(vodRuntimeItem(persisted, provider));
+      const persisted = normalizePersistedCatalogPayload(provider.id, "vod", JSON.parse(row.payload));
+      if (persisted?.catalogKind === "vod") items.push(vodRuntimeItem(persisted, provider));
     } catch {
       // Skip malformed persisted rows without widening the bounded playback window.
     }

@@ -19,7 +19,7 @@ import {
 } from "./m3uCatalogCache";
 import { beginM3UProviderSwitchMeasurement } from "./m3uSwitchMetrics";
 import { primeProviderSwitchSnapshot } from "./providerSwitchUx";
-import type { Channel } from "./iptv";
+import type { Channel, Provider } from "./iptv";
 import type { XtreamCategory, XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
 
 const HOME_SAMPLE_LIMIT = 48;
@@ -27,7 +27,7 @@ const NEW_SAMPLE_LIMIT = 24;
 
 export type ProviderSwitchCacheProvider = {
   id: string;
-  type: string;
+  type: Provider["type"];
   url?: string;
   playlistUrl?: string;
   username?: string;
@@ -60,9 +60,7 @@ export async function prepareProviderSwitchCache(
 ): Promise<ProviderSwitchCachePreparation | null> {
   if (provider.type === "m3u") {
     beginM3UProviderSwitchMeasurement(provider.id);
-    const cached = await hydrateM3UProviderCache(provider, {
-      initialLimit: HOME_SAMPLE_LIMIT,
-    });
+    const cached = await hydrateM3UProviderCache(provider);
     if (!cached) return null;
     const snapshot: ProviderSwitchCatalogSnapshot = {
       providerId: provider.id,
