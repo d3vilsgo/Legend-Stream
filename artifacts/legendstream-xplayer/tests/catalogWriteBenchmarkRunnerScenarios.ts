@@ -271,7 +271,8 @@ async function main() {
     const workflow = readFileSync(resolve(ROOT, "../../.github/workflows/android-apk.yml"), "utf8");
     assert.doesNotMatch(home, /catalog-benchmark|Catalog SQLite Benchmark/);
     assert.match(route, /if \(!enabled\) return <Redirect href="\/"/);
-    assert.match(layout, /isCatalogBenchmarkBuildEnabled\(\) \? \(/);
+    assert.match(layout, /appRuntime\.benchmarkRoute \? \(/);
+    assert.match(layout, /if \(appRuntime\.kind === "benchmark"\)/);
     assert.match(index, /isCatalogBenchmarkBuildEnabled\(\).*<Redirect href="\/catalog-benchmark"/);
     assert.match(workflow, /catalog_benchmark:[\s\S]*?default: false/);
     assert.match(workflow, /EXPO_PUBLIC_ENABLE_CATALOG_BENCHMARK/);

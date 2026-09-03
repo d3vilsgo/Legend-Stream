@@ -16,6 +16,7 @@
     "test:catalog-db-writer": "tsx tests/catalogDbWriterCoordinationScenarios.ts",
     "test:catalog-write-batch": "tsx tests/catalogWriteBatchScenarios.ts",
     "test:catalog-write-benchmark-runner": "tsx tests/catalogWriteBenchmarkRunnerScenarios.ts",
+    "test:catalog-benchmark-runtime": "tsx tests/catalogBenchmarkRuntimeIsolationScenarios.ts",
     "test:catalog-persistence": "tsx tests/catalogPersistenceScenarios.ts && tsx tests/catalogPagingScenarios.ts",
     "test:catalog-parity": "tsx tests/catalogParityScenarios.ts && tsx tests/pagedCatalogRemediationScenarios.ts && tsx tests/historyFavoritesResolutionScenarios.ts",
     "test:catalog-category-fallback": "tsx tests/catalogCategoryFallbackScenarios.ts",

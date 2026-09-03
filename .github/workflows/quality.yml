@@ -123,6 +123,12 @@ jobs:
           set -euo pipefail
           runner="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-write-benchmark-runner 2>&1 | tee /dev/stderr)"
           grep -F 'catalog write benchmark runner scenarios: 22/22 passed' <<<"$runner"
+      - name: Catalog benchmark runtime isolation (9/9 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-benchmark-runtime 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog benchmark runtime isolation scenarios: 9/9 passed' <<<"$runtime"
       - name: Catalog persistence invariants (10/10 required)
         shell: bash
         run: |

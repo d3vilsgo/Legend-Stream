@@ -19,7 +19,7 @@ import { MediaLibraryProvider } from "@/context/MediaLibraryContext";
 import { CatalogSyncProvider } from "@/context/CatalogSyncContext";
 import { cleanupProviderBackupTempFiles } from "@/lib/providerBackupFiles";
 import { safeLog } from "@/lib/safeLog";
-import { isCatalogBenchmarkBuildEnabled } from "@/lib/catalogBenchmarkEntry";
+import { resolveCatalogAppRuntime } from "@/lib/catalogBenchmarkEntry";
 
 const abortSignalCtor = globalThis.AbortSignal as typeof AbortSignal & {
   timeout?: (milliseconds: number) => AbortSignal;
@@ -34,9 +34,13 @@ if (abortSignalCtor && typeof abortSignalCtor.timeout !== "function") {
 
 void SplashScreen.preventAutoHideAsync().catch(() => undefined);
 
-void cleanupProviderBackupTempFiles({ coldStart: true }).catch((error) => {
-  safeLog.warn("BACKUP_TEMP_CLEANUP_FAILED", error);
-});
+const appRuntime = resolveCatalogAppRuntime();
+
+if (appRuntime.runBackupTempCleanup) {
+  void cleanupProviderBackupTempFiles({ coldStart: true }).catch((error) => {
+    safeLog.warn("BACKUP_TEMP_CLEANUP_FAILED", error);
+  });
+}
 
 const queryClient = new QueryClient();
 
@@ -44,7 +48,7 @@ function RootLayoutNav() {
   return (
     <Stack screenOptions={{ headerBackTitle: "Back" }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      {isCatalogBenchmarkBuildEnabled() ? (
+      {appRuntime.benchmarkRoute ? (
         <Stack.Screen name="catalog-benchmark" options={{ title: "Catalog Benchmark" }} />
       ) : null}
     </Stack>
@@ -71,6 +75,18 @@ export default function RootLayout() {
     const timer = setTimeout(() => { if (!cancelled) void hideSplash(); }, 2000);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [fontsLoaded, fontError]);
+
+  if (appRuntime.kind === "benchmark") {
+    return (
+      <SafeAreaProvider>
+        <ErrorBoundary>
+          <GestureHandlerRootView style={{ flex: 1 }}>
+            <RootLayoutNav />
+          </GestureHandlerRootView>
+        </ErrorBoundary>
+      </SafeAreaProvider>
+    );
+  }
 
   return (
     <SafeAreaProvider>
