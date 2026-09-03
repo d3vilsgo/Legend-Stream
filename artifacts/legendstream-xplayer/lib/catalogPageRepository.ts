@@ -4,6 +4,7 @@ import {
   buildCatalogPageSql,
   catalogPageCursorFromRow,
   catalogPageCursorSeen,
+  LIVE_CATEGORY_FIRST_SEEN_SQL,
   normalizeCatalogPageLimit,
   type CatalogPageKind,
   type CatalogPageRequest,
@@ -239,13 +240,7 @@ export async function getCachedCatalogCategories(
   if (kind !== "live") return getCachedCategories(providerId, kind);
   const db = await pageDatabase();
   const rows = await db.getAllAsync<{ category_id: string }>(
-    `SELECT DISTINCT category_id
-       FROM catalog_items
-      WHERE provider_id = ?
-        AND kind = 'live'
-        AND category_id IS NOT NULL
-        AND category_id <> ''
-      ORDER BY category_id COLLATE NOCASE ASC`,
+    LIVE_CATEGORY_FIRST_SEEN_SQL,
     providerId,
   );
   return rows.map((row) => ({

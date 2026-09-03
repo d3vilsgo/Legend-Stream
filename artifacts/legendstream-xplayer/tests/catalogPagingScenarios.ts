@@ -8,6 +8,7 @@ import {
   catalogPageCursorFromRow,
   CatalogPageFlightGuard,
   DEFAULT_CATALOG_PAGE_SIZE,
+  LIVE_CATEGORY_FIRST_SEEN_SQL,
   MAX_CATALOG_PAGE_SIZE,
   normalizeCatalogPageLimit,
   resolveCatalogTotalCount,
@@ -100,6 +101,18 @@ function fixtureDb() {
   addRows("provider-b", "vod", 3, "Other Movie");
   addRows("provider-b", "series", 2, "Other Series");
   addRows("provider-b", "live", 4, "Other Live");
+  ["Ulusal", "Haber", "Ulusal", "Spor", "DE", "USA", "__all__"].forEach((category, index) => {
+    insert.run(
+      "provider-order",
+      "live",
+      String(index + 1),
+      category,
+      `Ordered Live ${index + 1}`,
+      0,
+      1_700_000_100_000 + index,
+      1_700_000_100_000 + index,
+    );
+  });
   db.exec("COMMIT");
   fixture = db;
   return db;
@@ -244,6 +257,22 @@ async function main() {
     assert.ok(second.rows.every((row) => row.category_id === "cat-a"));
     assert.equal(new Set([...first.rows, ...second.rows].map((row) => row.item_id)).size, 200);
     assert.match(viewsSource, /getCachedCatalogCategories/);
+
+    const ordered = fixtureDb()
+      .prepare(LIVE_CATEGORY_FIRST_SEEN_SQL)
+      .all("provider-order") as Array<{ category_id: string }>;
+    assert.deepEqual(ordered.map((row) => row.category_id), ["Ulusal", "Haber", "Spor", "DE", "USA"]);
+    assert.equal(new Set(ordered.map((row) => row.category_id)).size, ordered.length);
+    assert.ok(ordered.every((row) => row.category_id !== "__all__"));
+    assert.match(LIVE_CATEGORY_FIRST_SEEN_SQL, /MIN\(rowid\)[\s\S]*GROUP BY category_id/i);
+    assert.doesNotMatch(LIVE_CATEGORY_FIRST_SEEN_SQL, /COLLATE NOCASE/i);
+    assert.match(repositorySource, /LIVE_CATEGORY_FIRST_SEEN_SQL/);
+    assert.match(viewsSource, /\{ id: "__all__", name: allLabel \}[\s\S]*\.\.\.categories\.map/);
+
+    const providerB = fixtureDb()
+      .prepare(LIVE_CATEGORY_FIRST_SEEN_SQL)
+      .all("provider-b") as Array<{ category_id: string }>;
+    assert.deepEqual(providerB.map((row) => row.category_id), ["Sports", "News"]);
   });
 
   await scenario("search is SQL-paged and stale pre-search cursor is rejected", () => {

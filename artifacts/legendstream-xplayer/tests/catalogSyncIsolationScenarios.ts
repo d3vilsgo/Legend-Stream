@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   isCatalogSyncOwnershipCurrent,
+  publishSuccessfulCatalogCommitIfCurrent,
   type CatalogSyncMode,
   type CatalogSyncOwnership,
 } from "../lib/catalogAvailability";
@@ -11,6 +12,8 @@ import { enqueueCatalogDbWrite } from "../lib/catalogDbWriter";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const contextSource = readFileSync(resolve(ROOT, "context/CatalogSyncContext.tsx"), "utf8");
+const playerSource = readFileSync(resolve(ROOT, "context/PlayerContext.tsx"), "utf8");
+const writeRunnerSource = readFileSync(resolve(ROOT, "lib/m3uCacheWriteRunner.ts"), "utf8");
 
 let passed = 0;
 
@@ -23,6 +26,12 @@ async function scenario(name: string, run: () => void | Promise<void>) {
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+function deferredBoolean() {
+  let resolve!: (value: boolean) => void;
+  const promise = new Promise<boolean>((done) => { resolve = done; });
   return { promise, resolve };
 }
 
@@ -63,6 +72,10 @@ function isolationHarness(providerId: string) {
     capture,
     switchProvider,
     beginRun,
+    beginSnapshotRefresh() {
+      generation += 1;
+      return capture();
+    },
     publishSnapshot(target: CatalogSyncOwnership, usable: boolean) {
       if (!owns(target)) return false;
       hasUsableCache = usable;
@@ -95,12 +108,23 @@ function isolationHarness(providerId: string) {
 }
 
 async function main() {
-  await scenario("late usable A snapshot cannot publish over empty B", () => {
+  await scenario("late usable A snapshot or M3U commit cannot publish over empty B", async () => {
     const harness = isolationHarness("A");
     const lateA = harness.capture();
+    const lateCommit = deferredBoolean();
+    let homeCount = 801;
     harness.switchProvider("B");
     harness.beginRun("initial");
     assert.equal(harness.publishSnapshot(lateA, true), false);
+    const published = publishSuccessfulCatalogCommitIfCurrent(
+      lateCommit.promise,
+      lateA,
+      () => harness.capture(),
+      () => { homeCount = 1_602; },
+    );
+    lateCommit.resolve(true);
+    assert.equal(await published, false);
+    assert.equal(homeCount, 801);
     assert.equal(harness.state().hasUsableCache, false);
     assert.match(
       contextSource,
@@ -134,13 +158,24 @@ async function main() {
     );
   });
 
-  await scenario("A to B to A rejects the old same-provider generation", () => {
+  await scenario("A to B to A rejects old snapshot and M3U completion generations", async () => {
     const harness = isolationHarness("A");
     const generationOne = harness.beginRun("initial").ownership;
+    const oldCommit = deferredBoolean();
+    let refreshes = 0;
     harness.switchProvider("B");
     harness.switchProvider("A");
     harness.beginRun("initial");
     assert.equal(harness.publishSnapshot(generationOne, true), false);
+    const published = publishSuccessfulCatalogCommitIfCurrent(
+      oldCommit.promise,
+      generationOne,
+      () => harness.capture(),
+      () => { refreshes += 1; },
+    );
+    oldCommit.resolve(true);
+    assert.equal(await published, false);
+    assert.equal(refreshes, 0);
     assert.equal(harness.state().hasUsableCache, false);
     assert.match(
       contextSource,
@@ -171,7 +206,7 @@ async function main() {
     assert.match(contextSource, /if \(runningRef\.current\?\.task === task\) runningRef\.current = null/);
   });
 
-  await scenario("serialized persisted writes preserve newer ABA state", async () => {
+  await scenario("serialized writes and successful current M3U commits refresh counts without changing Xtream semantics", async () => {
     const firstWrite = deferred();
     const order: string[] = [];
     const oldAWrite = enqueueCatalogDbWrite(async () => {
@@ -183,6 +218,53 @@ async function main() {
     await Promise.all([oldAWrite, newAWrite]);
     assert.deepEqual(order, ["A1", "A3"]);
     assert.match(contextSource, /isCatalogSyncOwnershipCurrent\([\s\S]*setCatalogSyncState\(providerId/);
+
+    const harness = isolationHarness("A");
+    const current = harness.capture();
+    const successfulCommit = deferredBoolean();
+    let homeCount = 801;
+    const published = publishSuccessfulCatalogCommitIfCurrent(
+      successfulCommit.promise,
+      current,
+      () => harness.capture(),
+      () => { homeCount = 1_602; },
+    );
+    successfulCommit.resolve(true);
+    assert.equal(await published, true);
+    assert.equal(homeCount, 1_602);
+
+    const firstSnapshotRead = harness.beginSnapshotRefresh();
+    const secondSnapshotRead = harness.beginSnapshotRefresh();
+    assert.equal(harness.publishSnapshot(secondSnapshotRead, true), true);
+    assert.equal(harness.publishSnapshot(firstSnapshotRead, false), false);
+    assert.equal(harness.state().hasUsableCache, true);
+
+    const currentAfterReads = harness.capture();
+    const rejectedCommit = deferredBoolean();
+    let rejectedRefreshes = 0;
+    const rejected = publishSuccessfulCatalogCommitIfCurrent(
+      rejectedCommit.promise,
+      currentAfterReads,
+      () => harness.capture(),
+      () => { rejectedRefreshes += 1; },
+    );
+    rejectedCommit.resolve(false);
+    assert.equal(await rejected, false);
+    assert.equal(rejectedRefreshes, 0);
+
+    const failed = await publishSuccessfulCatalogCommitIfCurrent(
+      Promise.reject(new Error("cache write failed")),
+      currentAfterReads,
+      () => harness.capture(),
+      () => { rejectedRefreshes += 1; },
+    );
+    assert.equal(failed, false);
+    assert.equal(rejectedRefreshes, 0);
+    assert.match(writeRunnerSource, /return enqueueM3UCacheWrite/);
+    assert.match(playerSource, /m3uCatalogCommit/);
+    assert.match(playerSource, /publishSuccessfulCatalogCommitIfCurrent/);
+    assert.match(contextSource, /m3uCatalogCommit[\s\S]*generation = \+\+generationRef\.current[\s\S]*refreshSnapshotFor\(active, ownership\)/);
+    assert.match(contextSource, /await refreshSnapshotFor\(provider, ownership\)/);
   });
 
   assert.equal(passed, 7);

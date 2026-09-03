@@ -4,6 +4,15 @@ export type CatalogPageSort = "default" | "alphaAsc" | "alphaDesc" | "idAsc" | "
 
 export const DEFAULT_CATALOG_PAGE_SIZE = 100;
 export const MAX_CATALOG_PAGE_SIZE = 200;
+export const LIVE_CATEGORY_FIRST_SEEN_SQL = `SELECT category_id, MIN(rowid) AS first_row_id
+   FROM catalog_items
+  WHERE provider_id = ?
+    AND kind = 'live'
+    AND category_id IS NOT NULL
+    AND TRIM(category_id) <> ''
+    AND category_id <> '__all__'
+  GROUP BY category_id
+  ORDER BY first_row_id ASC`;
 
 export type CatalogPageRequest = {
   providerId: string;

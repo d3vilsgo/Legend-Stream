@@ -18,6 +18,28 @@ export function isCatalogSyncOwnershipCurrent(
   );
 }
 
+export async function publishSuccessfulCatalogCommitIfCurrent(
+  completion: Promise<boolean> | null | undefined,
+  ownership: CatalogSyncOwnership,
+  currentOwnership: () => CatalogSyncOwnership,
+  publish: () => void,
+) {
+  if (!completion) return false;
+  let committed = false;
+  try {
+    committed = await completion;
+  } catch {
+    return false;
+  }
+  if (!committed) return false;
+  const current = currentOwnership();
+  if (!isCatalogSyncOwnershipCurrent(current.providerId, current.generation, ownership)) {
+    return false;
+  }
+  publish();
+  return true;
+}
+
 export function hasUsableCatalogCache(counts: CatalogCounts) {
   return counts.live > 0 || counts.vod > 0 || counts.series > 0;
 }

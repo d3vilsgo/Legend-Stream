@@ -147,7 +147,7 @@ function asLoadProvider(provider: NonNullable<ReturnType<typeof usePlayer>["prov
 }
 
 export function CatalogSyncProvider({ children }: { children: ReactNode }) {
-  const { provider, channels, recoverLegacyCatalogFallback } = usePlayer();
+  const { provider, channels, m3uCatalogCommit, recoverLegacyCatalogFallback } = usePlayer();
   const colors = useColors();
   const { language } = useI18n();
   const [syncState, setSyncStateLocal] = useState<CatalogSyncState | CatalogRunState | null>(null);
@@ -158,6 +158,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
   const cancelRef = useRef(false);
   const generationRef = useRef(0);
   const latestProviderIdRef = useRef<string | null>(provider?.id ?? null);
+  const latestProviderRef = useRef<ActiveCatalogProvider | null>(provider);
   const runningRef = useRef<RunningCatalogTask | null>(null);
   const activeRunIdRef = useRef<number | null>(null);
   const activeModeRef = useRef<CatalogSyncMode | null>(null);
@@ -166,6 +167,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
 
   useLayoutEffect(() => {
     const committedProviderId = provider?.id ?? null;
+    latestProviderRef.current = provider;
     if (latestProviderIdRef.current !== committedProviderId) {
       latestProviderIdRef.current = committedProviderId;
       generationRef.current += 1;
@@ -233,6 +235,22 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
       generation: generationRef.current,
     });
   }, [provider, refreshSnapshotFor]);
+
+  useEffect(() => {
+    const active = latestProviderRef.current;
+    if (
+      !active ||
+      resolvedProviderTransport(active) !== "m3u" ||
+      !m3uCatalogCommit ||
+      m3uCatalogCommit.providerId !== active.id
+    ) return;
+    const generation = ++generationRef.current;
+    const ownership: CatalogSyncOwnership = {
+      providerId: active.id,
+      generation,
+    };
+    void refreshSnapshotFor(active, ownership);
+  }, [m3uCatalogCommit, refreshSnapshotFor]);
 
   const publishState = useCallback(async (
     ownership: CatalogSyncOwnership,
