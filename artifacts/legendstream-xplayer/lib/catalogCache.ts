@@ -8,6 +8,10 @@ import {
   type PersistedCatalogItem,
 } from "./catalogPersistence";
 import {
+  CATALOG_SINGLE_ROW_UPSERT_SQL,
+  buildCatalogItemBindValues,
+} from "./catalogWriteBatch";
+import {
   fingerprintM3USqliteColumnNames,
   type M3USqliteSchemaFingerprint,
 } from "./sqliteWriteDiagnostics";
@@ -180,41 +184,6 @@ const parsePayload = (
   }
 };
 
-const addedTime = (value: unknown) => {
-  if (value === undefined || value === null || value === "") return 0;
-  const numeric = Number(value);
-  if (Number.isFinite(numeric) && numeric > 0) {
-    return numeric < 1_000_000_000_000 ? numeric * 1000 : numeric;
-  }
-  const parsed = Date.parse(String(value));
-  return Number.isFinite(parsed) ? parsed : 0;
-};
-
-function itemIdentity(item: PersistedCatalogItem) {
-  if (item.catalogKind === "live") return String(item.id);
-  if (item.catalogKind === "vod") return String(item.stream_id);
-  return String(item.series_id);
-}
-
-function itemCategory(item: PersistedCatalogItem) {
-  if (item.catalogKind === "live") return String(item.category || "");
-  return String(item.category_id ?? "");
-}
-
-function itemName(item: PersistedCatalogItem) {
-  return item.name;
-}
-
-function itemImage(item: PersistedCatalogItem) {
-  if (item.catalogKind === "live") return item.logoUrl ?? null;
-  if (item.catalogKind === "vod") return item.stream_icon ?? null;
-  return item.cover ?? null;
-}
-
-function itemAdded(item: PersistedCatalogItem) {
-  return item.catalogKind === "vod" ? addedTime(item.added) : 0;
-}
-
 async function writeSyncState(
   db: SQLite.SQLiteDatabase,
   providerId: string,
@@ -287,32 +256,9 @@ async function insertRows(
 ) {
   for (const persisted of rows) {
     if (isCancelled?.()) break;
-    if (persisted.catalogKind !== kind || persisted.providerId !== providerId) {
-      throw new Error("Catalog persistence DTO does not match its write target.");
-    }
     await db.runAsync(
-      `INSERT INTO catalog_items (
-         provider_id, kind, item_id, category_id, name, image_url, payload,
-         added_at, first_seen_at, last_seen_at, is_new
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(provider_id, kind, item_id) DO UPDATE SET
-         category_id = excluded.category_id,
-         name = excluded.name,
-         image_url = excluded.image_url,
-         payload = excluded.payload,
-         added_at = excluded.added_at,
-         last_seen_at = excluded.last_seen_at`,
-      providerId,
-      kind,
-      itemIdentity(persisted),
-      itemCategory(persisted),
-      itemName(persisted),
-      itemImage(persisted),
-      JSON.stringify(persisted),
-      itemAdded(persisted),
-      seenAt,
-      seenAt,
-      markNew ? 1 : 0,
+      CATALOG_SINGLE_ROW_UPSERT_SQL,
+      buildCatalogItemBindValues({ providerId, kind, item: persisted, seenAt, markNew }),
     );
   }
 }

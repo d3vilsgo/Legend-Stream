@@ -7,6 +7,7 @@ import { buildM3UCacheWriteProjection } from "../lib/m3uCacheWriteProjection";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const catalogCacheSource = readFileSync(resolve(ROOT, "lib/catalogCache.ts"), "utf8");
+const catalogWriteBatchSource = readFileSync(resolve(ROOT, "lib/catalogWriteBatch.ts"), "utf8");
 const m3uCatalogCacheSource = readFileSync(resolve(ROOT, "lib/m3uCatalogCache.ts"), "utf8");
 
 let passed = 0;
@@ -135,8 +136,11 @@ async function main() {
 
   await scenario("batch size and INSERT conflict contract remain unchanged", () => {
     assert.match(catalogCacheSource, /const WRITE_BATCH_SIZE = 200;/);
-    assert.match(catalogCacheSource, /INSERT INTO catalog_items/);
-    assert.match(catalogCacheSource, /ON CONFLICT\(provider_id, kind, item_id\) DO UPDATE SET/);
+    assert.match(catalogCacheSource, /await db\.runAsync\(/, "production remains row-by-row runAsync");
+    assert.match(catalogCacheSource, /CATALOG_SINGLE_ROW_UPSERT_SQL/);
+    assert.doesNotMatch(catalogCacheSource, /executePreparedCatalogMultiRowBatch/);
+    assert.match(catalogWriteBatchSource, /INSERT INTO catalog_items/);
+    assert.match(catalogWriteBatchSource, /ON CONFLICT\(provider_id, kind, item_id\) DO UPDATE SET/);
   });
 
   await scenario("M3U success path stages sequential batches before the final swap", () => {

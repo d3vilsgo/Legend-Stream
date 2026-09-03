@@ -104,9 +104,11 @@ expect(
 
 const packageRoot = process.cwd();
 const cacheSource = fs.readFileSync(path.join(packageRoot, "lib/catalogCache.ts"), "utf8");
+const writeBatchSource = fs.readFileSync(path.join(packageRoot, "lib/catalogWriteBatch.ts"), "utf8");
 expect(
   cacheSource.includes("items: PersistedCatalogItem[]") &&
-  cacheSource.includes("JSON.stringify(persisted)") &&
+  cacheSource.includes("buildCatalogItemBindValues") &&
+  writeBatchSource.includes("JSON.stringify(item)") &&
   !cacheSource.includes("Array<Channel | XtreamVodItem | XtreamSeriesItem>"),
   "catalog cache write API must accept only persisted DTOs",
 );
