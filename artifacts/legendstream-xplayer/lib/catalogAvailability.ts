@@ -7,6 +7,58 @@ export type CatalogSyncOwnership = {
   generation: number;
 };
 
+export type ProviderLoadRequestMode = "foreground" | "background";
+export type ProviderLoadRequestOwnership = {
+  providerId: string;
+  generation: number;
+  mode: ProviderLoadRequestMode;
+};
+
+export class ProviderLoadRequestGate {
+  private nextGeneration = 0;
+  private readonly activeByProvider = new Map<string, ProviderLoadRequestOwnership>();
+
+  beginForeground(providerId: string): ProviderLoadRequestOwnership {
+    const ownership: ProviderLoadRequestOwnership = {
+      providerId,
+      generation: ++this.nextGeneration,
+      mode: "foreground",
+    };
+    this.activeByProvider.set(providerId, ownership);
+    return ownership;
+  }
+
+  beginBackground(providerId: string): ProviderLoadRequestOwnership | null {
+    if (this.activeByProvider.has(providerId)) return null;
+    const ownership: ProviderLoadRequestOwnership = {
+      providerId,
+      generation: ++this.nextGeneration,
+      mode: "background",
+    };
+    this.activeByProvider.set(providerId, ownership);
+    return ownership;
+  }
+
+  isCurrent(ownership: ProviderLoadRequestOwnership) {
+    const active = this.activeByProvider.get(ownership.providerId);
+    return active?.generation === ownership.generation && active.mode === ownership.mode;
+  }
+
+  finish(ownership: ProviderLoadRequestOwnership) {
+    if (!this.isCurrent(ownership)) return false;
+    this.activeByProvider.delete(ownership.providerId);
+    return true;
+  }
+
+  invalidateProvider(providerId: string) {
+    this.activeByProvider.delete(providerId);
+  }
+
+  invalidateAll() {
+    this.activeByProvider.clear();
+  }
+}
+
 export function isCatalogSyncOwnershipCurrent(
   currentProviderId: string | null,
   currentGeneration: number,
