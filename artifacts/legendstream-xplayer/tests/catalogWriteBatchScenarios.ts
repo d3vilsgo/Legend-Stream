@@ -3,6 +3,10 @@ import { DatabaseSync } from "node:sqlite";
 import { enqueueCatalogDbWrite } from "../lib/catalogDbWriter";
 import type { PersistedVodCatalogItem } from "../lib/catalogPersistence";
 import {
+  CURRENT_CATALOG_SINGLE_ROW_UPSERT_SQL,
+  buildCurrentCatalogItemBindValues,
+} from "../lib/catalogWriteBaseline";
+import {
   CATALOG_ADAPTIVE_WIDTHS,
   CATALOG_SINGLE_ROW_UPSERT_SQL,
   CATALOG_UPSERT_VALUES_PER_ROW,
@@ -111,10 +115,12 @@ async function scenario(name: string, run: () => void | Promise<void>) {
 }
 
 async function main() {
-  await scenario("one-row SQL has one exact eleven-value shape", () => {
+  await scenario("one-row SQL matches the independent current production control", () => {
     const sql = buildCatalogMultiRowUpsert(1);
     assert.equal((sql.match(/\?/g) ?? []).length, 11);
+    assert.equal((CURRENT_CATALOG_SINGLE_ROW_UPSERT_SQL.match(/\?/g) ?? []).length, 11);
     assert.equal(sql, CATALOG_SINGLE_ROW_UPSERT_SQL);
+    assert.equal(sql.replace(/\s+/g, " ").trim(), CURRENT_CATALOG_SINGLE_ROW_UPSERT_SQL.replace(/\s+/g, " ").trim());
   });
 
   await scenario("fifty-row SQL has 550 placeholders", () => {
@@ -128,11 +134,15 @@ async function main() {
     assert.throws(() => buildCatalogMultiRowUpsert(51), RangeError);
   });
 
-  await scenario("bind order matches the persisted catalog column contract", () => {
+  await scenario("candidate bind order matches the independent current production control", () => {
     const item = vod(9);
     const bind = buildCatalogItemBindValues({
       providerId: "provider-a", kind: "vod", item, seenAt: 1234, markNew: true,
     });
+    const currentBind = buildCurrentCatalogItemBindValues({
+      providerId: "provider-a", kind: "vod", item, seenAt: 1234, markNew: true,
+    });
+    assert.deepEqual(bind, currentBind);
     assert.deepEqual(bind.slice(0, 6), ["provider-a", "vod", "9", "7", "Film 9", "https://invalid.example/9.jpg"]);
     assert.equal(bind[6], JSON.stringify(item));
     assert.deepEqual(bind.slice(7), [1_700_000_000_000, 1234, 1234, 1]);
@@ -165,10 +175,13 @@ async function main() {
   });
 
   await scenario("null image and blank category preserve current bind semantics", () => {
+    const item = vod(1, { stream_icon: undefined, category_id: undefined });
     const bind = buildCatalogItemBindValues({
-      providerId: "provider-a", kind: "vod",
-      item: vod(1, { stream_icon: undefined, category_id: undefined }), seenAt: 1, markNew: false,
+      providerId: "provider-a", kind: "vod", item, seenAt: 1, markNew: false,
     });
+    assert.deepEqual(bind, buildCurrentCatalogItemBindValues({
+      providerId: "provider-a", kind: "vod", item, seenAt: 1, markNew: false,
+    }));
     assert.equal(bind[3], "");
     assert.equal(bind[5], null);
   });
@@ -270,9 +283,12 @@ async function main() {
     assert.equal(database.attempts[0].executions.length, 4);
   });
 
-  await scenario("duplicate primary keys match current sequential UPSERT final state", () => {
+  await scenario("duplicate primary keys match independent current sequential UPSERT final state", () => {
     const fixture = [vod(1, { name: "first", plot: "one" }), vod(1, { name: "second", plot: "two" })];
-    const bind = fixture.map((item, index) => buildCatalogItemBindValues({
+    const currentBind = fixture.map((item, index) => buildCurrentCatalogItemBindValues({
+      providerId: "provider-a", kind: "vod", item, seenAt: 100 + index, markNew: index === 0,
+    }));
+    const candidateBind = fixture.map((item, index) => buildCatalogItemBindValues({
       providerId: "provider-a", kind: "vod", item, seenAt: 100 + index, markNew: index === 0,
     }));
     const sequential = new DatabaseSync(":memory:");
@@ -280,9 +296,9 @@ async function main() {
     try {
       createSqliteSchema(sequential);
       createSqliteSchema(candidate);
-      const single = sequential.prepare(CATALOG_SINGLE_ROW_UPSERT_SQL);
-      for (const values of bind) single.run(...values);
-      candidate.prepare(buildCatalogMultiRowUpsert(2)).run(...bind.flat());
+      const single = sequential.prepare(CURRENT_CATALOG_SINGLE_ROW_UPSERT_SQL);
+      for (const values of currentBind) single.run(...values);
+      candidate.prepare(buildCatalogMultiRowUpsert(2)).run(...candidateBind.flat());
       const sql = "SELECT category_id, name, image_url, payload, added_at, first_seen_at, last_seen_at, is_new FROM catalog_items";
       assert.deepEqual(candidate.prepare(sql).get(), sequential.prepare(sql).get());
     } finally {

@@ -1,9 +1,11 @@
 import * as SQLite from "expo-sqlite";
 import type { PersistedVodCatalogItem } from "./catalogPersistence";
 import {
+  CURRENT_CATALOG_SINGLE_ROW_UPSERT_SQL,
+  buildCurrentCatalogItemBindValues,
+} from "./catalogWriteBaseline";
+import {
   CATALOG_LOGICAL_BATCH_MAX,
-  CATALOG_SINGLE_ROW_UPSERT_SQL,
-  buildCatalogItemBindValues,
   executePreparedCatalogMultiRowBatch,
   executePreparedCatalogSingleRowBatch,
   type CatalogWriteCounters,
@@ -125,8 +127,8 @@ async function currentWriteBatch(
   await db.withExclusiveTransactionAsync(async (transaction) => {
     for (const item of items) {
       await transaction.runAsync(
-        CATALOG_SINGLE_ROW_UPSERT_SQL,
-        buildCatalogItemBindValues({
+        CURRENT_CATALOG_SINGLE_ROW_UPSERT_SQL,
+        buildCurrentCatalogItemBindValues({
           providerId: STAGING_PROVIDER,
           kind: "vod",
           item,
@@ -147,6 +149,10 @@ function hashText(hash: number, text: string) {
   return value >>> 0;
 }
 
+function rowFingerprint(values: readonly unknown[]) {
+  return values.map((value) => value === null ? "<null>" : String(value)).join("\u001f") + "\u001e";
+}
+
 async function validateResult(
   db: SQLite.SQLiteDatabase,
   items: PersistedVodCatalogItem[],
@@ -154,42 +160,106 @@ async function validateResult(
 ) {
   const counts = await db.getFirstAsync<{
     total: number;
+    active: number;
     staging: number;
     wrong_seen: number;
     wrong_new: number;
   }>(`SELECT
        COUNT(*) AS total,
+       SUM(CASE WHEN provider_id = ? THEN 1 ELSE 0 END) AS active,
        SUM(CASE WHEN provider_id = ? THEN 1 ELSE 0 END) AS staging,
        SUM(CASE WHEN first_seen_at != ? OR last_seen_at != ? THEN 1 ELSE 0 END) AS wrong_seen,
        SUM(CASE WHEN is_new != 1 THEN 1 ELSE 0 END) AS wrong_new
-     FROM catalog_items`, STAGING_PROVIDER, seenAt, seenAt);
-  if (!counts || counts.total !== items.length || counts.staging !== 0 || counts.wrong_seen !== 0 || counts.wrong_new !== 0) {
+     FROM catalog_items`, ACTIVE_PROVIDER, STAGING_PROVIDER, seenAt, seenAt);
+  if (
+    !counts ||
+    counts.total !== items.length ||
+    counts.active !== items.length ||
+    counts.staging !== 0 ||
+    counts.wrong_seen !== 0 ||
+    counts.wrong_new !== 0
+  ) {
     throw new Error("Catalog benchmark row/count metadata validation failed.");
   }
 
   let actualHash = 2_166_136_261;
   let offset = 0;
   while (offset < items.length) {
-    const page = await db.getAllAsync<{ item_id: string; payload: string }>(
-      `SELECT item_id, payload FROM catalog_items
-       WHERE provider_id = ? AND kind = 'vod'
-       ORDER BY item_id ASC LIMIT 500 OFFSET ?`,
+    const page = await db.getAllAsync<{
+      item_id: string;
+      category_id: string | null;
+      name: string;
+      image_url: string | null;
+      payload: string;
+      added_at: number;
+      first_seen_at: number;
+      last_seen_at: number;
+      is_new: number;
+    }>(
+      `SELECT item_id, category_id, name, image_url, payload,
+              added_at, first_seen_at, last_seen_at, is_new
+         FROM catalog_items
+        WHERE provider_id = ? AND kind = 'vod'
+        ORDER BY item_id ASC LIMIT 500 OFFSET ?`,
       ACTIVE_PROVIDER,
       offset,
     );
-    for (const row of page) actualHash = hashText(actualHash, `${row.item_id}\u001f${row.payload}\u001e`);
+    for (const row of page) {
+      actualHash = hashText(actualHash, rowFingerprint([
+        row.item_id,
+        row.category_id,
+        row.name,
+        row.image_url,
+        row.payload,
+        row.added_at,
+        row.first_seen_at,
+        row.last_seen_at,
+        row.is_new,
+      ]));
+    }
     offset += page.length;
     if (page.length === 0) break;
   }
 
   let expectedHash = 2_166_136_261;
-  for (const item of items) {
-    expectedHash = hashText(
-      expectedHash,
-      `${String(item.stream_id)}\u001f${JSON.stringify({ ...item, providerId: STAGING_PROVIDER })}\u001e`,
-    );
+  const expectedItems = [...items].sort((left, right) => String(left.stream_id).localeCompare(String(right.stream_id)));
+  for (const item of expectedItems) {
+    const bind = buildCurrentCatalogItemBindValues({
+      providerId: STAGING_PROVIDER,
+      kind: "vod",
+      item,
+      seenAt,
+      markNew: true,
+    });
+    expectedHash = hashText(expectedHash, rowFingerprint([
+      bind[2], bind[3], bind[4], bind[5], bind[6], bind[7], bind[8], bind[9], bind[10],
+    ]));
   }
-  if (actualHash !== expectedHash) throw new Error("Catalog benchmark identity/payload validation failed.");
+  if (actualHash !== expectedHash) {
+    throw new Error("Catalog benchmark persisted-column parity validation failed.");
+  }
+
+  const categories = await db.getAllAsync<{
+    category_id: string;
+    category_name: string;
+    parent_id: number | null;
+  }>(
+    `SELECT category_id, category_name, parent_id
+       FROM catalog_categories
+      WHERE provider_id = ? AND kind = 'vod'
+      ORDER BY CAST(category_id AS INTEGER) ASC`,
+    ACTIVE_PROVIDER,
+  );
+  if (
+    categories.length !== 24 ||
+    categories.some((category, index) =>
+      category.category_id !== String(index) ||
+      category.category_name !== `Category ${index}` ||
+      category.parent_id !== null
+    )
+  ) {
+    throw new Error("Catalog benchmark category validation failed.");
+  }
 }
 
 export async function runCatalogWriteBenchmark(options: {
@@ -308,8 +378,8 @@ export async function runCatalogWriteRollbackProbe(strategy: CatalogWriteBenchma
   const valid = makeRows(200, "small").slice(0, 2);
   const invalid = { ...valid[1], name: null } as unknown as PersistedVodCatalogItem;
   await db.runAsync(
-    CATALOG_SINGLE_ROW_UPSERT_SQL,
-    buildCatalogItemBindValues({
+    CURRENT_CATALOG_SINGLE_ROW_UPSERT_SQL,
+    buildCurrentCatalogItemBindValues({
       providerId: ACTIVE_PROVIDER,
       kind: "vod",
       item: { ...valid[0], providerId: ACTIVE_PROVIDER },
