@@ -110,12 +110,12 @@ jobs:
           set -euo pipefail
           writer="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-db-writer 2>&1 | tee /dev/stderr)"
           grep -F 'catalog DB writer coordination scenarios: 8/8 passed' <<<"$writer"
-      - name: Catalog prepared write candidate semantics (22/22 required)
+      - name: Catalog prepared write candidate semantics (27/27 required)
         shell: bash
         run: |
           set -euo pipefail
           candidate="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-write-batch 2>&1 | tee /dev/stderr)"
-          grep -F 'catalog write batch scenarios: 22/22 passed' <<<"$candidate"
+          grep -F 'catalog write batch scenarios: 27/27 passed' <<<"$candidate"
       - name: Catalog persistence invariants (10/10 required)
         shell: bash
         run: |

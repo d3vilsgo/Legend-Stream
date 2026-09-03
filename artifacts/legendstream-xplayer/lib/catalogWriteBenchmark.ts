@@ -27,16 +27,24 @@ export type CatalogWriteBenchmarkResult = {
   projectionMs: number;
   jsonSerializeMs: number;
   serializedBytes: number;
+  /** Stale DB delete + open + schema/index setup wall-clock. Cleanup is excluded. */
+  dbSetupMs: number;
+  /** Strategy transaction wall-clock total. Excludes yield and final swap time. */
   transactionMs: number;
+  /** Same strategy-transaction boundary as transactionMs; retained as the SQLite write metric. */
   sqliteWriteMs: number;
+  /** Wall-clock spent awaiting cooperative UI yields between logical write batches. */
+  yieldMs: number;
   prepareCount: number;
   executeCount: number;
   finalizeCount: number;
   yieldCount: number;
   categoryWriteMs: number;
   finalSwapMs: number;
+  /** First logical write batch start -> final swap completion. */
   totalMs: number;
   rowsPerSecond: number;
+  sqliteRowsPerSecond: number;
   correctness: "passed";
 };
 
@@ -48,6 +56,37 @@ const PROFILE_BYTES: Record<CatalogWritePayloadProfile, number> = {
 
 function nowMs() {
   return globalThis.performance?.now?.() ?? Date.now();
+}
+
+function failureText(caught: unknown) {
+  if (caught instanceof Error) return caught.stack ?? `${caught.name}: ${caught.message}`;
+  return String(caught);
+}
+
+class CatalogBenchmarkCleanupError extends Error {
+  readonly failures: unknown[];
+
+  constructor(failures: unknown[]) {
+    super(`Catalog benchmark cleanup failed:\n${failures.map(failureText).join("\n---\n")}`);
+    this.name = "CatalogBenchmarkCleanupError";
+    this.failures = failures;
+  }
+}
+
+class CatalogBenchmarkLifecycleError extends Error {
+  readonly primaryError: unknown;
+  readonly cleanupError: unknown;
+
+  constructor(primaryError: unknown, cleanupError: unknown) {
+    super(
+      `Catalog benchmark failed and cleanup also failed.\n` +
+      `Primary failure:\n${failureText(primaryError)}\n` +
+      `Cleanup failure:\n${failureText(cleanupError)}`,
+    );
+    this.name = "CatalogBenchmarkLifecycleError";
+    this.primaryError = primaryError;
+    this.cleanupError = cleanupError;
+  }
 }
 
 function addCounters(target: CatalogWriteCounters, source: CatalogWriteCounters) {
@@ -80,9 +119,7 @@ function makeRows(
   }));
 }
 
-async function openIsolatedDatabase() {
-  await SQLite.deleteDatabaseAsync(CATALOG_WRITE_BENCHMARK_DB).catch(() => undefined);
-  const db = await SQLite.openDatabaseAsync(CATALOG_WRITE_BENCHMARK_DB);
+async function createBenchmarkSchema(db: SQLite.SQLiteDatabase) {
   await db.execAsync(`
     PRAGMA journal_mode = WAL;
     PRAGMA synchronous = NORMAL;
@@ -116,7 +153,52 @@ async function openIsolatedDatabase() {
     CREATE INDEX idx_catalog_items_new
       ON catalog_items(provider_id, kind, is_new, first_seen_at DESC);
   `);
-  return db;
+}
+
+async function cleanupIsolatedDatabase(db: SQLite.SQLiteDatabase | null) {
+  const failures: unknown[] = [];
+  if (db) {
+    try {
+      await db.closeAsync();
+    } catch (caught) {
+      failures.push(caught);
+    }
+  }
+  try {
+    await SQLite.deleteDatabaseAsync(CATALOG_WRITE_BENCHMARK_DB);
+  } catch (caught) {
+    failures.push(caught);
+  }
+  if (failures.length > 0) throw new CatalogBenchmarkCleanupError(failures);
+}
+
+async function withIsolatedBenchmarkDatabase<T>(
+  run: (db: SQLite.SQLiteDatabase, dbSetupMs: number) => Promise<T>,
+): Promise<T> {
+  let db: SQLite.SQLiteDatabase | null = null;
+  let primaryError: unknown;
+  let hasPrimaryError = false;
+
+  try {
+    const setupStartedAt = nowMs();
+    // Fail closed: a stale benchmark DB must not survive into a new measurement.
+    await SQLite.deleteDatabaseAsync(CATALOG_WRITE_BENCHMARK_DB);
+    db = await SQLite.openDatabaseAsync(CATALOG_WRITE_BENCHMARK_DB);
+    await createBenchmarkSchema(db);
+    const dbSetupMs = nowMs() - setupStartedAt;
+    return await run(db, dbSetupMs);
+  } catch (caught) {
+    hasPrimaryError = true;
+    primaryError = caught;
+    throw caught;
+  } finally {
+    try {
+      await cleanupIsolatedDatabase(db);
+    } catch (cleanupError) {
+      if (hasPrimaryError) throw new CatalogBenchmarkLifecycleError(primaryError, cleanupError);
+      throw cleanupError;
+    }
+  }
 }
 
 async function currentWriteBatch(
@@ -277,17 +359,18 @@ export async function runCatalogWriteBenchmark(options: {
     0,
   );
   const jsonSerializeMs = nowMs() - serializationStartedAt;
-  const totalStartedAt = nowMs();
-  const db = await openIsolatedDatabase();
-  const seenAt = 1_800_000_000_000;
-  const counters: CatalogWriteCounters = { prepareCount: 0, executeCount: 0, finalizeCount: 0 };
-  let transactionMs = 0;
-  let yieldCount = 0;
-  let categoryWriteMs = 0;
-  let finalSwapMs = 0;
 
-  try {
-    const sqliteStartedAt = nowMs();
+  return withIsolatedBenchmarkDatabase(async (db, dbSetupMs) => {
+    const seenAt = 1_800_000_000_000;
+    const counters: CatalogWriteCounters = { prepareCount: 0, executeCount: 0, finalizeCount: 0 };
+    let transactionMs = 0;
+    let yieldMs = 0;
+    let yieldCount = 0;
+    let categoryWriteMs = 0;
+    let finalSwapMs = 0;
+
+    // Exact total boundary: immediately before the first logical strategy batch.
+    const totalStartedAt = nowMs();
     for (let start = 0; start < items.length; start += CATALOG_LOGICAL_BATCH_MAX) {
       const batch = items.slice(start, start + CATALOG_LOGICAL_BATCH_MAX);
       const transactionStartedAt = nowMs();
@@ -318,10 +401,13 @@ export async function runCatalogWriteBenchmark(options: {
         addCounters(counters, result.counters);
       }
       transactionMs += nowMs() - transactionStartedAt;
+
+      const yieldStartedAt = nowMs();
       await yieldToUi();
+      yieldMs += nowMs() - yieldStartedAt;
       yieldCount += 1;
     }
-    const sqliteWriteMs = nowMs() - sqliteStartedAt;
+    const sqliteWriteMs = transactionMs;
 
     const swapStartedAt = nowMs();
     await db.withExclusiveTransactionAsync(async (transaction) => {
@@ -346,7 +432,9 @@ export async function runCatalogWriteBenchmark(options: {
       categoryWriteMs = nowMs() - categoriesStartedAt;
     });
     finalSwapMs = nowMs() - swapStartedAt;
+    // Validation and cleanup happen after this timestamp and are intentionally excluded.
     const totalMs = nowMs() - totalStartedAt;
+
     await validateResult(db, items, seenAt);
 
     return {
@@ -356,38 +444,40 @@ export async function runCatalogWriteBenchmark(options: {
       projectionMs,
       jsonSerializeMs,
       serializedBytes,
+      dbSetupMs,
       transactionMs,
       sqliteWriteMs,
+      yieldMs,
       ...counters,
       yieldCount,
       categoryWriteMs,
       finalSwapMs,
       totalMs,
       rowsPerSecond: totalMs > 0 ? (items.length * 1000) / totalMs : 0,
+      sqliteRowsPerSecond: sqliteWriteMs > 0 ? (items.length * 1000) / sqliteWriteMs : 0,
       correctness: "passed",
     };
-  } finally {
-    await db.closeAsync().catch(() => undefined);
-    await SQLite.deleteDatabaseAsync(CATALOG_WRITE_BENCHMARK_DB).catch(() => undefined);
-  }
+  });
 }
 
 export async function runCatalogWriteRollbackProbe(strategy: CatalogWriteBenchmarkStrategy) {
-  const db = await openIsolatedDatabase();
-  const seenAt = 1_800_000_000_000;
-  const valid = makeRows(200, "small").slice(0, 2);
-  const invalid = { ...valid[1], name: null } as unknown as PersistedVodCatalogItem;
-  await db.runAsync(
-    CURRENT_CATALOG_SINGLE_ROW_UPSERT_SQL,
-    buildCurrentCatalogItemBindValues({
-      providerId: ACTIVE_PROVIDER,
-      kind: "vod",
-      item: { ...valid[0], providerId: ACTIVE_PROVIDER },
-      seenAt,
-      markNew: false,
-    }),
-  );
-  try {
+  return withIsolatedBenchmarkDatabase(async (db) => {
+    const seenAt = 1_800_000_000_000;
+    const valid = makeRows(200, "small").slice(0, 2);
+    const invalid = { ...valid[1], name: null } as unknown as PersistedVodCatalogItem;
+
+    // Seed write is inside the same protected lifecycle as the injected failure probe.
+    await db.runAsync(
+      CURRENT_CATALOG_SINGLE_ROW_UPSERT_SQL,
+      buildCurrentCatalogItemBindValues({
+        providerId: ACTIVE_PROVIDER,
+        kind: "vod",
+        item: { ...valid[0], providerId: ACTIVE_PROVIDER },
+        seenAt,
+        markNew: false,
+      }),
+    );
+
     try {
       if (strategy === "CURRENT") await currentWriteBatch(db, [valid[0], invalid], seenAt);
       else if (strategy === "PREPARED_SINGLE") {
@@ -403,6 +493,7 @@ export async function runCatalogWriteRollbackProbe(strategy: CatalogWriteBenchma
     } catch (caught) {
       if (caught instanceof Error && caught.message === "Injected constraint failure unexpectedly committed.") throw caught;
     }
+
     const active = await db.getFirstAsync<{ count: number }>(
       "SELECT COUNT(*) AS count FROM catalog_items WHERE provider_id = ?", ACTIVE_PROVIDER,
     );
@@ -413,8 +504,5 @@ export async function runCatalogWriteRollbackProbe(strategy: CatalogWriteBenchma
       throw new Error("Injected catalog write failure did not roll back or preserve active rows.");
     }
     return { rollback: "passed" as const, activeRows: 1, stagingRows: 0 };
-  } finally {
-    await db.closeAsync().catch(() => undefined);
-    await SQLite.deleteDatabaseAsync(CATALOG_WRITE_BENCHMARK_DB).catch(() => undefined);
-  }
+  });
 }

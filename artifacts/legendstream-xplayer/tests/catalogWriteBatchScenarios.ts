@@ -148,6 +148,17 @@ async function main() {
     assert.deepEqual(bind.slice(7), [1_700_000_000_000, 1234, 1234, 1]);
   });
 
+  await scenario("DTO target mismatch rejects before candidate execution and still finalizes", async () => {
+    const database = new FakeDatabase();
+    await assert.rejects(
+      executePreparedCatalogSingleRowBatch(options(database, [vod(1, { providerId: "provider-b" })])),
+      /does not match its write target/,
+    );
+    assert.equal(database.attempts.length, 1);
+    assert.equal(database.attempts[0].executions.length, 0);
+    assert.equal(database.attempts[0].finalized, 1);
+  });
+
   await scenario("every row contributes exactly eleven bind parameters", () => {
     assert.equal(buildCatalogItemsBindValues({
       providerId: "provider-a", kind: "vod", items: rows(17), seenAt: 1, markNew: false,
@@ -197,11 +208,31 @@ async function main() {
     assert.doesNotMatch(buildCatalogMultiRowUpsert(1), /İSTANBUL|IĞDIR|Film/);
   });
 
-  await scenario("one prepared 50-row statement executes repeatedly for a full logical batch", async () => {
+  await scenario("one prepared 50-row statement executes repeatedly for a full 200-row logical batch", async () => {
     const database = new FakeDatabase();
     const result = await executePreparedCatalogMultiRowBatch(options(database, rows(200)));
+    assert.equal(result.actualExecutedRows, 200);
     assert.deepEqual(result.counters, { prepareCount: 1, executeCount: 4, finalizeCount: 1 });
     assert.deepEqual(database.prepareShapes, [50]);
+    assert.equal(database.attempts[0].executions.length, 4);
+  });
+
+  await scenario("executed 17-row tail has one exact tail statement lifecycle", async () => {
+    const database = new FakeDatabase();
+    const result = await executePreparedCatalogMultiRowBatch(options(database, rows(67)));
+    assert.equal(result.actualExecutedRows, 67);
+    assert.deepEqual(result.counters, { prepareCount: 2, executeCount: 2, finalizeCount: 2 });
+    assert.deepEqual(database.prepareShapes, [50, 17]);
+    assert.deepEqual(database.attempts[0].executions.map((bind) => bind.length), [550, 187]);
+  });
+
+  await scenario("199-row logical batch executes 150 rows plus an exact 49-row tail", async () => {
+    const database = new FakeDatabase();
+    const result = await executePreparedCatalogMultiRowBatch(options(database, rows(199)));
+    assert.equal(result.actualExecutedRows, 199);
+    assert.deepEqual(result.counters, { prepareCount: 2, executeCount: 4, finalizeCount: 2 });
+    assert.deepEqual(database.prepareShapes, [50, 49]);
+    assert.equal(database.attempts[0].executions.flat().length, 199 * 11);
   });
 
   await scenario("prepared statements finalize on success", async () => {
@@ -261,6 +292,17 @@ async function main() {
     assert.equal(result.actualExecutedRows, 200);
   });
 
+  await scenario("cancellation before first row executes zero rows", async () => {
+    const database = new FakeDatabase();
+    const result = await executePreparedCatalogSingleRowBatch({
+      ...options(database, rows(10)), isCancelled: () => true,
+    });
+    assert.equal(result.actualExecutedRows, 0);
+    assert.equal(result.cancelled, true);
+    assert.deepEqual(result.counters, { prepareCount: 1, executeCount: 0, finalizeCount: 1 });
+    assert.equal(database.attempts[0].executions.length, 0);
+  });
+
   await scenario("cancellable prepared candidate reports exact executed rows", async () => {
     const database = new FakeDatabase();
     let checks = 0;
@@ -281,6 +323,19 @@ async function main() {
     assert.equal(result.actualExecutedRows, 4);
     assert.equal(checks, 5);
     assert.equal(database.attempts[0].executions.length, 4);
+  });
+
+  await scenario("cancellation near final row stops before the last row", async () => {
+    const database = new FakeDatabase();
+    let checks = 0;
+    const result = await executePreparedCatalogSingleRowBatch({
+      ...options(database, rows(10)), isCancelled: () => { checks += 1; return checks === 10; },
+    });
+    assert.equal(result.actualExecutedRows, 9);
+    assert.equal(result.counters.executeCount, 9);
+    assert.equal(result.cancelled, true);
+    assert.equal(checks, 10);
+    assert.equal(database.attempts[0].executions.length, 9);
   });
 
   await scenario("duplicate primary keys match independent current sequential UPSERT final state", () => {
@@ -320,8 +375,8 @@ async function main() {
     assert.deepEqual(order, ["first-start", "first-end", "second"]);
   });
 
-  assert.equal(passed, 22);
-  console.log("catalog write batch scenarios: 22/22 passed");
+  assert.equal(passed, 27);
+  console.log("catalog write batch scenarios: 27/27 passed");
 }
 
 void main();
