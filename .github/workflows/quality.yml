@@ -16,6 +16,7 @@ on:
 # SQLite diagnostics/freshness gate: fixed K4-safe error reasons, real transaction stages, schema fingerprints, and stale measurement suppression must pass.
 # Catalog DB writer gate: all mutations share one coordinator, use exclusive transactions, stable M3U VOD keys, and atomic replacement semantics.
 # 9.2 catalog gate: runtime catalog rows must pass explicit persisted DTO projection.
+# Paged catalog parity gate: persisted paging/remediation plus uncapped, chunked live identity and >500 History/Favorites completeness must pass.
 # Catalog category fallback gate: __all__ must stay out of Xtream transport and empty cache must fall back.
 # Catalog availability gate: usable rows stay browsable across cancelled/error refreshes; initial blocking is cache-driven.
 # Provider switch UX gate: Xtream + M3U cache handoff, fallback, tab routing, tap lock, K4 error, active marker, startup continuity, direct hydration and M3U cache-write observability must pass.
@@ -114,6 +115,14 @@ jobs:
           set -euo pipefail
           catalog="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-persistence 2>&1 | tee /dev/stderr)"
           grep -F 'catalog persistence scenarios: 10/10 passed' <<<"$catalog"
+      - name: Paged catalog parity regressions (12/12 + 4/4 + 12/12 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          parity="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-parity 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog parity scenarios: 12/12 passed' <<<"$parity"
+          grep -F 'paged catalog remediation scenarios: 4/4 passed' <<<"$parity"
+          grep -F 'history favorites resolution scenarios: 12/12 passed' <<<"$parity"
       - name: Catalog category fallback regressions (8/8 required)
         shell: bash
         run: |

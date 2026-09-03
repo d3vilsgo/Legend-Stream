@@ -16,10 +16,10 @@ import {
 } from "./m3uCacheWriteMeasurement";
 import type { M3UPathPlaybackRef } from "./m3uCatalogRefs";
 
-export type M3UCacheWriteProvider = Pick<
+export type M3UCacheWriteProvider = Omit<Pick<
   Provider,
   "id" | "type" | "url" | "username" | "password" | "createdAt"
-> & { playlistUrl?: string };
+>, "url"> & { url?: string; playlistUrl?: string };
 
 export type SafeM3UMovieRow = {
   stream_id: string;

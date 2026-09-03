@@ -12,7 +12,7 @@ function expect(name: string, condition: boolean) {
 }
 
 const homeSource = fs.readFileSync(
-  path.join(process.cwd(), "components/OptimizedHomeScreenV6.tsx"),
+  path.join(process.cwd(), "components/home/HomeDiscovery.tsx"),
   "utf8",
 );
 

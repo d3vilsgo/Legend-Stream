@@ -8,9 +8,18 @@ import {
   DEFAULT_PLAYER_CHROME_TIMEOUT_SECONDS,
   getPlayerChromeTimeoutSeconds,
 } from "@/lib/playerPreferences";
-import { getEpisodePlaybackQueue, getVodPlaybackQueue } from "@/lib/xtreamCatalog";
+import {
+  buildVodStreamUrl,
+  getEpisodePlaybackQueue,
+  getVodPlaybackQueue,
+} from "@/lib/xtreamCatalog";
 import { isCatalogRuntimeSource } from "@/lib/catalogPersistence";
-import { getCachedLiveItems, resolveCatalogRuntimeSource } from "@/lib/catalogRuntime";
+import { resolveCatalogRuntimeSource } from "@/lib/catalogRuntime";
+import {
+  getCachedLivePlaybackWindow,
+  getCachedVodPlaybackWindow,
+  type CatalogPlaybackIdentity,
+} from "@/lib/catalogPageRepository";
 import {
   liveQueueIndex,
   resolveLiveQueue,
@@ -81,6 +90,7 @@ export function CompatibilityVideoPlayer({
   subtitle,
   mediaKind,
   liveIdentity,
+  vodIdentity,
   autoFullscreen = true,
   onFullscreenExit,
   allowDownload = false,
@@ -90,6 +100,7 @@ export function CompatibilityVideoPlayer({
   subtitle?: string;
   mediaKind?: PlayerMediaKind;
   liveIdentity?: LiveChannelIdentity;
+  vodIdentity?: CatalogPlaybackIdentity;
   autoFullscreen?: boolean;
   onFullscreenExit?: () => void;
   allowDownload?: boolean;
@@ -131,7 +142,11 @@ export function CompatibilityVideoPlayer({
   const [currentLiveIdentity, setCurrentLiveIdentity] = useState<LiveChannelIdentity | null>(
     initialKind === "live" ? liveIdentity ?? null : null,
   );
+  const [currentVodIdentity, setCurrentVodIdentity] = useState<CatalogPlaybackIdentity | null>(
+    initialKind === "movie" ? vodIdentity ?? null : null,
+  );
   const [cachedLiveChannels, setCachedLiveChannels] = useState<Channel[]>([]);
+  const [cachedVodItems, setCachedVodItems] = useState<Awaited<ReturnType<typeof getCachedVodPlaybackWindow>>>([]);
   const [paused, setPaused] = useState(false);
   const [fit, setFit] = useState<PlayerFitMode>("fit");
   const [codecMode, setCodecMode] = useState<PlayerCodecMode>("auto");
@@ -321,13 +336,15 @@ export function CompatibilityVideoPlayer({
       !currentLiveIdentity ||
       !provider ||
       provider.id !== currentLiveIdentity.providerId ||
-      provider.type !== "xtream" ||
-      liveQueueIndex(channels, currentLiveIdentity) >= 0
+      (provider.type !== "m3u" && provider.type !== "xtream")
     ) {
       setCachedLiveChannels([]);
       return () => { cancelled = true; };
     }
-    void getCachedLiveItems(provider)
+    void getCachedLivePlaybackWindow(provider, {
+      providerId: currentLiveIdentity.providerId,
+      itemId: currentLiveIdentity.channelId,
+    })
       .then((items) => {
         if (!cancelled) setCachedLiveChannels(items);
       })
@@ -335,11 +352,33 @@ export function CompatibilityVideoPlayer({
         if (!cancelled) setCachedLiveChannels([]);
       });
     return () => { cancelled = true; };
-  }, [channels, currentKind, currentLiveIdentity, provider]);
+  }, [currentKind, currentLiveIdentity, provider]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (
+      currentKind !== "movie" ||
+      !currentVodIdentity ||
+      !provider ||
+      provider.id !== currentVodIdentity.providerId ||
+      (provider.type !== "m3u" && provider.type !== "xtream")
+    ) {
+      setCachedVodItems([]);
+      return () => { cancelled = true; };
+    }
+    void getCachedVodPlaybackWindow(provider, currentVodIdentity)
+      .then((items) => {
+        if (!cancelled) setCachedVodItems(items);
+      })
+      .catch(() => {
+        if (!cancelled) setCachedVodItems([]);
+      });
+    return () => { cancelled = true; };
+  }, [currentKind, currentVodIdentity, provider]);
 
   const liveQueue = useMemo(
     () => currentKind === "live"
-      ? resolveLiveQueue(channels, cachedLiveChannels, currentLiveIdentity)
+      ? resolveLiveQueue(cachedLiveChannels, channels, currentLiveIdentity)
       : [],
     [cachedLiveChannels, channels, currentKind, currentLiveIdentity],
   );
@@ -359,7 +398,7 @@ export function CompatibilityVideoPlayer({
     () => currentKind === "episode" ? getEpisodePlaybackQueue(currentSource) : undefined,
     [currentKind, currentSource],
   );
-  const vodQueue = useMemo(
+  const legacyVodQueue = useMemo(
     () => currentKind === "movie" ? getVodPlaybackQueue(currentSource) : undefined,
     [currentKind, currentSource],
   );
@@ -382,11 +421,26 @@ export function CompatibilityVideoPlayer({
         source: item.url,
       }));
     }
-    if (currentKind === "movie" && vodQueue) {
-      const current = vodQueue.items[vodQueue.index];
+    if (currentKind === "movie" && cachedVodItems.length) {
+      const credentials = provider?.type === "xtream" && provider.username && provider.password
+        ? {
+            baseUrl: provider.url || provider.playlistUrl,
+            username: provider.username,
+            password: provider.password,
+          }
+        : null;
+      return cachedVodItems.slice(0, 500).map((item) => ({
+        id: String(item.stream_id),
+        title: item.name,
+        subtitle: item.genre || "Filmler",
+        source: buildVodStreamUrl(credentials, item),
+      }));
+    }
+    if (currentKind === "movie" && legacyVodQueue) {
+      const current = legacyVodQueue.items[legacyVodQueue.index];
       const sameCategory = current?.categoryId
-        ? vodQueue.items.filter((item) => item.categoryId === current.categoryId)
-        : vodQueue.items;
+        ? legacyVodQueue.items.filter((item) => item.categoryId === current.categoryId)
+        : legacyVodQueue.items;
       return sameCategory.slice(0, 500).map((item) => ({
         id: item.id,
         title: item.title,
@@ -395,7 +449,7 @@ export function CompatibilityVideoPlayer({
       }));
     }
     return [];
-  }, [currentKind, episodeQueue, liveQueue, vodQueue]);
+  }, [cachedVodItems, currentKind, episodeQueue, legacyVodQueue, liveQueue, provider]);
 
   const currentIndex = useMemo(
     () => currentKind === "live"
@@ -418,6 +472,11 @@ export function CompatibilityVideoPlayer({
     setCurrentLiveIdentity(
       item.isLive && provider
         ? { providerId: provider.id, channelId: item.id }
+        : null,
+    );
+    setCurrentVodIdentity(
+      kind === "movie" && provider
+        ? { providerId: provider.id, itemId: item.id }
         : null,
     );
     setPosition(0);

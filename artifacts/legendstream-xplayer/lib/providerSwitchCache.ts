@@ -19,7 +19,7 @@ import {
 } from "./m3uCatalogCache";
 import { beginM3UProviderSwitchMeasurement } from "./m3uSwitchMetrics";
 import { primeProviderSwitchSnapshot } from "./providerSwitchUx";
-import type { Channel } from "./iptv";
+import type { Channel, Provider } from "./iptv";
 import type { XtreamCategory, XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
 
 const HOME_SAMPLE_LIMIT = 48;
@@ -27,15 +27,17 @@ const NEW_SAMPLE_LIMIT = 24;
 
 export type ProviderSwitchCacheProvider = {
   id: string;
-  type: string;
+  type: Provider["type"];
   url?: string;
   playlistUrl?: string;
   username?: string;
   password?: string;
+  createdAt: number;
 };
 
 export type ProviderSwitchCatalogSnapshot = {
   providerId: string;
+  scope: "preview" | "full";
   ready: boolean;
   counts: { live: number; vod: number; series: number };
   live: Channel[];
@@ -58,10 +60,11 @@ export async function prepareProviderSwitchCache(
 ): Promise<ProviderSwitchCachePreparation | null> {
   if (provider.type === "m3u") {
     beginM3UProviderSwitchMeasurement(provider.id);
-    const cached = await hydrateM3UProviderCache(provider as any);
+    const cached = await hydrateM3UProviderCache(provider);
     if (!cached) return null;
     const snapshot: ProviderSwitchCatalogSnapshot = {
       providerId: provider.id,
+      scope: cached.scope,
       ready: cached.ready,
       counts: cached.counts,
       live: cached.live,
@@ -99,7 +102,7 @@ export async function prepareProviderSwitchCache(
     vodCategories,
     seriesCategories,
   ] = await Promise.all([
-    getCachedLiveItems(provider),
+    getCachedLiveItems(provider, undefined, HOME_SAMPLE_LIMIT),
     getCachedVodItems(provider, undefined, HOME_SAMPLE_LIMIT),
     getCachedSeriesItems(provider, undefined, HOME_SAMPLE_LIMIT),
     getNewCachedLiveItems(provider, NEW_SAMPLE_LIMIT),
@@ -111,9 +114,10 @@ export async function prepareProviderSwitchCache(
 
   const snapshot: ProviderSwitchCatalogSnapshot = {
     providerId: provider.id,
+    scope: "full",
     ready: state?.phase === "ready",
     counts,
-    live: live.slice(0, HOME_SAMPLE_LIMIT),
+    live,
     movies,
     series,
     newChannels,

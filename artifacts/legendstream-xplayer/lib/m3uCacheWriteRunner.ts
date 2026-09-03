@@ -7,15 +7,17 @@ export function persistM3ULoadInBackground(
   provider: Provider,
   loaded: ProviderLoadResult,
 ) {
-  if (provider.type !== "m3u") return;
-  void enqueueM3UCacheWrite(async () => {
+  if (provider.type !== "m3u") return null;
+  return enqueueM3UCacheWrite(async () => {
     try {
       const persisted = await persistM3UProviderCache(provider, loaded);
       if (!persisted) {
         safeLog.warn("LS_M3U_CACHE_WRITE", { result: "rejected" });
       }
+      return persisted;
     } catch (caught) {
       safeLog.error("LS_M3U_CACHE_WRITE", caught);
+      return false;
     }
   });
 }

@@ -30,6 +30,12 @@ import {
 } from "@/lib/m3uCatalogCache";
 import { persistM3ULoadInBackground } from "@/lib/m3uCacheWriteRunner";
 import {
+  ProviderLoadRequestGate,
+  publishSuccessfulCatalogCommitIfCurrent,
+  type CatalogSyncOwnership,
+  type ProviderLoadRequestOwnership,
+} from "@/lib/catalogAvailability";
+import {
   resolveM3UTransport,
   resolvedProviderTransport,
   type M3UTransportResolutionReason,
@@ -53,6 +59,10 @@ import {
   removeLiveHistory,
   type LiveHistoryV2,
 } from "@/lib/liveHistory";
+import {
+  LegacyCatalogFallbackAttemptGuard,
+  shouldFallbackLegacyXtreamCatalogToM3U,
+} from "@/lib/legacyCatalogFallback";
 
 export { ProviderType };
 export type { Channel, EpgProgram };
@@ -146,11 +156,13 @@ interface PlayerContextValue extends PlayerState {
   isLoading: boolean;
   isEpgLoading: boolean;
   error: string | null;
+  m3uCatalogCommit: CatalogSyncOwnership & { sequence: number } | null;
   connectProvider: (config: ProviderInput) => Promise<boolean>;
   mergeImportedProviders: (providers: ProviderConfig[]) => Promise<ProviderMetadataCommitMetrics>;
   removeProvider: (providerId?: string) => Promise<void>;
   disconnectProvider: () => Promise<void>;
   refreshProvider: (providerId?: string) => Promise<void>;
+  recoverLegacyCatalogFallback: (providerId: string, error: unknown) => Promise<boolean>;
   refreshEpg: (providerId?: string, channelId?: string) => Promise<void>;
   resolveProviderForSwitch: (providerId: string) => Promise<ProviderConfig | null>;
   setActiveProvider: (providerId: string) => Promise<boolean>;
@@ -342,15 +354,20 @@ function toXtreamLoadProvider(provider: RoutedProvider): Provider {
     : provider;
 }
 
-async function loadProviderSmart(provider: RoutedProvider) {
+async function loadProviderSmart(
+  provider: RoutedProvider,
+  options: { persistM3U?: boolean } = {},
+) {
   if (resolvedProviderTransport(provider) !== "xtream") {
     const loaded = await loadProvider(provider);
-    persistM3ULoadInBackground(provider, loaded);
-    return { provider, loaded };
+    const cacheWriteTask = options.persistM3U === false
+      ? null
+      : persistM3ULoadInBackground(provider, loaded);
+    return { provider, loaded, cacheWriteTask };
   }
   const parsed = parseXtreamGetPhp(provider.url);
   if (!parsed) {
-    return { provider, loaded: await loadProvider(provider) };
+    return { provider, loaded: await loadProvider(provider), cacheWriteTask: null };
   }
   const savedXtream: RoutedProvider = {
     ...provider,
@@ -363,6 +380,7 @@ async function loadProviderSmart(provider: RoutedProvider) {
     return {
       provider: savedXtream,
       loaded: await loadProvider(toXtreamLoadProvider(savedXtream)),
+      cacheWriteTask: null,
     };
   } catch {
     const fallback: RoutedProvider = {
@@ -374,8 +392,10 @@ async function loadProviderSmart(provider: RoutedProvider) {
       password: undefined,
     };
     const loaded = await loadProvider(fallback);
-    persistM3ULoadInBackground(fallback, loaded);
-    return { provider: fallback, loaded };
+    const cacheWriteTask = options.persistM3U === false
+      ? null
+      : persistM3ULoadInBackground(fallback, loaded);
+    return { provider: fallback, loaded, cacheWriteTask };
   }
 }
 
@@ -804,12 +824,64 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isEpgLoading, setIsEpgLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [m3uCatalogCommit, setM3UCatalogCommit] = useState<
+    (CatalogSyncOwnership & { sequence: number }) | null
+  >(null);
   const stateRef = useRef(state);
+  const activeProviderGenerationRef = useRef(0);
+  const providerLoadGateRef = useRef(new ProviderLoadRequestGate());
+  const playerBusySequenceRef = useRef(0);
+  const playerBusyOwnerRef = useRef<number | null>(null);
   const liveHistoryRef = useRef<LiveHistoryV2>(emptyLiveHistoryV2());
   const epgCacheRef = useRef(
     new Map<string, { loadedAt: number; channelCount: number }>(),
   );
   const bulkEpgPromiseRef = useRef(new Map<string, Promise<void>>());
+  const legacyCatalogFallbackGuardRef = useRef(new LegacyCatalogFallbackAttemptGuard());
+
+  const isCurrentProviderLoad = (ownership: ProviderLoadRequestOwnership) =>
+    stateRef.current.provider?.id === ownership.providerId &&
+    providerLoadGateRef.current.isCurrent(ownership);
+
+  const beginPlayerBusy = () => {
+    const busyId = ++playerBusySequenceRef.current;
+    playerBusyOwnerRef.current = busyId;
+    setIsLoading(true);
+    return busyId;
+  };
+
+  const finishPlayerBusy = (busyId: number) => {
+    if (playerBusyOwnerRef.current !== busyId) return;
+    playerBusyOwnerRef.current = null;
+    setIsLoading(false);
+  };
+
+  const beginForegroundProviderLoad = (providerId: string) => {
+    const ownership = providerLoadGateRef.current.beginForeground(providerId);
+    return { ownership, busyId: beginPlayerBusy() };
+  };
+
+  const finishProviderLoad = (
+    ownership: ProviderLoadRequestOwnership,
+    persistenceOwnsRequest: boolean,
+    busyId: number,
+  ) => {
+    if (!persistenceOwnsRequest) providerLoadGateRef.current.finish(ownership);
+    finishPlayerBusy(busyId);
+  };
+
+  const applyPlayerState = (next: PlayerState) => {
+    const previousProviderId = stateRef.current.provider?.id ?? null;
+    const nextProviderId = next.provider?.id ?? null;
+    if (previousProviderId !== nextProviderId) {
+      activeProviderGenerationRef.current += 1;
+      providerLoadGateRef.current.invalidateAll();
+      setM3UCatalogCommit(null);
+    }
+    stateRef.current = next;
+    setState(next);
+    return activeProviderGenerationRef.current;
+  };
 
   useEffect(() => {
     stateRef.current = state;
@@ -819,8 +891,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     readState()
       .then(({ state: saved, liveHistory }) => {
         liveHistoryRef.current = liveHistory;
-        stateRef.current = saved;
-        setState(saved);
+        applyPlayerState(saved);
         setIsHydrating(false);
       })
       .catch(() => {
@@ -830,8 +901,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const persist = async (next: PlayerState) => {
-    stateRef.current = next;
-    setState(next);
+    const generation = applyPlayerState(next);
     try {
       const providersToSecure = new Map<string, ProviderConfig>();
       for (const item of next.providers) providersToSecure.set(item.id, item);
@@ -848,6 +918,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     } catch {
       // Keep the in-memory session usable and leave the previous on-disk state intact.
     }
+    return generation;
+  };
+
+  const observeM3UCacheWrite = (
+    providerId: string,
+    generation: number,
+    completion: Promise<boolean> | null,
+    requestOwnership?: ProviderLoadRequestOwnership,
+  ) => {
+    const publication = publishSuccessfulCatalogCommitIfCurrent(
+      completion,
+      { providerId, generation },
+      () => ({
+        providerId: stateRef.current.provider?.id ?? null,
+        generation: activeProviderGenerationRef.current,
+      }),
+      () => {
+        if (requestOwnership && !isCurrentProviderLoad(requestOwnership)) return;
+        setM3UCatalogCommit((current) => ({
+          providerId,
+          generation,
+          sequence: (current?.sequence ?? 0) + 1,
+        }));
+      },
+    );
+    void publication.finally(() => {
+      if (requestOwnership) providerLoadGateRef.current.finish(requestOwnership);
+    });
   };
 
   const persistLiveHistory = async (next: LiveHistoryV2) => {
@@ -904,8 +1002,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     await AsyncStorage.setItem(STORAGE_KEY, serialized);
     const asyncStorageWriteMs = Date.now() - writeStartedAt;
     const stateApplyStartedAt = Date.now();
-    stateRef.current = next;
-    setState(next);
+    applyPlayerState(next);
     return {
       prepareMs,
       asyncStorageWriteMs,
@@ -942,7 +1039,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const connectProvider = async (config: ProviderInput) => {
-    setIsLoading(true);
+    providerLoadGateRef.current.invalidateAll();
+    const busyId = beginPlayerBusy();
     setError(null);
 
     try {
@@ -982,7 +1080,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           )
         : [...current.providers, savedProvider];
       epgCacheRef.current.delete(savedProvider.id);
-      await persist({
+      const generation = await persist({
         ...current,
         providers,
         provider: savedProvider,
@@ -995,6 +1093,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           ...smart.loaded.channels,
         ],
       });
+      observeM3UCacheWrite(savedProvider.id, generation, smart.cacheWriteTask);
       return true;
     } catch (caught) {
       setError(
@@ -1002,7 +1101,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       );
       return false;
     } finally {
-      setIsLoading(false);
+      finishPlayerBusy(busyId);
     }
   };
 
@@ -1011,10 +1110,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const current = stateRef.current;
     const existing = current.providers.find((item) => item.id === providerId);
     if (!existing) return;
-    setIsLoading(true);
+    const { ownership, busyId } = beginForegroundProviderLoad(providerId);
+    let persistenceOwnsRequest = false;
     setError(null);
     try {
-      const smart = await loadProviderSmart(fromProvider(existing));
+      const smart = await loadProviderSmart(fromProvider(existing), { persistM3U: false });
+      if (!isCurrentProviderLoad(ownership)) return;
       const updated = toProvider({
         ...smart.provider,
         lastLoadedAt: Date.now(),
@@ -1022,9 +1123,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
         loadError: undefined,
       });
+      if (!isCurrentProviderLoad(ownership)) return;
       await saveProviderSecrets(updated);
+      if (!isCurrentProviderLoad(ownership)) return;
       epgCacheRef.current.delete(providerId);
-      await persist({
+      const generation = await persist({
         ...stateRef.current,
         provider:
           stateRef.current.provider?.id === providerId
@@ -1040,7 +1143,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           ...smart.loaded.channels,
         ],
       });
+      if (!isCurrentProviderLoad(ownership)) return;
+      const cacheWriteTask = persistM3ULoadInBackground(smart.provider, smart.loaded);
+      if (cacheWriteTask) {
+        persistenceOwnsRequest = true;
+        observeM3UCacheWrite(providerId, generation, cacheWriteTask, ownership);
+      }
     } catch (caught) {
+      if (!isCurrentProviderLoad(ownership)) return;
       const message =
         caught instanceof Error ? caught.message : "The provider could not be refreshed.";
       setError(message);
@@ -1051,7 +1161,76 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         ),
       });
     } finally {
-      setIsLoading(false);
+      finishProviderLoad(ownership, persistenceOwnsRequest, busyId);
+    }
+  };
+
+  const recoverLegacyCatalogFallback = async (providerId: string, caught: unknown) => {
+    const current = stateRef.current;
+    const existing = current.providers.find((item) => item.id === providerId);
+    if (
+      !existing ||
+      !shouldFallbackLegacyXtreamCatalogToM3U(existing, caught)
+    ) {
+      return false;
+    }
+    const ownership = providerLoadGateRef.current.beginBackground(providerId);
+    if (!ownership) return false;
+    if (!legacyCatalogFallbackGuardRef.current.tryStart(providerId)) {
+      providerLoadGateRef.current.finish(ownership);
+      return false;
+    }
+    let persistenceOwnsRequest = false;
+
+    const source = existing.playlistUrl || existing.url;
+    const fallback: RoutedProvider = {
+      ...fromProvider(existing),
+      type: "m3u",
+      declaredType: existing.declaredType ?? "xtream",
+      transport: "m3u",
+      url: source,
+      playlistUrl: source,
+      username: undefined,
+      password: undefined,
+    };
+
+    try {
+      const loaded = await loadProvider(fallback);
+      if (!isCurrentProviderLoad(ownership)) return false;
+      const updated = toProvider({
+        ...fallback,
+        lastLoadedAt: Date.now(),
+        channelCount: loaded.channels.length,
+        epgUrl: fallback.epgUrl || loaded.epgUrl,
+        loadError: undefined,
+      });
+      if (!isCurrentProviderLoad(ownership)) return false;
+      await saveProviderSecrets(updated);
+      if (!isCurrentProviderLoad(ownership)) return false;
+
+      const latest = stateRef.current;
+      if (!latest.providers.some((item) => item.id === providerId)) return false;
+      epgCacheRef.current.delete(providerId);
+      const generation = await persist({
+        ...latest,
+        provider: latest.provider?.id === providerId ? updated : latest.provider,
+        providers: latest.providers.map((item) => item.id === providerId ? updated : item),
+        channels: [
+          ...latest.channels.filter((channel) => channel.providerId !== providerId),
+          ...loaded.channels,
+        ],
+      });
+      if (!isCurrentProviderLoad(ownership)) return false;
+      const cacheWriteTask = persistM3ULoadInBackground(fallback, loaded);
+      if (cacheWriteTask) {
+        persistenceOwnsRequest = true;
+        observeM3UCacheWrite(providerId, generation, cacheWriteTask, ownership);
+      }
+      return true;
+    } catch {
+      return false;
+    } finally {
+      if (!persistenceOwnsRequest) providerLoadGateRef.current.finish(ownership);
     }
   };
 
@@ -1059,8 +1238,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const current = stateRef.current;
     const existing = current.providers.find((item) => item.id === providerId);
     if (!existing || existing.type !== "m3u") return;
+    if (playerBusyOwnerRef.current !== null) return;
+    const ownership = providerLoadGateRef.current.beginBackground(providerId);
+    if (!ownership) return;
+    let persistenceOwnsRequest = false;
     try {
-      const smart = await loadProviderSmart(fromProvider(existing));
+      const smart = await loadProviderSmart(fromProvider(existing), { persistM3U: false });
+      if (!isCurrentProviderLoad(ownership)) return;
       const updated = toProvider({
         ...smart.provider,
         lastLoadedAt: Date.now(),
@@ -1068,10 +1252,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
         loadError: undefined,
       });
+      if (!isCurrentProviderLoad(ownership)) return;
       await saveProviderSecrets(updated);
+      if (!isCurrentProviderLoad(ownership)) return;
       epgCacheRef.current.delete(providerId);
       const latest = stateRef.current;
-      await persist({
+      const generation = await persist({
         ...latest,
         provider: latest.provider?.id === providerId ? updated : latest.provider,
         providers: latest.providers.map((item) => item.id === providerId ? updated : item),
@@ -1080,8 +1266,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           ...smart.loaded.channels,
         ],
       });
+      if (!isCurrentProviderLoad(ownership)) return;
+      const cacheWriteTask = persistM3ULoadInBackground(smart.provider, smart.loaded);
+      if (cacheWriteTask) {
+        persistenceOwnsRequest = true;
+        observeM3UCacheWrite(providerId, generation, cacheWriteTask, ownership);
+      }
     } catch {
       // A background refresh failure must never hide or invalidate usable cached rows.
+    } finally {
+      if (!persistenceOwnsRequest) providerLoadGateRef.current.finish(ownership);
     }
   };
 
@@ -1108,7 +1302,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setError(null);
       return false;
     }
-    setIsLoading(true);
+    providerLoadGateRef.current.invalidateAll();
+    const busyId = beginPlayerBusy();
     setError(null);
     try {
       const switchPath = chooseProviderSwitchPath({
@@ -1146,7 +1341,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       });
       await saveProviderSecrets(updated);
       epgCacheRef.current.delete(providerId);
-      await persist({
+      const generation = await persist({
         ...stateRef.current,
         provider: updated,
         activeProviderId: providerId,
@@ -1161,12 +1356,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           ...smart.loaded.channels,
         ],
       });
+      observeM3UCacheWrite(providerId, generation, smart.cacheWriteTask);
       return true;
     } catch (caught) {
       setError(safeProviderSwitchError(caught));
       return false;
     } finally {
-      setIsLoading(false);
+      finishPlayerBusy(busyId);
     }
   };
 
@@ -1181,6 +1377,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const removeProvider = async (providerId = stateRef.current.provider?.id) => {
     if (!providerId) return;
+    providerLoadGateRef.current.invalidateProvider(providerId);
     const current = stateRef.current;
     const providers = current.providers.filter((item) => item.id !== providerId);
     const channels = current.channels.filter(
@@ -1422,11 +1619,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       isLoading,
       isEpgLoading,
       error,
+      m3uCatalogCommit,
       connectProvider,
       mergeImportedProviders,
       removeProvider,
       disconnectProvider,
       refreshProvider,
+      recoverLegacyCatalogFallback,
       refreshEpg,
       resolveProviderForSwitch,
       setActiveProvider,
@@ -1443,6 +1642,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       isLoading,
       isEpgLoading,
       error,
+      m3uCatalogCommit,
       refreshEpg,
     ],
   );

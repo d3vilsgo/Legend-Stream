@@ -11,7 +11,6 @@ import {
   upsertCatalogItems,
 } from "./catalogCache";
 import {
-  installM3UCatalog,
   type Channel,
   type Provider,
   type ProviderLoadResult,
@@ -68,15 +67,18 @@ import { yieldToUi } from "./cooperative";
 import type { XtreamCategory } from "./xtreamCatalog";
 
 const M3U_CACHE_STAGE_TOTAL = 3;
+export const M3U_HOME_PREVIEW_LIMIT = 48;
 const activationProviders = new Set<string>();
 
-export type M3UCatalogCacheProvider = Pick<
+export type M3UCatalogCacheProvider = Omit<Pick<
   Provider,
   "id" | "type" | "url" | "username" | "password" | "createdAt"
-> & { playlistUrl?: string };
+>, "url"> & { url?: string; playlistUrl?: string };
 
 export type M3UCatalogCacheHydration = {
+  scope: "preview";
   counts: { live: number; vod: number; series: number };
+  hydratedCounts: { live: number; vod: number; series: number };
   ready: boolean;
   live: Channel[];
   movies: ReturnType<typeof buildM3UDirectHydration>["movies"];
@@ -134,9 +136,9 @@ export async function hydrateM3UProviderCache(
     const sqliteStartedAt = Date.now();
     await initCatalogCache();
     const [rawLive, rawVod, rawSeries, state, rawCounts] = await Promise.all([
-      getCachedPersistedItems(provider.id, "live"),
-      getCachedPersistedItems(provider.id, "vod"),
-      getCachedPersistedItems(provider.id, "series"),
+      getCachedPersistedItems(provider.id, "live", undefined, M3U_HOME_PREVIEW_LIMIT),
+      getCachedPersistedItems(provider.id, "vod", undefined, M3U_HOME_PREVIEW_LIMIT),
+      getCachedPersistedItems(provider.id, "series", undefined, M3U_HOME_PREVIEW_LIMIT),
       getCatalogSyncState(provider.id),
       getCatalogCounts(provider.id),
     ]);
@@ -190,18 +192,19 @@ export async function hydrateM3UProviderCache(
       return null;
     }
 
-    installM3UCatalog(provider.id, direct.catalog);
     noteM3UCacheHydration({
       outcome: "hit",
       reason: "none",
       sqliteReadMs,
       runtimeHydrateMs,
-      itemCounts: direct.counts,
+      itemCounts: cacheRawCounts,
       cacheRawCounts,
       cacheSyncPhase,
     });
     return {
-      counts: direct.counts,
+      scope: "preview",
+      counts: cacheRawCounts,
+      hydratedCounts: direct.counts,
       ready: state?.phase === "ready",
       live: direct.live,
       movies: direct.movies,

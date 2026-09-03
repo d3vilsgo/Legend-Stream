@@ -1,6 +1,17 @@
 import { Platform } from "react-native";
 import { normalizeXtreamBaseUrl } from "./iptv";
 import { yieldToUi } from "./cooperative";
+import {
+  XtreamCatalogError,
+  isXtreamCatalogFallbackError,
+  type XtreamCatalogErrorCode,
+} from "./xtreamCatalogErrors";
+
+export {
+  XtreamCatalogError,
+  isXtreamCatalogFallbackError,
+  type XtreamCatalogErrorCode,
+} from "./xtreamCatalogErrors";
 
 export type XtreamCategory = {
   category_id: string | number;
@@ -144,35 +155,6 @@ export type VodPlaybackQueue = {
   items: VodPlaybackItem[];
   index: number;
 };
-
-export type XtreamCatalogErrorCode =
-  | "INVALID_RESPONSE"
-  | "UNSUPPORTED_RESPONSE"
-  | "NOT_FOUND"
-  | "TIMEOUT"
-  | "UNREACHABLE"
-  | "HTTP_ERROR";
-
-export class XtreamCatalogError extends Error {
-  readonly code: XtreamCatalogErrorCode;
-  readonly status?: number;
-
-  constructor(code: XtreamCatalogErrorCode, message: string, status?: number) {
-    super(message);
-    this.name = "XtreamCatalogError";
-    this.code = code;
-    this.status = status;
-  }
-}
-
-export function isXtreamCatalogFallbackError(error: unknown) {
-  return (
-    error instanceof XtreamCatalogError &&
-    (error.code === "INVALID_RESPONSE" ||
-      error.code === "UNSUPPORTED_RESPONSE" ||
-      error.code === "NOT_FOUND")
-  );
-}
 
 const episodeQueueByUrl = new Map<string, EpisodePlaybackQueue>();
 const vodQueueByUrl = new Map<string, VodPlaybackQueue>();
