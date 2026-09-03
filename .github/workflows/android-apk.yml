@@ -8,6 +8,11 @@ on:
         required: false
         default: false
         type: boolean
+      catalog_benchmark:
+        description: "Enable the internal catalog SQLite benchmark route (arm64 test build only)"
+        required: false
+        default: false
+        type: boolean
   push:
     tags:
       - "v*"
@@ -111,6 +116,7 @@ jobs:
         env:
           EXPO_NO_DOCTOR: "1"
           NODE_ENV: production
+          EXPO_PUBLIC_ENABLE_CATALOG_BENCHMARK: ${{ inputs.catalog_benchmark && '1' || '0' }}
         shell: bash
         run: |
           set -o pipefail
@@ -122,9 +128,15 @@ jobs:
         id: mode
         env:
           DISPATCH_DUAL_ABI: ${{ inputs.dual_abi || false }}
+          DISPATCH_CATALOG_BENCHMARK: ${{ inputs.catalog_benchmark || false }}
           HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message || '' }}
         shell: bash
         run: |
+          if [[ "$DISPATCH_CATALOG_BENCHMARK" == "true" && ( "$GITHUB_EVENT_NAME" != "workflow_dispatch" || "$DISPATCH_DUAL_ABI" == "true" ) ]]; then
+            echo "::error::Catalog benchmark builds must be manual arm64-only test builds"
+            exit 1
+          fi
+          echo "catalog_benchmark=$DISPATCH_CATALOG_BENCHMARK" >> "$GITHUB_OUTPUT"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "full_release=true" >> "$GITHUB_OUTPUT"
             echo "dual_abi=true" >> "$GITHUB_OUTPUT"
@@ -144,6 +156,7 @@ jobs:
         working-directory: artifacts/legendstream-xplayer/android
         env:
           NODE_ENV: production
+          EXPO_PUBLIC_ENABLE_CATALOG_BENCHMARK: "0"
           GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
         shell: bash
         run: |
@@ -176,6 +189,7 @@ jobs:
           GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
           FULL_RELEASE: ${{ steps.mode.outputs.full_release }}
           DUAL_ABI: ${{ steps.mode.outputs.dual_abi }}
+          EXPO_PUBLIC_ENABLE_CATALOG_BENCHMARK: ${{ steps.mode.outputs.catalog_benchmark == 'true' && '1' || '0' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -193,6 +207,7 @@ jobs:
           EXPECTED_PACKAGE: com.legendstream.xplayer
           EXPECTED_CERT_SHA256: FAC61745DC0903786FB9EDE62A962B399F7348F0BB6F899B8332667591033B9C
           MIN_VERSION_CODE_EXCLUSIVE: "45002"
+          CATALOG_BENCHMARK: ${{ steps.mode.outputs.catalog_benchmark }}
         shell: bash
         run: |
           set -euo pipefail
@@ -324,13 +339,20 @@ jobs:
             exit 1
           fi
           [ -n "$APP_VERSION" ] || { echo "::error::App version is empty in app.json"; exit 1; }
-          ARM64_NAME="LegendStream-XPlayer-v${APP_VERSION}-arm64-v8a.apk"
+          if [ "$CATALOG_BENCHMARK" = "true" ]; then
+            ARM64_NAME="LegendStream-XPlayer-v${APP_VERSION}-benchmark-arm64-v8a.apk"
+            ARM64_ARTIFACT_NAME="LegendStream-XPlayer-v${APP_VERSION}-benchmark-arm64-v8a"
+          else
+            ARM64_NAME="LegendStream-XPlayer-v${APP_VERSION}-arm64-v8a.apk"
+            ARM64_ARTIFACT_NAME="LegendStream-XPlayer-v${APP_VERSION}-arm64-v8a"
+          fi
           cp "$ARM64_APK" "$STAGE_DIR/$ARM64_NAME"
           ARM64_BYTES="$(stat -c%s "$STAGE_DIR/$ARM64_NAME")"
           echo "arm64 APK bytes=$ARM64_BYTES"
           echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "arm64_bytes=$ARM64_BYTES" >> "$GITHUB_OUTPUT"
           echo "arm64_version_code=$ARM64_CODE" >> "$GITHUB_OUTPUT"
+          echo "arm64_artifact_name=$ARM64_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
 
           if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
             ARMV7_NAME="LegendStream-XPlayer-v${APP_VERSION}-armeabi-v7a.apk"
@@ -348,7 +370,7 @@ jobs:
         id: upload_arm64
         uses: actions/upload-artifact@v4
         with:
-          name: LegendStream-XPlayer-v${{ steps.package_android.outputs.app_version }}-arm64-v8a
+          name: ${{ steps.package_android.outputs.arm64_artifact_name }}
           path: release-staging/*-arm64-v8a.apk
           if-no-files-found: error
           retention-days: 14

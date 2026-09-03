@@ -16,6 +16,7 @@ on:
 # SQLite diagnostics/freshness gate: fixed K4-safe error reasons, real transaction stages, schema fingerprints, and stale measurement suppression must pass.
 # Catalog DB writer gate: all mutations share one coordinator, use exclusive transactions, stable M3U VOD keys, and atomic replacement semantics.
 # Catalog write candidate gate: SQL/bind parity, prepared lifecycle, adaptive rollback/retry, cancellation counts, and duplicate-key semantics must pass.
+# Catalog benchmark runner gate: build-flag isolation, deterministic rotation/aggregation, correctness precedence, and session ownership must pass.
 # 9.2 catalog gate: runtime catalog rows must pass explicit persisted DTO projection.
 # Paged catalog parity gate: persisted paging/remediation plus uncapped, chunked live identity and >500 History/Favorites completeness must pass.
 # Catalog category fallback gate: __all__ must stay out of Xtream transport and empty cache must fall back.
@@ -116,6 +117,12 @@ jobs:
           set -euo pipefail
           candidate="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-write-batch 2>&1 | tee /dev/stderr)"
           grep -F 'catalog write batch scenarios: 27/27 passed' <<<"$candidate"
+      - name: Catalog native benchmark runner semantics (22/22 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-write-benchmark-runner 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog write benchmark runner scenarios: 22/22 passed' <<<"$runner"
       - name: Catalog persistence invariants (10/10 required)
         shell: bash
         run: |

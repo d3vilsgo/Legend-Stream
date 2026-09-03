@@ -1,4 +1,5 @@
 import * as SQLite from "expo-sqlite";
+import * as Crypto from "expo-crypto";
 import type { PersistedVodCatalogItem } from "./catalogPersistence";
 import {
   CURRENT_CATALOG_SINGLE_ROW_UPSERT_SQL,
@@ -11,10 +12,19 @@ import {
   type CatalogWriteCounters,
 } from "./catalogWriteBatch";
 import { yieldToUi } from "./cooperative";
+import {
+  assertSafeCatalogBenchmarkDatabaseName,
+  createCatalogBenchmarkDatabaseName,
+  type CatalogBenchmarkNativeProbe,
+} from "./catalogWriteBenchmarkRunner";
+import { redactSensitiveText } from "./safeLog";
 
-export const CATALOG_WRITE_BENCHMARK_DB = "legendstream-catalog-benchmark-v1.db";
 const ACTIVE_PROVIDER = "benchmark-active";
 const STAGING_PROVIDER = "__staging__benchmark-active";
+
+export function createNativeCatalogBenchmarkDatabaseName() {
+  return createCatalogBenchmarkDatabaseName(Crypto.randomUUID().replace(/-/g, ""));
+}
 
 export type CatalogWriteBenchmarkStrategy = "CURRENT" | "PREPARED_SINGLE" | "HYBRID_50";
 export type CatalogWritePayloadProfile = "small" | "medium" | "large";
@@ -155,7 +165,7 @@ async function createBenchmarkSchema(db: SQLite.SQLiteDatabase) {
   `);
 }
 
-async function cleanupIsolatedDatabase(db: SQLite.SQLiteDatabase | null) {
+async function cleanupIsolatedDatabase(db: SQLite.SQLiteDatabase | null, databaseName: string) {
   const failures: unknown[] = [];
   if (db) {
     try {
@@ -165,7 +175,7 @@ async function cleanupIsolatedDatabase(db: SQLite.SQLiteDatabase | null) {
     }
   }
   try {
-    await SQLite.deleteDatabaseAsync(CATALOG_WRITE_BENCHMARK_DB);
+    await SQLite.deleteDatabaseAsync(databaseName);
   } catch (caught) {
     failures.push(caught);
   }
@@ -173,8 +183,10 @@ async function cleanupIsolatedDatabase(db: SQLite.SQLiteDatabase | null) {
 }
 
 async function withIsolatedBenchmarkDatabase<T>(
+  databaseName: string,
   run: (db: SQLite.SQLiteDatabase, dbSetupMs: number) => Promise<T>,
 ): Promise<T> {
+  assertSafeCatalogBenchmarkDatabaseName(databaseName);
   let db: SQLite.SQLiteDatabase | null = null;
   let primaryError: unknown;
   let hasPrimaryError = false;
@@ -182,8 +194,8 @@ async function withIsolatedBenchmarkDatabase<T>(
   try {
     const setupStartedAt = nowMs();
     // Fail closed: a stale benchmark DB must not survive into a new measurement.
-    await SQLite.deleteDatabaseAsync(CATALOG_WRITE_BENCHMARK_DB);
-    db = await SQLite.openDatabaseAsync(CATALOG_WRITE_BENCHMARK_DB);
+    await SQLite.deleteDatabaseAsync(databaseName);
+    db = await SQLite.openDatabaseAsync(databaseName);
     await createBenchmarkSchema(db);
     const dbSetupMs = nowMs() - setupStartedAt;
     return await run(db, dbSetupMs);
@@ -193,7 +205,7 @@ async function withIsolatedBenchmarkDatabase<T>(
     throw caught;
   } finally {
     try {
-      await cleanupIsolatedDatabase(db);
+      await cleanupIsolatedDatabase(db, databaseName);
     } catch (cleanupError) {
       if (hasPrimaryError) throw new CatalogBenchmarkLifecycleError(primaryError, cleanupError);
       throw cleanupError;
@@ -348,6 +360,7 @@ export async function runCatalogWriteBenchmark(options: {
   strategy: CatalogWriteBenchmarkStrategy;
   rows: CatalogWriteBenchmarkRows;
   profile: CatalogWritePayloadProfile;
+  databaseName?: string;
 }): Promise<CatalogWriteBenchmarkResult> {
   const projectionStartedAt = nowMs();
   const items = makeRows(options.rows, options.profile);
@@ -360,7 +373,8 @@ export async function runCatalogWriteBenchmark(options: {
   );
   const jsonSerializeMs = nowMs() - serializationStartedAt;
 
-  return withIsolatedBenchmarkDatabase(async (db, dbSetupMs) => {
+  const databaseName = options.databaseName ?? createNativeCatalogBenchmarkDatabaseName();
+  return withIsolatedBenchmarkDatabase(databaseName, async (db, dbSetupMs) => {
     const seenAt = 1_800_000_000_000;
     const counters: CatalogWriteCounters = { prepareCount: 0, executeCount: 0, finalizeCount: 0 };
     let transactionMs = 0;
@@ -460,8 +474,11 @@ export async function runCatalogWriteBenchmark(options: {
   });
 }
 
-export async function runCatalogWriteRollbackProbe(strategy: CatalogWriteBenchmarkStrategy) {
-  return withIsolatedBenchmarkDatabase(async (db) => {
+export async function runCatalogWriteRollbackProbe(
+  strategy: CatalogWriteBenchmarkStrategy,
+  databaseName = createNativeCatalogBenchmarkDatabaseName(),
+) {
+  return withIsolatedBenchmarkDatabase(databaseName, async (db) => {
     const seenAt = 1_800_000_000_000;
     const valid = makeRows(200, "small").slice(0, 2);
     const invalid = { ...valid[1], name: null } as unknown as PersistedVodCatalogItem;
@@ -505,4 +522,109 @@ export async function runCatalogWriteRollbackProbe(strategy: CatalogWriteBenchma
     }
     return { rollback: "passed" as const, activeRows: 1, stagingRows: 0 };
   });
+}
+
+async function runNativeProbe(name: string, run: () => Promise<void>): Promise<CatalogBenchmarkNativeProbe> {
+  const startedAt = nowMs();
+  try {
+    await run();
+    return { name, passed: true, durationMs: nowMs() - startedAt };
+  } catch (caught) {
+    return {
+      name,
+      passed: false,
+      durationMs: nowMs() - startedAt,
+      errorCode: "NATIVE_CORRECTNESS_PROBE_FAILED",
+      sanitizedMessage: redactSensitiveText(caught instanceof Error ? caught.message : String(caught)),
+    };
+  }
+}
+
+async function runDuplicatePrimaryKeyNativeProbe() {
+  const databaseName = createNativeCatalogBenchmarkDatabaseName();
+  await withIsolatedBenchmarkDatabase(databaseName, async (db) => {
+    const seenAt = 1_800_000_000_000;
+    const first = makeRows(200, "small")[0];
+    const second = { ...first, name: "Benchmark duplicate winner", plot: "second payload" };
+    const sequentialProvider = "benchmark-sequential";
+    const candidateProvider = "benchmark-candidate";
+    const sequentialRows = [first, second].map((item) => ({ ...item, providerId: sequentialProvider }));
+    const candidateRows = [first, second].map((item) => ({ ...item, providerId: candidateProvider }));
+
+    await db.withExclusiveTransactionAsync(async (transaction) => {
+      for (const item of sequentialRows) {
+        await transaction.runAsync(
+          CURRENT_CATALOG_SINGLE_ROW_UPSERT_SQL,
+          buildCurrentCatalogItemBindValues({
+            providerId: sequentialProvider, kind: "vod", item, seenAt, markNew: true,
+          }),
+        );
+      }
+    });
+    await executePreparedCatalogMultiRowBatch({
+      database: db,
+      providerId: candidateProvider,
+      kind: "vod",
+      items: candidateRows,
+      seenAt,
+      markNew: true,
+    });
+    const select = `SELECT category_id, name, image_url, payload, added_at,
+                           first_seen_at, last_seen_at, is_new
+                      FROM catalog_items WHERE provider_id = ?`;
+    const sequential = await db.getFirstAsync<Record<string, unknown>>(select, sequentialProvider);
+    const candidate = await db.getFirstAsync<Record<string, unknown>>(select, candidateProvider);
+    if (!sequential || !candidate) throw new Error("Native duplicate-primary-key rows are missing.");
+    const normalizePayloadProvider = (row: Record<string, unknown>) => ({
+      ...row,
+      payload: String(row.payload).replace(sequentialProvider, candidateProvider),
+    });
+    if (JSON.stringify(normalizePayloadProvider(sequential)) !== JSON.stringify(candidate)) {
+      throw new Error("Native duplicate-primary-key UPSERT parity failed.");
+    }
+  });
+}
+
+async function runPreparedRepeatNativeProbe() {
+  const databaseName = createNativeCatalogBenchmarkDatabaseName();
+  await withIsolatedBenchmarkDatabase(databaseName, async (db) => {
+    const items = makeRows(200, "small").slice(0, 100);
+    const result = await executePreparedCatalogMultiRowBatch({
+      database: db,
+      providerId: STAGING_PROVIDER,
+      kind: "vod",
+      items,
+      seenAt: 1_800_000_000_000,
+      markNew: true,
+    });
+    const count = await db.getFirstAsync<{ count: number }>(
+      "SELECT COUNT(*) AS count FROM catalog_items WHERE provider_id = ?",
+      STAGING_PROVIDER,
+    );
+    if (
+      result.actualExecutedRows !== 100 ||
+      result.counters.prepareCount !== 1 ||
+      result.counters.executeCount !== 2 ||
+      result.counters.finalizeCount !== 1 ||
+      count?.count !== 100
+    ) {
+      throw new Error("Native repeated prepared execution lifecycle failed.");
+    }
+  });
+}
+
+export async function runCatalogWriteNativeCorrectnessProbes(): Promise<CatalogBenchmarkNativeProbe[]> {
+  const probes: Array<[string, () => Promise<void>]> = [
+    ["duplicate-pk-sequential-vs-hybrid", runDuplicatePrimaryKeyNativeProbe],
+    ["rollback-current", async () => { await runCatalogWriteRollbackProbe("CURRENT"); }],
+    ["rollback-prepared-single", async () => { await runCatalogWriteRollbackProbe("PREPARED_SINGLE"); }],
+    ["rollback-hybrid-50", async () => { await runCatalogWriteRollbackProbe("HYBRID_50"); }],
+    ["prepared-repeated-execution-finalize", runPreparedRepeatNativeProbe],
+    ["persisted-hash-metadata-staging-cleanup", async () => {
+      await runCatalogWriteBenchmark({ strategy: "HYBRID_50", rows: 200, profile: "small" });
+    }],
+  ];
+  const results: CatalogBenchmarkNativeProbe[] = [];
+  for (const [name, run] of probes) results.push(await runNativeProbe(name, run));
+  return results;
 }

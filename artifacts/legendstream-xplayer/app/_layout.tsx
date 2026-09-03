@@ -19,6 +19,7 @@ import { MediaLibraryProvider } from "@/context/MediaLibraryContext";
 import { CatalogSyncProvider } from "@/context/CatalogSyncContext";
 import { cleanupProviderBackupTempFiles } from "@/lib/providerBackupFiles";
 import { safeLog } from "@/lib/safeLog";
+import { isCatalogBenchmarkBuildEnabled } from "@/lib/catalogBenchmarkEntry";
 
 const abortSignalCtor = globalThis.AbortSignal as typeof AbortSignal & {
   timeout?: (milliseconds: number) => AbortSignal;
@@ -43,6 +44,9 @@ function RootLayoutNav() {
   return (
     <Stack screenOptions={{ headerBackTitle: "Back" }}>
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+      {isCatalogBenchmarkBuildEnabled() ? (
+        <Stack.Screen name="catalog-benchmark" options={{ title: "Catalog Benchmark" }} />
+      ) : null}
     </Stack>
   );
 }
