@@ -8,6 +8,7 @@ import {
   CatalogBenchmarkAlreadyRunningError,
   PRODUCTION_CATALOG_DB_NAME,
   assertSafeCatalogBenchmarkDatabaseName,
+  catalogBenchmarkArtifactNames,
   createCatalogBenchmarkDatabaseName,
   measuredStrategyOrder,
   median,
@@ -45,14 +46,17 @@ function result(
   };
 }
 
-function dependencies(options: {
+type DependencyOptions = {
   current?: number;
   prepared?: number;
   hybrid?: number;
   probes?: CatalogBenchmarkNativeProbe[];
   failRun?: (strategy: CatalogBenchmarkStrategy, invocation: number) => boolean;
   probePromise?: Promise<CatalogBenchmarkNativeProbe[]>;
-} = {}) {
+  mutateResult?: (result: CatalogBenchmarkRunResult, invocation: number) => unknown;
+};
+
+function dependencies(options: DependencyOptions = {}) {
   let invocation = 0;
   const names: string[] = [];
   const progressRuns: CatalogBenchmarkStrategy[] = [];
@@ -67,7 +71,8 @@ function dependencies(options: {
         : strategy === "PREPARED_SINGLE"
           ? options.prepared ?? 70
           : options.hybrid ?? 40;
-      return result(strategy, rows, profile, duration, duration);
+      const runResult = result(strategy, rows, profile, duration, duration);
+      return (options.mutateResult?.(runResult, invocation) ?? runResult) as CatalogBenchmarkRunResult;
     },
     runNativeCorrectnessProbes: () => options.probePromise ?? Promise.resolve(options.probes ?? [passedProbe]),
     wait: async () => undefined,
@@ -84,13 +89,22 @@ async function scenario(name: string, run: () => void | Promise<void>) {
   console.log(`ok ${passed} - ${name}`);
 }
 
-async function sessionWith(options: Parameters<typeof dependencies>[0] = {}) {
+async function sessionWith(options: DependencyOptions = {}) {
   const fixture = dependencies(options);
   const session = await runCatalogWriteBenchmarkSession({
     rows: 200, profile: "medium", dependencies: fixture.dependency,
     measuredRuns: 5, settleDelayMs: 0,
   });
   return { session, fixture };
+}
+
+async function invalidSession(mutateResult: NonNullable<DependencyOptions["mutateResult"]>) {
+  const { session } = await sessionWith({ mutateResult });
+  assert.equal(session.correctness, "failed");
+  assert.equal(session.classification, "CORRECTNESS_FAILED");
+  assert.equal(session.rawRuns[0]?.errorCode, "INVALID_BENCHMARK_RUN_RESULT");
+  assert.equal(session.comparisons.length, 0);
+  return session;
 }
 
 async function main() {
@@ -160,10 +174,61 @@ async function main() {
     assert.equal(session.classification, "PERFORMANCE_FAIL");
   });
 
-  await scenario("candidate total median over ten percent records regression warning", async () => {
+  await scenario("PREPARED_SINGLE regression remains informational when HYBRID_50 passes", async () => {
     const { session } = await sessionWith({ current: 100, prepared: 111, hybrid: 40 });
-    assert.equal(session.classification, "REGRESSION_WARNING");
+    assert.equal(session.classification, "PERFORMANCE_PASS");
     assert.deepEqual(session.regressionWarnings, ["PREPARED_SINGLE_TOTAL_MEDIAN_GT_CURRENT_BY_10_PERCENT"]);
+  });
+
+  await scenario("HYBRID_50 total regression is a blocking regression warning", async () => {
+    const { session } = await sessionWith({ current: 100, prepared: 70, hybrid: 111 });
+    assert.equal(session.classification, "REGRESSION_WARNING");
+    assert.deepEqual(session.regressionWarnings, ["HYBRID_50_TOTAL_MEDIAN_GT_CURRENT_BY_10_PERCENT"]);
+  });
+
+  await scenario("NaN benchmark timing is rejected before aggregation", async () => {
+    await invalidSession((run) => ({ ...run, sqliteWriteMs: Number.NaN }));
+  });
+
+  await scenario("infinite benchmark timing is rejected before aggregation", async () => {
+    await invalidSession((run) => ({ ...run, totalMs: Number.POSITIVE_INFINITY }));
+  });
+
+  await scenario("missing benchmark timing is rejected before aggregation", async () => {
+    await invalidSession((run) => {
+      const { projectionMs: _missing, ...incomplete } = run;
+      return incomplete;
+    });
+  });
+
+  await scenario("zero SQLite write timing is rejected before aggregation", async () => {
+    await invalidSession((run) => ({ ...run, sqliteWriteMs: 0 }));
+  });
+
+  await scenario("zero total timing is rejected before aggregation", async () => {
+    await invalidSession((run) => ({ ...run, totalMs: 0 }));
+  });
+
+  await scenario("negative benchmark values are rejected before aggregation", async () => {
+    await invalidSession((run) => ({ ...run, yieldMs: -1 }));
+  });
+
+  await scenario("mismatched benchmark row count is rejected", async () => {
+    await invalidSession((run) => ({ ...run, rows: 1_000 }));
+  });
+
+  await scenario("mismatched benchmark strategy is rejected", async () => {
+    await invalidSession((run) => ({ ...run, strategy: run.strategy === "CURRENT" ? "HYBRID_50" : "CURRENT" }));
+  });
+
+  await scenario("one invalid measured run cannot enter its aggregate", async () => {
+    const { session } = await sessionWith({
+      mutateResult: (run, invocation) => invocation === 4 ? { ...run, sqliteWriteMs: Number.NaN } : run,
+    });
+    assert.equal(session.correctness, "failed");
+    assert.equal(session.rawRuns[0]?.errorCode, "INVALID_BENCHMARK_RUN_RESULT");
+    assert.equal(session.aggregates.find((aggregate) => aggregate.strategy === "CURRENT")?.measuredRunCount, 4);
+    assert.equal(session.comparisons.length, 0);
   });
 
   await scenario("run correctness failure overrides performance", async () => {
@@ -201,6 +266,13 @@ async function main() {
     await assert.rejects(runCatalogWriteBenchmarkSession({ rows: 200, profile: "small", dependencies: failed.dependency, settleDelayMs: 0 }), /probe failed/);
     const next = await sessionWith();
     assert.equal(next.session.correctness, "passed");
+    const cleanupFailure = dependencies({ failRun: () => true });
+    const failedRun = await runCatalogWriteBenchmarkSession({
+      rows: 200, profile: "small", dependencies: cleanupFailure.dependency, settleDelayMs: 0,
+    });
+    assert.equal(failedRun.classification, "CORRECTNESS_FAILED");
+    const afterCleanupFailure = await sessionWith();
+    assert.equal(afterCleanupFailure.session.correctness, "passed");
   });
 
   await scenario("generated benchmark database names are unique and isolated", () => {
@@ -212,6 +284,17 @@ async function main() {
 
   await scenario("production catalog database name is rejected", () => {
     assert.throws(() => assertSafeCatalogBenchmarkDatabaseName(PRODUCTION_CATALOG_DB_NAME), /INVALID_BENCHMARK_DATABASE_NAME/);
+  });
+
+  await scenario("benchmark sidecar cleanup names stay constrained to one safe database", () => {
+    const databaseName = createCatalogBenchmarkDatabaseName("sidecar-test");
+    assert.deepEqual(catalogBenchmarkArtifactNames(databaseName), [
+      databaseName,
+      `${databaseName}-wal`,
+      `${databaseName}-shm`,
+      `${databaseName}-journal`,
+    ]);
+    assert.throws(() => catalogBenchmarkArtifactNames(PRODUCTION_CATALOG_DB_NAME), /INVALID_BENCHMARK_DATABASE_NAME/);
   });
 
   await scenario("safe result JSON contains no provider or credential fields", async () => {
@@ -278,8 +361,8 @@ async function main() {
     assert.match(workflow, /EXPO_PUBLIC_ENABLE_CATALOG_BENCHMARK/);
   });
 
-  assert.equal(passed, 22);
-  console.log("catalog write benchmark runner scenarios: 22/22 passed");
+  assert.equal(passed, 33);
+  console.log("catalog write benchmark runner scenarios: 33/33 passed");
 }
 
 void main();

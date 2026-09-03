@@ -19,7 +19,10 @@ import { MediaLibraryProvider } from "@/context/MediaLibraryContext";
 import { CatalogSyncProvider } from "@/context/CatalogSyncContext";
 import { cleanupProviderBackupTempFiles } from "@/lib/providerBackupFiles";
 import { safeLog } from "@/lib/safeLog";
-import { resolveCatalogAppRuntime } from "@/lib/catalogBenchmarkEntry";
+import {
+  createProductionQueryClient,
+  resolveCatalogAppRuntime,
+} from "@/lib/catalogBenchmarkEntry";
 
 const abortSignalCtor = globalThis.AbortSignal as typeof AbortSignal & {
   timeout?: (milliseconds: number) => AbortSignal;
@@ -42,7 +45,7 @@ if (appRuntime.runBackupTempCleanup) {
   });
 }
 
-const queryClient = new QueryClient();
+const queryClient = createProductionQueryClient(appRuntime, () => new QueryClient());
 
 function RootLayoutNav() {
   return (
@@ -87,6 +90,8 @@ export default function RootLayout() {
       </SafeAreaProvider>
     );
   }
+
+  if (!queryClient) throw new Error("PRODUCTION_QUERY_CLIENT_UNAVAILABLE");
 
   return (
     <SafeAreaProvider>

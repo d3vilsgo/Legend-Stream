@@ -3,6 +3,7 @@ import { redactSensitiveText } from "./safeLog";
 export const CATALOG_BENCHMARK_BUILD_FLAG = "EXPO_PUBLIC_ENABLE_CATALOG_BENCHMARK";
 export const CATALOG_BENCHMARK_DB_PREFIX = "legendstream-catalog-benchmark-v1-";
 export const PRODUCTION_CATALOG_DB_NAME = "legendstream-catalog-v1.db";
+export const CATALOG_BENCHMARK_ARTIFACT_SUFFIXES = ["", "-wal", "-shm", "-journal"] as const;
 export const CATALOG_BENCHMARK_STRATEGIES = [
   "CURRENT",
   "PREPARED_SINGLE",
@@ -165,6 +166,15 @@ export class CatalogBenchmarkAlreadyRunningError extends Error {
   }
 }
 
+export class InvalidCatalogBenchmarkRunResultError extends Error {
+  readonly code = "INVALID_BENCHMARK_RUN_RESULT";
+
+  constructor() {
+    super("INVALID_BENCHMARK_RUN_RESULT");
+    this.name = "InvalidCatalogBenchmarkRunResultError";
+  }
+}
+
 let activeSession = false;
 let databaseSequence = 0;
 
@@ -210,10 +220,67 @@ export function createCatalogBenchmarkDatabaseName(suffix?: string) {
   return assertSafeCatalogBenchmarkDatabaseName(`${CATALOG_BENCHMARK_DB_PREFIX}${generated}.db`);
 }
 
+export function catalogBenchmarkArtifactNames(databaseName: string) {
+  const safeName = assertSafeCatalogBenchmarkDatabaseName(databaseName);
+  return CATALOG_BENCHMARK_ARTIFACT_SUFFIXES.map((suffix) => `${safeName}${suffix}`);
+}
+
+const RUN_RESULT_NUMERIC_FIELDS = [
+  "projectionMs",
+  "jsonSerializeMs",
+  "serializedBytes",
+  "dbSetupMs",
+  "transactionMs",
+  "sqliteWriteMs",
+  "yieldMs",
+  "prepareCount",
+  "executeCount",
+  "finalizeCount",
+  "yieldCount",
+  "categoryWriteMs",
+  "finalSwapMs",
+  "totalMs",
+  "rowsPerSecond",
+  "sqliteRowsPerSecond",
+] as const satisfies readonly (keyof CatalogBenchmarkRunResult)[];
+
+export function assertValidCatalogBenchmarkRunResult(
+  result: unknown,
+  expected: Pick<CatalogBenchmarkRunResult, "strategy" | "rows" | "profile">,
+): asserts result is CatalogBenchmarkRunResult {
+  if (!result || typeof result !== "object") throw new InvalidCatalogBenchmarkRunResultError();
+  const candidate = result as Partial<CatalogBenchmarkRunResult>;
+  if (
+    candidate.strategy !== expected.strategy ||
+    candidate.rows !== expected.rows ||
+    candidate.profile !== expected.profile ||
+    candidate.correctness !== "passed"
+  ) {
+    throw new InvalidCatalogBenchmarkRunResultError();
+  }
+  for (const field of RUN_RESULT_NUMERIC_FIELDS) {
+    const value = candidate[field];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+      throw new InvalidCatalogBenchmarkRunResultError();
+    }
+  }
+  if (
+    candidate.sqliteWriteMs! <= 0 ||
+    candidate.totalMs! <= 0 ||
+    candidate.rowsPerSecond! <= 0 ||
+    candidate.sqliteRowsPerSecond! <= 0 ||
+    candidate.totalMs! < candidate.sqliteWriteMs!
+  ) {
+    throw new InvalidCatalogBenchmarkRunResultError();
+  }
+}
+
 function sanitizedFailure(caught: unknown) {
   return {
     errorCode: caught instanceof CatalogBenchmarkAlreadyRunningError
       ? caught.code
+      : caught instanceof InvalidCatalogBenchmarkRunResultError
+        ? caught.code
       : "BENCHMARK_RUN_FAILED",
     sanitizedMessage: redactSensitiveText(caught instanceof Error ? caught.message : String(caught)),
   };
@@ -276,6 +343,7 @@ async function runRecord(
       profile: options.profile,
       databaseName: (dependencies.createDatabaseName ?? createCatalogBenchmarkDatabaseName)(),
     });
+    assertValidCatalogBenchmarkRunResult(result, options);
     return { ...options, result, correctness: "passed" };
   } catch (caught) {
     return { ...options, correctness: "failed", ...sanitizedFailure(caught) };
@@ -390,12 +458,15 @@ async function executeSession(options: {
 
   let classification: CatalogBenchmarkClassification;
   if (correctness === "failed") classification = "CORRECTNESS_FAILED";
-  else if (regressionWarnings.length > 0) classification = "REGRESSION_WARNING";
   else {
     const hybrid = comparisons.find((item) => item.candidate === "HYBRID_50")!;
-    classification = hybrid.speedupSqlite >= 2 && hybrid.speedupTotal >= 2
-      ? "PERFORMANCE_PASS"
-      : "PERFORMANCE_FAIL";
+    if (hybrid.speedupSqlite >= 2 && hybrid.speedupTotal >= 2) {
+      classification = "PERFORMANCE_PASS";
+    } else if (regressionWarnings.includes("HYBRID_50_TOTAL_MEDIAN_GT_CURRENT_BY_10_PERCENT")) {
+      classification = "REGRESSION_WARNING";
+    } else {
+      classification = "PERFORMANCE_FAIL";
+    }
   }
 
   options.onProgress?.({

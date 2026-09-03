@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  createProductionQueryClient,
   resolveCatalogAppRuntime,
   resolveCatalogBenchmarkEntry,
 } from "../lib/catalogBenchmarkEntry";
@@ -11,7 +12,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const layoutSource = readFileSync(resolve(ROOT, "app/_layout.tsx"), "utf8");
 const indexSource = readFileSync(resolve(ROOT, "app/(tabs)/index.tsx"), "utf8");
 const benchmarkRootSource = layoutSource.match(
-  /if \(appRuntime\.kind === "benchmark"\) \{([\s\S]*?)\n  \}\n\n  return \(/,
+  /if \(appRuntime\.kind === "benchmark"\) \{([\s\S]*?)\n  \}\n\n  if \(!queryClient\)/,
 )?.[1];
 
 assert.ok(benchmarkRootSource, "benchmark root branch must remain explicit and inspectable");
@@ -29,7 +30,12 @@ scenario("flag off selects the production runtime", () => {
 });
 
 scenario("flag on selects the benchmark runtime", () => {
-  assert.equal(resolveCatalogAppRuntime("1").kind, "benchmark");
+  const runtime = resolveCatalogAppRuntime("1");
+  let allocations = 0;
+  assert.equal(runtime.kind, "benchmark");
+  assert.equal(createProductionQueryClient(runtime, () => { allocations += 1; return {}; }), null);
+  assert.equal(allocations, 0);
+  assert.match(layoutSource, /createProductionQueryClient\(appRuntime, \(\) => new QueryClient\(\)\)/);
 });
 
 scenario("benchmark runtime does not mount PlayerProvider", () => {

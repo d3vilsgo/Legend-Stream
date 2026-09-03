@@ -1,5 +1,6 @@
 import * as SQLite from "expo-sqlite";
 import * as Crypto from "expo-crypto";
+import { File } from "expo-file-system";
 import type { PersistedVodCatalogItem } from "./catalogPersistence";
 import {
   CURRENT_CATALOG_SINGLE_ROW_UPSERT_SQL,
@@ -14,6 +15,7 @@ import {
 import { yieldToUi } from "./cooperative";
 import {
   assertSafeCatalogBenchmarkDatabaseName,
+  catalogBenchmarkArtifactNames,
   createCatalogBenchmarkDatabaseName,
   type CatalogBenchmarkNativeProbe,
 } from "./catalogWriteBenchmarkRunner";
@@ -174,10 +176,25 @@ async function cleanupIsolatedDatabase(db: SQLite.SQLiteDatabase | null, databas
       failures.push(caught);
     }
   }
-  try {
-    await SQLite.deleteDatabaseAsync(databaseName);
-  } catch (caught) {
-    failures.push(caught);
+  try { await deleteExactBenchmarkArtifacts(databaseName); } catch (caught) { failures.push(caught); }
+  if (failures.length > 0) throw new CatalogBenchmarkCleanupError(failures);
+}
+
+async function deleteExactBenchmarkArtifacts(databaseName: string) {
+  const artifactNames = catalogBenchmarkArtifactNames(databaseName);
+  const directory = SQLite.defaultDatabaseDirectory;
+  if (typeof directory !== "string" || directory.length === 0) {
+    throw new Error("BENCHMARK_DATABASE_DIRECTORY_UNAVAILABLE");
+  }
+  const failures: unknown[] = [];
+  try { await SQLite.deleteDatabaseAsync(databaseName, directory); } catch (caught) { failures.push(caught); }
+  for (const artifactName of artifactNames) {
+    try {
+      const artifact = new File(directory, artifactName);
+      if (artifact.exists) artifact.delete();
+    } catch (caught) {
+      failures.push(caught);
+    }
   }
   if (failures.length > 0) throw new CatalogBenchmarkCleanupError(failures);
 }
@@ -194,7 +211,7 @@ async function withIsolatedBenchmarkDatabase<T>(
   try {
     const setupStartedAt = nowMs();
     // Fail closed: a stale benchmark DB must not survive into a new measurement.
-    await SQLite.deleteDatabaseAsync(databaseName);
+    await deleteExactBenchmarkArtifacts(databaseName);
     db = await SQLite.openDatabaseAsync(databaseName);
     await createBenchmarkSchema(db);
     const dbSetupMs = nowMs() - setupStartedAt;

@@ -52,3 +52,10 @@ export function resolveCatalogAppRuntime(
 ): CatalogAppRuntime {
   return isCatalogBenchmarkBuildEnabled(flag) ? BENCHMARK_RUNTIME : PRODUCTION_RUNTIME;
 }
+
+export function createProductionQueryClient<T>(
+  runtime: CatalogAppRuntime,
+  create: () => T,
+): T | null {
+  return runtime.mountQueryClientProvider ? create() : null;
+}
