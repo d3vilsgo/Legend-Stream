@@ -15,10 +15,14 @@ import {
 import { yieldToUi } from "./cooperative";
 import {
   assertSafeCatalogBenchmarkDatabaseName,
-  catalogBenchmarkArtifactNames,
   createCatalogBenchmarkDatabaseName,
   type CatalogBenchmarkNativeProbe,
 } from "./catalogWriteBenchmarkRunner";
+import {
+  CatalogBenchmarkCleanupError,
+  CatalogBenchmarkLifecycleError,
+  deleteExistingCatalogBenchmarkArtifacts,
+} from "./catalogBenchmarkCleanup";
 import { redactSensitiveText } from "./safeLog";
 
 const ACTIVE_PROVIDER = "benchmark-active";
@@ -68,37 +72,6 @@ const PROFILE_BYTES: Record<CatalogWritePayloadProfile, number> = {
 
 function nowMs() {
   return globalThis.performance?.now?.() ?? Date.now();
-}
-
-function failureText(caught: unknown) {
-  if (caught instanceof Error) return caught.stack ?? `${caught.name}: ${caught.message}`;
-  return String(caught);
-}
-
-class CatalogBenchmarkCleanupError extends Error {
-  readonly failures: unknown[];
-
-  constructor(failures: unknown[]) {
-    super(`Catalog benchmark cleanup failed:\n${failures.map(failureText).join("\n---\n")}`);
-    this.name = "CatalogBenchmarkCleanupError";
-    this.failures = failures;
-  }
-}
-
-class CatalogBenchmarkLifecycleError extends Error {
-  readonly primaryError: unknown;
-  readonly cleanupError: unknown;
-
-  constructor(primaryError: unknown, cleanupError: unknown) {
-    super(
-      `Catalog benchmark failed and cleanup also failed.\n` +
-      `Primary failure:\n${failureText(primaryError)}\n` +
-      `Cleanup failure:\n${failureText(cleanupError)}`,
-    );
-    this.name = "CatalogBenchmarkLifecycleError";
-    this.primaryError = primaryError;
-    this.cleanupError = cleanupError;
-  }
 }
 
 function addCounters(target: CatalogWriteCounters, source: CatalogWriteCounters) {
@@ -181,22 +154,15 @@ async function cleanupIsolatedDatabase(db: SQLite.SQLiteDatabase | null, databas
 }
 
 async function deleteExactBenchmarkArtifacts(databaseName: string) {
-  const artifactNames = catalogBenchmarkArtifactNames(databaseName);
   const directory = SQLite.defaultDatabaseDirectory;
   if (typeof directory !== "string" || directory.length === 0) {
     throw new Error("BENCHMARK_DATABASE_DIRECTORY_UNAVAILABLE");
   }
-  const failures: unknown[] = [];
-  try { await SQLite.deleteDatabaseAsync(databaseName, directory); } catch (caught) { failures.push(caught); }
-  for (const artifactName of artifactNames) {
-    try {
-      const artifact = new File(directory, artifactName);
-      if (artifact.exists) artifact.delete();
-    } catch (caught) {
-      failures.push(caught);
-    }
-  }
-  if (failures.length > 0) throw new CatalogBenchmarkCleanupError(failures);
+  await deleteExistingCatalogBenchmarkArtifacts({
+    databaseName,
+    directory,
+    createFile: (fileUri) => new File(fileUri),
+  });
 }
 
 async function withIsolatedBenchmarkDatabase<T>(

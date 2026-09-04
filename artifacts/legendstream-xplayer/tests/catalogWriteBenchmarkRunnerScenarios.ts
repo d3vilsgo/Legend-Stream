@@ -4,6 +4,13 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { isCatalogBenchmarkBuildEnabled, resolveCatalogBenchmarkEntry } from "../lib/catalogBenchmarkEntry";
 import {
+  CatalogBenchmarkCleanupError,
+  CatalogBenchmarkLifecycleError,
+  catalogBenchmarkArtifactFileUris,
+  deleteExistingCatalogBenchmarkArtifacts,
+  normalizeBenchmarkDirectoryFileUri,
+} from "../lib/catalogBenchmarkCleanup";
+import {
   CATALOG_BENCHMARK_DEVICE_GATE_DATASETS,
   CatalogBenchmarkAlreadyRunningError,
   PRODUCTION_CATALOG_DB_NAME,
@@ -105,6 +112,28 @@ async function invalidSession(mutateResult: NonNullable<DependencyOptions["mutat
   assert.equal(session.rawRuns[0]?.errorCode, "INVALID_BENCHMARK_RUN_RESULT");
   assert.equal(session.comparisons.length, 0);
   return session;
+}
+
+function cleanupFixture(existingUris: string[], deleteFailureUri?: string) {
+  const existing = new Set(existingUris);
+  const visited: string[] = [];
+  const deleted: string[] = [];
+  return {
+    existing,
+    visited,
+    deleted,
+    createFile: (fileUri: string) => {
+      visited.push(fileUri);
+      return {
+        get exists() { return existing.has(fileUri); },
+        delete() {
+          if (fileUri === deleteFailureUri) throw new Error("EACCES");
+          deleted.push(fileUri);
+          existing.delete(fileUri);
+        },
+      };
+    },
+  };
 }
 
 async function main() {
@@ -297,6 +326,90 @@ async function main() {
     assert.throws(() => catalogBenchmarkArtifactNames(PRODUCTION_CATALOG_DB_NAME), /INVALID_BENCHMARK_DATABASE_NAME/);
   });
 
+  await scenario("raw Android SQLite directory becomes an absolute file URI", () => {
+    assert.equal(
+      normalizeBenchmarkDirectoryFileUri("/data/data/com.legendstream.xplayer/files/SQLite"),
+      "file:///data/data/com.legendstream.xplayer/files/SQLite",
+    );
+  });
+
+  await scenario("an existing absolute file URI is preserved", () => {
+    const directory = "file:///data/data/com.legendstream.xplayer/files/SQLite";
+    assert.equal(normalizeBenchmarkDirectoryFileUri(directory), directory);
+  });
+
+  await scenario("relative and malformed benchmark directories fail closed", () => {
+    for (const directory of ["data/SQLite", "//data/SQLite", "content://SQLite", " file:///data/SQLite", ""]) {
+      assert.throws(
+        () => normalizeBenchmarkDirectoryFileUri(directory),
+        /INVALID_BENCHMARK_DATABASE_DIRECTORY/,
+      );
+    }
+  });
+
+  await scenario("an absent fresh UUID database needs no delete operation", async () => {
+    const databaseName = createCatalogBenchmarkDatabaseName("absent-main");
+    const fixture = cleanupFixture([]);
+    await deleteExistingCatalogBenchmarkArtifacts({
+      databaseName,
+      directory: "/data/app/SQLite",
+      createFile: fixture.createFile,
+    });
+    assert.deepEqual(fixture.deleted, []);
+    assert.equal(fixture.visited[0], `file:///data/app/SQLite/${databaseName}`);
+  });
+
+  await scenario("absent WAL SHM and journal sidecars are idempotent success", async () => {
+    const databaseName = createCatalogBenchmarkDatabaseName("absent-sidecars");
+    const mainUri = `file:///data/app/SQLite/${databaseName}`;
+    const fixture = cleanupFixture([mainUri]);
+    await deleteExistingCatalogBenchmarkArtifacts({
+      databaseName,
+      directory: "file:///data/app/SQLite",
+      createFile: fixture.createFile,
+    });
+    assert.deepEqual(fixture.deleted, [mainUri]);
+    assert.equal(fixture.visited.length, 4);
+  });
+
+  await scenario("existing benchmark artifacts are enumerated and deleted exactly", async () => {
+    const databaseName = createCatalogBenchmarkDatabaseName("existing-artifacts");
+    const expected = catalogBenchmarkArtifactFileUris(databaseName, "/data/app/SQLite");
+    const fixture = cleanupFixture(expected);
+    await deleteExistingCatalogBenchmarkArtifacts({
+      databaseName,
+      directory: "/data/app/SQLite/",
+      createFile: fixture.createFile,
+    });
+    assert.deepEqual(fixture.visited, expected);
+    assert.deepEqual(fixture.deleted, expected);
+    assert.equal(fixture.existing.size, 0);
+  });
+
+  await scenario("a real benchmark artifact delete failure propagates fail closed", async () => {
+    const databaseName = createCatalogBenchmarkDatabaseName("delete-failure");
+    const uris = catalogBenchmarkArtifactFileUris(databaseName, "/data/app/SQLite");
+    const fixture = cleanupFixture(uris, uris[1]);
+    await assert.rejects(
+      deleteExistingCatalogBenchmarkArtifacts({
+        databaseName,
+        directory: "/data/app/SQLite",
+        createFile: fixture.createFile,
+      }),
+      (caught) => caught instanceof CatalogBenchmarkCleanupError && caught.failures.length === 1,
+    );
+    assert.equal(fixture.existing.has(uris[1]), true);
+  });
+
+  await scenario("primary and cleanup failures retain both original causes", () => {
+    const primary = new Error("primary benchmark failure");
+    const cleanup = new CatalogBenchmarkCleanupError([new Error("cleanup failure")]);
+    const lifecycle = new CatalogBenchmarkLifecycleError(primary, cleanup);
+    assert.equal(lifecycle.primaryError, primary);
+    assert.equal(lifecycle.cleanupError, cleanup);
+    assert.match(lifecycle.message, /primary benchmark failure[\s\S]*cleanup failure/);
+  });
+
   await scenario("safe result JSON contains no provider or credential fields", async () => {
     const fixture = dependencies();
     const report = await runCatalogWriteDeviceGate({ dependencies: fixture.dependency, settleDelayMs: 0 });
@@ -361,8 +474,8 @@ async function main() {
     assert.match(workflow, /EXPO_PUBLIC_ENABLE_CATALOG_BENCHMARK/);
   });
 
-  assert.equal(passed, 33);
-  console.log("catalog write benchmark runner scenarios: 33/33 passed");
+  assert.equal(passed, 41);
+  console.log("catalog write benchmark runner scenarios: 41/41 passed");
 }
 
 void main();

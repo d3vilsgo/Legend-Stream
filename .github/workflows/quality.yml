@@ -117,12 +117,12 @@ jobs:
           set -euo pipefail
           candidate="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-write-batch 2>&1 | tee /dev/stderr)"
           grep -F 'catalog write batch scenarios: 27/27 passed' <<<"$candidate"
-      - name: Catalog native benchmark runner semantics (33/33 required)
+      - name: Catalog native benchmark runner semantics (41/41 required)
         shell: bash
         run: |
           set -euo pipefail
           runner="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-write-benchmark-runner 2>&1 | tee /dev/stderr)"
-          grep -F 'catalog write benchmark runner scenarios: 33/33 passed' <<<"$runner"
+          grep -F 'catalog write benchmark runner scenarios: 41/41 passed' <<<"$runner"
       - name: Catalog benchmark runtime isolation (9/9 required)
         shell: bash
         run: |
