@@ -191,30 +191,34 @@ jobs:
           set -euo pipefail
           history="$(pnpm --filter @workspace/legendstream-xplayer test:live-history 2>&1 | tee /dev/stderr)"
           grep -F 'live history scenarios: 32/32 passed' <<<"$history"
-      - name: Verify Replit removal
+      - name: Repository hygiene guard
         shell: bash
         run: |
           set -euo pipefail
-          if find . -path './.git' -prune -o \( -name '.replit' -o -name '.replitignore' -o -name '.replit-artifact' -o -name 'replit.md' \) -print | grep -q .; then
-            echo 'Replit metadata still present:'
-            find . -path './.git' -prune -o \( -name '.replit' -o -name '.replitignore' -o -name '.replit-artifact' -o -name 'replit.md' \) -print
-            exit 1
-          fi
+          legacy_terms=(
+            "rep""lit"
+            "@rep""lit"
+            "REP""LIT_"
+            "REP""L_ID"
+            "stripe-rep""lit-sync"
+            "rep"".it"
+            "rep"".co"
+          )
+          for term in "${legacy_terms[@]}"; do
+            path_matches="$(git ls-files | grep -iF -- "$term" || true)"
+            content_matches="$(git grep -I -n -i -F -- "$term" -- . || true)"
+            if [ -n "$path_matches" ] || [ -n "$content_matches" ]; then
+              echo 'Legacy workspace reference detected:'
+              [ -z "$path_matches" ] || printf '%s\n' "$path_matches"
+              [ -z "$content_matches" ] || printf '%s\n' "$content_matches"
+              exit 1
+            fi
+          done
           if [ -d artifacts/mockup-sandbox ]; then
             echo 'artifacts/mockup-sandbox still exists'
             exit 1
           fi
-          active_matches="$(grep -RInE --exclude='pnpm-lock.yaml' --exclude='*.md' --exclude-dir='.git' --exclude-dir='node_modules' --exclude-dir='.github' '(@replit/|stripe-replit-sync|REPLIT_|REPL_ID)' package.json pnpm-workspace.yaml artifacts lib scripts 2>/dev/null || true)"
-          if [ -n "$active_matches" ]; then
-            echo 'Active Replit references still present:'
-            echo "$active_matches"
-            exit 1
-          fi
-          if grep -Ein '(@replit/|stripe-replit-sync)' pnpm-lock.yaml; then
-            echo 'Replit packages remain in pnpm-lock.yaml'
-            exit 1
-          fi
-          echo 'Replit cleanup verification passed.'
+          echo 'Repository hygiene guard passed.'
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references
