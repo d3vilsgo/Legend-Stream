@@ -172,10 +172,14 @@ async function main() {
     assert.match(source, /WRITE_BATCH_SIZE/);
   });
 
-  await scenario("M3U writer delegates the full successful write to the atomic catalog replacement", () => {
+  await scenario("M3U writer uses explicit bulk staging writes before existing staging swap", () => {
     assert.doesNotMatch(m3uCatalogCacheSource, /sqliteStage\s*=\s*"upsert-live"/);
     assert.match(m3uCatalogCacheSource, /const stagingProviderId = `__staging__\$\{provider\.id\}`;/);
-    assert.match(m3uCatalogCacheSource, /await upsertCatalogItems\(stagingProviderId,\s*"live"/);
+    assert.match(
+      m3uCatalogCacheSource,
+      /await upsertCatalogItemsBulkNonCancellable\(stagingProviderId,\s*"live"/,
+    );
+    assert.doesNotMatch(m3uCatalogCacheSource, /await upsertCatalogItems\(stagingProviderId,\s*"live"/);
     assert.match(m3uCatalogCacheSource, /const committedCounts = await swapStagingToProvider\(\{/);
     assert.doesNotMatch(m3uCatalogCacheSource, /replaceProviderCatalogAtomically/);
     assert.match(m3uCatalogCacheSource, /onSqliteStage:\s*\(stage\)\s*=>/);
