@@ -72,7 +72,8 @@ async function main() {
     const mutations: Array<[string, string | undefined]> = [
       ["setCatalogSyncState", "getCatalogSyncState"],
       ["replaceCatalogCategories", "getCachedCategories"],
-      ["upsertCatalogItems", "replaceCatalogKind"],
+      ["upsertCatalogItems", "upsertCatalogItemsBulkNonCancellable"],
+      ["upsertCatalogItemsBulkNonCancellable", "replaceCatalogKind"],
       ["replaceCatalogKind", "pruneCatalogKind"],
       ["pruneCatalogKind", "replaceProviderCatalogAtomically"],
       ["replaceProviderCatalogAtomically", "cleanupStagingCatalog"],
@@ -147,9 +148,9 @@ async function main() {
     const source = m3uCatalogCacheSource.slice(start);
     assert.match(source, /__staging__/);
     assert.match(source, /await cleanupStagingCatalog\(provider\.id\)/);
-    const liveWrite = source.indexOf('await upsertCatalogItems(stagingProviderId, "live"');
-    const vodWrite = source.indexOf('await upsertCatalogItems(stagingProviderId, "vod"');
-    const seriesWrite = source.indexOf('await upsertCatalogItems(stagingProviderId, "series"');
+    const liveWrite = source.indexOf('await upsertCatalogItemsBulkNonCancellable(stagingProviderId, "live"');
+    const vodWrite = source.indexOf('await upsertCatalogItemsBulkNonCancellable(stagingProviderId, "vod"');
+    const seriesWrite = source.indexOf('await upsertCatalogItemsBulkNonCancellable(stagingProviderId, "series"');
     const swap = source.indexOf("await swapStagingToProvider");
     assert.ok(liveWrite >= 0 && vodWrite > liveWrite && seriesWrite > vodWrite && swap > seriesWrite);
     assert.doesNotMatch(source, /replaceProviderCatalogAtomically/);
@@ -161,7 +162,8 @@ async function main() {
     const start = m3uCatalogCacheSource.indexOf("export async function persistM3UProviderCache");
     const source = m3uCatalogCacheSource.slice(start);
     assert.match(source, /__staging__/);
-    assert.match(source, /upsertCatalogItems\(stagingProviderId/);
+    assert.match(source, /upsertCatalogItemsBulkNonCancellable\(stagingProviderId/);
+    assert.doesNotMatch(source, /upsertCatalogItems\(stagingProviderId/);
     assert.doesNotMatch(source, /replaceProviderCatalogAtomically/);
   });
 
