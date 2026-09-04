@@ -1,6 +1,7 @@
 import * as SQLite from "expo-sqlite";
 import { yieldToUi } from "./cooperative";
 import { enqueueCatalogDbWrite } from "./catalogDbWriter";
+import { executeCatalogBulkNonCancellableBatches } from "./catalogBulkWrite";
 import type { XtreamCategory } from "./xtreamCatalog";
 import {
   normalizePersistedCatalogPayload,
@@ -49,6 +50,15 @@ type CatalogWriteOptions = {
   seenAt?: number;
   onProgress?: (written: number) => void;
   isCancelled?: () => boolean;
+  onBatchStarted?: (batchIndex: number) => void;
+  onBatchCommitted?: (observation: CatalogWriteBatchObservation) => void;
+  onSqliteStage?: (stage: CatalogWriteSqliteStage) => void;
+};
+
+type CatalogBulkNonCancellableWriteOptions = {
+  markNew?: boolean;
+  seenAt?: number;
+  onProgress?: (written: number) => void;
   onBatchStarted?: (batchIndex: number) => void;
   onBatchCommitted?: (observation: CatalogWriteBatchObservation) => void;
   onSqliteStage?: (stage: CatalogWriteSqliteStage) => void;
@@ -456,6 +466,30 @@ export async function upsertCatalogItems(
     }
 
     return written;
+  });
+}
+
+export async function upsertCatalogItemsBulkNonCancellable(
+  providerId: string,
+  kind: CatalogKind,
+  items: PersistedCatalogItem[],
+  options: CatalogBulkNonCancellableWriteOptions = {},
+) {
+  return enqueueCatalogDbWrite(async () => {
+    const db = await database();
+    return executeCatalogBulkNonCancellableBatches({
+      database: db,
+      providerId,
+      kind,
+      items,
+      seenAt: options.seenAt ?? Date.now(),
+      markNew: Boolean(options.markNew),
+      onProgress: options.onProgress,
+      onBatchStarted: options.onBatchStarted,
+      onBatchCommitted: options.onBatchCommitted,
+      onSqliteStage: options.onSqliteStage,
+      yieldToUi,
+    });
   });
 }
 

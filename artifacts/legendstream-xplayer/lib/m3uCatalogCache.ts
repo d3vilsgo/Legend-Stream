@@ -8,7 +8,7 @@ import {
   initCatalogCache,
   setCatalogSyncState,
   swapStagingToProvider,
-  upsertCatalogItems,
+  upsertCatalogItemsBulkNonCancellable,
 } from "./catalogCache";
 import {
   type Channel,
@@ -448,7 +448,7 @@ export async function persistM3UProviderCache(
     );
     const seenAt = Date.now();
 
-    stagedCounts.live = await upsertCatalogItems(stagingProviderId, "live", stagedLive, {
+    stagedCounts.live = await upsertCatalogItemsBulkNonCancellable(stagingProviderId, "live", stagedLive, {
       seenAt,
       markNew: true,
       onBatchStarted: (batchIndex) => {
@@ -458,7 +458,7 @@ export async function persistM3UProviderCache(
         sqliteStage = stage;
       },
     });
-    stagedCounts.vod = await upsertCatalogItems(stagingProviderId, "vod", stagedVod, {
+    stagedCounts.vod = await upsertCatalogItemsBulkNonCancellable(stagingProviderId, "vod", stagedVod, {
       seenAt,
       markNew: true,
       onBatchStarted: (batchIndex) => {
@@ -468,7 +468,7 @@ export async function persistM3UProviderCache(
         sqliteStage = stage;
       },
     });
-    stagedCounts.series = await upsertCatalogItems(stagingProviderId, "series", stagedSeries, {
+    stagedCounts.series = await upsertCatalogItemsBulkNonCancellable(stagingProviderId, "series", stagedSeries, {
       seenAt,
       markNew: true,
       onBatchStarted: (batchIndex) => {
