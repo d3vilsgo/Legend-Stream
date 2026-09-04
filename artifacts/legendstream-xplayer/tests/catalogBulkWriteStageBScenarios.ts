@@ -135,7 +135,7 @@ async function sourceScenario(name: string, run: () => void | Promise<void>) {
 }
 
 function source(relative: string) {
-  return readFileSync(fileURLToPath(new URL(relative, import.meta.url)), "utf8");
+  return readFileSync(fileURLToPath(new URL(relative, import.meta.url).href), "utf8");
 }
 
 function between(text: string, start: string, end: string) {
