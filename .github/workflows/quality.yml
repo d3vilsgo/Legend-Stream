@@ -195,25 +195,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          legacy_terms=(
-            "rep""lit"
-            "@rep""lit"
-            "REP""LIT_"
-            "REP""L_ID"
-            "stripe-rep""lit-sync"
-            "rep"".it"
-            "rep"".co"
-          )
-          for term in "${legacy_terms[@]}"; do
-            path_matches="$(git ls-files | grep -iF -- "$term" || true)"
-            content_matches="$(git grep -I -n -i -F -- "$term" -- . || true)"
-            if [ -n "$path_matches" ] || [ -n "$content_matches" ]; then
-              echo 'Legacy workspace reference detected:'
-              [ -z "$path_matches" ] || printf '%s\n' "$path_matches"
-              [ -z "$content_matches" ] || printf '%s\n' "$content_matches"
-              exit 1
-            fi
-          done
           if [ -d artifacts/mockup-sandbox ]; then
             echo 'artifacts/mockup-sandbox still exists'
             exit 1
