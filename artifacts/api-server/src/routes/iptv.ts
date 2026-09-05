@@ -144,6 +144,8 @@ async function providerJson(
 }
 
 const allowedActions = new Set([
+  "get_live_categories",
+  "get_live_streams",
   "get_vod_categories",
   "get_vod_streams",
   "get_vod_info",
@@ -152,26 +154,54 @@ const allowedActions = new Set([
   "get_series_info",
 ]);
 
+function validateAuth(data: any) {
+  const userInfo = data?.user_info;
+  const authValue = userInfo?.auth;
+  const status = String(userInfo?.status ?? "").toLowerCase();
+  const authenticated = authValue === 1 || authValue === "1" || authValue === true;
+  if (!userInfo || !authenticated || ["disabled", "banned", "expired"].includes(status)) {
+    throw new UpstreamError(
+      "Xtream rejected these credentials or the subscription is inactive.",
+      401,
+      "INVALID_CREDENTIALS",
+    );
+  }
+  return data;
+}
+
+async function executeXtreamRequest(
+  credentials: ReturnType<typeof readCredentials>,
+  action?: string,
+  params?: unknown,
+) {
+  if (action !== undefined && !allowedActions.has(action)) {
+    throw new UpstreamError("Unsupported Xtream action.", 400, "INVALID_ACTION");
+  }
+
+  const url = new URL("player_api.php", `${credentials.baseUrl}/`);
+  if (action) url.searchParams.set("action", action);
+  if (params && typeof params === "object" && !Array.isArray(params)) {
+    for (const [key, raw] of Object.entries(params as Record<string, unknown>)) {
+      if (!/^[a-z_]+$/i.test(key)) continue;
+      if (typeof raw === "string" || typeof raw === "number") {
+        url.searchParams.set(key, String(raw));
+      }
+    }
+  }
+  const data = await providerJson(url, credentials);
+  return action ? data : validateAuth(data);
+}
+
 router.post("/xtream/action", async (req, res) => {
   try {
     const body = req.body as XtreamActionRequest;
     const credentials = readCredentials(body);
-    if (typeof body.action !== "string" || !allowedActions.has(body.action)) {
-      throw new UpstreamError("Unsupported Xtream action.", 400, "INVALID_ACTION");
-    }
-
-    const url = new URL("player_api.php", `${credentials.baseUrl}/`);
-    url.searchParams.set("action", body.action);
-    if (body.params && typeof body.params === "object" && !Array.isArray(body.params)) {
-      for (const [key, raw] of Object.entries(body.params as Record<string, unknown>)) {
-        if (!/^[a-z_]+$/i.test(key)) continue;
-        if (typeof raw === "string" || typeof raw === "number") {
-          url.searchParams.set(key, String(raw));
-        }
-      }
-    }
-
-    const data = await providerJson(url, credentials);
+    const action = body.action === undefined
+      ? undefined
+      : typeof body.action === "string"
+        ? body.action
+        : (() => { throw new UpstreamError("Unsupported Xtream action.", 400, "INVALID_ACTION"); })();
+    const data = await executeXtreamRequest(credentials, action, body.params);
     res.json(data);
   } catch (error) {
     const status = error instanceof UpstreamError ? error.status : 500;
@@ -183,41 +213,21 @@ router.post("/xtream/action", async (req, res) => {
   }
 });
 
+// Legacy browser bootstrap endpoint retained for compatibility. The canonical client uses
+// /xtream/action and therefore shares one high-level domain contract on native and web.
 router.post("/xtream", async (req, res) => {
   try {
     const credentials = readCredentials(req.body as XtreamRequest);
-    const authUrl = new URL("player_api.php", `${credentials.baseUrl}/`);
-    const auth = await providerJson(authUrl, credentials);
-    const userInfo = auth?.user_info;
-    const authValue = userInfo?.auth;
-    const status = String(userInfo?.status ?? "").toLowerCase();
-
-    if (
-      authValue === 0 ||
-      authValue === "0" ||
-      authValue === false ||
-      status === "disabled" ||
-      status === "banned" ||
-      status === "expired"
-    ) {
+    const auth = await executeXtreamRequest(credentials);
+    const categories = await executeXtreamRequest(credentials, "get_live_categories");
+    const streams = await executeXtreamRequest(credentials, "get_live_streams");
+    if (!Array.isArray(categories)) {
       throw new UpstreamError(
-        "Xtream rejected these credentials or the subscription is inactive.",
-        401,
-        "INVALID_CREDENTIALS",
-      );
-    }
-
-    if (!userInfo || (authValue === undefined && !userInfo.username)) {
-      throw new UpstreamError(
-        "The server responded, but it did not return a valid Xtream account payload.",
-        502,
+        "Xtream returned an invalid live categories response.",
+        422,
         "INVALID_PROVIDER_RESPONSE",
       );
     }
-
-    const streamsUrl = new URL("player_api.php", `${credentials.baseUrl}/`);
-    streamsUrl.searchParams.set("action", "get_live_streams");
-    const streams = await providerJson(streamsUrl, credentials);
     if (!Array.isArray(streams)) {
       throw new UpstreamError(
         "Xtream authentication succeeded, but no live stream list was returned.",
@@ -225,18 +235,7 @@ router.post("/xtream", async (req, res) => {
         "NO_LIVE_STREAMS",
       );
     }
-
-    let categories: unknown[] = [];
-    try {
-      const categoriesUrl = new URL("player_api.php", `${credentials.baseUrl}/`);
-      categoriesUrl.searchParams.set("action", "get_live_categories");
-      const categoryData = await providerJson(categoriesUrl, credentials);
-      categories = Array.isArray(categoryData) ? categoryData : [];
-    } catch {
-      // Some providers omit live categories. The stream list remains usable.
-    }
-
-    res.json({ auth, streams, categories, baseUrl: credentials.baseUrl });
+    res.json({ auth, categories, streams, baseUrl: credentials.baseUrl });
   } catch (error) {
     const status = error instanceof UpstreamError ? error.status : 500;
     const code = error instanceof UpstreamError ? error.code : "PROXY_ERROR";
