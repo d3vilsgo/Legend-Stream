@@ -1,6 +1,8 @@
 import { StalkerPortalError, type StalkerPortalSession } from "./stalkerPortal";
 import type { PersistedLiveCatalogItem } from "./catalogPersistence";
 
+export const MAX_STALKER_LIVE_PAGES = 5_000;
+
 export type StalkerLiveCategory = {
   id: string;
   name: string;
@@ -35,6 +37,7 @@ type TraverseOptions = {
   isCurrent?: () => boolean;
   persistPage: (items: PersistedLiveCatalogItem[], page: StalkerLivePage) => Promise<void>;
   yieldFn?: () => void | Promise<void>;
+  maxPages?: number;
 };
 
 export type StagedStalkerLiveSyncOptions = {
@@ -50,6 +53,7 @@ export type StagedStalkerLiveSyncOptions = {
   ) => Promise<void>;
   yieldFn?: () => void | Promise<void>;
   onCategories?: (categories: readonly StalkerLiveCategory[]) => void | Promise<void>;
+  maxPages?: number;
 };
 
 export type StalkerLiveTraversalResult = {
@@ -119,12 +123,23 @@ export function normalizeStalkerLiveCategories(payload: unknown): StalkerLiveCat
   return categories;
 }
 
+export function isStalkerLiveCategoryCapabilityAbsent(caught: unknown) {
+  return caught instanceof StalkerPortalError
+    && caught.code === "HTTP_ERROR"
+    && (caught.status === 404 || caught.status === 405);
+}
+
 export async function fetchStalkerLiveCategories(
   session: StalkerLivePortal,
   signal?: AbortSignal,
 ): Promise<StalkerLiveCategory[]> {
-  const payload = await session.request({ type: "itv", action: "get_genres" }, signal);
-  return normalizeStalkerLiveCategories(payload);
+  try {
+    const payload = await session.request({ type: "itv", action: "get_genres" }, signal);
+    return normalizeStalkerLiveCategories(payload);
+  } catch (caught) {
+    if (isStalkerLiveCategoryCapabilityAbsent(caught)) return [];
+    throw caught;
+  }
 }
 
 export function stableStalkerLiveChannelId(providerId: string, portalId: string) {
@@ -215,9 +230,31 @@ function throwIfCancelled(signal?: AbortSignal, isCurrent?: () => boolean) {
   }
 }
 
+export function normalizedStalkerLivePageCeiling(value?: number) {
+  const numeric = Number(value ?? MAX_STALKER_LIVE_PAGES);
+  if (!Number.isFinite(numeric)) return MAX_STALKER_LIVE_PAGES;
+  return Math.max(1, Math.trunc(numeric));
+}
+
+export function stalkerLivePageCeilingExceeded(
+  page: number,
+  maxPages = MAX_STALKER_LIVE_PAGES,
+) {
+  return page > normalizedStalkerLivePageCeiling(maxPages);
+}
+
+function assertWithinPageCeiling(page: number, maxPages?: number) {
+  if (!stalkerLivePageCeilingExceeded(page, normalizedStalkerLivePageCeiling(maxPages))) return;
+  throw new StalkerPortalError(
+    "INVALID_RESPONSE",
+    "Stalker Live pagination exceeded the safety ceiling without terminal evidence.",
+  );
+}
+
 export async function traverseStalkerLivePages(options: TraverseOptions): Promise<StalkerLiveTraversalResult> {
   const seenIds = new Set<string>();
   const pageFingerprints = new Set<string>();
+  const maxPages = normalizedStalkerLivePageCeiling(options.maxPages);
   let pageNumber = 1;
   let persisted = 0;
   let totalItems: number | null = null;
@@ -225,6 +262,7 @@ export async function traverseStalkerLivePages(options: TraverseOptions): Promis
 
   while (true) {
     throwIfCancelled(options.signal, options.isCurrent);
+    assertWithinPageCeiling(pageNumber, maxPages);
     const page = await fetchStalkerLivePage(
       options.session,
       options.providerId,
@@ -290,6 +328,7 @@ export async function runStagedStalkerLiveSync(
       isCurrent: options.isCurrent,
       persistPage: options.persistPage,
       yieldFn: options.yieldFn,
+      maxPages: options.maxPages,
     });
     throwIfCancelled(options.signal, options.isCurrent);
     if (result.uniqueItems === 0) {
