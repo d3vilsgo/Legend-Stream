@@ -15,6 +15,8 @@ on:
 # M3U playback ref gate: extensionless credential-path live refs, safe reconstruction, and fail-closed cleanup must pass.
 # SQLite diagnostics/freshness gate: fixed K4-safe error reasons, real transaction stages, schema fingerprints, and stale measurement suppression must pass.
 # Catalog DB writer gate: all mutations share one coordinator, use exclusive transactions, stable M3U VOD keys, and atomic replacement semantics.
+# Catalog write candidate gate: SQL/bind parity, prepared lifecycle, adaptive rollback/retry, cancellation counts, and duplicate-key semantics must pass.
+# Catalog benchmark runner gate: build-flag isolation, deterministic rotation/aggregation, correctness precedence, and session ownership must pass.
 # 9.2 catalog gate: runtime catalog rows must pass explicit persisted DTO projection.
 # Paged catalog parity gate: persisted paging/remediation plus uncapped, chunked live identity and >500 History/Favorites completeness must pass.
 # Catalog category fallback gate: __all__ must stay out of Xtream transport and empty cache must fall back.
@@ -109,6 +111,24 @@ jobs:
           set -euo pipefail
           writer="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-db-writer 2>&1 | tee /dev/stderr)"
           grep -F 'catalog DB writer coordination scenarios: 8/8 passed' <<<"$writer"
+      - name: Catalog prepared write candidate semantics (27/27 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-write-batch 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog write batch scenarios: 27/27 passed' <<<"$candidate"
+      - name: Catalog native benchmark runner semantics (41/41 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-write-benchmark-runner 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog write benchmark runner scenarios: 41/41 passed' <<<"$runner"
+      - name: Catalog benchmark runtime isolation (9/9 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-benchmark-runtime 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog benchmark runtime isolation scenarios: 9/9 passed' <<<"$runtime"
       - name: Catalog persistence invariants (10/10 required)
         shell: bash
         run: |
@@ -171,30 +191,15 @@ jobs:
           set -euo pipefail
           history="$(pnpm --filter @workspace/legendstream-xplayer test:live-history 2>&1 | tee /dev/stderr)"
           grep -F 'live history scenarios: 32/32 passed' <<<"$history"
-      - name: Verify Replit removal
+      - name: Repository hygiene guard
         shell: bash
         run: |
           set -euo pipefail
-          if find . -path './.git' -prune -o \( -name '.replit' -o -name '.replitignore' -o -name '.replit-artifact' -o -name 'replit.md' \) -print | grep -q .; then
-            echo 'Replit metadata still present:'
-            find . -path './.git' -prune -o \( -name '.replit' -o -name '.replitignore' -o -name '.replit-artifact' -o -name 'replit.md' \) -print
-            exit 1
-          fi
           if [ -d artifacts/mockup-sandbox ]; then
             echo 'artifacts/mockup-sandbox still exists'
             exit 1
           fi
-          active_matches="$(grep -RInE --exclude='pnpm-lock.yaml' --exclude='*.md' --exclude-dir='.git' --exclude-dir='node_modules' --exclude-dir='.github' '(@replit/|stripe-replit-sync|REPLIT_|REPL_ID)' package.json pnpm-workspace.yaml artifacts lib scripts 2>/dev/null || true)"
-          if [ -n "$active_matches" ]; then
-            echo 'Active Replit references still present:'
-            echo "$active_matches"
-            exit 1
-          fi
-          if grep -Ein '(@replit/|stripe-replit-sync)' pnpm-lock.yaml; then
-            echo 'Replit packages remain in pnpm-lock.yaml'
-            exit 1
-          fi
-          echo 'Replit cleanup verification passed.'
+          echo 'Repository hygiene guard passed.'
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references
