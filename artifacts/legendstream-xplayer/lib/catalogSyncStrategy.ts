@@ -94,6 +94,7 @@ export async function runCatalogFetchPlan<T, C extends CategoryLike>(
         parallelMaxObserved,
       };
     }
+    if (verifyByCategory) await write(bulkRows);
     fallbackReason = suspicion ?? "category-verification";
   } catch (caught) {
     if (cancelled()) throw caught;
