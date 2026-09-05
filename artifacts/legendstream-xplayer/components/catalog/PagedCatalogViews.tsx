@@ -44,7 +44,7 @@ type CategoryOption = { id: string; name: string };
 type SnapshotCount = { totalCount: number | null; countKnown: boolean };
 
 function pagedProviderType(type: ProviderType): CatalogPageProviderType | null {
-  return type === "m3u" || type === "xtream" ? type : null;
+  return type === "m3u" || type === "xtream" || type === "stalker" ? type : null;
 }
 
 function allOnlySnapshotCount(
