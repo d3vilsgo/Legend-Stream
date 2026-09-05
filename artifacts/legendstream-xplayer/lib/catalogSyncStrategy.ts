@@ -13,7 +13,7 @@ export type CatalogFetchMetrics = {
   sqliteWriteMs: number;
   totalMs: number;
   parallelMaxObserved: number;
-  fallbackReason?: BulkSuspicionReason | "bulk-error" | "parallel-error";
+  fallbackReason?: BulkSuspicionReason | "bulk-error" | "parallel-error" | "category-verification";
 };
 
 type CategoryLike = { category_id: string | number };
@@ -26,6 +26,7 @@ type RunCatalogFetchPlanOptions<T, C extends CategoryLike> = {
   categoryIdOf: (row: T) => string | number | undefined;
   isCancelled?: () => boolean;
   concurrency?: number;
+  forceCategoryFallback?: boolean;
   onFallbackProgress?: (completedCategories: number, totalCategories: number, path: "parallel" | "serial") => Promise<void> | void;
 };
 
@@ -81,7 +82,8 @@ export async function runCatalogFetchPlan<T, C extends CategoryLike>(
       return { path: "bulk", itemCount: 0, bulkParseMs, sqliteWriteMs, totalMs: Date.now() - startedAt, parallelMaxObserved };
     }
     const suspicion = suspiciousBulkResult(bulkRows, options.categories, options.categoryIdOf);
-    if (!suspicion) {
+    const verifyByCategory = options.forceCategoryFallback === true && options.categories.length > 0;
+    if (!suspicion && !verifyByCategory) {
       await write(bulkRows);
       return {
         path: "bulk",
@@ -92,7 +94,7 @@ export async function runCatalogFetchPlan<T, C extends CategoryLike>(
         parallelMaxObserved,
       };
     }
-    fallbackReason = suspicion;
+    fallbackReason = suspicion ?? "category-verification";
   } catch (caught) {
     if (cancelled()) throw caught;
     fallbackReason = "bulk-error";
