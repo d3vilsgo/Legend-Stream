@@ -1,6 +1,13 @@
-import { Platform } from "react-native";
-import { normalizeXtreamBaseUrl } from "./iptv";
 import { yieldToUi } from "./cooperative";
+import {
+  createXtreamClient,
+  normalizeXtreamBaseUrl,
+  type XtreamCategory,
+  type XtreamCredentials,
+  type XtreamLiveItem,
+  type XtreamParseMetrics,
+  type XtreamParseMetricsSink,
+} from "./xtream/client";
 import {
   XtreamCatalogError,
   isXtreamCatalogFallbackError,
@@ -11,12 +18,11 @@ export {
   XtreamCatalogError,
   isXtreamCatalogFallbackError,
   type XtreamCatalogErrorCode,
-} from "./xtreamCatalogErrors";
-
-export type XtreamCategory = {
-  category_id: string | number;
-  category_name: string;
-  parent_id?: number;
+  type XtreamCategory,
+  type XtreamCredentials,
+  type XtreamLiveItem,
+  type XtreamParseMetrics,
+  type XtreamParseMetricsSink,
 };
 
 export type XtreamVodItem = {
@@ -115,21 +121,6 @@ export type XtreamSeriesInfo = {
   episodes?: Record<string, XtreamEpisode[]>;
 };
 
-export type XtreamCredentials = {
-  baseUrl: string;
-  username: string;
-  password: string;
-};
-
-export type XtreamParseMetrics = {
-  bodyReadMs: number;
-  jsonParseMs: number;
-  parseMs: number;
-  responseChars: number;
-};
-
-export type XtreamParseMetricsSink = (metrics: XtreamParseMetrics) => void;
-
 export type EpisodePlaybackItem = {
   id: string;
   title: string;
@@ -159,193 +150,26 @@ export type VodPlaybackQueue = {
 const episodeQueueByUrl = new Map<string, EpisodePlaybackQueue>();
 const vodQueueByUrl = new Map<string, VodPlaybackQueue>();
 
-const normalizeCatalogBaseUrl = (value: string) => {
-  const normalized = normalizeXtreamBaseUrl(value);
-  try {
-    const url = new URL(normalized);
-    if (/\/get\.php$/i.test(url.pathname)) {
-      url.pathname = url.pathname.replace(/\/get\.php$/i, "") || "/";
-      return url.toString().replace(/\/+$/, "");
-    }
-  } catch {
-    // normalizeXtreamBaseUrl already validates URL inputs.
-  }
-  return normalized;
-};
+const clientFor = (credentials: XtreamCredentials) => createXtreamClient(credentials);
 
-const encodeCredentials = (credentials: XtreamCredentials) => ({
-  baseUrl: normalizeCatalogBaseUrl(credentials.baseUrl),
-  username: credentials.username.trim(),
-  password: credentials.password,
-});
-
-async function parseResponse(response: Response, onParseMetrics?: XtreamParseMetricsSink) {
-  const bodyReadStartedAt = Date.now();
-  const text = await response.text();
-  const bodyReadMs = Date.now() - bodyReadStartedAt;
-  await yieldToUi();
-
-  if (response.status === 404) {
-    throw new XtreamCatalogError(
-      "NOT_FOUND",
-      "Xtream catalog endpoint is not available on this server.",
-      response.status,
-    );
-  }
-
-  if (response.status >= 500) {
-    throw new XtreamCatalogError(
-      "HTTP_ERROR",
-      `Xtream request failed with HTTP ${response.status}.`,
-      response.status,
-    );
-  }
-
-  let data: unknown;
-  const jsonParseStartedAt = Date.now();
-  try {
-    data = JSON.parse(text);
-  } catch {
-    if (!response.ok) {
-      throw new XtreamCatalogError(
-        "HTTP_ERROR",
-        `Xtream request failed with HTTP ${response.status}.`,
-        response.status,
-      );
-    }
-    throw new XtreamCatalogError(
-      "INVALID_RESPONSE",
-      "Xtream server returned an invalid JSON response.",
-      response.status,
-    );
-  }
-  const jsonParseMs = Date.now() - jsonParseStartedAt;
-  onParseMetrics?.({
-    bodyReadMs,
-    jsonParseMs,
-    parseMs: bodyReadMs + jsonParseMs,
-    responseChars: text.length,
-  });
-  if (!response.ok) {
-    const message = (data as any)?.error?.message;
-    throw new XtreamCatalogError(
-      "HTTP_ERROR",
-      message || `Xtream request failed with HTTP ${response.status}.`,
-      response.status,
-    );
-  }
-  return data as any;
+export async function authenticateXtream(credentials: XtreamCredentials, signal?: AbortSignal) {
+  return clientFor(credentials).authenticate(signal);
 }
 
-function transportError(caught: unknown, target: "server" | "web proxy") {
-  const name = caught instanceof Error ? caught.name : "";
-  if (name === "TimeoutError" || name === "AbortError") {
-    return new XtreamCatalogError("TIMEOUT", `Xtream ${target} timed out.`);
-  }
-  return new XtreamCatalogError("UNREACHABLE", `Xtream ${target} could not be reached.`);
+export async function getLiveCategories(credentials: XtreamCredentials, signal?: AbortSignal) {
+  return clientFor(credentials).getLiveCategories(signal);
 }
 
-function linkedRequestSignal(external: AbortSignal | undefined, timeoutMs: number) {
-  if (!external) {
-    return { signal: AbortSignal.timeout(timeoutMs), cleanup: () => undefined };
-  }
-  const controller = new AbortController();
-  const onAbort = () => controller.abort();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  external.addEventListener("abort", onAbort, { once: true });
-  if (external.aborted) controller.abort();
-  return {
-    signal: controller.signal,
-    cleanup: () => {
-      clearTimeout(timeout);
-      external.removeEventListener("abort", onAbort);
-    },
-  };
-}
-
-async function requestNative(
+export async function getLiveStreams(
   credentials: XtreamCredentials,
-  action: string,
-  params: Record<string, string | number | undefined> = {},
   signal?: AbortSignal,
   onParseMetrics?: XtreamParseMetricsSink,
 ) {
-  const normalized = encodeCredentials(credentials);
-  const url = new URL("player_api.php", `${normalized.baseUrl}/`);
-  url.searchParams.set("username", normalized.username);
-  url.searchParams.set("password", normalized.password);
-  url.searchParams.set("action", action);
-  Object.entries(params).forEach(([key, value]) => {
-    if (value !== undefined && value !== "") url.searchParams.set(key, String(value));
-  });
-
-  const requestAbort = linkedRequestSignal(signal, 20_000);
-  try {
-    const response = await fetch(url.toString(), {
-      headers: {
-        Accept: "application/json,text/plain,*/*",
-        "User-Agent": "LegendStream-XPlayer/1.0 Android",
-      },
-      signal: requestAbort.signal,
-    });
-    return await parseResponse(response, onParseMetrics);
-  } catch (caught) {
-    if (signal?.aborted) throw caught;
-    throw transportError(caught, "server");
-  } finally {
-    requestAbort.cleanup();
-  }
-}
-
-async function requestWeb(
-  credentials: XtreamCredentials,
-  action: string,
-  params: Record<string, string | number | undefined> = {},
-  signal?: AbortSignal,
-  onParseMetrics?: XtreamParseMetricsSink,
-) {
-  const requestAbort = linkedRequestSignal(signal, 25_000);
-  try {
-    const response = await fetch("/api/iptv/xtream/action", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ ...encodeCredentials(credentials), action, params }),
-      signal: requestAbort.signal,
-    });
-    return await parseResponse(response, onParseMetrics);
-  } catch (caught) {
-    if (signal?.aborted) throw caught;
-    throw transportError(caught, "web proxy");
-  } finally {
-    requestAbort.cleanup();
-  }
-}
-
-async function requestXtream(
-  credentials: XtreamCredentials,
-  action: string,
-  params: Record<string, string | number | undefined> = {},
-  signal?: AbortSignal,
-  onParseMetrics?: XtreamParseMetricsSink,
-) {
-  return Platform.OS === "web"
-    ? requestWeb(credentials, action, params, signal, onParseMetrics)
-    : requestNative(credentials, action, params, signal, onParseMetrics);
-}
-
-function requireArray<T>(data: unknown, label: string): T[] {
-  if (!Array.isArray(data)) {
-    throw new XtreamCatalogError(
-      "UNSUPPORTED_RESPONSE",
-      `Xtream server returned an unsupported ${label} response.`,
-    );
-  }
-  return data as T[];
+  return clientFor(credentials).getLiveStreams(signal, onParseMetrics);
 }
 
 export async function getVodCategories(credentials: XtreamCredentials, signal?: AbortSignal) {
-  const data = await requestXtream(credentials, "get_vod_categories", {}, signal);
-  return requireArray<XtreamCategory>(data, "VOD categories");
+  return clientFor(credentials).getVodCategories(signal);
 }
 
 function registerVodQueue(credentials: XtreamCredentials | null | undefined, rows: XtreamVodItem[]) {
@@ -371,10 +195,11 @@ export async function getVodStreams(
   signal?: AbortSignal,
   onParseMetrics?: XtreamParseMetricsSink,
 ) {
-  const data = await requestXtream(credentials, "get_vod_streams", {
-    category_id: categoryId,
-  }, signal, onParseMetrics);
-  const rows = requireArray<XtreamVodItem>(data, "VOD streams");
+  const rows = await clientFor(credentials).getVodStreams(
+    categoryId,
+    signal,
+    onParseMetrics,
+  ) as XtreamVodItem[];
   registerVodQueue(credentials, rows);
   await yieldToUi();
   return rows;
@@ -391,16 +216,13 @@ export function registerVodPlaybackQueue(credentials: XtreamCredentials, rows: X
 export async function getVodInfo(
   credentials: XtreamCredentials,
   vodId: string | number,
+  signal?: AbortSignal,
 ) {
-  const data = await requestXtream(credentials, "get_vod_info", {
-    vod_id: vodId,
-  });
-  return (data ?? {}) as XtreamVodInfo;
+  return await clientFor(credentials).getVodInfo(vodId, signal) as XtreamVodInfo;
 }
 
 export async function getSeriesCategories(credentials: XtreamCredentials, signal?: AbortSignal) {
-  const data = await requestXtream(credentials, "get_series_categories", {}, signal);
-  return requireArray<XtreamCategory>(data, "series categories");
+  return clientFor(credentials).getSeriesCategories(signal);
 }
 
 export async function getSeries(
@@ -409,11 +231,13 @@ export async function getSeries(
   signal?: AbortSignal,
   onParseMetrics?: XtreamParseMetricsSink,
 ) {
-  const data = await requestXtream(credentials, "get_series", {
-    category_id: categoryId,
-  }, signal, onParseMetrics);
+  const rows = await clientFor(credentials).getSeries(
+    categoryId,
+    signal,
+    onParseMetrics,
+  ) as XtreamSeriesItem[];
   await yieldToUi();
-  return requireArray<XtreamSeriesItem>(data, "series catalog");
+  return rows;
 }
 
 function registerEpisodeQueue(credentials: XtreamCredentials | null | undefined, info: XtreamSeriesInfo) {
@@ -445,12 +269,9 @@ export function getEpisodePlaybackQueue(source: string): EpisodePlaybackQueue | 
 export async function getSeriesInfo(
   credentials: XtreamCredentials,
   seriesId: string | number,
+  signal?: AbortSignal,
 ) {
-  const data = (await requestXtream(credentials, "get_series_info", {
-    series_id: seriesId,
-    series: seriesId,
-  })) as XtreamSeriesInfo;
-  const info = (data ?? {}) as XtreamSeriesInfo;
+  const info = await clientFor(credentials).getSeriesInfo(seriesId, signal) as XtreamSeriesInfo;
   registerEpisodeQueue(credentials, info);
   return info;
 }
@@ -461,9 +282,9 @@ export function buildVodStreamUrl(
 ) {
   if (item.direct_source) return item.direct_source;
   if (!credentials) throw new Error("Xtream credentials are required for this VOD stream.");
-  const baseUrl = normalizeCatalogBaseUrl(credentials.baseUrl);
+  const baseUrl = normalizeXtreamBaseUrl(credentials.baseUrl);
   const extension = item.container_extension || "mp4";
-  return `${baseUrl}/movie/${encodeURIComponent(credentials.username)}/${encodeURIComponent(
+  return `${baseUrl}/movie/${encodeURIComponent(credentials.username.trim())}/${encodeURIComponent(
     credentials.password,
   )}/${encodeURIComponent(String(item.stream_id))}.${extension}`;
 }
@@ -474,9 +295,9 @@ export function buildEpisodeStreamUrl(
 ) {
   if (episode.direct_source) return episode.direct_source;
   if (!credentials) throw new Error("Xtream credentials are required for this episode stream.");
-  const baseUrl = normalizeCatalogBaseUrl(credentials.baseUrl);
+  const baseUrl = normalizeXtreamBaseUrl(credentials.baseUrl);
   const extension = episode.container_extension || "mp4";
-  return `${baseUrl}/series/${encodeURIComponent(credentials.username)}/${encodeURIComponent(
+  return `${baseUrl}/series/${encodeURIComponent(credentials.username.trim())}/${encodeURIComponent(
     credentials.password,
   )}/${encodeURIComponent(String(episode.id))}.${extension}`;
 }
