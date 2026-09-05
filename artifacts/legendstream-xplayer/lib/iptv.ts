@@ -1,10 +1,14 @@
-import { Platform } from "react-native";
 import { mapInBatches, yieldToUi } from "./cooperative";
 import {
   createM3UShapeDiagnosticsObserver,
   type M3UShapeDiagnostics,
 } from "./m3uShapeDiagnostics";
 import { createStalkerPortalSession } from "./stalkerPortal";
+import {
+  loadXtreamLiveCatalogFromPreparedRun,
+  type XtreamCredentials,
+} from "./xtreamCatalog";
+import { normalizeXtreamBaseUrl as normalizeCanonicalXtreamBaseUrl } from "./xtream/client";
 
 export type ProviderType = "m3u" | "xtream" | "stalker";
 export type ChannelContentType = "live" | "movie" | "series";
@@ -532,50 +536,15 @@ const asJson = async (response: Response) => {
 };
 
 export const normalizeXtreamBaseUrl = (value: string) => {
-  const trimmed = value.trim();
-  const candidate = /^[a-z][a-z\d+\-.]*:\/\//i.test(trimmed)
-    ? trimmed
-    : `http://${trimmed}`;
-  let parsed: URL;
   try {
-    parsed = new URL(candidate);
-  } catch {
-    throw new ProviderLoadError("Enter a valid Xtream server URL.", "INVALID_URL");
+    return normalizeCanonicalXtreamBaseUrl(value);
+  } catch (caught) {
+    const message = caught instanceof Error ? caught.message : "Enter a valid Xtream server URL.";
+    throw new ProviderLoadError(message, "INVALID_URL");
   }
-  if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname) {
-    throw new ProviderLoadError(
-      "Xtream server URLs must use HTTP or HTTPS.",
-      "INVALID_URL",
-    );
-  }
-  const path = parsed.pathname.replace(/\/+$/, "");
-  if (/\/(player_api|panel_api|server\/load)\.php$/i.test(path)) {
-    parsed.pathname = path.slice(0, path.lastIndexOf("/")) || "/";
-  } else {
-    parsed.pathname = path;
-  }
-  parsed.search = "";
-  parsed.hash = "";
-  return parsed.toString().replace(/\/+$/, "");
 };
 
 const cleanBaseUrl = (value: string) => normalizeXtreamBaseUrl(value);
-
-async function fetchProviderJson(url: string, init?: RequestInit) {
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      ...init,
-      signal: init?.signal ?? AbortSignal.timeout(20_000),
-    });
-  } catch {
-    throw new ProviderLoadError(
-      "The Xtream server could not be reached. Check the URL, port, HTTPS certificate, and network.",
-      "PROVIDER_UNREACHABLE",
-    );
-  }
-  return asJson(response);
-}
 
 async function fetchProviderText(url: string, init?: RequestInit) {
   const controller = new AbortController();
@@ -611,28 +580,6 @@ async function fetchProviderText(url: string, init?: RequestInit) {
   }
 }
 
-async function loadXtreamInBrowser(
-  baseUrl: string,
-  username: string,
-  password: string,
-) {
-  let response: Response;
-  try {
-    response = await fetch("/api/iptv/xtream", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ baseUrl, username, password }),
-      signal: AbortSignal.timeout(25_000),
-    });
-  } catch {
-    throw new ProviderLoadError(
-      "The web proxy could not be reached. Restart the API service and try again.",
-      "PROXY_UNAVAILABLE",
-    );
-  }
-  return asJson(response);
-}
-
 async function loadM3U(provider: Provider): Promise<ProviderLoadResult> {
   const content = await fetchProviderText(provider.url, {
     headers: { Accept: "application/vnd.apple.mpegurl,text/plain,*/*" },
@@ -649,20 +596,35 @@ async function loadXtream(provider: Provider): Promise<ProviderLoadResult> {
     );
   }
   const baseUrl = cleanBaseUrl(provider.url);
-  const payload =
-    Platform.OS === "web"
-      ? await loadXtreamInBrowser(baseUrl, provider.username, provider.password)
-      : await loadXtreamDirect(baseUrl, provider.username, provider.password);
-  const auth = payload.auth;
-  if (
-    auth?.user_info?.auth === 0 ||
-    auth?.user_info?.auth === "0" ||
-    auth?.user_info?.status?.toLowerCase?.() === "disabled"
-  ) {
-    throw new ProviderLoadError(
-      "Xtream rejected these credentials. Check the username and password.",
-      "INVALID_CREDENTIALS",
-    );
+  const credentials: XtreamCredentials = {
+    baseUrl,
+    username: provider.username,
+    password: provider.password,
+  };
+  let payload: Awaited<ReturnType<typeof loadXtreamLiveCatalogFromPreparedRun>>;
+  try {
+    payload = await loadXtreamLiveCatalogFromPreparedRun(credentials);
+  } catch (caught) {
+    const code = (caught as any)?.code;
+    if (code === "AUTHENTICATION") {
+      throw new ProviderLoadError(
+        "Xtream rejected these credentials. Check the username and password.",
+        "INVALID_CREDENTIALS",
+      );
+    }
+    if (code === "TIMEOUT") {
+      throw new ProviderLoadError("The Xtream server request timed out.", "PROVIDER_TIMEOUT");
+    }
+    if (code === "UNREACHABLE") {
+      throw new ProviderLoadError(
+        "The Xtream server could not be reached. Check the URL, port, HTTPS certificate, and network.",
+        "PROVIDER_UNREACHABLE",
+      );
+    }
+    if (code === "INVALID_RESPONSE" || code === "UNSUPPORTED_RESPONSE") {
+      throw new ProviderLoadError("The Xtream provider returned an invalid response.", "INVALID_PROVIDER_RESPONSE");
+    }
+    throw caught;
   }
 
   const streams = payload.streams;
@@ -672,9 +634,8 @@ async function loadXtream(provider: Provider): Promise<ProviderLoadResult> {
       "NO_LIVE_STREAMS",
     );
   }
-  const categoryRows = payload.categories;
   const categoryMap = new Map<string, string>(
-    (Array.isArray(categoryRows) ? categoryRows : []).map((row: any) => [
+    payload.categories.map((row) => [
       String(row.category_id),
       decodeEpgText(String(row.category_name ?? "")),
     ]),
@@ -689,7 +650,7 @@ async function loadXtream(provider: Provider): Promise<ProviderLoadResult> {
         id: makeId(provider.id, index, streamId),
         providerId: provider.id,
         name: decodeEpgText(String(stream.name || `Channel ${index + 1}`)),
-        streamUrl: `${baseUrl}/live/${encodeURIComponent(provider.username!)}/${encodeURIComponent(provider.password!)}/${streamId}.${extension}`,
+        streamUrl: stream.direct_source || `${baseUrl}/live/${encodeURIComponent(provider.username!)}/${encodeURIComponent(provider.password!)}/${encodeURIComponent(streamId)}.${extension}`,
         logoUrl: stream.stream_icon || undefined,
         category: categoryMap.get(String(stream.category_id)) || "Live TV",
         tvgId: stream.epg_channel_id || undefined,
@@ -700,34 +661,6 @@ async function loadXtream(provider: Provider): Promise<ProviderLoadResult> {
     250,
   );
   return { channels, liveChannels: channels, epgUrl: provider.epgUrl };
-}
-
-async function loadXtreamDirect(
-  baseUrl: string,
-  username: string,
-  password: string,
-) {
-  const apiUrl = new URL("player_api.php", `${baseUrl}/`);
-  apiUrl.searchParams.set("username", username);
-  apiUrl.searchParams.set("password", password);
-  const auth = await fetchProviderJson(apiUrl.toString());
-  await yieldToUi();
-
-  const streamsUrl = new URL(apiUrl);
-  streamsUrl.searchParams.set("action", "get_live_streams");
-  const streams = await fetchProviderJson(streamsUrl.toString());
-  await yieldToUi();
-
-  let categories: unknown[] = [];
-  try {
-    const categoriesUrl = new URL(apiUrl);
-    categoriesUrl.searchParams.set("action", "get_live_categories");
-    const result = await fetchProviderJson(categoriesUrl.toString());
-    categories = Array.isArray(result) ? result : [];
-  } catch {
-    // Some providers omit live categories while returning playable streams.
-  }
-  return { auth, streams, categories };
 }
 
 async function loadStalker(provider: Provider): Promise<ProviderLoadResult> {
