@@ -694,7 +694,10 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         const runForActive = active.type === "stalker" ? runStalkerSync : runSync;
 
         if (!usable && state?.phase !== "ready") {
-          await runForActive("initial");
+          await runSync("initial");
+          if (active.type === "stalker") {
+            await runStalkerSync("initial");
+          }
           return;
         }
 
