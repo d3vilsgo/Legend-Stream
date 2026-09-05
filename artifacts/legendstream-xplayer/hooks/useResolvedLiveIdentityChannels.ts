@@ -49,8 +49,11 @@ export function useResolvedLiveIdentityChannels(
     };
 
     publishOrdered();
-    if (provider.type === "stalker") return;
-    if (provider.type !== "m3u" && provider.type !== "xtream") return;
+    if (
+      provider.type !== "m3u" &&
+      provider.type !== "xtream" &&
+      provider.type !== "stalker"
+    ) return;
 
     void getCachedLiveItemsByIds(provider, requestedIds)
       .then((rows) => publishOrdered(rows))
