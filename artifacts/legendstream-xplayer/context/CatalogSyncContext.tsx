@@ -27,8 +27,6 @@ import {
   getCatalogCounts,
   getCatalogSyncState,
   initCatalogCache,
-  pruneCatalogKind,
-  replaceCatalogCategories,
   setCatalogSyncState,
   upsertCatalogItems,
 } from "@/lib/catalogCache";
@@ -55,7 +53,11 @@ import {
 } from "@/lib/xtreamCatalog";
 import { yieldToUi } from "@/lib/cooperative";
 import { projectCatalogItems } from "@/lib/catalogPersistence";
-import { runCatalogFetchPlan, type CatalogFetchMetrics } from "@/lib/catalogSyncStrategy";
+import {
+  catalogErrorClass,
+  runCatalogFetchPlan,
+  type CatalogFetchMetrics,
+} from "@/lib/catalogSyncStrategy";
 import { recordCatalogSyncMeasurement } from "@/lib/catalogSyncMetrics";
 import {
   getCachedLiveItems,
@@ -71,6 +73,13 @@ import {
 } from "@/lib/providerSwitchUx";
 import type { Channel } from "@/lib/iptv";
 import { resolvedProviderTransport } from "@/lib/m3uTransportRouting";
+import {
+  cleanupCatalogKindStaging,
+  publishStagedCatalogKind,
+  stagingCatalogProviderId,
+} from "@/lib/xtreamKindCache";
+import { runIndependentCatalogKinds } from "@/lib/xtreamKindSync";
+import { stabilizeXtreamLiveCatalogItems } from "@/lib/xtreamIdentity";
 
 export type CatalogSnapshot = {
   providerId?: string;
@@ -310,14 +319,12 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     let liveSqliteWriteMs = 0;
     let vodMetrics: CatalogFetchMetrics | null = null;
     let seriesMetrics: CatalogFetchMetrics | null = null;
-    const isCancelled = () =>
-      cancelRef.current ||
-      controller.signal.aborted ||
-      !isCatalogSyncOwnershipCurrent(
-        latestProviderIdRef.current,
-        generationRef.current,
-        ownership,
-      );
+    const ownsRun = () => isCatalogSyncOwnershipCurrent(
+      latestProviderIdRef.current,
+      generationRef.current,
+      ownership,
+    );
+    const isCancelled = () => cancelRef.current || controller.signal.aborted || !ownsRun();
 
     const task = (async () => {
       if (isInitial) setIsInitialSyncRunning(true);
@@ -332,121 +339,269 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           isInitial ? "Preparing catalog sources" : "Catalog update started",
         );
 
-        const vodCategories = await getVodCategories(credentials, controller.signal);
-        if (isCancelled()) return;
-        await replaceCatalogCategories(provider.id, "vod", vodCategories);
-        await yieldToUi();
+        const outcomes = await runIndependentCatalogKinds([
+          {
+            kind: "live",
+            run: async () => {
+              const stagingId = stagingCatalogProviderId(provider.id, generation, "live");
+              await cleanupCatalogKindStaging(stagingId, "live");
+              try {
+                await publishState(ownership, "syncing", completed, total, "Live TV · loading");
+                const currentLive = channels.filter(
+                  (channel) => channel.providerId === provider.id && (channel.contentType ?? "live") === "live",
+                );
+                const liveRows = isInitial && currentLive.length
+                  ? currentLive
+                  : (await loadProvider(asLoadProvider(provider))).channels;
+                if (isCancelled()) return;
 
-        const seriesCategories = await getSeriesCategories(credentials, controller.signal);
-        if (isCancelled()) return;
-        await replaceCatalogCategories(provider.id, "series", seriesCategories);
-        await yieldToUi();
+                const projected = stabilizeXtreamLiveCatalogItems(
+                  provider.id,
+                  projectCatalogItems(stagingId, "live", liveRows),
+                );
+                const remoteUniqueCount = new Set(
+                  projected
+                    .filter((item) => item.catalogKind === "live")
+                    .map((item) => item.id),
+                ).size;
+                const liveWriteStartedAt = Date.now();
+                await upsertCatalogItems(stagingId, "live", projected, {
+                  markNew,
+                  seenAt: syncStartedAt,
+                  isCancelled,
+                });
+                liveSqliteWriteMs = Date.now() - liveWriteStartedAt;
+                if (isCancelled()) return;
 
-        await publishState(ownership, "syncing", completed, total, "Live TV · loading");
-
-        // Initial preparation can reuse the just-loaded PlayerContext list. Background/manual
-        // refreshes deliberately hit the provider again so newly-added live channels can be found.
-        const currentLive = channels.filter(
-          (channel) => channel.providerId === provider.id && (channel.contentType ?? "live") === "live",
-        );
-        const liveRows = isInitial && currentLive.length
-          ? currentLive
-          : (await loadProvider(asLoadProvider(provider))).channels;
-        if (isCancelled()) return;
-        const liveWriteStartedAt = Date.now();
-        await upsertCatalogItems(provider.id, "live", projectCatalogItems(provider.id, "live", liveRows), {
-          markNew,
-          seenAt: syncStartedAt,
-          isCancelled,
-        });
-        liveSqliteWriteMs = Date.now() - liveWriteStartedAt;
-        completed = 1;
-        await publishState(ownership, "syncing", completed, total, "Movies · bulk catalog");
-
-        vodMetrics = await runCatalogFetchPlan<XtreamVodItem, (typeof vodCategories)[number]>({
-          categories: vodCategories,
-          fetchBulk: (onParseMs) => getVodStreams(
-            credentials,
-            undefined,
-            controller.signal,
-            ({ parseMs }) => onParseMs(parseMs),
-          ),
-          fetchCategory: (category) => getVodStreams(credentials, category.category_id, controller.signal),
-          writeRows: async (rows) => {
-            await upsertCatalogItems(provider.id, "vod", projectCatalogItems(provider.id, "vod", rows), {
-              markNew,
-              seenAt: syncStartedAt,
-              isCancelled,
-            });
+                const published = await publishStagedCatalogKind({
+                  providerId: provider.id,
+                  stagingId,
+                  kind: "live",
+                  expectedCount: remoteUniqueCount,
+                  canPublish: () => !isCancelled(),
+                });
+                if (!published.published && !isCancelled()) {
+                  throw new Error("Xtream Live publish ownership changed.");
+                }
+                if (!isCancelled()) {
+                  completed += 1;
+                  await refreshSnapshotFor(provider, ownership);
+                  await publishState(ownership, "syncing", completed, total, "Live TV · published");
+                }
+              } catch (caught) {
+                try {
+                  await cleanupCatalogKindStaging(stagingId, "live");
+                } catch {
+                  // The active cache remains untouched when staging cleanup fails.
+                }
+                throw caught;
+              }
+            },
           },
-          categoryIdOf: (row) => row.category_id,
-          isCancelled,
-          onFallbackProgress: async (done, categoryTotal, path) => {
-            await publishState(
-              ownership,
-              "syncing",
-              completed,
-              total,
-              `Movies · ${path === "parallel" ? "parallel" : "serial"} fallback ${done}/${categoryTotal}`,
-            );
-          },
-        });
+          {
+            kind: "vod",
+            run: async () => {
+              const stagingId = stagingCatalogProviderId(provider.id, generation, "vod");
+              await cleanupCatalogKindStaging(stagingId, "vod");
+              try {
+                await publishState(ownership, "syncing", completed, total, "Movies · loading categories");
+                let vodCategories: Awaited<ReturnType<typeof getVodCategories>> = [];
+                let categoryMetadataDegraded = false;
+                let categoryMetadataErrorClass = "none";
+                try {
+                  vodCategories = await getVodCategories(credentials, controller.signal);
+                } catch (caught) {
+                  if (isCancelled()) return;
+                  categoryMetadataDegraded = true;
+                  categoryMetadataErrorClass = catalogErrorClass(caught);
+                  await publishState(
+                    ownership,
+                    "syncing",
+                    completed,
+                    total,
+                    `Movies · stage=categories code=CATEGORY_METADATA_UNAVAILABLE errorClass=${categoryMetadataErrorClass} fallback=bulk-baseline-probe`,
+                  );
+                }
+                if (isCancelled()) return;
+                const vodUniqueIds = new Set<string>();
 
-        if (isCancelled()) {
+                vodMetrics = await runCatalogFetchPlan<XtreamVodItem, (typeof vodCategories)[number]>({
+                  categories: vodCategories,
+                  fetchBulk: (onParseMs) => getVodStreams(
+                    credentials,
+                    undefined,
+                    controller.signal,
+                    ({ parseMs }) => onParseMs(parseMs),
+                  ),
+                  fetchCategory: (category) => getVodStreams(credentials, category.category_id, controller.signal),
+                  writeRows: async (rows) => {
+                    for (const row of rows) vodUniqueIds.add(String(row.stream_id));
+                    await upsertCatalogItems(stagingId, "vod", projectCatalogItems(stagingId, "vod", rows), {
+                      markNew,
+                      seenAt: syncStartedAt,
+                      isCancelled,
+                    });
+                  },
+                  categoryIdOf: (row) => row.category_id,
+                  isCancelled,
+                  forceCategoryFallback: true,
+                  allowHealthyBulkOnCategoryFailure: true,
+                  onFallbackProgress: async (done, categoryTotal, path) => {
+                    await publishState(
+                      ownership,
+                      "syncing",
+                      completed,
+                      total,
+                      `Movies · ${path === "parallel" ? "parallel" : "serial"} fallback ${done}/${categoryTotal}`,
+                    );
+                  },
+                });
+                if (isCancelled()) return;
+                if (vodMetrics.degradedToHealthyBulk) {
+                  await publishState(
+                    ownership,
+                    "syncing",
+                    completed,
+                    total,
+                    "Movies · stage=category-retry code=CATEGORY_RECOVERY_FAILED errorClass=Unavailable fallback=healthy-bulk",
+                  );
+                } else if (categoryMetadataDegraded) {
+                  await publishState(
+                    ownership,
+                    "syncing",
+                    completed,
+                    total,
+                    `Movies · stage=categories code=CATEGORY_METADATA_UNAVAILABLE errorClass=${categoryMetadataErrorClass} fallback=healthy-bulk`,
+                  );
+                }
+
+                const published = await publishStagedCatalogKind({
+                  providerId: provider.id,
+                  stagingId,
+                  kind: "vod",
+                  categories: vodCategories,
+                  expectedCount: vodUniqueIds.size,
+                  canPublish: () => !isCancelled(),
+                });
+                if (!published.published && !isCancelled()) {
+                  throw new Error("Xtream VOD publish ownership changed.");
+                }
+                if (!isCancelled()) {
+                  completed += 1;
+                  await refreshSnapshotFor(provider, ownership);
+                  await publishState(ownership, "syncing", completed, total, "Movies · published");
+                }
+              } catch (caught) {
+                try {
+                  await cleanupCatalogKindStaging(stagingId, "vod");
+                } catch {
+                  // The active cache remains untouched when staging cleanup fails.
+                }
+                throw caught;
+              }
+            },
+          },
+          {
+            kind: "series",
+            run: async () => {
+              const stagingId = stagingCatalogProviderId(provider.id, generation, "series");
+              await cleanupCatalogKindStaging(stagingId, "series");
+              try {
+                await publishState(ownership, "syncing", completed, total, "Series · loading categories");
+                const seriesCategories = await getSeriesCategories(credentials, controller.signal);
+                if (isCancelled()) return;
+                const seriesUniqueIds = new Set<string>();
+
+                seriesMetrics = await runCatalogFetchPlan<XtreamSeriesItem, (typeof seriesCategories)[number]>({
+                  categories: seriesCategories,
+                  fetchBulk: (onParseMs) => getSeries(
+                    credentials,
+                    undefined,
+                    controller.signal,
+                    ({ parseMs }) => onParseMs(parseMs),
+                  ),
+                  fetchCategory: (category) => getSeries(credentials, category.category_id, controller.signal),
+                  writeRows: async (rows) => {
+                    for (const row of rows) seriesUniqueIds.add(String(row.series_id));
+                    await upsertCatalogItems(stagingId, "series", projectCatalogItems(stagingId, "series", rows), {
+                      markNew,
+                      seenAt: syncStartedAt,
+                      isCancelled,
+                    });
+                  },
+                  categoryIdOf: (row) => row.category_id,
+                  isCancelled,
+                  onFallbackProgress: async (done, categoryTotal, path) => {
+                    await publishState(
+                      ownership,
+                      "syncing",
+                      completed,
+                      total,
+                      `Series · ${path === "parallel" ? "parallel" : "serial"} fallback ${done}/${categoryTotal}`,
+                    );
+                  },
+                });
+                if (isCancelled()) return;
+
+                const published = await publishStagedCatalogKind({
+                  providerId: provider.id,
+                  stagingId,
+                  kind: "series",
+                  categories: seriesCategories,
+                  expectedCount: seriesUniqueIds.size,
+                  canPublish: () => !isCancelled(),
+                });
+                if (!published.published && !isCancelled()) {
+                  throw new Error("Xtream Series publish ownership changed.");
+                }
+                if (!isCancelled()) {
+                  completed += 1;
+                  await refreshSnapshotFor(provider, ownership);
+                  await publishState(ownership, "syncing", completed, total, "Series · published");
+                }
+              } catch (caught) {
+                try {
+                  await cleanupCatalogKindStaging(stagingId, "series");
+                } catch {
+                  // The active cache remains untouched when staging cleanup fails.
+                }
+                throw caught;
+              }
+            },
+          },
+        ], { isCancelled });
+
+        if (outcomes.cancelled || isCancelled()) {
           await publishState(ownership, "cancelled", completed, total, "Catalog preparation cancelled");
           await refreshSnapshotFor(provider, ownership);
           return;
         }
 
-        completed = 2;
-        await publishState(ownership, "syncing", completed, total, "Series · bulk catalog");
-
-        seriesMetrics = await runCatalogFetchPlan<XtreamSeriesItem, (typeof seriesCategories)[number]>({
-          categories: seriesCategories,
-          fetchBulk: (onParseMs) => getSeries(
-            credentials,
-            undefined,
-            controller.signal,
-            ({ parseMs }) => onParseMs(parseMs),
-          ),
-          fetchCategory: (category) => getSeries(credentials, category.category_id, controller.signal),
-          writeRows: async (rows) => {
-            await upsertCatalogItems(provider.id, "series", projectCatalogItems(provider.id, "series", rows), {
-              markNew,
-              seenAt: syncStartedAt,
-              isCancelled,
-            });
-          },
-          categoryIdOf: (row) => row.category_id,
-          isCancelled,
-          onFallbackProgress: async (done, categoryTotal, path) => {
-            await publishState(
-              ownership,
-              "syncing",
-              completed,
-              total,
-              `Series · ${path === "parallel" ? "parallel" : "serial"} fallback ${done}/${categoryTotal}`,
-            );
-          },
-        });
-
-        if (isCancelled()) {
-          await publishState(ownership, "cancelled", completed, total, "Catalog preparation cancelled");
+        const allSucceeded = outcomes.live === "success" && outcomes.vod === "success" && outcomes.series === "success";
+        if (!allSucceeded) {
+          const failureSummary = (["live", "vod", "series"] as const)
+            .map((kind) => {
+              const failure = outcomes.failures[kind];
+              return failure
+                ? `${kind}:stage=${failure.stage},code=${failure.code},errorClass=${failure.errorClass},fallback=${failure.fallbackPath}`
+                : null;
+            })
+            .filter((value): value is string => Boolean(value))
+            .join(" · ");
+          await publishState(
+            ownership,
+            "error",
+            completed,
+            total,
+            failureSummary
+              ? `Catalog update retained failed kinds · ${failureSummary}`
+              : "Catalog update completed with retained cache for failed kinds",
+          );
           await refreshSnapshotFor(provider, ownership);
           return;
         }
 
-        completed = 3;
         await publishState(ownership, "syncing", completed, total, "Finalizing catalog cache");
-        if (isCancelled()) return;
-
-        // Prune only after every requested catalog completed successfully.
-        // Cancellation/network failure therefore never deletes a valid old cache.
-        await Promise.all([
-          pruneCatalogKind(provider.id, "live", syncStartedAt),
-          pruneCatalogKind(provider.id, "vod", syncStartedAt),
-          pruneCatalogKind(provider.id, "series", syncStartedAt),
-        ]);
         await yieldToUi();
         if (isCancelled()) return;
 
@@ -479,7 +634,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         }
         if (await recoverLegacyCatalogFallback(provider.id, caught)) return;
         const message = caught instanceof Error ? caught.message : "Catalog synchronization failed";
-        // Failure describes the refresh attempt only; availability remains count-driven.
         await publishState(ownership, "error", completed, total, message);
         await refreshSnapshotFor(provider, ownership);
       } finally {
