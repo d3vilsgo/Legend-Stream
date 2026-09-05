@@ -3,12 +3,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { runInNewContext } from "node:vm";
 import * as ts from "typescript";
+import { runCatalogFetchPlan } from "../lib/catalogSyncStrategy";
 import { runIndependentCatalogKinds } from "../lib/xtreamKindSync";
 import { stableXtreamLiveId } from "../lib/xtreamIdentity";
 
 type FakeItem = { providerId: string; kind: string; id: string };
 type FakeCategory = { providerId: string; kind: string; id: string; name: string };
 type FakeState = { items: FakeItem[]; categories: FakeCategory[] };
+type Category = { category_id: string; category_name: string };
+type VodRow = { stream_id: number; category_id?: string | null };
 
 async function loadPublishWithFakeDb(stateRef: { current: FakeState }, loseOwnership: () => void) {
   const source = fs.readFileSync(path.join(process.cwd(), "lib/xtreamKindCache.ts"), "utf8");
@@ -130,6 +133,101 @@ async function main() {
     assert.equal(result.cancelled, true);
   });
 
+  await scenario("slow VOD does not delay Series completion", async () => {
+    let resolveVod!: () => void;
+    const vodGate = new Promise<void>((resolve) => { resolveVod = resolve; });
+    const events: string[] = [];
+    const run = runIndependentCatalogKinds([
+      { kind: "live", run: async () => { events.push("live-done"); } },
+      { kind: "vod", run: async () => { events.push("vod-start"); await vodGate; events.push("vod-done"); } },
+      { kind: "series", run: async () => { events.push("series-start"); events.push("series-done"); } },
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.ok(events.includes("series-done"), "Series must complete while VOD is still deferred");
+    assert.ok(!events.includes("vod-done"), "VOD must still be pending at the Series completion checkpoint");
+    resolveVod();
+    const result = await run;
+    assert.equal(result.series, "success");
+    assert.equal(result.vod, "success");
+  });
+
+  await scenario("slow Series does not delay VOD completion", async () => {
+    let resolveSeries!: () => void;
+    const seriesGate = new Promise<void>((resolve) => { resolveSeries = resolve; });
+    const events: string[] = [];
+    const run = runIndependentCatalogKinds([
+      { kind: "live", run: async () => undefined },
+      { kind: "vod", run: async () => { events.push("vod-done"); } },
+      { kind: "series", run: async () => { events.push("series-start"); await seriesGate; events.push("series-done"); } },
+    ]);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.ok(events.includes("vod-done"), "VOD must complete while Series is still deferred");
+    assert.ok(!events.includes("series-done"), "Series must still be pending at the VOD completion checkpoint");
+    resolveSeries();
+    await run;
+  });
+
+  await scenario("healthy VOD bulk survives final category verification failure", async () => {
+    const categories: Category[] = [
+      { category_id: "1", category_name: "One" },
+      { category_id: "2", category_name: "Two" },
+      { category_id: "3", category_name: "Three" },
+      { category_id: "4", category_name: "Four" },
+    ];
+    const staging = new Map<number, VodRow>();
+    const attempts = new Map<string, number>();
+    const result = await runCatalogFetchPlan<VodRow, Category>({
+      categories,
+      fetchBulk: async () => [
+        { stream_id: 1, category_id: "1" },
+        { stream_id: 2, category_id: "2" },
+        { stream_id: 3, category_id: "3" },
+        { stream_id: 4, category_id: null },
+      ],
+      fetchCategory: async (category) => {
+        const attempt = (attempts.get(category.category_id) ?? 0) + 1;
+        attempts.set(category.category_id, attempt);
+        if (category.category_id === "4") throw new Error("verification unavailable");
+        return [{ stream_id: Number(category.category_id), category_id: category.category_id }];
+      },
+      writeRows: async (rows) => { for (const row of rows) staging.set(row.stream_id, row); },
+      categoryIdOf: (row) => row.category_id ?? undefined,
+      forceCategoryFallback: true,
+      allowHealthyBulkOnCategoryFailure: true,
+    });
+    assert.equal(result.degradedToHealthyBulk, true);
+    assert.deepEqual([...staging.keys()].sort((a, b) => a - b), [1, 2, 3, 4]);
+    assert.equal(attempts.get("4"), 2, "failed category receives one parallel attempt plus one serial retry");
+    assert.equal(attempts.get("1"), 1, "successful parallel categories must not be fetched again serially");
+  });
+
+  await scenario("suspicious VOD bulk plus failed recovery rejects instead of publishing partial staging", async () => {
+    const categories: Category[] = [
+      { category_id: "1", category_name: "One" },
+      { category_id: "2", category_name: "Two" },
+      { category_id: "3", category_name: "Three" },
+      { category_id: "4", category_name: "Four" },
+    ];
+    let rejected = false;
+    try {
+      await runCatalogFetchPlan<VodRow, Category>({
+        categories,
+        fetchBulk: async () => [],
+        fetchCategory: async (category) => {
+          if (category.category_id === "2") throw new Error("required recovery failed");
+          return [{ stream_id: Number(category.category_id), category_id: category.category_id }];
+        },
+        writeRows: async () => undefined,
+        categoryIdOf: (row) => row.category_id ?? undefined,
+        forceCategoryFallback: true,
+        allowHealthyBulkOnCategoryFailure: true,
+      });
+    } catch {
+      rejected = true;
+    }
+    assert.equal(rejected, true);
+  });
+
   await scenario("Xtream Live persistent identity is stream-id stable across order changes", () => {
     const first = stableXtreamLiveId("provider-a", "12345");
     const reordered = stableXtreamLiveId("provider-a", "12345");
@@ -202,7 +300,7 @@ async function main() {
     assert.deepEqual(stateRef.current, before, "active rows, staging swap, and category mutations must all roll back");
   });
 
-  console.log(`xtream independent kind scenarios: ${passed}/9 passed`);
+  console.log(`xtream independent kind scenarios: ${passed}/13 passed`);
 }
 
 void main();
