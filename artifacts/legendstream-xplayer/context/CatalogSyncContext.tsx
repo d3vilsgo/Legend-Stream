@@ -71,6 +71,7 @@ import {
 } from "@/lib/providerSwitchUx";
 import type { Channel } from "@/lib/iptv";
 import { resolvedProviderTransport } from "@/lib/m3uTransportRouting";
+import { syncStalkerLiveCatalog } from "@/lib/stalkerLiveSync";
 
 export type CatalogSnapshot = {
   providerId?: string;
@@ -111,6 +112,7 @@ const HOME_SAMPLE_LIMIT = 48;
 const NEW_SAMPLE_LIMIT = 24;
 const BACKGROUND_SYNC_DELAY_MS = 1_250;
 const SYNC_STAGE_TOTAL = 4;
+const STALKER_SYNC_STAGE_TOTAL = 1;
 
 const Context = createContext<CatalogSyncContextValue | null>(null);
 
@@ -174,8 +176,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     }
   }, [provider?.id]);
 
-  // Backward-compatible runtime name used by existing catalog loaders. Its meaning is now
-  // "local cache is usable", not "the last synchronization finished successfully".
   const cacheReady = hasUsableCache;
 
   const refreshSnapshotFor = useCallback(async (
@@ -224,7 +224,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
       newSeries,
     });
     setHasUsableCache(usable);
-    // Never let persisted state from a previous run overwrite the active run's local UI state.
     if (activeRunIdRef.current === null) setSyncStateLocal(state);
   }, []);
 
@@ -276,10 +275,129 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     };
     const next: CatalogRunState = { ...base, runId: ownership.generation };
     if (activeRunIdRef.current === ownership.generation) setSyncStateLocal(next);
-    // Catalog writes are globally serialized. The ownership check and queue insertion
-    // happen in the same JS turn, so a newer generation can only enqueue after this write.
     await setCatalogSyncState(providerId, phase, completed, total, message, stamp);
   }, []);
+
+  const runStalkerSync = useCallback(async (mode: CatalogSyncMode) => {
+    if (!provider || provider.type !== "stalker") return;
+    if (provider.id !== latestProviderIdRef.current) return;
+    const portalUrl = provider.url || provider.playlistUrl;
+    const mac = provider.mac?.trim() || "";
+    if (!portalUrl || !mac) return;
+    const running = runningRef.current;
+    if (running && isCatalogSyncOwnershipCurrent(
+      latestProviderIdRef.current,
+      generationRef.current,
+      running.ownership,
+    )) return running.task;
+
+    const generation = ++generationRef.current;
+    const ownership: CatalogSyncOwnership = { providerId: provider.id, generation };
+    const isInitial = mode === "initial";
+    const controller = new AbortController();
+    activeRunIdRef.current = generation;
+    activeModeRef.current = mode;
+    abortControllerRef.current = controller;
+    cancelRef.current = false;
+    setSyncStateLocal(freshCatalogRunState(provider.id, generation, mode));
+
+    const isCancelled = () =>
+      cancelRef.current ||
+      controller.signal.aborted ||
+      !isCatalogSyncOwnershipCurrent(
+        latestProviderIdRef.current,
+        generationRef.current,
+        ownership,
+      );
+
+    const task = (async () => {
+      if (isInitial) setIsInitialSyncRunning(true);
+      else setIsRefreshing(true);
+      try {
+        await initCatalogCache();
+        await publishState(
+          ownership,
+          isInitial ? "preparing" : "syncing",
+          0,
+          STALKER_SYNC_STAGE_TOTAL,
+          isInitial ? "Preparing Stalker Live catalog" : "Stalker Live update started",
+        );
+        await syncStalkerLiveCatalog({
+          provider: { id: provider.id, url: portalUrl, mac },
+          signal: controller.signal,
+          isCurrent: () => !isCancelled(),
+          onProgress: async (progress) => {
+            if (isCancelled()) return;
+            const message = progress.phase === "categories"
+              ? "Live TV · categories"
+              : progress.phase === "committing"
+                ? "Live TV · finalizing"
+                : `Live TV · page ${progress.page ?? 1}`;
+            await publishState(
+              ownership,
+              "syncing",
+              0,
+              STALKER_SYNC_STAGE_TOTAL,
+              message,
+            );
+          },
+        });
+        if (isCancelled()) return;
+        await publishState(
+          ownership,
+          "ready",
+          STALKER_SYNC_STAGE_TOTAL,
+          STALKER_SYNC_STAGE_TOTAL,
+          "Stalker Live cache ready",
+          mode === "background" ? "background" : "full",
+        );
+        await refreshSnapshotFor(provider, ownership);
+      } catch (caught) {
+        if (isCancelled()) {
+          await publishState(
+            ownership,
+            "cancelled",
+            0,
+            STALKER_SYNC_STAGE_TOTAL,
+            "Stalker Live preparation cancelled",
+          );
+          await refreshSnapshotFor(provider, ownership);
+          return;
+        }
+        const message = caught instanceof Error ? caught.message : "Stalker Live synchronization failed";
+        await publishState(
+          ownership,
+          "error",
+          0,
+          STALKER_SYNC_STAGE_TOTAL,
+          message,
+        );
+        await refreshSnapshotFor(provider, ownership);
+      } finally {
+        if (
+          activeRunIdRef.current === generation &&
+          isCatalogSyncOwnershipCurrent(
+            latestProviderIdRef.current,
+            generationRef.current,
+            ownership,
+          )
+        ) {
+          if (isInitial) setIsInitialSyncRunning(false);
+          else setIsRefreshing(false);
+          activeRunIdRef.current = null;
+          activeModeRef.current = null;
+        }
+        if (abortControllerRef.current === controller) abortControllerRef.current = null;
+      }
+    })();
+
+    runningRef.current = { ownership, task };
+    const releaseTaskOwnership = () => {
+      if (runningRef.current?.task === task) runningRef.current = null;
+    };
+    void task.then(releaseTaskOwnership, releaseTaskOwnership);
+    return task;
+  }, [provider, publishState, refreshSnapshotFor]);
 
   const runSync = useCallback(async (mode: CatalogSyncMode) => {
     if (!provider || resolvedProviderTransport(provider) !== "xtream") return;
@@ -344,8 +462,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
 
         await publishState(ownership, "syncing", completed, total, "Live TV · loading");
 
-        // Initial preparation can reuse the just-loaded PlayerContext list. Background/manual
-        // refreshes deliberately hit the provider again so newly-added live channels can be found.
         const currentLive = channels.filter(
           (channel) => channel.providerId === provider.id && (channel.contentType ?? "live") === "live",
         );
@@ -440,8 +556,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         await publishState(ownership, "syncing", completed, total, "Finalizing catalog cache");
         if (isCancelled()) return;
 
-        // Prune only after every requested catalog completed successfully.
-        // Cancellation/network failure therefore never deletes a valid old cache.
         await Promise.all([
           pruneCatalogKind(provider.id, "live", syncStartedAt),
           pruneCatalogKind(provider.id, "vod", syncStartedAt),
@@ -479,7 +593,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         }
         if (await recoverLegacyCatalogFallback(provider.id, caught)) return;
         const message = caught instanceof Error ? caught.message : "Catalog synchronization failed";
-        // Failure describes the refresh attempt only; availability remains count-driven.
         await publishState(ownership, "error", completed, total, message);
         await refreshSnapshotFor(provider, ownership);
       } finally {
@@ -510,7 +623,10 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
 
   const refreshCatalog = useCallback(async () => {
     await runSync("manual");
-  }, [runSync]);
+    if (provider?.type === "stalker") {
+      await runStalkerSync("manual");
+    }
+  }, [provider?.type, runStalkerSync, runSync]);
 
   const cancelInitialSync = useCallback(() => {
     if (activeModeRef.current !== "initial") return;
@@ -565,8 +681,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         )) return;
         const usable = hasUsableCatalogCache(counts);
 
-        // Cache-first: publish local rows before doing any update request. A provider-switch
-        // handoff may already be showing the target cache, so never blank it first.
         await refreshSnapshotFor(active, lifecycleOwnership);
         if (disposed || !isCatalogSyncOwnershipCurrent(
           latestProviderIdRef.current,
@@ -574,16 +688,19 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           lifecycleOwnership,
         )) return;
         clearProviderSwitchSnapshot(active.id);
-        if (disposed || resolvedProviderTransport(active) !== "xtream") return;
+        const transport = resolvedProviderTransport(active);
+        const supportsCatalogSync = transport === "xtream" || active.type === "stalker";
+        if (disposed || !supportsCatalogSync) return;
+        const runForActive = active.type === "stalker" ? runStalkerSync : runSync;
 
-        // Only a genuinely empty, never-completed cache uses the blocking initial path.
         if (!usable && state?.phase !== "ready") {
           await runSync("initial");
+          if (active.type === "stalker") {
+            await runStalkerSync("initial");
+          }
           return;
         }
 
-        // Usable rows remain browsable even when the previous refresh was cancelled/errored.
-        // An empty cache explicitly marked ready also stays non-blocking.
         if (backgroundStartedRef.current !== active.id) {
           backgroundStartedRef.current = active.id;
           backgroundTimer = setTimeout(() => {
@@ -591,7 +708,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
               latestProviderIdRef.current,
               generationRef.current,
               lifecycleOwnership,
-            )) void runSync("background");
+            )) void runForActive("background");
           }, BACKGROUND_SYNC_DELAY_MS);
         }
       } catch {
@@ -600,7 +717,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           generationRef.current,
           lifecycleOwnership,
         )) clearProviderSwitchSnapshot(active.id);
-        // SQLite/provider failures leave the legacy on-demand catalog path intact.
       }
     })();
 
@@ -610,7 +726,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
       abortCatalogRequest(abortControllerRef.current);
       if (backgroundTimer) clearTimeout(backgroundTimer);
     };
-  }, [provider?.id]); // provider switch is the lifecycle boundary.
+  }, [provider?.id]);
 
   const isSyncing = isCatalogSyncActive(syncState?.phase);
   const value = useMemo<CatalogSyncContextValue>(() => ({
@@ -625,8 +741,9 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     cancelInitialSync,
   }), [cacheReady, cancelInitialSync, hasUsableCache, isRefreshing, isSyncing, refreshCatalog, refreshSnapshot, snapshot, syncState]);
 
+  const syncTransport = resolvedProviderTransport(provider);
   const isInitialBlocking =
-    resolvedProviderTransport(provider) === "xtream" &&
+    (syncTransport === "xtream" || provider?.type === "stalker") &&
     shouldBlockInitialCatalogSync(hasUsableCache, isInitialSyncRunning, syncState?.phase);
   const progress = syncState && syncState.total > 0
     ? Math.max(0, Math.min(1, syncState.completed / syncState.total))
@@ -667,8 +784,8 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           </Pressable>
           <Text style={[styles.fallbackText, { color: colors.mutedForeground }]}>
             {tr
-              ? "Vazgeçersen mevcut isteğe bağlı yükleme davranışı kullanılmaya devam eder."
-              : "If cancelled, the existing on-demand loading path remains available."}
+              ? "Vazgeçersen mevcut önbellek kullanılmaya devam eder."
+              : "If cancelled, the existing cache remains available."}
           </Text>
         </View>
       </View>

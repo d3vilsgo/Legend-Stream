@@ -24,6 +24,7 @@ import {
 import { buildM3UDirectHydrationCooperatively } from "./m3uCatalogHydration";
 import { safeLog } from "./safeLog";
 import { yieldToUi } from "./cooperative";
+import { getCachedStalkerLiveCategories } from "./stalkerLiveCache";
 import type { Channel } from "./iptv";
 import type {
   XtreamCategory,
@@ -157,7 +158,7 @@ function mapRows(
 function compatibleProvider(provider: CatalogRuntimeProvider, request: CatalogPageRequest) {
   return (
     provider.id === request.providerId &&
-    (provider.type === "m3u" || provider.type === "xtream") &&
+    (provider.type === "m3u" || provider.type === "xtream" || provider.type === "stalker") &&
     provider.type === request.providerType
   );
 }
@@ -238,6 +239,13 @@ export async function getCachedCatalogCategories(
   kind: CatalogPageKind,
 ): Promise<XtreamCategory[]> {
   if (kind !== "live") return getCachedCategories(providerId, kind);
+  const storedStalker = await getCachedStalkerLiveCategories(providerId);
+  if (storedStalker.length) {
+    return storedStalker.map((category) => ({
+      category_id: category.id,
+      category_name: category.name,
+    }));
+  }
   const db = await pageDatabase();
   const rows = await db.getAllAsync<{ category_id: string }>(
     LIVE_CATEGORY_FIRST_SEEN_SQL,

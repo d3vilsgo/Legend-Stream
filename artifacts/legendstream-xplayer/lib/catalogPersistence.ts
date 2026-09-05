@@ -9,12 +9,19 @@ import type { XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
 export type CatalogKind = "live" | "vod" | "series";
 export type CatalogSourceMode = "canonical" | "direct";
 
+export type PersistedStalkerLivePlaybackRef = {
+  type: "stalker-live";
+  portalId: string;
+  cmd: string;
+};
+
 export type PersistedLivePlaybackRef =
   | {
       type: "xtream-live";
       streamId: string;
       containerExtension: string;
     }
+  | PersistedStalkerLivePlaybackRef
   | M3UPathPlaybackRef
   | { type: "unresolved" };
 
@@ -45,6 +52,7 @@ export type PersistedLiveCatalogItem = {
   name: string;
   logoUrl?: string;
   category: string;
+  categoryName?: string;
   tvgId?: string;
   streamType?: string;
   contentType: "live";
@@ -162,6 +170,13 @@ function normalizeLivePlaybackRef(value: unknown): PersistedLivePlaybackRef {
       return { type: "xtream-live", streamId, containerExtension };
     }
   }
+  if (raw.type === "stalker-live") {
+    const portalId = nonBlankString(raw.portalId);
+    const cmd = stringValue(raw.cmd);
+    if (portalId && cmd !== undefined) {
+      return { type: "stalker-live", portalId, cmd };
+    }
+  }
   return { type: "unresolved" };
 }
 
@@ -224,6 +239,7 @@ function projectLive(providerId: string, value: unknown): PersistedLiveCatalogIt
     name,
     logoUrl: normalizeImageUrl(raw.logoUrl) ?? undefined,
     category: stringValue(raw.category) ?? "Live TV",
+    categoryName: stringValue(raw.categoryName),
     tvgId: stringValue(raw.tvgId),
     streamType: stringValue(raw.streamType),
     contentType: "live",
@@ -328,28 +344,52 @@ export function makeDirectVodRuntimeSource(ref: PersistedVodCatalogItem): string
   return `legendstream-catalog://xtream/movie/${encodeURIComponent(ref.providerId)}/${encodeURIComponent(ref.playbackRef.streamId)}?ext=${encodeURIComponent(ref.playbackRef.containerExtension)}`;
 }
 
-export type CatalogRuntimeSourceRef = {
-  kind: "vod-direct";
-  providerId: string;
-  streamId: string;
-  containerExtension: string;
-};
+export function makeStalkerLiveRuntimeSource(ref: PersistedLiveCatalogItem): string {
+  if (ref.playbackRef.type !== "stalker-live") {
+    throw new Error("Only Stalker Live references use this catalog runtime source.");
+  }
+  return `legendstream-catalog://stalker/live/${encodeURIComponent(ref.providerId)}/${encodeURIComponent(ref.id)}`;
+}
+
+export type CatalogRuntimeSourceRef =
+  | {
+      kind: "vod-direct";
+      providerId: string;
+      streamId: string;
+      containerExtension: string;
+    }
+  | {
+      kind: "stalker-live";
+      providerId: string;
+      itemId: string;
+    };
 
 export function parseCatalogRuntimeSource(source: string): CatalogRuntimeSourceRef | null {
   if (!source.startsWith(RUNTIME_SCHEME)) return null;
   try {
     const url = new URL(source);
-    if (url.protocol !== RUNTIME_SCHEME || url.hostname !== "xtream") return null;
     const parts = url.pathname.split("/").filter(Boolean).map(decodeURIComponent);
-    if (parts.length !== 3 || parts[0] !== "movie") return null;
-    const containerExtension = url.searchParams.get("ext") || "mp4";
-    if (!parts[1] || !parts[2] || !/^[a-zA-Z0-9]{1,10}$/.test(containerExtension)) return null;
-    return {
-      kind: "vod-direct",
-      providerId: parts[1],
-      streamId: parts[2],
-      containerExtension,
-    };
+    if (url.protocol !== RUNTIME_SCHEME) return null;
+    if (url.hostname === "xtream") {
+      if (parts.length !== 3 || parts[0] !== "movie") return null;
+      const containerExtension = url.searchParams.get("ext") || "mp4";
+      if (!parts[1] || !parts[2] || !/^[a-zA-Z0-9]{1,10}$/.test(containerExtension)) return null;
+      return {
+        kind: "vod-direct",
+        providerId: parts[1],
+        streamId: parts[2],
+        containerExtension,
+      };
+    }
+    if (url.hostname === "stalker") {
+      if (parts.length !== 3 || parts[0] !== "live" || !parts[1] || !parts[2]) return null;
+      return {
+        kind: "stalker-live",
+        providerId: parts[1],
+        itemId: parts[2],
+      };
+    }
+    return null;
   } catch {
     return null;
   }
