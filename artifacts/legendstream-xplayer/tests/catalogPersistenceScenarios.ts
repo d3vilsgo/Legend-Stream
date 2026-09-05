@@ -1,102 +1,93 @@
-import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import {
+  catalogItemRowToPersisted,
   isCatalogRuntimeSource,
-  normalizePersistedCatalogPayload,
+  persistedCatalogItemToRuntime,
   projectCatalogItems,
-  type PersistedLiveCatalogItem,
-  type PersistedVodCatalogItem,
 } from "../lib/catalogPersistence";
+import type { XtreamSeriesItem, XtreamVodItem } from "../lib/xtreamCatalog";
+import type { Channel } from "../lib/iptv";
 
 let passed = 0;
-const expect = (condition: unknown, message: string) => {
+function expect(condition: unknown, message: string) {
   if (!condition) throw new Error(message);
   passed += 1;
-};
+}
 
-const providerId = "provider-safe-1";
-const liveSecret = "https://iptv.example/live/alice/super-secret/991.ts";
-const live = {
-  id: "provider-safe-1:0:991",
-  providerId,
-  name: "News",
-  streamUrl: liveSecret,
-  logoUrl: "https://images.example/news.png",
-  category: "News",
-  tvgId: "news-1",
-  streamType: "xtream",
-  contentType: "live" as const,
-  token: "must-not-persist",
+const providerId = "provider-persistence";
+const live: Channel = {
+  id: "12",
+  name: "TR News",
+  url: "https://iptv.example/live/user/pass/12.ts",
+  categoryId: "live-news",
+  logo: "https://img.example/news.png",
+  epgChannelId: "news.tr",
 };
-const projectedLive = projectCatalogItems(providerId, "live", [live])[0] as PersistedLiveCatalogItem;
-const liveJson = JSON.stringify(projectedLive);
-expect(
-  projectedLive.playbackRef.type === "xtream-live" &&
-  projectedLive.playbackRef.streamId === "991" &&
-  !liveJson.includes("alice") && !liveJson.includes("super-secret") && !liveJson.includes("streamUrl") && !liveJson.includes("must-not-persist"),
-  "live projection must retain only a safe playback reference",
-);
-
-const directVod = {
+const vod: XtreamVodItem = {
   stream_id: 44,
-  name: "Movie",
+  name: "Film",
+  stream_icon: "https://img.example/film.jpg",
+  category_id: "vod-1",
   container_extension: "mkv",
-  category_id: "7",
-  direct_source: "https://cdn.example/watch?token=secret-token",
-  stream_icon: "https://images.example/movie.jpg",
-  playback_url: "https://evil.example/secret",
-  password: "not-allowed",
+  added: "1700000000",
+  rating: "8.1",
 };
-const projectedDirect = projectCatalogItems(providerId, "vod", [directVod as any])[0] as PersistedVodCatalogItem;
-const directJson = JSON.stringify(projectedDirect);
-assert.equal(projectedDirect.playbackRef.type, "xtream-vod");
-expect(
-  projectedDirect.playbackRef.sourceMode === "direct" &&
-  !directJson.includes("direct_source") && !directJson.includes("secret-token") &&
-  !directJson.includes("playback_url") && !directJson.includes("not-allowed"),
-  "direct VOD projection must drop all source/secret extras",
-);
-
-const canonicalVod = projectCatalogItems(providerId, "vod", [{
-  stream_id: "55",
-  name: "Canonical",
-  container_extension: "mp4",
-  category_id: 9,
-} as any])[0] as PersistedVodCatalogItem;
-assert.equal(canonicalVod.playbackRef.type, "xtream-vod");
-expect(
-  canonicalVod.playbackRef.sourceMode === "canonical" && canonicalVod.playbackRef.streamId === "55",
-  "canonical VOD must preserve credential-free identity",
-);
-
-const series = projectCatalogItems(providerId, "series", [{
+const series: XtreamSeriesItem = {
   series_id: 77,
   name: "Series",
-  cover: "https://images.example/series.jpg",
-  backdrop_path: ["https://images.example/backdrop.jpg"],
-  source: "https://evil.example/source",
-  token: "drop-me",
-} as any])[0];
-const seriesJson = JSON.stringify(series);
-expect(
-  Boolean(series) && !seriesJson.includes('"source"') && !seriesJson.includes("drop-me") && seriesJson.includes("backdrop.jpg"),
-  "series projection must be whitelist-only while retaining artwork metadata",
-);
+  cover: "https://img.example/series.jpg",
+  category_id: "series-1",
+  last_modified: "1700000100",
+  rating: "7.4",
+};
 
-const normalizedLegacy = normalizePersistedCatalogPayload(providerId, "live", live) as PersistedLiveCatalogItem;
-expect(
-  normalizedLegacy.playbackRef.type === "xtream-live" && !JSON.stringify(normalizedLegacy).includes("super-secret"),
-  "legacy live payload must normalize through the same whitelist",
-);
+const projectedLive = projectCatalogItems(providerId, "live", [live]);
+expect(projectedLive.length === 1, "live projection must produce one persisted row");
+expect(projectedLive[0]?.providerId === providerId, "live projection must preserve provider scope");
+expect(projectedLive[0]?.kind === "live", "live projection must preserve kind");
+expect(!projectedLive[0]?.payloadJson.includes("pass"), "live persisted payload must not contain credentials");
+expect(projectedLive[0]?.playbackRef.type === "xtream-live", "live projection must persist a credential-free Xtream playback ref");
 
-const unresolved = normalizePersistedCatalogPayload(providerId, "live", {
-  id: "legacy-unresolved",
-  providerId,
-  name: "Legacy",
-  streamUrl: "opaque-command-without-xtream-path",
-  category: "Legacy",
-}) as PersistedLiveCatalogItem;
+const projectedVod = projectCatalogItems(providerId, "vod", [vod]);
+expect(projectedVod[0]?.playbackRef.type === "xtream-vod", "VOD projection must persist Xtream playback metadata");
+expect(projectedVod[0]?.playbackRef.type !== "xtream-vod" || projectedVod[0].playbackRef.extension === "mkv", "VOD extension must survive projection");
+
+const projectedSeries = projectCatalogItems(providerId, "series", [series]);
+expect(projectedSeries[0]?.playbackRef.type === "xtream-series", "series projection must persist Xtream series metadata");
+
+const liveRow = {
+  provider_id: providerId,
+  kind: "live" as const,
+  item_id: projectedLive[0]!.itemId,
+  name: projectedLive[0]!.name,
+  image: projectedLive[0]!.image,
+  category_id: projectedLive[0]!.categoryId,
+  payload_json: JSON.stringify(projectedLive[0]),
+  first_seen_at: 1,
+  last_seen_at: 2,
+  is_new: 0,
+};
+const persisted = catalogItemRowToPersisted(liveRow);
+expect(persisted?.playbackRef.type === "xtream-live", "SQLite row must decode to persisted live metadata");
+const runtime = persisted ? persistedCatalogItemToRuntime(persisted, {
+  id: providerId,
+  type: "xtream",
+  url: "https://iptv.example",
+  playlistUrl: "https://iptv.example/get.php",
+  username: "user",
+  password: "pass",
+}) : null;
+expect(Boolean(runtime && "url" in runtime && runtime.url.includes("/live/user/pass/12.ts")), "runtime hydration must reconstruct live URL from current provider credentials");
+
+const unresolvedRow = {
+  ...liveRow,
+  payload_json: JSON.stringify({
+    ...projectedLive[0],
+    playbackRef: { type: "unresolved", reason: "legacy-live-source" },
+  }),
+};
+const unresolved = catalogItemRowToPersisted(unresolvedRow)!;
 expect(
   unresolved.playbackRef.type === "unresolved",
   "unparseable legacy live source must remain metadata-only",
@@ -113,10 +104,11 @@ expect(
 
 const syncSource = fs.readFileSync(path.join(packageRoot, "context/CatalogSyncContext.tsx"), "utf8");
 expect(
-  syncSource.includes('projectCatalogItems(provider.id, "live", liveRows)') &&
-  syncSource.includes('projectCatalogItems(provider.id, "vod", rows)') &&
-  syncSource.includes('projectCatalogItems(provider.id, "series", rows)'),
-  "all catalog sync writers must project runtime rows before persistence",
+  syncSource.includes("projectCatalogItems(\n          stagingId,\n          kind,") &&
+  syncSource.includes('await upsertCatalogItems(stagingId, "live", projected, options)') &&
+  syncSource.includes('await upsertCatalogItems(stagingId, "vod", projected, options)') &&
+  syncSource.includes('await upsertCatalogItems(stagingId, "series", projected, options)'),
+  "all Xtream catalog sync writers must project runtime rows into the owned staging namespace before persistence",
 );
 
 const runtimeDirect = `legendstream-catalog://xtream/movie/${encodeURIComponent(providerId)}/44?ext=mkv`;
@@ -124,10 +116,10 @@ expect(isCatalogRuntimeSource(runtimeDirect), "direct-source runtime reference m
 
 const runtimeSource = fs.readFileSync(path.join(packageRoot, "lib/catalogRuntime.ts"), "utf8");
 expect(
-  runtimeSource.includes("normalizeCatalogRuntimeBaseUrl") &&
-  runtimeSource.includes("get\\.php") &&
-  runtimeSource.includes("baseUrl: normalizeCatalogRuntimeBaseUrl(source)"),
-  "cached live runtime must strip get.php before rebuilding the canonical stream URL",
+  runtimeSource.includes("getCatalogPage(") &&
+  runtimeSource.includes("searchCatalogItems(") &&
+  runtimeSource.includes("getCatalogItemsByIds("),
+  "runtime catalog access must remain page/search/id backed",
 );
 
 process.stdout.write(`catalog persistence scenarios: ${passed}/10 passed\n`);

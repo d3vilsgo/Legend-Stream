@@ -24,7 +24,7 @@
     "test:catalog-category-fallback": "tsx tests/catalogCategoryFallbackScenarios.ts",
     "test:catalog-availability": "tsx tests/catalogAvailabilityScenarios.ts && tsx tests/catalogSyncIsolationScenarios.ts",
     "test:provider-switch": "tsx tests/m3uPreviewHydrationScenarios.ts && tsx tests/providerSwitchScenarios.ts && tsx tests/m3uHydrationYieldScenarios.ts && tsx tests/m3uTransportRoutingScenarios.ts",
-    "test:catalog-bulk-sync": "tsx tests/catalogBulkSyncScenarios.ts",
+    "test:catalog-bulk-sync": "tsx tests/catalogBulkSyncScenarios.ts && tsx tests/xtreamIndependentKindSyncScenarios.ts",
     "test:poster-image-resilience": "tsx tests/posterImageResilienceScenarios.ts",
     "test:player-live-queue": "tsx tests/playerLiveQueueScenarios.ts",
     "test:media-progress": "tsx tests/mediaProgressScenarios.ts",
