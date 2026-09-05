@@ -9,6 +9,10 @@ import {
   type PersistedLiveCatalogItem,
   type PersistedStalkerLivePlaybackRef,
 } from "./catalogPersistence";
+import {
+  enqueueOwnedStalkerLiveCommit,
+  type StalkerLiveCommitOwnershipCheck,
+} from "./stalkerLiveCommitOwnership";
 import type { StalkerLiveCategory } from "./stalkerLiveCatalog";
 
 const CATALOG_DB_NAME = "legendstream-catalog-v1.db";
@@ -61,40 +65,55 @@ export async function stageStalkerLivePage(
 export async function commitStalkerLiveStaging(
   providerId: string,
   categories: readonly StalkerLiveCategory[],
+  isCurrent?: StalkerLiveCommitOwnershipCheck,
 ) {
   const stagingId = stagingProviderId(providerId);
-  return enqueueCatalogDbWrite(async () => {
-    const db = await database();
-    await db.withExclusiveTransactionAsync(async (txn) => {
-      await txn.runAsync(
-        "DELETE FROM catalog_items WHERE provider_id = ? AND kind = 'live'",
-        providerId,
-      );
-      await txn.runAsync(
-        "DELETE FROM catalog_categories WHERE provider_id = ? AND kind = 'live'",
-        providerId,
-      );
-      await txn.runAsync(
-        "UPDATE catalog_items SET provider_id = ? WHERE provider_id = ? AND kind = 'live'",
-        providerId,
-        stagingId,
-      );
-      for (const category of categories) {
+  return enqueueOwnedStalkerLiveCommit({
+    enqueue: enqueueCatalogDbWrite,
+    isCurrent,
+    mutate: async (assertCurrent) => {
+      assertCurrent();
+      const db = await database();
+      assertCurrent();
+      await db.withExclusiveTransactionAsync(async (txn) => {
+        assertCurrent();
         await txn.runAsync(
-          `INSERT OR REPLACE INTO catalog_categories
-           (provider_id, kind, category_id, category_name, parent_id)
-           VALUES (?, 'live', ?, ?, NULL)`,
+          "DELETE FROM catalog_items WHERE provider_id = ? AND kind = 'live'",
           providerId,
-          category.id,
-          category.name,
         );
-      }
-      await txn.runAsync(
-        "DELETE FROM catalog_categories WHERE provider_id = ? AND kind = 'live'",
-        stagingId,
-      );
-      await txn.runAsync("DELETE FROM catalog_sync_state WHERE provider_id = ?", stagingId);
-    });
+        assertCurrent();
+        await txn.runAsync(
+          "DELETE FROM catalog_categories WHERE provider_id = ? AND kind = 'live'",
+          providerId,
+        );
+        assertCurrent();
+        await txn.runAsync(
+          "UPDATE catalog_items SET provider_id = ? WHERE provider_id = ? AND kind = 'live'",
+          providerId,
+          stagingId,
+        );
+        for (const category of categories) {
+          assertCurrent();
+          await txn.runAsync(
+            `INSERT OR REPLACE INTO catalog_categories
+             (provider_id, kind, category_id, category_name, parent_id)
+             VALUES (?, 'live', ?, ?, NULL)`,
+            providerId,
+            category.id,
+            category.name,
+          );
+        }
+        assertCurrent();
+        await txn.runAsync(
+          "DELETE FROM catalog_categories WHERE provider_id = ? AND kind = 'live'",
+          stagingId,
+        );
+        assertCurrent();
+        await txn.runAsync("DELETE FROM catalog_sync_state WHERE provider_id = ?", stagingId);
+        assertCurrent();
+      });
+      assertCurrent();
+    },
   });
 }
 
