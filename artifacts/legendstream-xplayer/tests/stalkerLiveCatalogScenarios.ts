@@ -4,6 +4,7 @@ import {
   createStalkerPortalSession,
 } from "../lib/stalkerPortal";
 import {
+  MAX_STALKER_LIVE_PAGES,
   fetchStalkerLiveCategories,
   normalizeStalkerLiveCategories,
   normalizeStalkerLivePage,
@@ -11,8 +12,10 @@ import {
   resolveStalkerLiveCreateLink,
   runStagedStalkerLiveSync,
   stableStalkerLiveChannelId,
+  stalkerLivePageCeilingExceeded,
   traverseStalkerLivePages,
 } from "../lib/stalkerLiveCatalog";
+import { enqueueOwnedStalkerLiveCommit } from "../lib/stalkerLiveCommitOwnership";
 import {
   buildCatalogPageSql,
   catalogPageQueryKey,
@@ -134,6 +137,48 @@ async function main() {
     ]);
   });
 
+  await scenario("category capability absence fails open only for empty shape and HTTP 404/405", async () => {
+    assert.deepEqual(await fetchStalkerLiveCategories(fakePortal(() => ({ unsupported: true }))), []);
+    for (const status of [404, 405]) {
+      const categories = await fetchStalkerLiveCategories(fakePortal(() => {
+        throw new StalkerPortalError("HTTP_ERROR", "category capability unavailable", status);
+      }));
+      assert.deepEqual(categories, []);
+    }
+
+    const events: string[] = [];
+    const completed = await runStagedStalkerLiveSync({
+      session: fakePortal((params) => {
+        if (params.action === "get_genres") {
+          throw new StalkerPortalError("HTTP_ERROR", "category capability unavailable", 404);
+        }
+        return { data: [channel(1, "99")], total_items: 1, max_page_items: 1 };
+      }),
+      providerId: PROVIDER,
+      cleanupStaging: async () => { events.push("cleanup"); },
+      persistPage: async (items) => { events.push(`persist-${items.length}`); },
+      commit: async (categories) => { events.push(`commit-categories-${categories.length}`); },
+    });
+    assert.equal(completed.categories.length, 0);
+    assert.equal(completed.result.persisted, 1);
+    assert.deepEqual(events, ["cleanup", "persist-1", "commit-categories-0", "cleanup"]);
+  });
+
+  await scenario("category transport and auth failures remain fail closed", async () => {
+    const failures: Array<StalkerPortalError> = [
+      new StalkerPortalError("AUTH_FAILED", "auth failed", 401),
+      new StalkerPortalError("AUTH_FAILED", "auth failed", 403),
+      new StalkerPortalError("TIMEOUT", "timeout"),
+      new StalkerPortalError("CANCELLED", "cancelled"),
+      new StalkerPortalError("NETWORK_ERROR", "network"),
+      new StalkerPortalError("HTTP_ERROR", "server", 500),
+      new StalkerPortalError("INVALID_RESPONSE", "invalid json"),
+    ];
+    for (const failure of failures) {
+      await expectCode(fetchStalkerLiveCategories(fakePortal(() => { throw failure; })), failure.code);
+    }
+  });
+
   await scenario("canonical channel identity is independent from page order", () => {
     const categories = [{ id: "10", name: "News" }];
     const first = normalizeStalkerLivePage({ data: [channel(77), channel(88)] }, PROVIDER, 1, categories);
@@ -184,6 +229,41 @@ async function main() {
     });
     assert.deepEqual(pages, [1, 2, 3]);
     assert.equal(result.uniqueItems, 3);
+  });
+
+  await scenario("pagination hard ceiling policy is finite and test-overridable", () => {
+    assert.ok(Number.isInteger(MAX_STALKER_LIVE_PAGES));
+    assert.ok(MAX_STALKER_LIVE_PAGES >= 1_000);
+    assert.equal(stalkerLivePageCeilingExceeded(3, 3), false);
+    assert.equal(stalkerLivePageCeilingExceeded(4, 3), true);
+  });
+
+  await scenario("pagination hard ceiling fails closed without committing staged rows", async () => {
+    let requests = 0;
+    let commits = 0;
+    let cleanups = 0;
+    let staged: string[] = [];
+    const committed = ["old-1", "old-2"];
+    await expectCode(runStagedStalkerLiveSync({
+      session: fakePortal((params) => {
+        if (params.action === "get_genres") return { unsupported: true };
+        requests += 1;
+        return { data: [channel(requests)] };
+      }),
+      providerId: PROVIDER,
+      maxPages: 3,
+      cleanupStaging: async () => {
+        cleanups += 1;
+        staged = [];
+      },
+      persistPage: async (items) => { staged.push(...items.map((item) => item.id)); },
+      commit: async () => { commits += 1; },
+    }), "INVALID_RESPONSE");
+    assert.equal(requests, 3);
+    assert.equal(commits, 0);
+    assert.equal(cleanups, 2);
+    assert.deepEqual(staged, []);
+    assert.deepEqual(committed, ["old-1", "old-2"]);
   });
 
   await scenario("empty first page stops without persistence", async () => {
@@ -285,6 +365,52 @@ async function main() {
     }), "CANCELLED");
     assert.equal(commits, 0);
     assert.equal(cleanups, 2);
+  });
+
+  await scenario("queued commit rechecks ownership before any DB mutation", async () => {
+    let current = true;
+    let releaseQueue!: () => void;
+    const queued = new Promise<void>((resolve) => { releaseQueue = resolve; });
+    let mutations = 0;
+    const pending = enqueueOwnedStalkerLiveCommit({
+      enqueue: async (work) => {
+        await queued;
+        return work();
+      },
+      isCurrent: () => current,
+      mutate: async (assertCurrent) => {
+        mutations += 1;
+        assertCurrent();
+      },
+    });
+    current = false;
+    releaseQueue();
+    await expectCode(pending, "CANCELLED");
+    assert.equal(mutations, 0);
+  });
+
+  await scenario("transaction ownership loss throws so the mutation can roll back", async () => {
+    let current = true;
+    let active = ["old-1", "old-2"];
+    await expectCode(enqueueOwnedStalkerLiveCommit({
+      enqueue: async (work) => work(),
+      isCurrent: () => current,
+      mutate: async (assertCurrent) => {
+        const before = [...active];
+        try {
+          assertCurrent();
+          active = [];
+          await Promise.resolve();
+          current = false;
+          assertCurrent();
+          active = ["new-1"];
+        } catch (caught) {
+          active = before;
+          throw caught;
+        }
+      },
+    }), "CANCELLED");
+    assert.deepEqual(active, ["old-1", "old-2"]);
   });
 
   await scenario("failed staged sync preserves old committed cache", async () => {
@@ -521,8 +647,8 @@ async function main() {
     assert.equal(cleanupCalls, 2);
   });
 
-  assert.equal(passed, 26);
-  console.log("stalker live catalog scenarios: 26/26 passed");
+  assert.equal(passed, 32);
+  console.log("stalker live catalog scenarios: 32/32 passed");
 }
 
 void main().catch((error) => {
