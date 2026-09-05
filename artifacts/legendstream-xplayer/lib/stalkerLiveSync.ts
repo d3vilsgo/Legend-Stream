@@ -1,5 +1,5 @@
 import { yieldToUi } from "./cooperative";
-import { createStalkerPortalSession } from "./stalkerPortal";
+import { createStalkerPortalSession, StalkerPortalError } from "./stalkerPortal";
 import { runStagedStalkerLiveSync } from "./stalkerLiveCatalog";
 import {
   cleanupStalkerLiveStaging,
@@ -24,6 +24,12 @@ type StalkerLiveSyncOptions = {
   }) => void | Promise<void>;
 };
 
+function assertCurrent(signal?: AbortSignal, isCurrent?: () => boolean) {
+  if (signal?.aborted || (isCurrent && !isCurrent())) {
+    throw new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled.");
+  }
+}
+
 export async function syncStalkerLiveCatalog(options: StalkerLiveSyncOptions) {
   const providerId = options.provider.id;
   const syncStartedAt = Date.now();
@@ -40,6 +46,7 @@ export async function syncStalkerLiveCatalog(options: StalkerLiveSyncOptions) {
     cleanupStaging: () => cleanupStalkerLiveStaging(providerId),
     persistPage: async (items, page) => {
       await stageStalkerLivePage(providerId, items, syncStartedAt);
+      assertCurrent(options.signal, options.isCurrent);
       await options.onProgress?.({
         phase: "pages",
         page: page.page,
@@ -51,6 +58,7 @@ export async function syncStalkerLiveCatalog(options: StalkerLiveSyncOptions) {
         phase: "committing",
         persisted: result.persisted,
       });
+      assertCurrent(options.signal, options.isCurrent);
       await commitStalkerLiveStaging(providerId, categories);
     },
     yieldFn: yieldToUi,
