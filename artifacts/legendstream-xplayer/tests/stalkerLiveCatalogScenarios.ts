@@ -205,7 +205,9 @@ async function main() {
     const result = await traverseStalkerLivePages({
       session,
       providerId: PROVIDER,
-      persistPage: async (items) => persisted.push(items.map((item) => item.id)),
+      persistPage: async (items) => {
+        persisted.push(items.map((item) => item.id));
+      },
     });
     assert.deepEqual(pages, [1, 2]);
     assert.deepEqual(persisted.map((rows) => rows.length), [2, 1]);
@@ -322,7 +324,9 @@ async function main() {
     const result = await traverseStalkerLivePages({
       session,
       providerId: PROVIDER,
-      persistPage: async (items) => ids.push(...items.map((item) => item.id)),
+      persistPage: async (items) => {
+        ids.push(...items.map((item) => item.id));
+      },
     });
     assert.deepEqual(ids, [
       stableStalkerLiveChannelId(PROVIDER, "1"),
