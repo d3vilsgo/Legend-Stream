@@ -53,7 +53,11 @@ import {
 } from "@/lib/xtreamCatalog";
 import { yieldToUi } from "@/lib/cooperative";
 import { projectCatalogItems } from "@/lib/catalogPersistence";
-import { runCatalogFetchPlan, type CatalogFetchMetrics } from "@/lib/catalogSyncStrategy";
+import {
+  catalogErrorClass,
+  runCatalogFetchPlan,
+  type CatalogFetchMetrics,
+} from "@/lib/catalogSyncStrategy";
 import { recordCatalogSyncMeasurement } from "@/lib/catalogSyncMetrics";
 import {
   getCachedLiveItems,
@@ -381,6 +385,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                 }
                 if (!isCancelled()) {
                   completed += 1;
+                  await refreshSnapshotFor(provider, ownership);
                   await publishState(ownership, "syncing", completed, total, "Live TV · published");
                 }
               } catch (caught) {
@@ -400,7 +405,23 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
               await cleanupCatalogKindStaging(stagingId, "vod");
               try {
                 await publishState(ownership, "syncing", completed, total, "Movies · loading categories");
-                const vodCategories = await getVodCategories(credentials, controller.signal);
+                let vodCategories: Awaited<ReturnType<typeof getVodCategories>> = [];
+                let categoryMetadataDegraded = false;
+                let categoryMetadataErrorClass = "none";
+                try {
+                  vodCategories = await getVodCategories(credentials, controller.signal);
+                } catch (caught) {
+                  if (isCancelled()) return;
+                  categoryMetadataDegraded = true;
+                  categoryMetadataErrorClass = catalogErrorClass(caught);
+                  await publishState(
+                    ownership,
+                    "syncing",
+                    completed,
+                    total,
+                    `Movies · stage=categories code=CATEGORY_METADATA_UNAVAILABLE errorClass=${categoryMetadataErrorClass} fallback=bulk-baseline-probe`,
+                  );
+                }
                 if (isCancelled()) return;
                 const vodUniqueIds = new Set<string>();
 
@@ -424,6 +445,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                   categoryIdOf: (row) => row.category_id,
                   isCancelled,
                   forceCategoryFallback: true,
+                  allowHealthyBulkOnCategoryFailure: true,
                   onFallbackProgress: async (done, categoryTotal, path) => {
                     await publishState(
                       ownership,
@@ -435,6 +457,23 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                   },
                 });
                 if (isCancelled()) return;
+                if (vodMetrics.degradedToHealthyBulk) {
+                  await publishState(
+                    ownership,
+                    "syncing",
+                    completed,
+                    total,
+                    "Movies · stage=category-retry code=CATEGORY_RECOVERY_FAILED errorClass=Unavailable fallback=healthy-bulk",
+                  );
+                } else if (categoryMetadataDegraded) {
+                  await publishState(
+                    ownership,
+                    "syncing",
+                    completed,
+                    total,
+                    `Movies · stage=categories code=CATEGORY_METADATA_UNAVAILABLE errorClass=${categoryMetadataErrorClass} fallback=healthy-bulk`,
+                  );
+                }
 
                 const published = await publishStagedCatalogKind({
                   providerId: provider.id,
@@ -449,6 +488,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                 }
                 if (!isCancelled()) {
                   completed += 1;
+                  await refreshSnapshotFor(provider, ownership);
                   await publishState(ownership, "syncing", completed, total, "Movies · published");
                 }
               } catch (caught) {
@@ -516,6 +556,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                 }
                 if (!isCancelled()) {
                   completed += 1;
+                  await refreshSnapshotFor(provider, ownership);
                   await publishState(ownership, "syncing", completed, total, "Series · published");
                 }
               } catch (caught) {
@@ -538,12 +579,23 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
 
         const allSucceeded = outcomes.live === "success" && outcomes.vod === "success" && outcomes.series === "success";
         if (!allSucceeded) {
+          const failureSummary = (["live", "vod", "series"] as const)
+            .map((kind) => {
+              const failure = outcomes.failures[kind];
+              return failure
+                ? `${kind}:stage=${failure.stage},code=${failure.code},errorClass=${failure.errorClass},fallback=${failure.fallbackPath}`
+                : null;
+            })
+            .filter((value): value is string => Boolean(value))
+            .join(" · ");
           await publishState(
             ownership,
             "error",
             completed,
             total,
-            "Catalog update completed with retained cache for failed kinds",
+            failureSummary
+              ? `Catalog update retained failed kinds · ${failureSummary}`
+              : "Catalog update completed with retained cache for failed kinds",
           );
           await refreshSnapshotFor(provider, ownership);
           return;
