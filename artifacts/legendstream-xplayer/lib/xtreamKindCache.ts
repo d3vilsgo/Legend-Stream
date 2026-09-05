@@ -107,6 +107,9 @@ export async function publishStagedCatalogKind(
         options.providerId,
         options.kind,
       );
+      if (options.canPublish && !options.canPublish()) {
+        throw new Error("Xtream staging publish ownership lost.");
+      }
       result = {
         published: true,
         stagedCount,
