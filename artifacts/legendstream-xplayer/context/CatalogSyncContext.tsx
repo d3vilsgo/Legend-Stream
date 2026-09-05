@@ -622,11 +622,10 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
   }, [channels, provider, publishState, recoverLegacyCatalogFallback, refreshSnapshotFor]);
 
   const refreshCatalog = useCallback(async () => {
+    await runSync("manual");
     if (provider?.type === "stalker") {
       await runStalkerSync("manual");
-      return;
     }
-    await runSync("manual");
   }, [provider?.type, runStalkerSync, runSync]);
 
   const cancelInitialSync = useCallback(() => {
