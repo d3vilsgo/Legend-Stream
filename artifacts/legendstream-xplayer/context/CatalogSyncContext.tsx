@@ -453,11 +453,14 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           kind,
           rows.slice(start, start + XTREAM_STAGE_PROJECT_BATCH),
         );
-        await upsertCatalogItems(stagingId, kind, projected, {
-          markNew,
-          seenAt: syncStartedAt,
-          isCancelled,
-        });
+        const options = { markNew, seenAt: syncStartedAt, isCancelled };
+        if (kind === "live") {
+          await upsertCatalogItems(stagingId, "live", projected, options);
+        } else if (kind === "vod") {
+          await upsertCatalogItems(stagingId, "vod", projected, options);
+        } else {
+          await upsertCatalogItems(stagingId, "series", projected, options);
+        }
         await yieldToUi();
       }
     };
