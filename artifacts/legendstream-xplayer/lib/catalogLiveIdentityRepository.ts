@@ -26,7 +26,7 @@ export async function getCachedLiveItemsByIds(
   provider: CatalogRuntimeProvider,
   ids: readonly string[],
 ): Promise<Channel[]> {
-  if (provider.type !== "m3u" && provider.type !== "xtream") return [];
+  if (provider.type !== "m3u" && provider.type !== "xtream" && provider.type !== "stalker") return [];
   const requestedIds = normalizeLiveIdentityIds(ids);
   if (!requestedIds.length) return [];
 
