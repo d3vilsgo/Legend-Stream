@@ -101,8 +101,8 @@ async function main() {
   try { await cancelledRun; } catch { cancelRejected = true; }
   expect(
     bulkAborted && cancelRejected &&
-    contextSource.includes("getVodStreams(\n            credentials,\n            undefined,\n            controller.signal") &&
-    contextSource.includes("getSeries(\n            credentials,\n            undefined,\n            controller.signal"),
+    /getVodStreams\(\s*credentials,\s*undefined,\s*controller\.signal/.test(contextSource) &&
+    /getSeries\(\s*credentials,\s*undefined,\s*controller\.signal/.test(contextSource),
     "Cancel must abort the active bulk request through the existing controller signal",
   );
 
