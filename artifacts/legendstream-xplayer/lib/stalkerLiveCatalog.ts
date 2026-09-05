@@ -37,6 +37,29 @@ type TraverseOptions = {
   yieldFn?: () => void | Promise<void>;
 };
 
+export type StagedStalkerLiveSyncOptions = {
+  session: StalkerLivePortal;
+  providerId: string;
+  signal?: AbortSignal;
+  isCurrent?: () => boolean;
+  cleanupStaging: () => Promise<void>;
+  persistPage: (items: PersistedLiveCatalogItem[], page: StalkerLivePage) => Promise<void>;
+  commit: (
+    categories: readonly StalkerLiveCategory[],
+    result: StalkerLiveTraversalResult,
+  ) => Promise<void>;
+  yieldFn?: () => void | Promise<void>;
+  onCategories?: (categories: readonly StalkerLiveCategory[]) => void | Promise<void>;
+};
+
+export type StalkerLiveTraversalResult = {
+  pagesFetched: number;
+  uniqueItems: number;
+  persisted: number;
+  totalItems: number | null;
+  maxPageItems: number | null;
+};
+
 const asObject = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -192,7 +215,7 @@ function throwIfCancelled(signal?: AbortSignal, isCurrent?: () => boolean) {
   }
 }
 
-export async function traverseStalkerLivePages(options: TraverseOptions) {
+export async function traverseStalkerLivePages(options: TraverseOptions): Promise<StalkerLiveTraversalResult> {
   const seenIds = new Set<string>();
   const pageFingerprints = new Set<string>();
   let pageNumber = 1;
@@ -247,6 +270,47 @@ export async function traverseStalkerLivePages(options: TraverseOptions) {
     totalItems,
     maxPageItems,
   };
+}
+
+export async function runStagedStalkerLiveSync(
+  options: StagedStalkerLiveSyncOptions,
+) {
+  let primaryError: unknown = null;
+  await options.cleanupStaging();
+  try {
+    throwIfCancelled(options.signal, options.isCurrent);
+    const categories = await fetchStalkerLiveCategories(options.session, options.signal);
+    throwIfCancelled(options.signal, options.isCurrent);
+    await options.onCategories?.(categories);
+    const result = await traverseStalkerLivePages({
+      session: options.session,
+      providerId: options.providerId,
+      categories,
+      signal: options.signal,
+      isCurrent: options.isCurrent,
+      persistPage: options.persistPage,
+      yieldFn: options.yieldFn,
+    });
+    throwIfCancelled(options.signal, options.isCurrent);
+    if (result.uniqueItems === 0) {
+      throw new StalkerPortalError(
+        "INVALID_RESPONSE",
+        "The Stalker Portal returned no live channels.",
+      );
+    }
+    await options.commit(categories, result);
+    throwIfCancelled(options.signal, options.isCurrent);
+    return { categories, result };
+  } catch (caught) {
+    primaryError = caught;
+    throw caught;
+  } finally {
+    try {
+      await options.cleanupStaging();
+    } catch (cleanupError) {
+      if (primaryError === null) throw cleanupError;
+    }
+  }
 }
 
 function playableUrlFromCreateLink(payload: unknown) {
