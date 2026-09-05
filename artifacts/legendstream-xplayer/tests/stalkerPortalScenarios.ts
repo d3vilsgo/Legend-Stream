@@ -65,6 +65,29 @@ function abortingFetch(): FetchLike {
   });
 }
 
+function bodyReadAbortingResponse(
+  signal: AbortSignal | null | undefined,
+  onBodyRead: () => void,
+): Response {
+  return {
+    ok: true,
+    status: 200,
+    text: () => new Promise<string>((_resolve, reject) => {
+      onBodyRead();
+      const rejectAbort = () => {
+        const error = new Error("body read aborted");
+        error.name = "AbortError";
+        reject(error);
+      };
+      if (signal?.aborted) {
+        rejectAbort();
+        return;
+      }
+      signal?.addEventListener("abort", rejectAbort, { once: true });
+    }),
+  } as Response;
+}
+
 async function expectCode(
   operation: Promise<unknown> | (() => Promise<unknown>),
   code: StalkerPortalError["code"],
@@ -184,6 +207,56 @@ async function main() {
     await expectCode(pending, "CANCELLED");
   });
 
+  await scenario("body-read external cancellation is deterministic and does not auth retry", async () => {
+    let markBodyRead!: () => void;
+    const bodyReadStarted = new Promise<void>((resolve) => {
+      markBodyRead = resolve;
+    });
+    const mock = queuedFetch([
+      () => json({ token: TOKEN_1 }),
+      (request) => bodyReadAbortingResponse(request.init?.signal, markBodyRead),
+    ]);
+    const session = createStalkerPortalSession({
+      portalUrl: "https://portal.example",
+      mac: MAC,
+      fetchImpl: mock.fetchImpl,
+      timeoutMs: 1_000,
+    });
+    await session.handshake();
+    const controller = new AbortController();
+    const pending = session.request({ type: "itv", action: "get_ordered_list", p: 1 }, controller.signal);
+    await bodyReadStarted;
+    controller.abort();
+    await expectCode(pending, "CANCELLED");
+    assert.equal(mock.requests.length, 2);
+    const handshakes = mock.requests.filter((request) => new URL(request.url).searchParams.get("action") === "handshake");
+    assert.equal(handshakes.length, 1);
+  });
+
+  await scenario("body-read timeout is deterministic and does not auth retry", async () => {
+    let markBodyRead!: () => void;
+    const bodyReadStarted = new Promise<void>((resolve) => {
+      markBodyRead = resolve;
+    });
+    const mock = queuedFetch([
+      () => json({ token: TOKEN_1 }),
+      (request) => bodyReadAbortingResponse(request.init?.signal, markBodyRead),
+    ]);
+    const session = createStalkerPortalSession({
+      portalUrl: "https://portal.example",
+      mac: MAC,
+      fetchImpl: mock.fetchImpl,
+      timeoutMs: 20,
+    });
+    await session.handshake();
+    const pending = session.request({ type: "itv", action: "get_ordered_list", p: 1 });
+    await bodyReadStarted;
+    await expectCode(pending, "TIMEOUT");
+    assert.equal(mock.requests.length, 2);
+    const handshakes = mock.requests.filter((request) => new URL(request.url).searchParams.get("action") === "handshake");
+    assert.equal(handshakes.length, 1);
+  });
+
   await scenario("non-auth HTTP failure is deterministic", async () => {
     const mock = queuedFetch([() => new Response("server unavailable", { status: 503 })]);
     const session = createStalkerPortalSession({ portalUrl: "https://portal.example", mac: MAC, fetchImpl: mock.fetchImpl });
@@ -280,8 +353,8 @@ async function main() {
     }
   });
 
-  assert.equal(passed, 14);
-  console.log("stalker portal protocol scenarios: 14/14 passed");
+  assert.equal(passed, 16);
+  console.log("stalker portal protocol scenarios: 16/16 passed");
 }
 
 void main().catch((error) => {
