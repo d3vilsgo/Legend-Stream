@@ -2,7 +2,9 @@ import { yieldToUi } from "./cooperative";
 import {
   createXtreamClient,
   normalizeXtreamBaseUrl,
+  normalizeXtreamCredentials,
   type XtreamCategory,
+  type XtreamClient,
   type XtreamCredentials,
   type XtreamLiveItem,
   type XtreamParseMetrics,
@@ -147,17 +149,72 @@ export type VodPlaybackQueue = {
   index: number;
 };
 
+type PreparedTaxonomy = {
+  live: XtreamCategory[];
+  vod: XtreamCategory[];
+  series: XtreamCategory[];
+};
+
+type PreparedRun = {
+  client: XtreamClient;
+  signal?: AbortSignal;
+  taxonomy: Promise<PreparedTaxonomy>;
+};
+
 const episodeQueueByUrl = new Map<string, EpisodePlaybackQueue>();
 const vodQueueByUrl = new Map<string, VodPlaybackQueue>();
+const preparedRuns = new Map<string, PreparedRun>();
+
+const credentialsKey = (credentials: XtreamCredentials) => {
+  const normalized = normalizeXtreamCredentials(credentials);
+  return `${normalized.baseUrl}\u0000${normalized.username}\u0000${normalized.password}`;
+};
 
 const clientFor = (credentials: XtreamCredentials) => createXtreamClient(credentials);
+
+export function beginXtreamCatalogRun(
+  credentials: XtreamCredentials,
+  signal?: AbortSignal,
+): PreparedRun {
+  const key = credentialsKey(credentials);
+  const existing = preparedRuns.get(key);
+  if (existing && existing.signal === signal && !signal?.aborted) return existing;
+
+  const client = clientFor(credentials);
+  const taxonomy = (async (): Promise<PreparedTaxonomy> => {
+    await client.authenticate(signal);
+    const [live, vod, series] = await Promise.all([
+      client.getLiveCategories(signal),
+      client.getVodCategories(signal),
+      client.getSeriesCategories(signal),
+    ]);
+    return { live, vod, series };
+  })();
+  const run = { client, signal, taxonomy };
+  preparedRuns.set(key, run);
+  void taxonomy.catch(() => {
+    if (preparedRuns.get(key) === run) preparedRuns.delete(key);
+  });
+  return run;
+}
+
+export function releaseXtreamCatalogRun(credentials: XtreamCredentials, signal?: AbortSignal) {
+  const key = credentialsKey(credentials);
+  const run = preparedRuns.get(key);
+  if (run && (signal === undefined || run.signal === signal)) preparedRuns.delete(key);
+}
+
+function preparedClient(credentials: XtreamCredentials, signal?: AbortSignal) {
+  const run = preparedRuns.get(credentialsKey(credentials));
+  return run && run.signal === signal ? run.client : clientFor(credentials);
+}
 
 export async function authenticateXtream(credentials: XtreamCredentials, signal?: AbortSignal) {
   return clientFor(credentials).authenticate(signal);
 }
 
 export async function getLiveCategories(credentials: XtreamCredentials, signal?: AbortSignal) {
-  return clientFor(credentials).getLiveCategories(signal);
+  return (await beginXtreamCatalogRun(credentials, signal).taxonomy).live;
 }
 
 export async function getLiveStreams(
@@ -165,11 +222,13 @@ export async function getLiveStreams(
   signal?: AbortSignal,
   onParseMetrics?: XtreamParseMetricsSink,
 ) {
-  return clientFor(credentials).getLiveStreams(signal, onParseMetrics);
+  const run = beginXtreamCatalogRun(credentials, signal);
+  await run.taxonomy;
+  return run.client.getLiveStreams(signal, onParseMetrics);
 }
 
 export async function getVodCategories(credentials: XtreamCredentials, signal?: AbortSignal) {
-  return clientFor(credentials).getVodCategories(signal);
+  return (await beginXtreamCatalogRun(credentials, signal).taxonomy).vod;
 }
 
 function registerVodQueue(credentials: XtreamCredentials | null | undefined, rows: XtreamVodItem[]) {
@@ -195,7 +254,9 @@ export async function getVodStreams(
   signal?: AbortSignal,
   onParseMetrics?: XtreamParseMetricsSink,
 ) {
-  const rows = await clientFor(credentials).getVodStreams(
+  const run = beginXtreamCatalogRun(credentials, signal);
+  await run.taxonomy;
+  const rows = await run.client.getVodStreams(
     categoryId,
     signal,
     onParseMetrics,
@@ -222,7 +283,7 @@ export async function getVodInfo(
 }
 
 export async function getSeriesCategories(credentials: XtreamCredentials, signal?: AbortSignal) {
-  return clientFor(credentials).getSeriesCategories(signal);
+  return (await beginXtreamCatalogRun(credentials, signal).taxonomy).series;
 }
 
 export async function getSeries(
@@ -231,13 +292,39 @@ export async function getSeries(
   signal?: AbortSignal,
   onParseMetrics?: XtreamParseMetricsSink,
 ) {
-  const rows = await clientFor(credentials).getSeries(
+  const run = beginXtreamCatalogRun(credentials, signal);
+  await run.taxonomy;
+  const rows = await run.client.getSeries(
     categoryId,
     signal,
     onParseMetrics,
   ) as XtreamSeriesItem[];
   await yieldToUi();
   return rows;
+}
+
+export async function loadXtreamLiveCatalog(
+  credentials: XtreamCredentials,
+  signal?: AbortSignal,
+  onParseMetrics?: XtreamParseMetricsSink,
+) {
+  const run = beginXtreamCatalogRun(credentials, signal);
+  const taxonomy = await run.taxonomy;
+  const streams = await run.client.getLiveStreams(signal, onParseMetrics);
+  return { categories: taxonomy.live, streams, authValidated: true as const };
+}
+
+export async function loadXtreamLiveCatalogFromPreparedRun(
+  credentials: XtreamCredentials,
+  onParseMetrics?: XtreamParseMetricsSink,
+) {
+  const run = preparedRuns.get(credentialsKey(credentials));
+  if (!run || run.signal?.aborted) {
+    return loadXtreamLiveCatalog(credentials, undefined, onParseMetrics);
+  }
+  const taxonomy = await run.taxonomy;
+  const streams = await run.client.getLiveStreams(run.signal, onParseMetrics);
+  return { categories: taxonomy.live, streams, authValidated: true as const };
 }
 
 function registerEpisodeQueue(credentials: XtreamCredentials | null | undefined, info: XtreamSeriesInfo) {
