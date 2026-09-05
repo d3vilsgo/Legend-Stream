@@ -4,6 +4,7 @@ import {
   createM3UShapeDiagnosticsObserver,
   type M3UShapeDiagnostics,
 } from "./m3uShapeDiagnostics";
+import { createStalkerPortalSession } from "./stalkerPortal";
 
 export type ProviderType = "m3u" | "xtream" | "stalker";
 export type ChannelContentType = "live" | "movie" | "series";
@@ -729,40 +730,25 @@ async function loadXtreamDirect(
   return { auth, streams, categories };
 }
 
-const stalkerJson = async (response: Response) => {
-  const text = await response.text();
-  await yieldToUi();
-  if (!response.ok) throw new Error(`Stalker Portal returned ${response.status}.`);
-  try {
-    const parsed = JSON.parse(text);
-    return parsed?.js ?? parsed;
-  } catch {
-    throw new Error("The Stalker Portal response was not valid JSON.");
-  }
-};
-
 async function loadStalker(provider: Provider): Promise<ProviderLoadResult> {
-  const baseUrl = cleanBaseUrl(provider.url);
-  const mac = provider.mac?.trim() || "00:1A:79:00:00:01";
-  const headers = {
-    Accept: "*/*",
-    "User-Agent": "Mozilla/5.0 (Linux; Android 12; SmartTV) AppleWebKit/537.36",
-    "X-User-Agent": "Model: MAG250; Link: WiFi",
-    Cookie: `mac=${mac}; stb_lang=en; timezone=Europe%2FIstanbul`,
-  };
-  const handshake = await stalkerJson(
-    await fetch(`${baseUrl}/portal.php?type=stb&action=handshake&token=&JsHttpRequest=1-xml`, { headers }),
-  );
-  const token = handshake?.token || handshake?.js?.token;
-  if (!token) {
-    throw new Error("Stalker Portal handshake failed. Check the portal URL and MAC address.");
-  }
-
-  const authenticatedHeaders = { ...headers, Authorization: `Bearer ${token}` };
-  const result = await stalkerJson(
-    await fetch(`${baseUrl}/portal.php?type=itv&action=get_ordered_list&p=1&JsHttpRequest=1-xml`, { headers: authenticatedHeaders }),
-  );
-  const rows = Array.isArray(result?.data) ? result.data : Array.isArray(result) ? result : [];
+  const mac = provider.mac?.trim() || "";
+  const session = createStalkerPortalSession({
+    portalUrl: provider.url,
+    mac,
+    afterResponse: yieldToUi,
+  });
+  await session.handshake();
+  const result = await session.request({
+    type: "itv",
+    action: "get_ordered_list",
+    p: 1,
+  });
+  const rows = Array.isArray((result as any)?.data)
+    ? (result as any).data
+    : Array.isArray(result)
+      ? result
+      : [];
+  const baseUrl = session.baseUrl;
   const channels = await mapInBatches(
     rows,
     (row: any, index: number): Channel => {
