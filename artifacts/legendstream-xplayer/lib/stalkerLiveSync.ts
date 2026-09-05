@@ -59,7 +59,7 @@ export async function syncStalkerLiveCatalog(options: StalkerLiveSyncOptions) {
         persisted: result.persisted,
       });
       assertCurrent(options.signal, options.isCurrent);
-      await commitStalkerLiveStaging(providerId, categories);
+      await commitStalkerLiveStaging(providerId, categories, options.isCurrent);
     },
     yieldFn: yieldToUi,
     onCategories: async () => {
