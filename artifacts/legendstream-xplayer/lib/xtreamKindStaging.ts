@@ -59,14 +59,17 @@ export async function publishXtreamKindStaging(
   providerId: string,
   generation: number,
   kind: CatalogKind,
+  isCurrent: () => boolean,
 ) {
   const stagingId = xtreamKindStagingProviderId(providerId, generation, kind);
   return enqueueCatalogDbWrite(async () => {
+    if (!isCurrent()) throw new Error("Xtream catalog staging ownership expired.");
     const db = await database();
     let stagedCount = 0;
     let activeCount = 0;
 
     await db.withExclusiveTransactionAsync(async (txn) => {
+      if (!isCurrent()) throw new Error("Xtream catalog staging ownership expired.");
       const staged = await txn.getFirstAsync<{ count: number }>(
         "SELECT COUNT(*) AS count FROM catalog_items WHERE provider_id = ? AND kind = ?",
         stagingId,
@@ -79,6 +82,7 @@ export async function publishXtreamKindStaging(
         providerId,
         kind,
       );
+      if (!isCurrent()) throw new Error("Xtream catalog staging ownership expired.");
       await txn.runAsync(
         "UPDATE catalog_items SET provider_id = ? WHERE provider_id = ? AND kind = ?",
         providerId,
@@ -87,6 +91,7 @@ export async function publishXtreamKindStaging(
       );
 
       if (kind !== "live") {
+        if (!isCurrent()) throw new Error("Xtream catalog staging ownership expired.");
         await txn.runAsync(
           "DELETE FROM catalog_categories WHERE provider_id = ? AND kind = ?",
           providerId,
@@ -100,6 +105,7 @@ export async function publishXtreamKindStaging(
         );
       }
 
+      if (!isCurrent()) throw new Error("Xtream catalog staging ownership expired.");
       const active = await txn.getFirstAsync<{ count: number }>(
         "SELECT COUNT(*) AS count FROM catalog_items WHERE provider_id = ? AND kind = ?",
         providerId,
