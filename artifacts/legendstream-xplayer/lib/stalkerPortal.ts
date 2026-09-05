@@ -267,7 +267,25 @@ export class StalkerPortalSession {
         throw new StalkerPortalError("NETWORK_ERROR", "Stalker portal could not be reached.");
       }
 
-      const text = await response.text();
+      let text: string;
+      try {
+        text = await response.text();
+      } catch (caught) {
+        if (externalSignal?.aborted) {
+          throw new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled.");
+        }
+        if (requestSignal.timedOut()) {
+          throw new StalkerPortalError("TIMEOUT", "Stalker portal request timed out.");
+        }
+        const name = caught instanceof Error ? caught.name : "";
+        if (name === "AbortError") {
+          throw new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled.");
+        }
+        throw new StalkerPortalError(
+          "NETWORK_ERROR",
+          "Stalker portal response body could not be read.",
+        );
+      }
       await this.#afterResponse();
 
       if (!response.ok) {
