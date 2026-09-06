@@ -252,10 +252,44 @@ async function main() {
     assert.match(syncSource, /runIndependentCatalogKinds/);
   });
 
-  await scenario("VOD completeness requires category completion rather than trusting bulk alone", () => {
+  await scenario("healthy VOD completeness keeps taxonomy but avoids category-content replay", async () => {
     const root = process.cwd();
     const syncSource = fs.readFileSync(path.join(root, "context/CatalogSyncContext.tsx"), "utf8");
-    assert.match(syncSource, /forceCategoryFallback:\s*true/);
+    assert.match(syncSource, /getVodCategories\(credentials, controller\.signal\)/);
+    assert.doesNotMatch(syncSource, /forceCategoryFallback:\s*true/);
+
+    const categories: Category[] = [
+      { category_id: "1", category_name: "One" },
+      { category_id: "2", category_name: "Two" },
+      { category_id: "3", category_name: "Three" },
+      { category_id: "4", category_name: "Four" },
+    ];
+    let categoryContentRequests = 0;
+    let writeCalls = 0;
+    let submittedRows = 0;
+    const result = await runCatalogFetchPlan<VodRow, Category>({
+      categories,
+      fetchBulk: async () => [
+        { stream_id: 1, category_id: "1" },
+        { stream_id: 2, category_id: "2" },
+        { stream_id: 3, category_id: "3" },
+        { stream_id: 4, category_id: "4" },
+      ],
+      fetchCategory: async () => {
+        categoryContentRequests += 1;
+        return [];
+      },
+      writeRows: async (rows) => {
+        writeCalls += 1;
+        submittedRows += rows.length;
+      },
+      categoryIdOf: (row) => row.category_id ?? undefined,
+      allowHealthyBulkOnCategoryFailure: true,
+    });
+    assert.equal(result.path, "bulk");
+    assert.equal(categoryContentRequests, 0, "healthy authoritative bulk must not replay category content");
+    assert.equal(writeCalls, 1, "healthy authoritative bulk must persist exactly once");
+    assert.equal(submittedRows, 4, "the single persistence call must contain exactly the authoritative bulk rows");
   });
 
   await scenario("M3U ingest source is untouched by Xtream hotfix contract", () => {
