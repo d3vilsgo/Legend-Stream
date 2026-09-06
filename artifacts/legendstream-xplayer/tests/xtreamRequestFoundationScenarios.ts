@@ -22,10 +22,10 @@ scenario("canonical client owns player_api request construction and auth omits a
 });
 
 scenario("auth is fail-closed before taxonomy fan-out", () => {
-  const authIndex = facadeSource.indexOf("await client.authenticate(signal)");
-  const liveTaxonomyIndex = facadeSource.indexOf("client.getLiveCategories(signal)");
-  const vodTaxonomyIndex = facadeSource.indexOf("client.getVodCategories(signal)");
-  const seriesTaxonomyIndex = facadeSource.indexOf("client.getSeriesCategories(signal)");
+  const authIndex = facadeSource.indexOf("await client.authenticate(requestSignal)");
+  const liveTaxonomyIndex = facadeSource.indexOf("client.getLiveCategories(requestSignal)");
+  const vodTaxonomyIndex = facadeSource.indexOf("client.getVodCategories(requestSignal)");
+  const seriesTaxonomyIndex = facadeSource.indexOf("client.getSeriesCategories(requestSignal)");
   assert.ok(authIndex >= 0);
   assert.ok(liveTaxonomyIndex > authIndex && vodTaxonomyIndex > authIndex && seriesTaxonomyIndex > authIndex);
   assert.match(clientSource, /const authenticated = authValue === 1 \|\| authValue === "1" \|\| authValue === true/);
@@ -41,6 +41,14 @@ scenario("taxonomy siblings are independent after one shared auth", () => {
   assert.match(syncSource, /kind: "live"[\s\S]*kind: "vod"[\s\S]*kind: "series"/);
 });
 
+scenario("Live-first provisional run adopts CatalogSync cancellation without re-auth", () => {
+  assert.match(facadeSource, /options: \{ provisional\?: boolean \} = \{\}/);
+  assert.match(facadeSource, /existing\.provisional && existing\.externalSignal === undefined && signal/);
+  assert.match(facadeSource, /linkExternalAbort\(signal, existing\.requestController\)/);
+  assert.match(facadeSource, /beginXtreamCatalogRun\(credentials, undefined, \{ provisional: true \}\)/);
+  assert.equal((facadeSource.match(/await client\.authenticate\(requestSignal\)/g) ?? []).length, 1);
+});
+
 scenario("content requests are auth-gated without replaying failed taxonomy", () => {
   const liveStreams = facadeSource.match(/export async function getLiveStreams\([\s\S]*?\n\}/)?.[0] ?? "";
   const vodStreams = facadeSource.match(/export async function getVodStreams\([\s\S]*?\n\}/)?.[0] ?? "";
@@ -53,12 +61,11 @@ scenario("content requests are auth-gated without replaying failed taxonomy", ()
   assert.match(syncSource, /catch \(caught\) \{[\s\S]*CATEGORY_METADATA_UNAVAILABLE[\s\S]*fallback=bulk-baseline-probe/);
 });
 
-scenario("CatalogSync run reuses one prepared auth foundation", () => {
+scenario("CatalogSync kinds share controller-backed prepared auth", () => {
   assert.match(syncSource, /getVodCategories\(credentials, controller\.signal\)/);
   assert.match(syncSource, /getSeriesCategories\(credentials, controller\.signal\)/);
   assert.match(syncSource, /getVodStreams\([\s\S]*controller\.signal/s);
   assert.match(syncSource, /getSeries\([\s\S]*controller\.signal/s);
-  assert.equal((facadeSource.match(/await client\.authenticate\(signal\)/g) ?? []).length, 1);
   assert.match(iptvSource, /loadXtreamLiveCatalogFromPreparedRun\(credentials\)/);
 });
 
