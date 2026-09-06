@@ -85,8 +85,8 @@ scenario("legacy Live streams-before-categories request chain is removed", () =>
 });
 
 scenario("VOD and Series remain bulk-first with category fallback", () => {
-  const vodPlan = syncSource.match(/runCatalogFetchPlan<XtreamVodItem[\s\S]*?\n\s*\}\);\n\s*if \(isCancelled\(\)\) return;/)?.[0] ?? "";
-  const seriesPlan = syncSource.match(/runCatalogFetchPlan<XtreamSeriesItem[\s\S]*?\n\s*\}\);\n\s*if \(isCancelled\(\)\) return;/)?.[0] ?? "";
+  const vodPlan = syncSource.match(/vodMetrics = await runCatalogFetchPlan<XtreamVodItem[\s\S]*?if \(vodMetrics\.degradedToHealthyBulk\)/)?.[0] ?? "";
+  const seriesPlan = syncSource.match(/seriesMetrics = await runCatalogFetchPlan<XtreamSeriesItem[\s\S]*?if \(seriesMetrics\.degradedToHealthyBulk\)/)?.[0] ?? "";
   assert.match(vodPlan, /fetchBulk:[\s\S]*getVodStreams\([\s\S]*undefined/);
   assert.match(vodPlan, /fetchCategory:[\s\S]*getVodStreams\(credentials, category\.category_id/);
   assert.match(vodPlan, /allowHealthyBulkOnCategoryFailure: true/);
