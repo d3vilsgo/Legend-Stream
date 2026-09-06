@@ -57,13 +57,7 @@ export function suspiciousBulkResult<T, C extends CategoryLike>(
 ): BulkSuspicionReason | null {
   if (rows.length === 0) return "empty";
   if (categories.length < 4) return null;
-
-  // A bulk result with fewer than one item for every two declared categories is
-  // implausibly small for a populated Xtream catalog and is safer to verify by category.
   if (rows.length < Math.ceil(categories.length / 2)) return "too-few-items";
-
-  // Bulk mode is only authoritative when it preserves the category relationship that
-  // downstream SQLite filtering relies on. A majority of rows without category_id is suspect.
   const categorizedRows = rows.reduce((count, row) => {
     const categoryId = categoryIdOf(row);
     return categoryId === undefined || categoryId === null || String(categoryId).trim() === ""
@@ -85,6 +79,8 @@ export async function runCatalogFetchPlan<T, C extends CategoryLike>(
   let parallelMaxObserved = 0;
   let fallbackReason: CatalogFetchMetrics["fallbackReason"];
   let healthyBulk = false;
+  let healthyBulkRows: T[] | null = null;
+  const recoveredRows: T[] = [];
   const failedCategories: C[] = [];
 
   const cancelled = () => options.isCancelled?.() === true;
@@ -98,12 +94,12 @@ export async function runCatalogFetchPlan<T, C extends CategoryLike>(
     fallbackReason,
     ...(degradedToHealthyBulk ? { degradedToHealthyBulk: true } : {}),
   });
-  const write = async (rows: T[]) => {
+  const writeAuthoritative = async (rows: T[]) => {
     if (cancelled()) return;
     const writeStartedAt = Date.now();
     await options.writeRows(rows);
     sqliteWriteMs += Date.now() - writeStartedAt;
-    itemCount += rows.length;
+    itemCount = rows.length;
   };
 
   try {
@@ -113,12 +109,12 @@ export async function runCatalogFetchPlan<T, C extends CategoryLike>(
     if (cancelled()) return metrics("bulk");
     const suspicion = suspiciousBulkResult(bulkRows, options.categories, options.categoryIdOf);
     healthyBulk = suspicion === null;
+    if (healthyBulk) healthyBulkRows = bulkRows;
     const verifyByCategory = options.forceCategoryFallback === true && options.categories.length > 0;
     if (healthyBulk && !verifyByCategory) {
-      await write(bulkRows);
+      await writeAuthoritative(bulkRows);
       return metrics("bulk");
     }
-    if (healthyBulk && verifyByCategory) await write(bulkRows);
     fallbackReason = suspicion ?? "category-verification";
   } catch (caught) {
     if (cancelled()) throw caught;
@@ -136,31 +132,30 @@ export async function runCatalogFetchPlan<T, C extends CategoryLike>(
       if (cancelled()) break;
       for (let index = 0; index < settled.length; index += 1) {
         const result = settled[index];
-        if (result.status === "fulfilled") {
-          await write(result.value);
-        } else {
-          failedCategories.push(batch[index]);
-        }
+        if (result.status === "fulfilled") recoveredRows.push(...result.value);
+        else failedCategories.push(batch[index]);
       }
       completedCategories += batch.length;
       await options.onFallbackProgress?.(completedCategories, options.categories.length, "parallel");
     }
-    if (!cancelled() && failedCategories.length === 0) return metrics("parallel");
+    if (!cancelled() && failedCategories.length === 0) {
+      const authoritative = healthyBulkRows ? [...healthyBulkRows, ...recoveredRows] : recoveredRows;
+      await writeAuthoritative(authoritative);
+      return metrics("parallel");
+    }
     if (failedCategories.length > 0) fallbackReason = "parallel-error";
   }
 
   if (cancelled()) return metrics("serial");
 
   if (options.categories.length === 0) {
-    // No category route exists. This path is reached only after the first bulk request failed
-    // or was otherwise unusable, so retain the previous one-time compatibility retry.
     const rows = await options.fetchBulk((parseMs) => {
       bulkParseMs = parseMs;
     });
     if (cancelled()) return metrics("serial");
     const suspicion = suspiciousBulkResult(rows, options.categories, options.categoryIdOf);
     if (suspicion) throw new CatalogFetchPlanError("CatalogCompletenessError");
-    await write(rows);
+    await writeAuthoritative(rows);
     return metrics("serial");
   }
 
@@ -171,7 +166,7 @@ export async function runCatalogFetchPlan<T, C extends CategoryLike>(
     try {
       const rows = await options.fetchCategory(category);
       if (cancelled()) break;
-      await write(rows);
+      recoveredRows.push(...rows);
     } catch (caught) {
       if (cancelled()) throw caught;
       retryFailures.push(caught);
@@ -182,11 +177,14 @@ export async function runCatalogFetchPlan<T, C extends CategoryLike>(
 
   if (cancelled()) return metrics("serial");
   if (retryFailures.length > 0) {
-    if (healthyBulk && options.allowHealthyBulkOnCategoryFailure === true) {
+    if (healthyBulkRows && options.allowHealthyBulkOnCategoryFailure === true) {
+      await writeAuthoritative(healthyBulkRows);
       return metrics("serial", true);
     }
     throw new CatalogFetchPlanError(catalogErrorClass(retryFailures[0]));
   }
 
+  const authoritative = healthyBulkRows ? [...healthyBulkRows, ...recoveredRows] : recoveredRows;
+  await writeAuthoritative(authoritative);
   return metrics("serial");
 }
