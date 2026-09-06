@@ -11,27 +11,27 @@ type Scenario = { name: string; run: () => void };
 const scenarios: Scenario[] = [];
 const scenario = (name: string, run: () => void) => scenarios.push({ name, run });
 
+const cooperative = cacheSource.match(/export async function upsertCatalogItems\([\s\S]*?\n\}/)?.[0] ?? "";
+
 scenario("R1 Xtream large staging writes use prepared multi-row batches", () => {
-  assert.match(cacheSource, /export async function upsertCatalogItemsCooperative\(/);
-  const cooperative = cacheSource.match(/export async function upsertCatalogItemsCooperative\([\s\S]*?\n\}/)?.[0] ?? "";
   assert.match(cooperative, /CATALOG_LOGICAL_BATCH_MAX/);
   assert.match(cooperative, /executePreparedCatalogMultiRowBatch/);
   assert.doesNotMatch(cooperative, /insertRows\(/);
 });
 
 scenario("R2 cooperative writes yield between logical batches", () => {
-  const cooperative = cacheSource.match(/export async function upsertCatalogItemsCooperative\([\s\S]*?\n\}/)?.[0] ?? "";
   const enqueueIndex = cooperative.indexOf("await enqueueCatalogDbWrite");
   const yieldIndex = cooperative.indexOf("await yieldToUi()");
   assert.ok(enqueueIndex >= 0, "each logical batch must cross the global writer queue");
   assert.ok(yieldIndex > enqueueIndex, "a macrotask/UI yield must occur after each queued batch");
+  assert.doesNotMatch(cooperative, /return enqueueCatalogDbWrite\(async \(\) => \{[\s\S]*for \(let start/);
 });
 
-scenario("R3 Xtream siblings use cooperative staging writes without bypassing serialization", () => {
-  assert.match(syncSource, /import \{[\s\S]*upsertCatalogItemsCooperative[\s\S]*\} from "@\/lib\/catalogCache"/);
-  const uses = syncSource.match(/upsertCatalogItemsCooperative\(stagingId,\s*"(live|vod|series)"/g) ?? [];
+scenario("R3 Xtream siblings use the cooperative staging writer without bypassing serialization", () => {
+  const uses = syncSource.match(/await upsertCatalogItems\(stagingId,\s*"(live|vod|series)"/g) ?? [];
   assert.equal(uses.length, 3, "Live VOD and Series must all use the cooperative staging writer");
-  assert.match(cacheSource, /upsertCatalogItemsCooperative[\s\S]*enqueueCatalogDbWrite/);
+  assert.match(cooperative, /enqueueCatalogDbWrite/);
+  assert.ok((syncSource.match(/isCancelled,/g) ?? []).length >= 3);
 });
 
 scenario("R4 successful kind publishes do not trigger three full snapshot refreshes", () => {
@@ -57,9 +57,10 @@ scenario("R5 manual refresh UI state stays bounded while progress remains visibl
 scenario("R6 atomic publish and cancellation ownership guards remain mandatory", () => {
   assert.match(kindCacheSource, /withExclusiveTransactionAsync/);
   assert.match(kindCacheSource, /expectedCount !== undefined && stagedCount !== options\.expectedCount/);
-  assert.match(kindCacheSource, /canPublish: \(\) => !isCancelled\(\)/);
-  const cooperative = cacheSource.match(/export async function upsertCatalogItemsCooperative\([\s\S]*?\n\}/)?.[0] ?? "";
+  assert.match(kindCacheSource, /if \(options\.canPublish && !options\.canPublish\(\)\)/);
+  assert.match(syncSource, /canPublish: \(\) => !isCancelled\(\)/);
   assert.match(cooperative, /if \(options\.isCancelled\?\.\(\)\) break/);
+  assert.match(cooperative, /if \(options\.isCancelled\?\.\(\)\) return null/);
 });
 
 let passed = 0;
