@@ -134,13 +134,16 @@ async function main() {
     assert.doesNotMatch(source.slice(transactionStart, transactionEnd), /INSERT INTO catalog_items/);
   });
 
-  await scenario("production row-by-row INSERT contract is independent from benchmark candidates", () => {
-    assert.match(catalogCacheSource, /const WRITE_BATCH_SIZE = 200;/);
-    assert.match(catalogCacheSource, /INSERT INTO catalog_items/);
-    assert.match(catalogCacheSource, /ON CONFLICT\(provider_id, kind, item_id\) DO UPDATE SET/);
-    assert.match(catalogCacheSource, /JSON\.stringify\(persisted\)/);
-    assert.doesNotMatch(catalogCacheSource, /from "\.\/catalogWriteBatch"/);
-    assert.doesNotMatch(catalogCacheSource, /CATALOG_SINGLE_ROW_UPSERT_SQL|buildCatalogItemBindValues|executePreparedCatalog/);
+  await scenario("production Xtream writer uses prepared batches without benchmark strategy selection", () => {
+    const source = functionSource("upsertCatalogItems", "upsertCatalogItemsBulkNonCancellable");
+    assert.match(catalogCacheSource, /from "\.\/catalogWriteBatch"/);
+    assert.match(source, /CATALOG_LOGICAL_BATCH_MAX/);
+    assert.match(source, /executePreparedCatalogMultiRowBatch/);
+    assert.match(source, /enqueueCatalogDbWrite/);
+    assert.match(source, /withExclusiveTransactionAsync/);
+    assert.match(source, /await yieldToUi\(\)/);
+    assert.doesNotMatch(source, /insertRows\(/);
+    assert.doesNotMatch(source, /PREPARED_SINGLE|HYBRID_50|CURRENT|strategy/);
   });
 
   await scenario("M3U success path stages sequential batches before the final swap", () => {
