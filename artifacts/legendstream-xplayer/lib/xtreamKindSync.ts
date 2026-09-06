@@ -1,3 +1,5 @@
+import { finishUnpublishedXtreamCardinalityAttempt } from "./xtreamCardinalityDiagnostics";
+
 export type XtreamCatalogKind = "live" | "vod" | "series";
 export type XtreamKindOutcome = "success" | "failed" | "skipped";
 
@@ -58,11 +60,13 @@ export async function runIndependentCatalogKinds(
     try {
       await task.run();
       if (options.isCancelled?.()) {
+        finishUnpublishedXtreamCardinalityAttempt(task.kind);
         result.cancelled = true;
         return;
       }
       result[task.kind] = "success";
     } catch (caught) {
+      finishUnpublishedXtreamCardinalityAttempt(task.kind);
       if (options.isCancelled?.()) {
         result.cancelled = true;
         return;
