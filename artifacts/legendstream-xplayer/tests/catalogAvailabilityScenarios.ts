@@ -81,10 +81,11 @@ expect(
   contextSource.includes("getVodCategories(credentials, controller.signal)") &&
   contextSource.includes("getSeries(credentials, category.category_id, controller.signal)") &&
   xtreamSource.includes("signal?: AbortSignal") &&
-  xtreamSource.includes("await run.taxonomy") &&
+  xtreamSource.includes("await run.auth") &&
+  xtreamSource.includes("linkExternalAbort(signal, existing.requestController)") &&
   xtreamClientSource.includes("external?.aborted") &&
   xtreamClientSource.includes('"CANCELLED"'),
-  "Cancel must propagate the active Xtream AbortController signal through the canonical client",
+  "Cancel must propagate the active Xtream AbortController signal through the canonical auth-gated client",
 );
 
 process.stdout.write(`catalog availability scenarios: ${passed}/7 passed\n`);
