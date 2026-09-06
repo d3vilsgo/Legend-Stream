@@ -219,15 +219,16 @@ router.post("/xtream", async (req, res) => {
   try {
     const credentials = readCredentials(req.body as XtreamRequest);
     const auth = await executeXtreamRequest(credentials);
-    const categories = await executeXtreamRequest(credentials, "get_live_categories");
-    const streams = await executeXtreamRequest(credentials, "get_live_streams");
-    if (!Array.isArray(categories)) {
-      throw new UpstreamError(
-        "Xtream returned an invalid live categories response.",
-        422,
-        "INVALID_PROVIDER_RESPONSE",
-      );
+
+    let categories: unknown[] = [];
+    try {
+      const categoryData = await executeXtreamRequest(credentials, "get_live_categories");
+      categories = Array.isArray(categoryData) ? categoryData : [];
+    } catch {
+      // Some providers omit or reject live categories. The stream list remains usable.
     }
+
+    const streams = await executeXtreamRequest(credentials, "get_live_streams");
     if (!Array.isArray(streams)) {
       throw new UpstreamError(
         "Xtream authentication succeeded, but no live stream list was returned.",
