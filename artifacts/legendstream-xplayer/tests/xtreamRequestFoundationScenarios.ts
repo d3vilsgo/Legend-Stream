@@ -78,6 +78,27 @@ scenario("web proxy supports auth plus all catalog actions", () => {
   assert.match(apiSource, /return action \? data : validateAuth\(data\)/);
 });
 
+scenario("A1-A5 legacy Live compatibility keeps categories fail-open and streams/auth fail-closed", () => {
+  const legacyRoute = apiSource.slice(apiSource.indexOf('router.post("/xtream",'));
+  assert.match(legacyRoute, /const auth = await executeXtreamRequest\(credentials\)/);
+  assert.match(legacyRoute, /let categories: unknown\[\] = \[\];[\s\S]*try \{[\s\S]*get_live_categories[\s\S]*categories = Array\.isArray\(categoryData\) \? categoryData : \[\];[\s\S]*\} catch \{[\s\S]*\}/);
+  assert.match(legacyRoute, /const streams = await executeXtreamRequest\(credentials, "get_live_streams"\);[\s\S]*if \(!Array\.isArray\(streams\)\)[\s\S]*NO_LIVE_STREAMS/);
+  const authIndex = legacyRoute.indexOf("const auth = await executeXtreamRequest(credentials)");
+  const categoryIndex = legacyRoute.indexOf('"get_live_categories"');
+  const streamsIndex = legacyRoute.indexOf('"get_live_streams"');
+  assert.ok(authIndex >= 0 && categoryIndex > authIndex && streamsIndex > authIndex);
+});
+
+scenario("P1-P7 web proxy errors map to native canonical semantic classes", () => {
+  assert.match(clientSource, /function mapProxyError[\s\S]*INVALID_CREDENTIALS[\s\S]*"AUTHENTICATION"/);
+  assert.match(clientSource, /function mapProxyError[\s\S]*PROVIDER_TIMEOUT[\s\S]*"TIMEOUT"/);
+  assert.match(clientSource, /function mapProxyError[\s\S]*PROVIDER_UNREACHABLE[\s\S]*"UNREACHABLE"/);
+  assert.match(clientSource, /function mapProxyError[\s\S]*INVALID_PROVIDER_RESPONSE[\s\S]*"INVALID_RESPONSE"/);
+  assert.match(clientSource, /function mapProxyError[\s\S]*PROVIDER_HTTP_ERROR[\s\S]*"HTTP_ERROR"/);
+  assert.match(clientSource, /if \(external\?\.aborted\)[\s\S]*"CANCELLED"/);
+  assert.match(clientSource, /if \(timedOut \|\| name === "TimeoutError"\)[\s\S]*"TIMEOUT"/);
+});
+
 let passed = 0;
 for (const { name, run } of scenarios) {
   try {
