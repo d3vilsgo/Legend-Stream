@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { projectCatalogItemsCooperatively } from "../lib/catalogPersistence";
 import { runCatalogFetchPlan } from "../lib/catalogSyncStrategy";
+import type { Channel } from "../lib/iptv";
 
 const root = path.resolve(__dirname, "..");
 const cacheSource = fs.readFileSync(path.join(root, "lib/catalogCache.ts"), "utf8");
@@ -40,10 +41,12 @@ scenario("R3 large Xtream projection uses a bounded cooperative API", () => {
 });
 
 scenario("R4 cooperative projection advances the macrotask heartbeat on 12k/40k/10k synthetic catalogs", async () => {
-  const liveRows = Array.from({ length: 12_000 }, (_, index) => ({
+  const liveRows: Channel[] = Array.from({ length: 12_000 }, (_, index) => ({
     id: `legacy:${index}`,
+    providerId: "__staging__synthetic",
     name: `Live ${index}`,
     category: "Live",
+    streamUrl: `https://example.invalid/live/${index}.ts`,
     playbackRef: { type: "xtream-live", streamId: String(index), containerExtension: "ts" },
   }));
   const vodRows = Array.from({ length: 40_000 }, (_, index) => ({
