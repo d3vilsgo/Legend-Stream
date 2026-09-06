@@ -113,10 +113,11 @@ expect(
 
 const syncSource = fs.readFileSync(path.join(packageRoot, "context/CatalogSyncContext.tsx"), "utf8");
 expect(
-  syncSource.includes('projectCatalogItems(provider.id, "live", liveRows)') &&
-  syncSource.includes('projectCatalogItems(provider.id, "vod", rows)') &&
-  syncSource.includes('projectCatalogItems(provider.id, "series", rows)'),
-  "all catalog sync writers must project runtime rows before persistence",
+  syncSource.includes('projectCatalogItems(stagingId, "live", liveRows)') &&
+  syncSource.includes('projectCatalogItems(stagingId, "vod", rows)') &&
+  syncSource.includes('projectCatalogItems(stagingId, "series", rows)') &&
+  syncSource.includes("stabilizeXtreamLiveCatalogItems("),
+  "all Xtream catalog sync writers must project runtime rows into generation-scoped staging before persistence",
 );
 
 const runtimeDirect = `legendstream-catalog://xtream/movie/${encodeURIComponent(providerId)}/44?ext=mkv`;
