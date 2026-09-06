@@ -33,13 +33,24 @@ scenario("auth is fail-closed before taxonomy fan-out", () => {
 });
 
 scenario("taxonomy siblings are independent after one shared auth", () => {
-  assert.match(facadeSource, /type PreparedRun = \{[\s\S]*liveTaxonomy: Promise<XtreamCategory\[\]>;[\s\S]*vodTaxonomy: Promise<XtreamCategory\[\]>;[\s\S]*seriesTaxonomy: Promise<XtreamCategory\[\]>;/);
+  assert.match(facadeSource, /type PreparedRun = \{[\s\S]*auth: Promise<void>;[\s\S]*liveTaxonomy: Promise<XtreamCategory\[\]>;[\s\S]*vodTaxonomy: Promise<XtreamCategory\[\]>;[\s\S]*seriesTaxonomy: Promise<XtreamCategory\[\]>;/);
   assert.doesNotMatch(facadeSource, /taxonomy: Promise<PreparedTaxonomy>/);
   assert.doesNotMatch(facadeSource, /const \[live, vod, series\] = await Promise\.all/);
-  assert.match(facadeSource, /await run\.liveTaxonomy;\s*return run\.client\.getLiveStreams/s);
-  assert.match(facadeSource, /await run\.vodTaxonomy;[\s\S]*run\.client\.getVodStreams/s);
-  assert.match(facadeSource, /await run\.seriesTaxonomy;[\s\S]*run\.client\.getSeries/s);
   assert.doesNotMatch(facadeSource, /await run\.taxonomy/);
+  assert.match(syncSource, /runIndependentCatalogKinds\(\[/);
+  assert.match(syncSource, /kind: "live"[\s\S]*kind: "vod"[\s\S]*kind: "series"/);
+});
+
+scenario("content requests are auth-gated without replaying failed taxonomy", () => {
+  const liveStreams = facadeSource.match(/export async function getLiveStreams\([\s\S]*?\n\}/)?.[0] ?? "";
+  const vodStreams = facadeSource.match(/export async function getVodStreams\([\s\S]*?\n\}/)?.[0] ?? "";
+  const series = facadeSource.match(/export async function getSeries\([\s\S]*?\n\}/)?.[0] ?? "";
+  assert.match(liveStreams, /await run\.auth/);
+  assert.match(vodStreams, /await run\.auth/);
+  assert.match(series, /await run\.auth/);
+  assert.doesNotMatch(vodStreams, /await run\.vodTaxonomy/);
+  assert.doesNotMatch(series, /await run\.seriesTaxonomy/);
+  assert.match(syncSource, /catch \(caught\) \{[\s\S]*CATEGORY_METADATA_UNAVAILABLE[\s\S]*fallback=bulk-baseline-probe/);
 });
 
 scenario("CatalogSync run reuses one prepared auth foundation", () => {
@@ -62,6 +73,7 @@ scenario("VOD and Series remain bulk-first with category fallback", () => {
   const seriesPlan = syncSource.match(/runCatalogFetchPlan<XtreamSeriesItem[\s\S]*?\n\s*\}\);/)?.[0] ?? "";
   assert.match(vodPlan, /fetchBulk:[\s\S]*getVodStreams\([\s\S]*undefined/);
   assert.match(vodPlan, /fetchCategory:[\s\S]*getVodStreams\(credentials, category\.category_id/);
+  assert.match(vodPlan, /allowHealthyBulkOnCategoryFailure: true/);
   assert.match(seriesPlan, /fetchBulk:[\s\S]*getSeries\([\s\S]*undefined/);
   assert.match(seriesPlan, /fetchCategory:[\s\S]*getSeries\(credentials, category\.category_id/);
 });
