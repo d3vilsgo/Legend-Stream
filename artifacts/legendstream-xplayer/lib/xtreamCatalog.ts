@@ -187,13 +187,13 @@ export function beginXtreamCatalogRun(
   const run = { client, signal, auth, liveTaxonomy, vodTaxonomy, seriesTaxonomy };
   preparedRuns.set(key, run);
 
-  // Authentication is the only shared gate. A sibling taxonomy failure must not evict
-  // the prepared run or force another kind to authenticate again.
+  // Authentication is the only shared gate. Sibling taxonomy failures stay local to
+  // their kind and must not cause another kind to authenticate again.
   void auth.catch(() => {
     if (preparedRuns.get(key) === run) preparedRuns.delete(key);
   });
-  // Each taxonomy promise is intentionally independent. Attach observation handlers to
-  // avoid unhandled-rejection noise while preserving the original promise for callers.
+  // Observe taxonomy rejections to avoid unhandled-rejection noise while callers retain
+  // the original rejecting promises and can choose kind-specific fallback behavior.
   void liveTaxonomy.catch(() => undefined);
   void vodTaxonomy.catch(() => undefined);
   void seriesTaxonomy.catch(() => undefined);
@@ -225,7 +225,7 @@ export async function getLiveStreams(
   onParseMetrics?: XtreamParseMetricsSink,
 ) {
   const run = beginXtreamCatalogRun(credentials, signal);
-  await run.liveTaxonomy;
+  await run.auth;
   return run.client.getLiveStreams(signal, onParseMetrics);
 }
 
@@ -257,7 +257,10 @@ export async function getVodStreams(
   onParseMetrics?: XtreamParseMetricsSink,
 ) {
   const run = beginXtreamCatalogRun(credentials, signal);
-  await run.vodTaxonomy;
+  // Content remains auth-gated, not taxonomy-gated. The orchestrator normally obtains
+  // VOD taxonomy first, but if taxonomy is unavailable it may deliberately probe the
+  // global bulk endpoint without replaying the failed taxonomy promise.
+  await run.auth;
   const rows = await run.client.getVodStreams(
     categoryId,
     signal,
@@ -295,7 +298,7 @@ export async function getSeries(
   onParseMetrics?: XtreamParseMetricsSink,
 ) {
   const run = beginXtreamCatalogRun(credentials, signal);
-  await run.seriesTaxonomy;
+  await run.auth;
   const rows = await run.client.getSeries(
     categoryId,
     signal,
