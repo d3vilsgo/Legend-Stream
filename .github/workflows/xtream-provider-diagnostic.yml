@@ -1,0 +1,219 @@
+name: Xtream Provider Diagnostic
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cardinality:
+    name: Read-only provider cardinality
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      XTREAM_DIAG_BASE_URL: ${{ secrets.XTREAM_DIAG_BASE_URL }}
+      XTREAM_DIAG_USERNAME: ${{ secrets.XTREAM_DIAG_USERNAME }}
+      XTREAM_DIAG_PASSWORD: ${{ secrets.XTREAM_DIAG_PASSWORD }}
+    steps:
+      - name: Measure Xtream aggregate cardinality
+        shell: bash
+        run: |
+          node <<'NODE'
+          const secretNames = [
+            'XTREAM_DIAG_BASE_URL',
+            'XTREAM_DIAG_USERNAME',
+            'XTREAM_DIAG_PASSWORD',
+          ];
+
+          const missing = secretNames.filter((name) => !String(process.env[name] ?? '').trim());
+          if (missing.length) {
+            console.error(`missing_required_secrets=${missing.join(',')}`);
+            process.exit(2);
+          }
+
+          const baseUrlRaw = String(process.env.XTREAM_DIAG_BASE_URL).trim();
+          const username = String(process.env.XTREAM_DIAG_USERNAME);
+          const password = String(process.env.XTREAM_DIAG_PASSWORD);
+
+          let baseUrl;
+          try {
+            baseUrl = new URL(baseUrlRaw);
+          } catch {
+            console.error('diagnostic_error action=config http_status=NA error_class=INVALID_BASE_URL');
+            process.exit(2);
+          }
+          if (
+            !['http:', 'https:'].includes(baseUrl.protocol) ||
+            !baseUrl.hostname ||
+            (baseUrl.pathname && baseUrl.pathname !== '/') ||
+            baseUrl.search ||
+            baseUrl.hash
+          ) {
+            console.error('diagnostic_error action=config http_status=NA error_class=INVALID_BASE_URL_SHAPE');
+            process.exit(2);
+          }
+
+          const sanitizeClass = (value) => {
+            const text = String(value || 'UNKNOWN');
+            return /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(text) ? text : 'UNKNOWN';
+          };
+
+          class DiagnosticError extends Error {
+            constructor(code) {
+              super(code);
+              this.name = 'DiagnosticError';
+              this.code = code;
+            }
+          }
+
+          async function request(action, params = {}) {
+            const url = new URL('player_api.php', `${baseUrl.origin}/`);
+            url.searchParams.set('username', username);
+            url.searchParams.set('password', password);
+            url.searchParams.set('action', action);
+            for (const [key, value] of Object.entries(params)) {
+              url.searchParams.set(key, String(value));
+            }
+
+            let response;
+            try {
+              response = await fetch(url, {
+                method: 'GET',
+                headers: { Accept: 'application/json,*/*' },
+                signal: AbortSignal.timeout(30_000),
+              });
+            } catch (error) {
+              console.error(`diagnostic_error action=${action} http_status=NA error_class=${sanitizeClass(error?.name)}`);
+              throw new DiagnosticError('REQUEST_FAILED');
+            }
+
+            if (!response.ok) {
+              console.error(`diagnostic_error action=${action} http_status=${response.status} error_class=HTTP_ERROR`);
+              throw new DiagnosticError('HTTP_ERROR');
+            }
+
+            let data;
+            try {
+              data = JSON.parse(await response.text());
+            } catch {
+              console.error(`diagnostic_error action=${action} http_status=${response.status} error_class=INVALID_JSON`);
+              throw new DiagnosticError('INVALID_JSON');
+            }
+            if (!Array.isArray(data)) {
+              console.error(`diagnostic_error action=${action} http_status=${response.status} error_class=UNSUPPORTED_RESPONSE`);
+              throw new DiagnosticError('UNSUPPORTED_RESPONSE');
+            }
+            return data;
+          }
+
+          function idsOf(rows, key) {
+            const ids = [];
+            for (const row of rows) {
+              if (!row || typeof row !== 'object') continue;
+              const value = row[key];
+              if (value === undefined || value === null || String(value).trim() === '') continue;
+              ids.push(String(value));
+            }
+            return ids;
+          }
+
+          function summarize(rows, key) {
+            const ids = idsOf(rows, key);
+            const unique = new Set(ids);
+            return {
+              rows: rows.length,
+              unique,
+              duplicateCount: ids.length - unique.size,
+            };
+          }
+
+          async function mapBounded(values, concurrency, fn) {
+            const results = new Array(values.length);
+            let next = 0;
+            async function worker() {
+              while (true) {
+                const index = next++;
+                if (index >= values.length) return;
+                results[index] = await fn(values[index], index);
+              }
+            }
+            await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(values.length, 1)) }, worker));
+            return results;
+          }
+
+          function categoryIds(categories, label) {
+            const ids = [];
+            for (const row of categories) {
+              const value = row && typeof row === 'object' ? row.category_id : undefined;
+              if (value === undefined || value === null || String(value).trim() === '') {
+                console.error(`diagnostic_error action=${label} http_status=NA error_class=MISSING_CATEGORY_ID`);
+                throw new DiagnosticError('MISSING_CATEGORY_ID');
+              }
+              ids.push(String(value));
+            }
+            return ids;
+          }
+
+          function setDifferenceCount(left, right) {
+            let count = 0;
+            for (const value of left) if (!right.has(value)) count += 1;
+            return count;
+          }
+
+          try {
+            const liveBulk = await request('get_live_streams');
+            const live = summarize(liveBulk, 'stream_id');
+
+            const vodCategories = await request('get_vod_categories');
+            const vodCategoryIds = categoryIds(vodCategories, 'get_vod_categories');
+            const vodBulkRows = await request('get_vod_streams');
+            const vodBulk = summarize(vodBulkRows, 'stream_id');
+            const vodCategoryResponses = await mapBounded(
+              vodCategoryIds,
+              6,
+              (categoryId) => request('get_vod_streams', { category_id: categoryId }),
+            );
+            const vodCategoryRowsTotal = vodCategoryResponses.reduce((sum, rows) => sum + rows.length, 0);
+            const vodCategoryUnion = new Set(vodCategoryResponses.flatMap((rows) => idsOf(rows, 'stream_id')));
+
+            const seriesCategories = await request('get_series_categories');
+            const seriesCategoryIds = categoryIds(seriesCategories, 'get_series_categories');
+            const seriesBulkRows = await request('get_series');
+            const seriesBulk = summarize(seriesBulkRows, 'series_id');
+            const seriesCategoryResponses = await mapBounded(
+              seriesCategoryIds,
+              6,
+              (categoryId) => request('get_series', { category_id: categoryId }),
+            );
+            const seriesCategoryRowsTotal = seriesCategoryResponses.reduce((sum, rows) => sum + rows.length, 0);
+            const seriesCategoryUnion = new Set(seriesCategoryResponses.flatMap((rows) => idsOf(rows, 'series_id')));
+
+            console.log(`LIVE bulk_rows=${live.rows}`);
+            console.log(`LIVE bulk_unique_stream_id=${live.unique.size}`);
+            console.log(`LIVE duplicate_stream_id_count=${live.duplicateCount}`);
+
+            console.log(`VOD category_count=${vodCategories.length}`);
+            console.log(`VOD bulk_rows=${vodBulk.rows}`);
+            console.log(`VOD bulk_unique_stream_id=${vodBulk.unique.size}`);
+            console.log(`VOD bulk_duplicate_stream_id_count=${vodBulk.duplicateCount}`);
+            console.log(`VOD category_rows_total=${vodCategoryRowsTotal}`);
+            console.log(`VOD category_union_unique_stream_id=${vodCategoryUnion.size}`);
+            console.log(`VOD category_only_count=${setDifferenceCount(vodCategoryUnion, vodBulk.unique)}`);
+            console.log(`VOD bulk_only_count=${setDifferenceCount(vodBulk.unique, vodCategoryUnion)}`);
+
+            console.log(`SERIES category_count=${seriesCategories.length}`);
+            console.log(`SERIES bulk_rows=${seriesBulk.rows}`);
+            console.log(`SERIES bulk_unique_series_id=${seriesBulk.unique.size}`);
+            console.log(`SERIES bulk_duplicate_series_id_count=${seriesBulk.duplicateCount}`);
+            console.log(`SERIES category_rows_total=${seriesCategoryRowsTotal}`);
+            console.log(`SERIES category_union_unique_series_id=${seriesCategoryUnion.size}`);
+            console.log(`SERIES category_only_count=${setDifferenceCount(seriesCategoryUnion, seriesBulk.unique)}`);
+            console.log(`SERIES bulk_only_count=${setDifferenceCount(seriesBulk.unique, seriesCategoryUnion)}`);
+          } catch (error) {
+            if (!(error instanceof DiagnosticError)) {
+              console.error(`diagnostic_error action=run http_status=NA error_class=${sanitizeClass(error?.name)}`);
+            }
+            process.exit(1);
+          }
+          NODE
