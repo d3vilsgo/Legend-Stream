@@ -54,7 +54,7 @@ import {
   XtreamVodItem,
 } from "@/lib/xtreamCatalog";
 import { yieldToUi } from "@/lib/cooperative";
-import { projectCatalogItems } from "@/lib/catalogPersistence";
+import { projectCatalogItemsCooperatively } from "@/lib/catalogPersistence";
 import {
   catalogErrorClass,
   runCatalogFetchPlan,
@@ -81,7 +81,7 @@ import {
   stagingCatalogProviderId,
 } from "@/lib/xtreamKindCache";
 import { runIndependentCatalogKinds } from "@/lib/xtreamKindSync";
-import { stabilizeXtreamLiveCatalogItems } from "@/lib/xtreamIdentity";
+import { stableXtreamLiveId } from "@/lib/xtreamIdentity";
 
 export type CatalogSnapshot = {
   providerId?: string;
@@ -122,6 +122,7 @@ const HOME_SAMPLE_LIMIT = 48;
 const NEW_SAMPLE_LIMIT = 24;
 const BACKGROUND_SYNC_DELAY_MS = 1_250;
 const SYNC_STAGE_TOTAL = 4;
+const PROGRESS_BUCKETS = 10;
 
 const Context = createContext<CatalogSyncContextValue | null>(null);
 
@@ -185,8 +186,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     }
   }, [provider?.id]);
 
-  // Backward-compatible runtime name used by existing catalog loaders. Its meaning is now
-  // "local cache is usable", not "the last synchronization finished successfully".
   const cacheReady = hasUsableCache;
 
   const refreshSnapshotFor = useCallback(async (
@@ -235,7 +234,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
       newSeries,
     });
     setHasUsableCache(usable);
-    // Never let persisted state from a previous run overwrite the active run's local UI state.
     if (activeRunIdRef.current === null) setSyncStateLocal(state);
   }, []);
 
@@ -287,8 +285,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     };
     const next: CatalogRunState = { ...base, runId: ownership.generation };
     if (activeRunIdRef.current === ownership.generation) setSyncStateLocal(next);
-    // Catalog writes are globally serialized. The ownership check and queue insertion
-    // happen in the same JS turn, so a newer generation can only enqueue after this write.
     await setCatalogSyncState(providerId, phase, completed, total, message, stamp);
   }, []);
 
@@ -327,6 +323,24 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
       ownership,
     );
     const isCancelled = () => cancelRef.current || controller.signal.aborted || !ownsRun();
+    const createProgressPublisher = (label: "Movies" | "Series") => {
+      let lastBucket = -1;
+      return async (done: number, categoryTotal: number, path: "parallel" | "serial") => {
+        if (isCancelled()) return;
+        const bucket = categoryTotal <= 0
+          ? PROGRESS_BUCKETS
+          : Math.min(PROGRESS_BUCKETS, Math.floor((done * PROGRESS_BUCKETS) / categoryTotal));
+        if (bucket <= lastBucket && done < categoryTotal) return;
+        lastBucket = bucket;
+        await publishState(
+          ownership,
+          "syncing",
+          completed,
+          total,
+          `${label} · ${path === "parallel" ? "parallel" : "serial"} fallback ${done}/${categoryTotal}`,
+        );
+      };
+    };
 
     const task = (async () => {
       if (isInitial) setIsInitialSyncRunning(true);
@@ -341,8 +355,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           isInitial ? "Preparing catalog sources" : "Catalog update started",
         );
 
-        // Seed one controller-backed prepared run before sibling tasks start. This makes
-        // single-auth deterministic regardless of which kind reaches the provider first.
         beginXtreamCatalogRun(credentials, controller.signal);
 
         const outcomes = await runIndependentCatalogKinds([
@@ -361,15 +373,18 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                   : (await loadProvider(asLoadProvider(provider))).channels;
                 if (isCancelled()) return;
 
-                const projected = stabilizeXtreamLiveCatalogItems(
-                  provider.id,
-                  projectCatalogItems(stagingId, "live", liveRows),
-                );
-                const remoteUniqueCount = new Set(
-                  projected
-                    .filter((item) => item.catalogKind === "live")
-                    .map((item) => item.id),
-                ).size;
+                const liveUniqueIds = new Set<string>();
+                const projected = await projectCatalogItemsCooperatively(stagingId, "live", liveRows, {
+                  isCancelled,
+                  onProjectedItem: (item) => {
+                    if (item.catalogKind !== "live") return;
+                    if (item.playbackRef.type === "xtream-live") {
+                      item.id = stableXtreamLiveId(provider.id, item.playbackRef.streamId);
+                    }
+                    liveUniqueIds.add(item.id);
+                  },
+                });
+                if (isCancelled()) return;
                 const liveWriteStartedAt = Date.now();
                 await upsertCatalogItems(stagingId, "live", projected, {
                   markNew,
@@ -383,7 +398,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                   providerId: provider.id,
                   stagingId,
                   kind: "live",
-                  expectedCount: remoteUniqueCount,
+                  expectedCount: liveUniqueIds.size,
                   canPublish: () => !isCancelled(),
                 });
                 if (!published.published && !isCancelled()) {
@@ -429,6 +444,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                 }
                 if (isCancelled()) return;
                 const vodUniqueIds = new Set<string>();
+                const publishVodProgress = createProgressPublisher("Movies");
 
                 vodMetrics = await runCatalogFetchPlan<XtreamVodItem, (typeof vodCategories)[number]>({
                   categories: vodCategories,
@@ -440,8 +456,14 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                   ),
                   fetchCategory: (category) => getVodStreams(credentials, category.category_id, controller.signal),
                   writeRows: async (rows) => {
-                    for (const row of rows) vodUniqueIds.add(String(row.stream_id));
-                    await upsertCatalogItems(stagingId, "vod", projectCatalogItems(stagingId, "vod", rows), {
+                    const projectedRows = await projectCatalogItemsCooperatively(stagingId, "vod", rows, {
+                      isCancelled,
+                      onProjectedItem: (item) => {
+                        if (item.catalogKind === "vod") vodUniqueIds.add(String(item.stream_id));
+                      },
+                    });
+                    if (isCancelled()) return;
+                    await upsertCatalogItems(stagingId, "vod", projectedRows, {
                       markNew,
                       seenAt: syncStartedAt,
                       isCancelled,
@@ -449,17 +471,8 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                   },
                   categoryIdOf: (row) => row.category_id,
                   isCancelled,
-                  forceCategoryFallback: true,
                   allowHealthyBulkOnCategoryFailure: true,
-                  onFallbackProgress: async (done, categoryTotal, path) => {
-                    await publishState(
-                      ownership,
-                      "syncing",
-                      completed,
-                      total,
-                      `Movies · ${path === "parallel" ? "parallel" : "serial"} fallback ${done}/${categoryTotal}`,
-                    );
-                  },
+                  onFallbackProgress: publishVodProgress,
                 });
                 if (isCancelled()) return;
                 if (vodMetrics.degradedToHealthyBulk) {
@@ -515,6 +528,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                 const seriesCategories = await getSeriesCategories(credentials, controller.signal);
                 if (isCancelled()) return;
                 const seriesUniqueIds = new Set<string>();
+                const publishSeriesProgress = createProgressPublisher("Series");
 
                 seriesMetrics = await runCatalogFetchPlan<XtreamSeriesItem, (typeof seriesCategories)[number]>({
                   categories: seriesCategories,
@@ -526,8 +540,14 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                   ),
                   fetchCategory: (category) => getSeries(credentials, category.category_id, controller.signal),
                   writeRows: async (rows) => {
-                    for (const row of rows) seriesUniqueIds.add(String(row.series_id));
-                    await upsertCatalogItems(stagingId, "series", projectCatalogItems(stagingId, "series", rows), {
+                    const projectedRows = await projectCatalogItemsCooperatively(stagingId, "series", rows, {
+                      isCancelled,
+                      onProjectedItem: (item) => {
+                        if (item.catalogKind === "series") seriesUniqueIds.add(String(item.series_id));
+                      },
+                    });
+                    if (isCancelled()) return;
+                    await upsertCatalogItems(stagingId, "series", projectedRows, {
                       markNew,
                       seenAt: syncStartedAt,
                       isCancelled,
@@ -535,15 +555,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                   },
                   categoryIdOf: (row) => row.category_id,
                   isCancelled,
-                  onFallbackProgress: async (done, categoryTotal, path) => {
-                    await publishState(
-                      ownership,
-                      "syncing",
-                      completed,
-                      total,
-                      `Series · ${path === "parallel" ? "parallel" : "serial"} fallback ${done}/${categoryTotal}`,
-                    );
-                  },
+                  onFallbackProgress: publishSeriesProgress,
                 });
                 if (isCancelled()) return;
 
@@ -640,8 +652,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         await publishState(ownership, "error", completed, total, message);
         await refreshSnapshotFor(provider, ownership);
       } finally {
-        // Prepared runs are scoped to one CatalogSync generation. Never let a completed
-        // run be reused by the next manual/background refresh.
         releaseXtreamCatalogRun(credentials, controller.signal);
         if (
           activeRunIdRef.current === generation &&
@@ -725,8 +735,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         )) return;
         const usable = hasUsableCatalogCache(counts);
 
-        // Cache-first: publish local rows before doing any update request. A provider-switch
-        // handoff may already be showing the target cache, so never blank it first.
         await refreshSnapshotFor(active, lifecycleOwnership);
         if (disposed || !isCatalogSyncOwnershipCurrent(
           latestProviderIdRef.current,
@@ -736,14 +744,11 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         clearProviderSwitchSnapshot(active.id);
         if (disposed || resolvedProviderTransport(active) !== "xtream") return;
 
-        // Only a genuinely empty, never-completed cache uses the blocking initial path.
         if (!usable && state?.phase !== "ready") {
           await runSync("initial");
           return;
         }
 
-        // Usable rows remain browsable even when the previous refresh was cancelled/errored.
-        // An empty cache explicitly marked ready also stays non-blocking.
         if (backgroundStartedRef.current !== active.id) {
           backgroundStartedRef.current = active.id;
           backgroundTimer = setTimeout(() => {
@@ -760,7 +765,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           generationRef.current,
           lifecycleOwnership,
         )) clearProviderSwitchSnapshot(active.id);
-        // SQLite/provider failures leave the legacy on-demand catalog path intact.
       }
     })();
 
@@ -770,7 +774,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
       abortCatalogRequest(abortControllerRef.current);
       if (backgroundTimer) clearTimeout(backgroundTimer);
     };
-  }, [provider?.id]); // provider switch is the lifecycle boundary.
+  }, [provider?.id]);
 
   const isSyncing = isCatalogSyncActive(syncState?.phase);
   const value = useMemo<CatalogSyncContextValue>(() => ({
