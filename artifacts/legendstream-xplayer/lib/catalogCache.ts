@@ -2,6 +2,11 @@ import * as SQLite from "expo-sqlite";
 import { yieldToUi } from "./cooperative";
 import { enqueueCatalogDbWrite } from "./catalogDbWriter";
 import { executeCatalogBulkNonCancellableBatches } from "./catalogBulkWrite";
+import {
+  CATALOG_LOGICAL_BATCH_MAX,
+  executePreparedCatalogMultiRowBatch,
+  type CatalogWriteDatabase,
+} from "./catalogWriteBatch";
 import type { XtreamCategory } from "./xtreamCatalog";
 import {
   normalizePersistedCatalogPayload,
@@ -442,31 +447,50 @@ export async function upsertCatalogItems(
   items: PersistedCatalogItem[],
   options: CatalogWriteOptions = {},
 ) {
-  return enqueueCatalogDbWrite(async () => {
-    const db = await database();
-    const now = options.seenAt ?? Date.now();
-    let written = 0;
+  const db = await database();
+  const now = options.seenAt ?? Date.now();
+  let written = 0;
 
-    for (let start = 0; start < items.length; start += WRITE_BATCH_SIZE) {
-      if (options.isCancelled?.()) break;
-      const batch = items.slice(start, start + WRITE_BATCH_SIZE);
-      const batchIndex = Math.floor(start / WRITE_BATCH_SIZE) + 1;
-      options.onBatchStarted?.(batchIndex);
-      options.onSqliteStage?.("begin-transaction");
-      await db.withExclusiveTransactionAsync(async (txn) => {
-        options.onSqliteStage?.("insert-statement");
-        await insertRows(txn, providerId, kind, batch, now, Boolean(options.markNew), options.isCancelled);
-        options.onSqliteStage?.("commit");
+  for (let start = 0; start < items.length; start += CATALOG_LOGICAL_BATCH_MAX) {
+    if (options.isCancelled?.()) break;
+    const batch = items.slice(start, start + CATALOG_LOGICAL_BATCH_MAX);
+    const batchIndex = Math.floor(start / CATALOG_LOGICAL_BATCH_MAX) + 1;
+    options.onBatchStarted?.(batchIndex);
+
+    const result = await enqueueCatalogDbWrite(async () => {
+      if (options.isCancelled?.()) return null;
+      const observedDatabase = {
+        withExclusiveTransactionAsync: async (task) => {
+          options.onSqliteStage?.("begin-transaction");
+          return db.withExclusiveTransactionAsync(async (txn) => {
+            options.onSqliteStage?.("insert-statement");
+            await task(txn);
+            options.onSqliteStage?.("commit");
+          });
+        },
+      } satisfies CatalogWriteDatabase;
+      return executePreparedCatalogMultiRowBatch({
+        database: observedDatabase,
+        providerId,
+        kind,
+        items: batch,
+        seenAt: now,
+        markNew: Boolean(options.markNew),
       });
-      written += batch.length;
-      const committedRows = Math.min(written, items.length);
-      options.onBatchCommitted?.({ batchIndex, batchRows: batch.length, committedRows });
-      options.onProgress?.(committedRows);
-      await yieldToUi();
-    }
+    });
 
-    return written;
-  });
+    if (!result) break;
+    written += result.actualExecutedRows;
+    options.onBatchCommitted?.({
+      batchIndex,
+      batchRows: batch.length,
+      committedRows: written,
+    });
+    options.onProgress?.(written);
+    await yieldToUi();
+  }
+
+  return written;
 }
 
 export async function upsertCatalogItemsBulkNonCancellable(
