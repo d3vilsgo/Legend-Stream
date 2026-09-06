@@ -78,33 +78,46 @@ function playbackRefType(item: PersistedCatalogItem) {
   return item.catalogKind === "live" ? item.playbackRef.type : "unresolved";
 }
 
+function field(name: string, value: unknown): [string, unknown] {
+  return [name, value];
+}
+
+function collisionFields(sample: CollisionSample) {
+  return [
+    field("sourceStreamIdFingerprint", sample.sourceStreamIdFingerprint),
+    field("finalItemIdFingerprint", sample.finalItemIdFingerprint),
+    field("playbackRefType", sample.playbackRefType),
+    field("streamIdSource", sample.streamIdSource),
+  ];
+}
+
 function emitAndDelete(attempt: CardinalityAttempt) {
   if (attempt.kind === "live") {
-    safeLog.info("LS_XTREAM_CARDINALITY_LIVE", {
-      rawRows: attempt.rawRows,
-      rawUniqueStreamIds: attempt.rawUniqueStreamIds,
-      projectedRows: attempt.projectedRows,
-      finalUniqueItemIds: attempt.finalUniqueItemIds,
-      finalIdCollisionCount: attempt.finalIdCollisionCount,
-      stagedCount: attempt.stagedCount,
-      activeCount: attempt.activeCount,
-    });
+    safeLog.info("LS_XTREAM_CARDINALITY_LIVE", [
+      field("rawRows", attempt.rawRows),
+      field("rawUniqueStreamIds", attempt.rawUniqueStreamIds),
+      field("projectedRows", attempt.projectedRows),
+      field("finalUniqueItemIds", attempt.finalUniqueItemIds),
+      field("finalIdCollisionCount", attempt.finalIdCollisionCount),
+      field("stagedCount", attempt.stagedCount),
+      field("activeCount", attempt.activeCount),
+    ]);
     if ((attempt.finalIdCollisionCount ?? 0) > 0 && attempt.collisionSamples.length > 0) {
-      safeLog.info("LS_XTREAM_CARDINALITY_LIVE_COLLISIONS", {
-        collisionCount: attempt.finalIdCollisionCount,
-        samples: attempt.collisionSamples.slice(0, 5),
-      });
+      safeLog.info("LS_XTREAM_CARDINALITY_LIVE_COLLISIONS", [
+        field("collisionCount", attempt.finalIdCollisionCount),
+        field("samples", attempt.collisionSamples.slice(0, 5).map(collisionFields)),
+      ]);
     }
   } else {
-    safeLog.info("LS_XTREAM_CARDINALITY_VOD", {
-      rawRows: attempt.rawRows,
-      projectedRows: attempt.projectedRows,
-      vodUniqueIds: attempt.vodUniqueIds,
-      stagedCount: attempt.stagedCount,
-      publishCalled: attempt.publishCalled,
-      publishSucceeded: attempt.publishSucceeded,
-      activeCount: attempt.activeCount,
-    });
+    safeLog.info("LS_XTREAM_CARDINALITY_VOD", [
+      field("rawRows", attempt.rawRows),
+      field("projectedRows", attempt.projectedRows),
+      field("vodUniqueIds", attempt.vodUniqueIds),
+      field("stagedCount", attempt.stagedCount),
+      field("publishCalled", attempt.publishCalled),
+      field("publishSucceeded", attempt.publishSucceeded),
+      field("activeCount", attempt.activeCount),
+    ]);
   }
 
   attempts.delete(attempt.stagingId);
