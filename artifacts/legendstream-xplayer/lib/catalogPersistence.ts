@@ -6,6 +6,7 @@ import {
   type M3UPathPlaybackRef,
 } from "./m3uCatalogRefs";
 import type { XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
+import { observeXtreamCardinalityProjection } from "./xtreamCardinalityDiagnostics";
 
 export type CatalogKind = "live" | "vod" | "series";
 export type CatalogSourceMode = "canonical" | "direct";
@@ -335,6 +336,9 @@ export async function projectCatalogItemsCooperatively(
       options.onProjectedItem?.(item);
     }
     if (end < values.length && !options.isCancelled?.()) await yieldToUi();
+  }
+  if (!options.isCancelled?.()) {
+    observeXtreamCardinalityProjection(providerId, kind, values, projected);
   }
   return projected;
 }
