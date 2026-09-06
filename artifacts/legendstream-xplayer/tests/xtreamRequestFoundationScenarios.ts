@@ -41,6 +41,15 @@ scenario("taxonomy siblings are independent after one shared auth", () => {
   assert.match(syncSource, /kind: "live"[\s\S]*kind: "vod"[\s\S]*kind: "series"/);
 });
 
+scenario("CatalogSync lifecycle seeds and releases one controller-backed prepared run", () => {
+  const seedIndex = syncSource.indexOf("beginXtreamCatalogRun(credentials, controller.signal)");
+  const kindsIndex = syncSource.indexOf("runIndependentCatalogKinds([");
+  const releaseIndex = syncSource.indexOf("releaseXtreamCatalogRun(credentials, controller.signal)");
+  assert.ok(seedIndex >= 0 && kindsIndex > seedIndex, "prepared run must be seeded before sibling tasks start");
+  assert.ok(releaseIndex > kindsIndex, "prepared run must be released after sibling orchestration");
+  assert.match(syncSource, /finally \{[\s\S]*releaseXtreamCatalogRun\(credentials, controller\.signal\)/);
+});
+
 scenario("Live-first provisional run adopts CatalogSync cancellation without re-auth", () => {
   assert.match(facadeSource, /options: \{ provisional\?: boolean \} = \{\}/);
   assert.match(facadeSource, /existing\.provisional && existing\.externalSignal === undefined && signal/);
