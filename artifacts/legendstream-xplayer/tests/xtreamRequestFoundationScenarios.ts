@@ -23,15 +23,23 @@ scenario("canonical client owns player_api request construction and auth omits a
 
 scenario("auth is fail-closed before taxonomy fan-out", () => {
   const authIndex = facadeSource.indexOf("await client.authenticate(signal)");
-  const taxonomyIndex = facadeSource.indexOf("const [live, vod, series] = await Promise.all");
-  assert.ok(authIndex >= 0 && taxonomyIndex > authIndex);
+  const liveTaxonomyIndex = facadeSource.indexOf("client.getLiveCategories(signal)");
+  const vodTaxonomyIndex = facadeSource.indexOf("client.getVodCategories(signal)");
+  const seriesTaxonomyIndex = facadeSource.indexOf("client.getSeriesCategories(signal)");
+  assert.ok(authIndex >= 0);
+  assert.ok(liveTaxonomyIndex > authIndex && vodTaxonomyIndex > authIndex && seriesTaxonomyIndex > authIndex);
   assert.match(clientSource, /const authenticated = authValue === 1 \|\| authValue === "1" \|\| authValue === true/);
   assert.match(clientSource, /\["disabled", "banned", "expired"\]\.includes\(status\)/);
 });
 
-scenario("all taxonomy completes before live content starts", () => {
-  assert.match(facadeSource, /const taxonomy = await run\.taxonomy;\s*const streams = await run\.client\.getLiveStreams/s);
-  assert.match(facadeSource, /client\.getLiveCategories\(signal\)[\s\S]*client\.getVodCategories\(signal\)[\s\S]*client\.getSeriesCategories\(signal\)/);
+scenario("taxonomy siblings are independent after one shared auth", () => {
+  assert.match(facadeSource, /type PreparedRun = \{[\s\S]*liveTaxonomy: Promise<XtreamCategory\[\]>;[\s\S]*vodTaxonomy: Promise<XtreamCategory\[\]>;[\s\S]*seriesTaxonomy: Promise<XtreamCategory\[\]>;/);
+  assert.doesNotMatch(facadeSource, /taxonomy: Promise<PreparedTaxonomy>/);
+  assert.doesNotMatch(facadeSource, /const \[live, vod, series\] = await Promise\.all/);
+  assert.match(facadeSource, /await run\.liveTaxonomy;\s*return run\.client\.getLiveStreams/s);
+  assert.match(facadeSource, /await run\.vodTaxonomy;[\s\S]*run\.client\.getVodStreams/s);
+  assert.match(facadeSource, /await run\.seriesTaxonomy;[\s\S]*run\.client\.getSeries/s);
+  assert.doesNotMatch(facadeSource, /await run\.taxonomy/);
 });
 
 scenario("CatalogSync run reuses one prepared auth foundation", () => {
