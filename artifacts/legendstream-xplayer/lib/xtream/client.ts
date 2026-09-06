@@ -95,24 +95,54 @@ export function buildXtreamPlayerApiUrl(
   return url;
 }
 
-async function parseResponse(response: Response, onParseMetrics?: XtreamParseMetricsSink) {
+function mapProxyError(data: unknown, responseStatus: number) {
+  const proxyError = (data as any)?.error;
+  const code = typeof proxyError?.code === "string" ? proxyError.code : "";
+  const message = typeof proxyError?.message === "string"
+    ? proxyError.message
+    : `Xtream request failed with HTTP ${responseStatus}.`;
+  const rawProviderStatus = Number(proxyError?.providerStatus);
+  const providerStatus = Number.isFinite(rawProviderStatus)
+    ? rawProviderStatus
+    : responseStatus;
+
+  switch (code) {
+    case "INVALID_CREDENTIALS":
+      return new XtreamCatalogError("AUTHENTICATION", message, providerStatus);
+    case "PROVIDER_TIMEOUT":
+      return new XtreamCatalogError("TIMEOUT", message, providerStatus);
+    case "PROVIDER_UNREACHABLE":
+      return new XtreamCatalogError("UNREACHABLE", message, providerStatus);
+    case "INVALID_PROVIDER_RESPONSE":
+      return new XtreamCatalogError("INVALID_RESPONSE", message, providerStatus);
+    case "PROVIDER_HTTP_ERROR":
+      return new XtreamCatalogError(
+        providerStatus === 404 ? "NOT_FOUND" : "HTTP_ERROR",
+        message,
+        providerStatus,
+      );
+    case "PROVIDER_AUTH_HTTP_ERROR":
+      return new XtreamCatalogError("HTTP_ERROR", message, providerStatus);
+    default:
+      return undefined;
+  }
+}
+
+async function parseResponse(
+  response: Response,
+  onParseMetrics?: XtreamParseMetricsSink,
+  mapWebProxyErrors = false,
+) {
   const bodyReadStartedAt = Date.now();
   const text = await response.text();
   const bodyReadMs = Date.now() - bodyReadStartedAt;
   await yieldToUi();
 
-  if (response.status === 404) {
+  if (!mapWebProxyErrors && response.status === 404) {
     throw new XtreamCatalogError(
       "NOT_FOUND",
       "Xtream endpoint is not available on this server.",
       404,
-    );
-  }
-  if (response.status >= 500) {
-    throw new XtreamCatalogError(
-      "HTTP_ERROR",
-      `Xtream request failed with HTTP ${response.status}.`,
-      response.status,
     );
   }
 
@@ -143,6 +173,10 @@ async function parseResponse(response: Response, onParseMetrics?: XtreamParseMet
   });
 
   if (!response.ok) {
+    if (mapWebProxyErrors) {
+      const mapped = mapProxyError(data, response.status);
+      if (mapped) throw mapped;
+    }
     const message = typeof (data as any)?.error?.message === "string"
       ? (data as any).error.message
       : `Xtream request failed with HTTP ${response.status}.`;
@@ -232,7 +266,7 @@ async function requestWeb(
       body: JSON.stringify({ ...normalizeXtreamCredentials(credentials), action, params }),
       signal: requestAbort.signal,
     });
-    return await parseResponse(response, onParseMetrics);
+    return await parseResponse(response, onParseMetrics, true);
   } catch (caught) {
     throw mapTransportError(caught, signal, requestAbort.wasTimedOut(), "web proxy");
   } finally {
