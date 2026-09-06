@@ -49,14 +49,15 @@ import {
   safeProviderSwitchError,
 } from "@/lib/providerSwitchUx";
 import {
+  LiveHistoryMutationQueue,
   clearLiveHistoryProvider,
-  commitLiveHistoryV2,
   emptyLiveHistoryV2,
   historyForProvider,
   migrateLiveHistoryStorage,
   providerIdFromChannelId,
   recordLiveHistory,
   removeLiveHistory,
+  type LiveHistoryMutation,
   type LiveHistoryV2,
 } from "@/lib/liveHistory";
 import {
@@ -833,6 +834,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const playerBusySequenceRef = useRef(0);
   const playerBusyOwnerRef = useRef<number | null>(null);
   const liveHistoryRef = useRef<LiveHistoryV2>(emptyLiveHistoryV2());
+  const liveHistoryMutationQueueRef = useRef(new LiveHistoryMutationQueue());
   const epgCacheRef = useRef(
     new Map<string, { loadedAt: number; channelCount: number }>(),
   );
@@ -948,12 +950,27 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const persistLiveHistory = async (next: LiveHistoryV2) => {
+  const persistLiveHistory = async (providerId: string, mutate: LiveHistoryMutation) => {
     try {
-      const verified = await commitLiveHistoryV2(liveHistoryStorage, next);
-      liveHistoryRef.current = verified;
-      return verified;
-    } catch {
+      return await liveHistoryMutationQueueRef.current.run({
+        storage: liveHistoryStorage,
+        current: () => liveHistoryRef.current,
+        mutate,
+        publish: async (verified) => {
+          liveHistoryRef.current = verified;
+          const latest = stateRef.current;
+          if (latest.provider?.id !== providerId) return;
+          await persist({
+            ...latest,
+            history: historyForProvider(verified, providerId),
+          });
+        },
+      });
+    } catch (caught) {
+      const diagnostic = caught instanceof Error && "cause" in caught
+        ? (caught as Error & { cause?: unknown }).cause ?? caught
+        : caught;
+      safeLog.error("LS_LIVE_HISTORY_PERSIST_FAILED", diagnostic);
       setError("Live TV history could not be saved.");
       return null;
     }
@@ -1555,48 +1572,30 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const current = stateRef.current;
     const providerId = providerIdFromChannelId(channelId) ?? current.provider?.id;
     if (!providerId) return;
-    const verified = await persistLiveHistory(
-      recordLiveHistory(liveHistoryRef.current, providerId, channelId),
+    await persistLiveHistory(
+      providerId,
+      (history) => recordLiveHistory(history, providerId, channelId),
     );
-    if (!verified) return;
-    const latest = stateRef.current;
-    if (latest.provider?.id !== providerId) return;
-    await persist({
-      ...latest,
-      history: historyForProvider(verified, providerId),
-    });
   };
 
   const removeWatched = async (channelId: string) => {
     const current = stateRef.current;
     const providerId = providerIdFromChannelId(channelId) ?? current.provider?.id;
     if (!providerId) return;
-    const verified = await persistLiveHistory(
-      removeLiveHistory(liveHistoryRef.current, providerId, channelId),
+    await persistLiveHistory(
+      providerId,
+      (history) => removeLiveHistory(history, providerId, channelId),
     );
-    if (!verified) return;
-    const latest = stateRef.current;
-    if (latest.provider?.id !== providerId) return;
-    await persist({
-      ...latest,
-      history: historyForProvider(verified, providerId),
-    });
   };
 
   const clearHistory = async () => {
     const current = stateRef.current;
     const providerId = current.provider?.id;
     if (!providerId) return;
-    const verified = await persistLiveHistory(
-      clearLiveHistoryProvider(liveHistoryRef.current, providerId),
+    await persistLiveHistory(
+      providerId,
+      (history) => clearLiveHistoryProvider(history, providerId),
     );
-    if (!verified) return;
-    const latest = stateRef.current;
-    if (latest.provider?.id !== providerId) return;
-    await persist({
-      ...latest,
-      history: historyForProvider(verified, providerId),
-    });
   };
 
   const epgByChannel = useMemo(() => {
