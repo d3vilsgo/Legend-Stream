@@ -78,6 +78,14 @@ async function loadPublishWithFakeDb(stateRef: { current: FakeState }, loseOwner
     require: (id: string) => {
       if (id === "expo-sqlite") return { openDatabaseAsync: async () => fakeDb };
       if (id === "./catalogDbWriter") return { enqueueCatalogDbWrite: async (run: () => Promise<unknown>) => run() };
+      if (id === "./xtreamCardinalityDiagnostics") {
+        return {
+          beginXtreamCardinalityAttempt: () => undefined,
+          finishXtreamCardinalityPublish: () => undefined,
+          noteXtreamCardinalityPublishCalled: () => undefined,
+          noteXtreamCardinalityStagedCount: () => undefined,
+        };
+      }
       throw new Error(`Unexpected test require: ${id}`);
     },
   });
