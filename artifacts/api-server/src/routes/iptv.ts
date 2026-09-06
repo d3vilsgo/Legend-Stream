@@ -20,12 +20,14 @@ type XtreamActionRequest = XtreamRequest & {
 class UpstreamError extends Error {
   status: number;
   code: string;
+  providerStatus?: number;
 
-  constructor(message: string, status: number, code: string) {
+  constructor(message: string, status: number, code: string, providerStatus?: number) {
     super(message);
     this.name = "UpstreamError";
     this.status = status;
     this.code = code;
+    this.providerStatus = providerStatus;
   }
 }
 
@@ -138,6 +140,7 @@ async function providerJson(
       response.status === 401 || response.status === 403
         ? "PROVIDER_AUTH_HTTP_ERROR"
         : "PROVIDER_HTTP_ERROR",
+      response.status,
     );
   }
   return data as any;
@@ -192,6 +195,22 @@ async function executeXtreamRequest(
   return action ? data : validateAuth(data);
 }
 
+function respondWithUpstreamError(res: any, error: unknown) {
+  const status = error instanceof UpstreamError ? error.status : 500;
+  const code = error instanceof UpstreamError ? error.code : "PROXY_ERROR";
+  const message = error instanceof UpstreamError
+    ? error.message
+    : "The provider proxy could not complete the request.";
+  const providerStatus = error instanceof UpstreamError ? error.providerStatus : undefined;
+  res.status(status).json({
+    error: {
+      code,
+      message,
+      ...(providerStatus !== undefined ? { providerStatus } : {}),
+    },
+  });
+}
+
 router.post("/xtream/action", async (req, res) => {
   try {
     const body = req.body as XtreamActionRequest;
@@ -204,12 +223,7 @@ router.post("/xtream/action", async (req, res) => {
     const data = await executeXtreamRequest(credentials, action, body.params);
     res.json(data);
   } catch (error) {
-    const status = error instanceof UpstreamError ? error.status : 500;
-    const code = error instanceof UpstreamError ? error.code : "PROXY_ERROR";
-    const message = error instanceof UpstreamError
-      ? error.message
-      : "The provider proxy could not complete the request.";
-    res.status(status).json({ error: { code, message } });
+    respondWithUpstreamError(res, error);
   }
 });
 
@@ -238,12 +252,7 @@ router.post("/xtream", async (req, res) => {
     }
     res.json({ auth, categories, streams, baseUrl: credentials.baseUrl });
   } catch (error) {
-    const status = error instanceof UpstreamError ? error.status : 500;
-    const code = error instanceof UpstreamError ? error.code : "PROXY_ERROR";
-    const message = error instanceof UpstreamError
-      ? error.message
-      : "The provider proxy could not complete the request.";
-    res.status(status).json({ error: { code, message } });
+    respondWithUpstreamError(res, error);
   }
 });
 
