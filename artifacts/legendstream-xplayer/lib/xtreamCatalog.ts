@@ -151,7 +151,10 @@ export type VodPlaybackQueue = {
 
 type PreparedRun = {
   client: XtreamClient;
-  signal?: AbortSignal;
+  externalSignal?: AbortSignal;
+  requestController: AbortController;
+  requestSignal: AbortSignal;
+  provisional: boolean;
   auth: Promise<void>;
   liveTaxonomy: Promise<XtreamCategory[]>;
   vodTaxonomy: Promise<XtreamCategory[]>;
@@ -169,22 +172,56 @@ const credentialsKey = (credentials: XtreamCredentials) => {
 
 const clientFor = (credentials: XtreamCredentials) => createXtreamClient(credentials);
 
+function linkExternalAbort(signal: AbortSignal | undefined, controller: AbortController) {
+  if (!signal) return;
+  if (signal.aborted) {
+    controller.abort();
+    return;
+  }
+  signal.addEventListener("abort", () => controller.abort(), { once: true });
+}
+
 export function beginXtreamCatalogRun(
   credentials: XtreamCredentials,
   signal?: AbortSignal,
+  options: { provisional?: boolean } = {},
 ): PreparedRun {
   const key = credentialsKey(credentials);
   const existing = preparedRuns.get(key);
-  if (existing && existing.signal === signal && !signal?.aborted) return existing;
+  if (existing && !existing.requestSignal.aborted) {
+    if (existing.externalSignal === signal) return existing;
+    // Live bootstrap can win the sibling race before CatalogSync's controller-backed
+    // taxonomy calls begin. Adopt that controller into the provisional run so the same
+    // logical synchronization keeps one auth request and gains real cancellation.
+    if (existing.provisional && existing.externalSignal === undefined && signal) {
+      existing.externalSignal = signal;
+      existing.provisional = false;
+      linkExternalAbort(signal, existing.requestController);
+      return existing;
+    }
+  }
 
   const client = clientFor(credentials);
+  const requestController = new AbortController();
+  linkExternalAbort(signal, requestController);
+  const requestSignal = requestController.signal;
   const auth = (async () => {
-    await client.authenticate(signal);
+    await client.authenticate(requestSignal);
   })();
-  const liveTaxonomy = auth.then(() => client.getLiveCategories(signal));
-  const vodTaxonomy = auth.then(() => client.getVodCategories(signal));
-  const seriesTaxonomy = auth.then(() => client.getSeriesCategories(signal));
-  const run = { client, signal, auth, liveTaxonomy, vodTaxonomy, seriesTaxonomy };
+  const liveTaxonomy = auth.then(() => client.getLiveCategories(requestSignal));
+  const vodTaxonomy = auth.then(() => client.getVodCategories(requestSignal));
+  const seriesTaxonomy = auth.then(() => client.getSeriesCategories(requestSignal));
+  const run: PreparedRun = {
+    client,
+    externalSignal: signal,
+    requestController,
+    requestSignal,
+    provisional: options.provisional === true,
+    auth,
+    liveTaxonomy,
+    vodTaxonomy,
+    seriesTaxonomy,
+  };
   preparedRuns.set(key, run);
 
   // Authentication is the only shared gate. Sibling taxonomy failures stay local to
@@ -203,12 +240,12 @@ export function beginXtreamCatalogRun(
 export function releaseXtreamCatalogRun(credentials: XtreamCredentials, signal?: AbortSignal) {
   const key = credentialsKey(credentials);
   const run = preparedRuns.get(key);
-  if (run && (signal === undefined || run.signal === signal)) preparedRuns.delete(key);
+  if (run && (signal === undefined || run.externalSignal === signal)) preparedRuns.delete(key);
 }
 
 function preparedClient(credentials: XtreamCredentials, signal?: AbortSignal) {
   const run = preparedRuns.get(credentialsKey(credentials));
-  return run && run.signal === signal ? run.client : clientFor(credentials);
+  return run && (run.externalSignal === signal || signal === undefined) ? run.client : clientFor(credentials);
 }
 
 export async function authenticateXtream(credentials: XtreamCredentials, signal?: AbortSignal) {
@@ -226,7 +263,7 @@ export async function getLiveStreams(
 ) {
   const run = beginXtreamCatalogRun(credentials, signal);
   await run.auth;
-  return run.client.getLiveStreams(signal, onParseMetrics);
+  return run.client.getLiveStreams(run.requestSignal, onParseMetrics);
 }
 
 export async function getVodCategories(credentials: XtreamCredentials, signal?: AbortSignal) {
@@ -263,7 +300,7 @@ export async function getVodStreams(
   await run.auth;
   const rows = await run.client.getVodStreams(
     categoryId,
-    signal,
+    run.requestSignal,
     onParseMetrics,
   ) as XtreamVodItem[];
   registerVodQueue(credentials, rows);
@@ -301,7 +338,7 @@ export async function getSeries(
   await run.auth;
   const rows = await run.client.getSeries(
     categoryId,
-    signal,
+    run.requestSignal,
     onParseMetrics,
   ) as XtreamSeriesItem[];
   await yieldToUi();
@@ -315,7 +352,7 @@ export async function loadXtreamLiveCatalog(
 ) {
   const run = beginXtreamCatalogRun(credentials, signal);
   const categories = await run.liveTaxonomy;
-  const streams = await run.client.getLiveStreams(signal, onParseMetrics);
+  const streams = await run.client.getLiveStreams(run.requestSignal, onParseMetrics);
   return { categories, streams, authValidated: true as const };
 }
 
@@ -323,12 +360,12 @@ export async function loadXtreamLiveCatalogFromPreparedRun(
   credentials: XtreamCredentials,
   onParseMetrics?: XtreamParseMetricsSink,
 ) {
-  const run = preparedRuns.get(credentialsKey(credentials));
-  if (!run || run.signal?.aborted) {
-    return loadXtreamLiveCatalog(credentials, undefined, onParseMetrics);
+  let run = preparedRuns.get(credentialsKey(credentials));
+  if (!run || run.requestSignal.aborted) {
+    run = beginXtreamCatalogRun(credentials, undefined, { provisional: true });
   }
   const categories = await run.liveTaxonomy;
-  const streams = await run.client.getLiveStreams(run.signal, onParseMetrics);
+  const streams = await run.client.getLiveStreams(run.requestSignal, onParseMetrics);
   return { categories, streams, authValidated: true as const };
 }
 
