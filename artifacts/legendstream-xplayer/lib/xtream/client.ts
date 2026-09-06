@@ -299,7 +299,20 @@ export function createXtreamClient(
       return requireAuthenticatedPayload(await request(undefined, {}, signal));
     },
     async getLiveCategories(signal?: AbortSignal) {
-      return requireArray<XtreamCategory>(await request("get_live_categories", {}, signal), "live categories");
+      try {
+        return requireArray<XtreamCategory>(
+          await request("get_live_categories", {}, signal),
+          "live categories",
+        );
+      } catch (error) {
+        if (
+          signal?.aborted ||
+          (error instanceof XtreamCatalogError && error.code === "CANCELLED")
+        ) {
+          throw error;
+        }
+        return [];
+      }
     },
     async getLiveStreams(signal?: AbortSignal, onParseMetrics?: XtreamParseMetricsSink) {
       return requireArray<XtreamLiveItem>(
