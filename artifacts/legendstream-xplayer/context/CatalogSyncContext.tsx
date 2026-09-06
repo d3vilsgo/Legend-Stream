@@ -43,10 +43,12 @@ import {
 } from "@/lib/catalogAvailability";
 import { loadProvider, Provider } from "@/lib/iptv";
 import {
+  beginXtreamCatalogRun,
   getSeries,
   getSeriesCategories,
   getVodCategories,
   getVodStreams,
+  releaseXtreamCatalogRun,
   XtreamCredentials,
   XtreamSeriesItem,
   XtreamVodItem,
@@ -338,6 +340,10 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
           total,
           isInitial ? "Preparing catalog sources" : "Catalog update started",
         );
+
+        // Seed one controller-backed prepared run before sibling tasks start. This makes
+        // single-auth deterministic regardless of which kind reaches the provider first.
+        beginXtreamCatalogRun(credentials, controller.signal);
 
         const outcomes = await runIndependentCatalogKinds([
           {
@@ -637,6 +643,9 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         await publishState(ownership, "error", completed, total, message);
         await refreshSnapshotFor(provider, ownership);
       } finally {
+        // Prepared runs are scoped to one CatalogSync generation. Never let a completed
+        // run be reused by the next manual/background refresh.
+        releaseXtreamCatalogRun(credentials, controller.signal);
         if (
           activeRunIdRef.current === generation &&
           isCatalogSyncOwnershipCurrent(
