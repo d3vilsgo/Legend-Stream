@@ -391,7 +391,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                 }
                 if (!isCancelled()) {
                   completed += 1;
-                  await refreshSnapshotFor(provider, ownership);
                   await publishState(ownership, "syncing", completed, total, "Live TV · published");
                 }
               } catch (caught) {
@@ -494,7 +493,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                 }
                 if (!isCancelled()) {
                   completed += 1;
-                  await refreshSnapshotFor(provider, ownership);
                   await publishState(ownership, "syncing", completed, total, "Movies · published");
                 }
               } catch (caught) {
@@ -562,7 +560,6 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
                 }
                 if (!isCancelled()) {
                   completed += 1;
-                  await refreshSnapshotFor(provider, ownership);
                   await publishState(ownership, "syncing", completed, total, "Series · published");
                 }
               } catch (caught) {
