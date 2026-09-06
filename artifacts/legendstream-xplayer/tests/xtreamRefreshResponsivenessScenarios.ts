@@ -78,8 +78,14 @@ scenario("R5 unique-ID accounting is folded into cooperative projection instead 
 
 scenario("R6 fallback progress persistence is bounded to meaningful milestone buckets", () => {
   assert.match(syncSource, /const PROGRESS_BUCKETS = 10/);
-  assert.match(syncSource, /createProgressPublisher/);
-  assert.doesNotMatch(syncSource, /onFallbackProgress:[\s\S]{0,500}?await publishState\(/);
+  const progressPublisher = syncSource.match(/const createProgressPublisher = \(label:[\s\S]*?\n    \};/)?.[0] ?? "";
+  assert.match(progressPublisher, /let lastBucket = -1/);
+  assert.match(progressPublisher, /Math\.floor\(\(done \* PROGRESS_BUCKETS\) \/ categoryTotal\)/);
+  assert.match(progressPublisher, /if \(bucket <= lastBucket && done < categoryTotal\) return/);
+  assert.match(progressPublisher, /lastBucket = bucket;[\s\S]*await publishState\(/);
+  assert.match(syncSource, /onFallbackProgress: publishVodProgress/);
+  assert.match(syncSource, /onFallbackProgress: publishSeriesProgress/);
+  assert.doesNotMatch(syncSource, /onFallbackProgress:\s*async\s*\([^)]*\)\s*=>[\s\S]{0,240}?publishState\(/);
 });
 
 scenario("R7 prepared SQLite batching and queue serialization remain mandatory", () => {
