@@ -190,9 +190,6 @@ export function beginXtreamCatalogRun(
   const existing = preparedRuns.get(key);
   if (existing && !existing.requestSignal.aborted) {
     if (existing.externalSignal === signal) return existing;
-    // Live bootstrap can win the sibling race before CatalogSync's controller-backed
-    // taxonomy calls begin. Adopt that controller into the provisional run so the same
-    // logical synchronization keeps one auth request and gains real cancellation.
     if (existing.provisional && existing.externalSignal === undefined && signal) {
       existing.externalSignal = signal;
       existing.provisional = false;
@@ -224,13 +221,9 @@ export function beginXtreamCatalogRun(
   };
   preparedRuns.set(key, run);
 
-  // Authentication is the only shared gate. Sibling taxonomy failures stay local to
-  // their kind and must not cause another kind to authenticate again.
   void auth.catch(() => {
     if (preparedRuns.get(key) === run) preparedRuns.delete(key);
   });
-  // Observe taxonomy rejections to avoid unhandled-rejection noise while callers retain
-  // the original rejecting promises and can choose kind-specific fallback behavior.
   void liveTaxonomy.catch(() => undefined);
   void vodTaxonomy.catch(() => undefined);
   void seriesTaxonomy.catch(() => undefined);
@@ -294,16 +287,15 @@ export async function getVodStreams(
   onParseMetrics?: XtreamParseMetricsSink,
 ) {
   const run = beginXtreamCatalogRun(credentials, signal);
-  // Content remains auth-gated, not taxonomy-gated. The orchestrator normally obtains
-  // VOD taxonomy first, but if taxonomy is unavailable it may deliberately probe the
-  // global bulk endpoint without replaying the failed taxonomy promise.
   await run.auth;
   const rows = await run.client.getVodStreams(
     categoryId,
     run.requestSignal,
     onParseMetrics,
   ) as XtreamVodItem[];
-  registerVodQueue(credentials, rows);
+  // Catalog refresh must not materialize a whole-provider playback registry. Paged
+  // playback resolves its bounded window from SQLite; explicit legacy callers may
+  // still register a queue on demand through registerVodPlaybackQueue.
   await yieldToUi();
   return rows;
 }
