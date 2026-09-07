@@ -24,7 +24,7 @@ export function useStalkerLiveCatalogSync(provider: ProviderConfig | null) {
 
   const run = useCallback(async () => {
     if (!provider || provider.type !== "stalker") return;
-    const portalUrl = provider.url || provider.playlistUrl || "";
+    const portalUrl = provider.url;
     const mac = provider.mac?.trim() || "";
     if (!portalUrl || !mac) return;
 
@@ -35,8 +35,7 @@ export function useStalkerLiveCatalogSync(provider: ProviderConfig | null) {
     const providerId = provider.id;
     const isCurrent = () =>
       !controller.signal.aborted &&
-      generationRef.current === generation &&
-      provider.id === providerId;
+      generationRef.current === generation;
 
     setState((current) => ({ ...current, syncing: true }));
     try {
