@@ -4,7 +4,7 @@ import {
   initCatalogCache,
   stagingProviderId,
   swapStagingToProvider,
-  upsertCatalogItemsBulkNonCancellable,
+  upsertCatalogItems,
 } from "./catalogCache";
 import {
   normalizePersistedCatalogPayload,
@@ -31,13 +31,30 @@ export async function stageStalkerLivePage(
   providerId: string,
   items: PersistedLiveCatalogItem[],
   seenAt: number,
+  isCurrent?: StalkerLiveCommitOwnershipCheck,
 ) {
+  const assertCurrent = () => assertStalkerLiveCommitCurrent(isCurrent);
   const stagingId = stagingProviderId(providerId);
   const staged = items.map((item) => ({ ...item, providerId: stagingId }));
-  return upsertCatalogItemsBulkNonCancellable(stagingId, "live", staged, {
+
+  // Stalker uses the cancellable shared writer path here on purpose. The
+  // ownership check runs before queueing, again after the shared-writer wait,
+  // and at the SQLite transaction/statement boundary. Therefore a stale run
+  // can either finish before a newer run's serialized cleanup (and be erased)
+  // or observe lost ownership after that cleanup (and perform no mutation).
+  assertCurrent();
+  const written = await upsertCatalogItems(stagingId, "live", staged, {
     seenAt,
     markNew: false,
+    isCancelled: () => Boolean(isCurrent && !isCurrent()),
+    onBatchStarted: assertCurrent,
+    onSqliteStage: assertCurrent,
   });
+  assertCurrent();
+  if (written !== staged.length) {
+    throw new Error("Stalker Live staging write did not commit the complete page.");
+  }
+  return written;
 }
 
 export async function commitStalkerLiveStaging(
