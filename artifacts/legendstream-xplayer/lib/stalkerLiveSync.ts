@@ -14,6 +14,7 @@ import {
   stageStalkerLivePage,
   stalkerLiveStagingProviderId,
 } from "./stalkerLiveCache";
+import { noteStalkerLivePublishSuccess } from "./stalkerLivePublishRevision";
 import type { PersistedLiveCatalogItem } from "./catalogPersistence";
 
 export type StalkerLiveSyncProvider = { id: string; url: string; mac: string };
@@ -47,6 +48,7 @@ type SyncDependencies = {
     itemCount: number,
     isCurrent?: () => boolean,
   ) => Promise<unknown>;
+  notePublishSuccess?: (providerId: string, kind: "live") => void;
   yieldFn: () => void | Promise<void>;
 };
 
@@ -62,6 +64,7 @@ const productionDependencies: SyncDependencies = {
   cleanupStaging: cleanupStalkerLiveStaging,
   stageItems: stageStalkerLivePage,
   commitStaging: commitStalkerLiveStaging,
+  notePublishSuccess: noteStalkerLivePublishSuccess,
   yieldFn: yieldToUi,
 };
 
@@ -153,6 +156,7 @@ export async function syncStalkerLiveCatalogWithDependencies(
       options.isCurrent,
     );
     assertCurrent(options.signal, options.isCurrent);
+    dependencies.notePublishSuccess?.(providerId, "live");
 
     return {
       pagesFetched: discovery.pagesFetched,

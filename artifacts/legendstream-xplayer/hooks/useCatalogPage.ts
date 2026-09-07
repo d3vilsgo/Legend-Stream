@@ -16,6 +16,10 @@ import {
   type CatalogPageItem,
 } from "@/lib/catalogPageRepository";
 import { getCachedStalkerLivePage } from "@/lib/stalkerLivePageRepository";
+import {
+  readStalkerLivePublishRevision,
+  subscribeStalkerLivePublishRevision,
+} from "@/lib/stalkerLivePublishRevision";
 import type { CatalogRuntimeProvider } from "@/lib/catalogRuntime";
 
 type ItemForKind<K extends CatalogPageKind> = CatalogPageItem<K>;
@@ -82,8 +86,10 @@ export function useCatalogPage<K extends CatalogPageKind>({
   snapshotCount,
 }: UseCatalogPageInput<K>) {
   const [state, setState] = useState<CatalogPageState<ItemForKind<K>>>(() => emptyState());
+  const [stalkerLivePublishRevision, setStalkerLivePublishRevision] = useState(0);
   const flightGuardRef = useRef(new CatalogPageFlightGuard());
   const generationRef = useRef(0);
+  const observedStalkerLivePublishRevisionRef = useRef(0);
   const pendingCommitRef = useRef<{
     startedAt: number;
     request: Pick<CatalogPageRequest, "providerType" | "kind" | "limit">;
@@ -118,6 +124,22 @@ export function useCatalogPage<K extends CatalogPageKind>({
     snapshotTotal: snapshotCount?.totalCount ?? null,
     snapshotCountKnown: snapshotCount?.countKnown ?? false,
   });
+
+  useEffect(() => {
+    if (!stalkerLive || !provider?.id) {
+      observedStalkerLivePublishRevisionRef.current = 0;
+      setStalkerLivePublishRevision(0);
+      return;
+    }
+    const currentRevision = readStalkerLivePublishRevision(provider.id, "live");
+    observedStalkerLivePublishRevisionRef.current = currentRevision;
+    setStalkerLivePublishRevision(currentRevision);
+    return subscribeStalkerLivePublishRevision(
+      provider.id,
+      "live",
+      setStalkerLivePublishRevision,
+    );
+  }, [stalkerLive, provider?.id]);
 
   const loadPage = useCallback(async (
     cursor: string | null,
@@ -265,6 +287,13 @@ export function useCatalogPage<K extends CatalogPageKind>({
     });
     void loadPage(null, "initial", generation);
   }, [effectiveEnabled, provider, baseRequest, queryKey, resolvedSnapshotTotal, loadPage]);
+
+  useEffect(() => {
+    if (!stalkerLive || stalkerLivePublishRevision <= 0) return;
+    if (observedStalkerLivePublishRevisionRef.current === stalkerLivePublishRevision) return;
+    observedStalkerLivePublishRevisionRef.current = stalkerLivePublishRevision;
+    reload();
+  }, [stalkerLive, stalkerLivePublishRevision, reload]);
 
   return {
     ...state,
