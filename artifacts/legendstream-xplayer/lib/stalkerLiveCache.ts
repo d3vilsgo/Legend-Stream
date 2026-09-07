@@ -1,11 +1,6 @@
 import * as SQLite from "expo-sqlite";
-import {
-  cleanupStagingCatalog,
-  initCatalogCache,
-  stagingProviderId,
-  swapStagingToProvider,
-  upsertCatalogItems,
-} from "./catalogCache";
+import { initCatalogCache, upsertCatalogItems } from "./catalogCache";
+import { enqueueCatalogDbWrite } from "./catalogDbWriter";
 import {
   normalizePersistedCatalogPayload,
   type PersistedLiveCatalogItem,
@@ -15,6 +10,8 @@ import { assertStalkerLiveCommitCurrent, type StalkerLiveCommitOwnershipCheck } 
 import type { StalkerLiveCategory } from "./stalkerLiveCatalog";
 
 const CATALOG_DB_NAME = "legendstream-catalog-v1.db";
+const STALKER_STAGING_PREFIX = "__staging__";
+const STALKER_STAGING_MARKER = "__stalker_run__";
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 async function database() {
@@ -23,25 +20,46 @@ async function database() {
   return databasePromise;
 }
 
-export async function cleanupStalkerLiveStaging(providerId: string) {
-  return cleanupStagingCatalog(providerId);
+export function stalkerLiveStagingProviderId(providerId: string, runToken: string) {
+  const provider = providerId.trim();
+  const token = runToken.trim();
+  if (!provider || !token) throw new Error("Stalker Live staging requires provider and run identity.");
+  return `${STALKER_STAGING_PREFIX}${provider}${STALKER_STAGING_MARKER}${token}`;
+}
+
+function assertStalkerLiveStagingTarget(providerId: string, stagingId: string) {
+  const expectedPrefix = `${STALKER_STAGING_PREFIX}${providerId.trim()}${STALKER_STAGING_MARKER}`;
+  if (!providerId.trim() || !stagingId.startsWith(expectedPrefix) || stagingId.length === expectedPrefix.length) {
+    throw new Error("Stalker Live staging target does not belong to this provider run.");
+  }
+}
+
+export async function cleanupStalkerLiveStaging(providerId: string, stagingId: string) {
+  assertStalkerLiveStagingTarget(providerId, stagingId);
+  const db = await database();
+  return enqueueCatalogDbWrite(async () => {
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      await txn.runAsync("DELETE FROM catalog_items WHERE provider_id = ?", stagingId);
+      await txn.runAsync("DELETE FROM catalog_categories WHERE provider_id = ?", stagingId);
+      await txn.runAsync("DELETE FROM catalog_sync_state WHERE provider_id = ?", stagingId);
+    });
+  });
 }
 
 export async function stageStalkerLivePage(
   providerId: string,
+  stagingId: string,
   items: PersistedLiveCatalogItem[],
   seenAt: number,
   isCurrent?: StalkerLiveCommitOwnershipCheck,
 ) {
+  assertStalkerLiveStagingTarget(providerId, stagingId);
   const assertCurrent = () => assertStalkerLiveCommitCurrent(isCurrent);
-  const stagingId = stagingProviderId(providerId);
   const staged = items.map((item) => ({ ...item, providerId: stagingId }));
 
-  // Stalker uses the cancellable shared writer path here on purpose. The
-  // ownership check runs before queueing, again after the shared-writer wait,
-  // and at the SQLite transaction/statement boundary. Therefore a stale run
-  // can either finish before a newer run's serialized cleanup (and be erased)
-  // or observe lost ownership after that cleanup (and perform no mutation).
+  // Each sync run owns a physically distinct staging namespace. Ownership
+  // checks still guard queued writes, while stale cleanup can only delete the
+  // stale run's own namespace and therefore cannot damage a newer run.
   assertCurrent();
   const written = await upsertCatalogItems(stagingId, "live", staged, {
     seenAt,
@@ -59,26 +77,78 @@ export async function stageStalkerLivePage(
 
 export async function commitStalkerLiveStaging(
   providerId: string,
+  stagingId: string,
   categories: readonly StalkerLiveCategory[],
   itemCount: number,
   isCurrent?: StalkerLiveCommitOwnershipCheck,
 ) {
+  assertStalkerLiveStagingTarget(providerId, stagingId);
   const assertCurrent = () => assertStalkerLiveCommitCurrent(isCurrent);
   assertCurrent();
-  return swapStagingToProvider({
-    providerId,
-    kinds: ["live"],
-    liveCategories: categories.map((category) => ({
-      category_id: category.id,
-      category_name: category.name,
-    })),
-    vodCategories: [],
-    seriesCategories: [],
-    readyMessage: "Stalker Live catalog ready",
-    readyStamp: "background",
-    syncTotal: itemCount,
-    committedCounts: { live: itemCount, vod: 0, series: 0 },
-    assertStillOwned: assertCurrent,
+  const db = await database();
+
+  return enqueueCatalogDbWrite(async () => {
+    assertCurrent();
+    await db.withExclusiveTransactionAsync(async (txn) => {
+      assertCurrent();
+      const stagedCountRow = await txn.getFirstAsync<{ count: number }>(
+        "SELECT COUNT(*) AS count FROM catalog_items WHERE provider_id = ? AND kind = 'live'",
+        stagingId,
+      );
+      const stagedCount = Number(stagedCountRow?.count ?? 0);
+      if (stagedCount !== itemCount) {
+        throw new Error("Stalker Live staging cardinality changed before publish.");
+      }
+
+      assertCurrent();
+      await txn.runAsync("DELETE FROM catalog_items WHERE provider_id = ? AND kind = 'live'", providerId);
+      assertCurrent();
+      await txn.runAsync("DELETE FROM catalog_categories WHERE provider_id = ? AND kind = 'live'", providerId);
+      assertCurrent();
+      await txn.runAsync(
+        "UPDATE catalog_items SET provider_id = ? WHERE provider_id = ? AND kind = 'live'",
+        providerId,
+        stagingId,
+      );
+
+      for (const category of categories) {
+        assertCurrent();
+        await txn.runAsync(
+          `INSERT OR REPLACE INTO catalog_categories
+           (provider_id, kind, category_id, category_name, parent_id)
+           VALUES (?, 'live', ?, ?, NULL)`,
+          providerId,
+          category.id,
+          category.name || category.id,
+        );
+      }
+
+      assertCurrent();
+      const now = Date.now();
+      await txn.runAsync(
+        `INSERT INTO catalog_sync_state (
+           provider_id, phase, completed, total, message, updated_at,
+           last_full_sync_at, last_background_sync_at
+         ) VALUES (?, 'ready', ?, ?, ?, ?, NULL, ?)
+         ON CONFLICT(provider_id) DO UPDATE SET
+           phase = excluded.phase,
+           completed = excluded.completed,
+           total = excluded.total,
+           message = excluded.message,
+           updated_at = excluded.updated_at,
+           last_full_sync_at = COALESCE(excluded.last_full_sync_at, catalog_sync_state.last_full_sync_at),
+           last_background_sync_at = COALESCE(excluded.last_background_sync_at, catalog_sync_state.last_background_sync_at)`,
+        providerId,
+        itemCount,
+        itemCount,
+        "Stalker Live catalog ready",
+        now,
+        now,
+      );
+      assertCurrent();
+    });
+    assertCurrent();
+    return { live: itemCount, vod: 0, series: 0 };
   });
 }
 
