@@ -3,14 +3,18 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath } from "node:url";
-import { enqueueCatalogDbWrite } from "../lib/catalogDbWriter";
+import type { PersistedLiveCatalogItem } from "../lib/catalogPersistence";
+import {
+  cleanupStalkerLiveStaging,
+  commitStalkerLiveStaging,
+  stageStalkerLivePage,
+  type StalkerLiveCacheDependencies,
+} from "../lib/stalkerLiveCache";
 import { resolveStalkerLiveCreateLink } from "../lib/stalkerLiveCatalog";
 import { stalkerLiveStagingProviderId } from "../lib/stalkerLiveStaging";
 import { createStalkerPortalSession, StalkerPortalError } from "../lib/stalkerPortal";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const cacheSource = readFileSync(resolve(ROOT, "lib/stalkerLiveCache.ts"), "utf8");
-const syncSource = readFileSync(resolve(ROOT, "lib/stalkerLiveSync.ts"), "utf8");
 const playerSource = readFileSync(resolve(ROOT, "components/CompatibilityVideoPlayerV2.tsx"), "utf8");
 
 let passed = 0;
@@ -31,23 +35,116 @@ async function expectCancelled(promise: Promise<unknown>) {
 function createRaceDatabase() {
   const db = new DatabaseSync(":memory:");
   db.exec(`
+    PRAGMA foreign_keys = ON;
+
+    CREATE TABLE catalog_categories (
+      provider_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      category_id TEXT NOT NULL,
+      category_name TEXT NOT NULL,
+      parent_id INTEGER,
+      PRIMARY KEY (provider_id, kind, category_id)
+    );
+
     CREATE TABLE catalog_items (
       provider_id TEXT NOT NULL,
       kind TEXT NOT NULL,
       item_id TEXT NOT NULL,
+      category_id TEXT,
+      name TEXT NOT NULL,
+      image_url TEXT,
+      payload TEXT NOT NULL,
+      added_at INTEGER NOT NULL DEFAULT 0,
+      first_seen_at INTEGER NOT NULL,
+      last_seen_at INTEGER NOT NULL,
+      is_new INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (provider_id, kind, item_id)
+    );
+
+    CREATE TABLE catalog_sync_state (
+      provider_id TEXT PRIMARY KEY NOT NULL,
+      phase TEXT NOT NULL,
+      completed INTEGER NOT NULL DEFAULT 0,
+      total INTEGER NOT NULL DEFAULT 0,
+      message TEXT,
+      updated_at INTEGER NOT NULL,
+      last_full_sync_at INTEGER,
+      last_background_sync_at INTEGER
     );
   `);
   return db;
 }
 
-function insertLive(db: DatabaseSync, providerId: string, itemId: string) {
-  db.prepare("INSERT OR REPLACE INTO catalog_items (provider_id, kind, item_id) VALUES (?, 'live', ?)")
-    .run(providerId, itemId);
+function createExpoSqliteAdapter(db: DatabaseSync): NonNullable<StalkerLiveCacheDependencies["database"]> {
+  const transaction = {
+    async runAsync(sql: string, ...params: Array<string | number | null>) {
+      const result = db.prepare(sql).run(...params);
+      return { changes: Number(result.changes), lastInsertRowId: Number(result.lastInsertRowid) };
+    },
+    async getFirstAsync<T>(sql: string, ...params: Array<string | number | null>) {
+      return (db.prepare(sql).get(...params) as T | undefined) ?? null;
+    },
+    async getAllAsync<T>(sql: string, ...params: Array<string | number | null>) {
+      return db.prepare(sql).all(...params) as T[];
+    },
+    async prepareAsync(sql: string) {
+      const statement = db.prepare(sql);
+      return {
+        async executeAsync(params: Array<string | number | null>) {
+          return statement.run(...params);
+        },
+        async finalizeAsync() {},
+      };
+    },
+  };
+
+  return {
+    ...transaction,
+    async execAsync(sql: string) {
+      db.exec(sql);
+    },
+    async withExclusiveTransactionAsync(task: (txn: typeof transaction) => Promise<void>) {
+      db.exec("BEGIN IMMEDIATE");
+      try {
+        await task(transaction);
+        db.exec("COMMIT");
+      } catch (error) {
+        db.exec("ROLLBACK");
+        throw error;
+      }
+    },
+  } as unknown as NonNullable<StalkerLiveCacheDependencies["database"]>;
 }
 
-function cleanupNamespace(db: DatabaseSync, stagingId: string) {
-  db.prepare("DELETE FROM catalog_items WHERE provider_id = ?").run(stagingId);
+function liveItem(providerId: string, itemId: string, category = "news"): PersistedLiveCatalogItem {
+  return {
+    schemaVersion: 1,
+    catalogKind: "live",
+    providerId,
+    id: itemId,
+    name: itemId,
+    category,
+    categoryName: category,
+    contentType: "live",
+    playbackRef: { type: "stalker-live", portalId: itemId, cmd: `ffmpeg http://stream.invalid/${itemId}` },
+  };
+}
+
+function seedActiveCatalog(db: DatabaseSync, providerId: string, itemId: string) {
+  const item = liveItem(providerId, itemId, "old-category");
+  db.prepare(`INSERT INTO catalog_items (
+      provider_id, kind, item_id, category_id, name, image_url, payload,
+      added_at, first_seen_at, last_seen_at, is_new
+    ) VALUES (?, 'live', ?, ?, ?, NULL, ?, 0, 1, 1, 0)`)
+    .run(providerId, itemId, item.category, item.name, JSON.stringify(item));
+  db.prepare(`INSERT INTO catalog_categories
+      (provider_id, kind, category_id, category_name, parent_id)
+    VALUES (?, 'live', 'old-category', 'Old category', NULL)`)
+    .run(providerId);
+  db.prepare(`INSERT INTO catalog_sync_state
+      (provider_id, phase, completed, total, message, updated_at, last_full_sync_at, last_background_sync_at)
+    VALUES (?, 'ready', 1, 1, 'Old catalog ready', 1, 1, 1)`)
+    .run(providerId);
 }
 
 function liveIds(db: DatabaseSync, providerId: string) {
@@ -56,139 +153,172 @@ function liveIds(db: DatabaseSync, providerId: string) {
   ).all(providerId).map((row) => String((row as { item_id: string }).item_id));
 }
 
-function publishNamespace(db: DatabaseSync, providerId: string, stagingId: string, expectedCount: number) {
-  db.exec("BEGIN IMMEDIATE");
-  try {
-    const row = db.prepare(
-      "SELECT COUNT(*) AS count FROM catalog_items WHERE provider_id = ? AND kind = 'live'",
-    ).get(stagingId) as { count: number } | undefined;
-    if (Number(row?.count ?? 0) !== expectedCount) {
-      throw new Error("Stalker Live staging cardinality changed before publish.");
-    }
-    db.prepare("DELETE FROM catalog_items WHERE provider_id = ? AND kind = 'live'").run(providerId);
-    db.prepare(
-      "UPDATE catalog_items SET provider_id = ? WHERE provider_id = ? AND kind = 'live'",
-    ).run(providerId, stagingId);
-    db.exec("COMMIT");
-  } catch (error) {
-    db.exec("ROLLBACK");
-    throw error;
-  }
+function categories(db: DatabaseSync, providerId: string) {
+  return db.prepare(
+    "SELECT category_id, category_name FROM catalog_categories WHERE provider_id = ? AND kind = 'live' ORDER BY category_id",
+  ).all(providerId).map((row) => ({
+    category_id: String((row as { category_id: string }).category_id),
+    category_name: String((row as { category_name: string }).category_name),
+  }));
 }
 
-function assertProductionRunScopedWiring() {
-  assert.match(cacheSource, /cleanupStalkerLiveStaging\(providerId: string, stagingId: string\)/);
-  assert.match(cacheSource, /DELETE FROM catalog_items WHERE provider_id = \?"?,?\s*stagingId/s);
-  assert.match(cacheSource, /upsertCatalogItems\(stagingId, "live", staged/);
-  assert.match(cacheSource, /isCancelled:\s*\(\) => Boolean\(isCurrent && !isCurrent\(\)\)/);
-  assert.match(cacheSource, /onBatchStarted:\s*assertCurrent/);
-  assert.match(cacheSource, /onSqliteStage:\s*assertCurrent/);
-  assert.match(cacheSource, /SELECT COUNT\(\*\) AS count FROM catalog_items WHERE provider_id = \? AND kind = 'live'/);
-  const countCheck = cacheSource.indexOf("stagedCount !== itemCount");
-  const activeDelete = cacheSource.indexOf("DELETE FROM catalog_items WHERE provider_id = ? AND kind = 'live'", countCheck);
-  assert.ok(countCheck >= 0 && activeDelete > countCheck, "cardinality must be checked before active Live deletion");
-
-  assert.match(syncSource, /const stagingId = stalkerLiveStagingProviderId\(/);
-  assert.match(syncSource, /cleanupStalkerLiveStaging\(providerId, stagingId\)/);
-  assert.match(syncSource, /stageStalkerLivePage\(providerId, stagingId, items, syncStartedAt, options\.isCurrent\)/);
-  assert.match(syncSource, /commitStalkerLiveStaging\(\s*providerId,\s*stagingId,/s);
+function syncState(db: DatabaseSync, providerId: string) {
+  return db.prepare(`SELECT phase, completed, total, message, last_full_sync_at, last_background_sync_at
+    FROM catalog_sync_state WHERE provider_id = ?`).get(providerId);
 }
 
 async function main() {
-  await scenario("stale queued stage cannot contaminate a newer run-scoped staging namespace", async () => {
-    assertProductionRunScopedWiring();
+  await scenario("production cleanup stage and commit preserve B across stale A cleanup", async () => {
     const providerId = "provider-race-stage";
     const stagingA = stalkerLiveStagingProviderId(providerId, "run-a");
     const stagingB = stalkerLiveStagingProviderId(providerId, "run-b");
     assert.notEqual(stagingA, stagingB);
 
     const db = createRaceDatabase();
-    insertLive(db, providerId, "old-good");
-    let runACurrent = true;
-    let releaseWriter!: () => void;
-    const writerGate = new Promise<void>((resolveGate) => { releaseWriter = resolveGate; });
+    const dependencies = { database: createExpoSqliteAdapter(db) };
+    try {
+      seedActiveCatalog(db, providerId, "old-good");
+      await stageStalkerLivePage(providerId, stagingA, [liveItem(providerId, "A-stale")], 10, () => true, dependencies);
 
-    const blocker = enqueueCatalogDbWrite(async () => writerGate);
-    const delayedA = enqueueCatalogDbWrite(async () => {
-      if (!runACurrent) return;
-      insertLive(db, stagingA, "A-stale");
-    });
+      await cleanupStalkerLiveStaging(providerId, stagingB, dependencies);
+      await stageStalkerLivePage(providerId, stagingB, [liveItem(providerId, "B-current")], 20, () => true, dependencies);
+      assert.deepEqual(liveIds(db, stagingA), ["A-stale"]);
+      assert.deepEqual(liveIds(db, stagingB), ["B-current"], "B staging must physically exist before commit");
 
-    runACurrent = false;
-    const cleanupB = enqueueCatalogDbWrite(async () => cleanupNamespace(db, stagingB));
-    const stageB = enqueueCatalogDbWrite(async () => insertLive(db, stagingB, "B-current"));
-    const publishB = enqueueCatalogDbWrite(async () => publishNamespace(db, providerId, stagingB, 1));
+      await cleanupStalkerLiveStaging(providerId, stagingA, dependencies);
+      assert.deepEqual(liveIds(db, stagingA), []);
+      assert.deepEqual(liveIds(db, stagingB), ["B-current"], "stale A cleanup must not delete B staging");
 
-    releaseWriter();
-    await Promise.all([blocker, delayedA, cleanupB, stageB, publishB]);
-
-    assert.deepEqual(liveIds(db, providerId), ["B-current"]);
-    assert.deepEqual(liveIds(db, stagingA), []);
-    assert.deepEqual(liveIds(db, stagingB), []);
-    db.close();
+      await commitStalkerLiveStaging(
+        providerId,
+        stagingB,
+        [{ id: "news", name: "News" }],
+        1,
+        () => true,
+        dependencies,
+      );
+      assert.deepEqual(liveIds(db, providerId), ["B-current"]);
+      assert.deepEqual(liveIds(db, stagingA), []);
+      assert.deepEqual(liveIds(db, stagingB), []);
+      assert.deepEqual(categories(db, providerId), [{ category_id: "news", category_name: "News" }]);
+      const publishedState = syncState(db, providerId) as {
+        phase: string;
+        completed: number;
+        total: number;
+        message: string;
+        last_full_sync_at: number;
+        last_background_sync_at: number;
+      };
+      assert.deepEqual({ ...publishedState, last_background_sync_at: 0 }, {
+        phase: "ready",
+        completed: 1,
+        total: 1,
+        message: "Stalker Live catalog ready",
+        last_full_sync_at: 1,
+        last_background_sync_at: 0,
+      });
+      assert.ok(publishedState.last_background_sync_at > 1);
+    } finally {
+      db.close();
+    }
   });
 
-  await scenario("stale finally cleanup cannot delete B staging after B has staged", async () => {
-    assertProductionRunScopedWiring();
-    const providerId = "provider-race-finally";
-    const stagingA = stalkerLiveStagingProviderId(providerId, "run-a");
-    const stagingB = stalkerLiveStagingProviderId(providerId, "run-b");
-    const db = createRaceDatabase();
-    insertLive(db, providerId, "old-good");
-
-    await enqueueCatalogDbWrite(async () => cleanupNamespace(db, stagingB));
-    await enqueueCatalogDbWrite(async () => insertLive(db, stagingB, "B-1"));
-    await enqueueCatalogDbWrite(async () => insertLive(db, stagingB, "B-2"));
-
-    // Run A is stale here. Its unconditional finally cleanup is still legal,
-    // but run-scoped identity constrains it to A's physical namespace.
-    await enqueueCatalogDbWrite(async () => cleanupNamespace(db, stagingA));
-
-    assert.deepEqual(liveIds(db, providerId), ["old-good"], "stale cleanup must not touch active good catalog");
-    assert.deepEqual(liveIds(db, stagingB), ["B-1", "B-2"], "stale cleanup must not touch B staging");
-
-    await enqueueCatalogDbWrite(async () => publishNamespace(db, providerId, stagingB, 2));
-    assert.deepEqual(liveIds(db, providerId), ["B-1", "B-2"]);
-    assert.deepEqual(liveIds(db, stagingA), []);
-    assert.deepEqual(liveIds(db, stagingB), []);
-    db.close();
-  });
-
-  await scenario("A staged rows then stale cleanup cannot affect B cleanup stage and publish", async () => {
+  await scenario("production run-scoped DB path isolates A stage from B cleanup stage and publish", async () => {
     const providerId = "provider-race-secondary";
     const stagingA = stalkerLiveStagingProviderId(providerId, "run-a");
     const stagingB = stalkerLiveStagingProviderId(providerId, "run-b");
+    assert.notEqual(stagingA, stagingB);
     const db = createRaceDatabase();
-    insertLive(db, providerId, "old-good-2");
+    const dependencies = { database: createExpoSqliteAdapter(db) };
+    let currentRun: "a" | "b" = "a";
+    try {
+      seedActiveCatalog(db, providerId, "old-good-2");
+      await stageStalkerLivePage(
+        providerId,
+        stagingA,
+        [liveItem(providerId, "A-before-loss")],
+        30,
+        () => currentRun === "a",
+        dependencies,
+      );
 
-    await enqueueCatalogDbWrite(async () => insertLive(db, stagingA, "A-before-loss"));
-    await enqueueCatalogDbWrite(async () => cleanupNamespace(db, stagingB));
-    await enqueueCatalogDbWrite(async () => insertLive(db, stagingB, "B-after-cleanup"));
-    await enqueueCatalogDbWrite(async () => cleanupNamespace(db, stagingA));
+      currentRun = "b";
+      await cleanupStalkerLiveStaging(providerId, stagingB, dependencies);
+      await stageStalkerLivePage(
+        providerId,
+        stagingB,
+        [liveItem(providerId, "B-1"), liveItem(providerId, "B-2")],
+        40,
+        () => currentRun === "b",
+        dependencies,
+      );
+      await cleanupStalkerLiveStaging(providerId, stagingA, dependencies);
 
-    assert.deepEqual(liveIds(db, providerId), ["old-good-2"]);
-    assert.deepEqual(liveIds(db, stagingA), []);
-    assert.deepEqual(liveIds(db, stagingB), ["B-after-cleanup"]);
+      assert.deepEqual(liveIds(db, providerId), ["old-good-2"]);
+      assert.deepEqual(liveIds(db, stagingA), []);
+      assert.deepEqual(liveIds(db, stagingB), ["B-1", "B-2"]);
 
-    await enqueueCatalogDbWrite(async () => publishNamespace(db, providerId, stagingB, 1));
-    assert.deepEqual(liveIds(db, providerId), ["B-after-cleanup"]);
-    db.close();
+      await commitStalkerLiveStaging(providerId, stagingB, [], 2, () => currentRun === "b", dependencies);
+      assert.deepEqual(liveIds(db, providerId), ["B-1", "B-2"]);
+      assert.deepEqual(liveIds(db, stagingA), []);
+      assert.deepEqual(liveIds(db, stagingB), []);
+    } finally {
+      db.close();
+    }
   });
 
-  await scenario("zero or partial staging fails closed before destroying active good catalog", async () => {
+  await scenario("production commit cardinality failure preserves active items categories and state", async () => {
     const providerId = "provider-cardinality";
     const stagingB = stalkerLiveStagingProviderId(providerId, "run-b");
     const db = createRaceDatabase();
-    insertLive(db, providerId, "old-good-cardinality");
-    insertLive(db, stagingB, "B-partial");
+    const dependencies = { database: createExpoSqliteAdapter(db) };
+    try {
+      seedActiveCatalog(db, providerId, "old-good-cardinality");
+      await stageStalkerLivePage(providerId, stagingB, [liveItem(providerId, "B-partial")], 50, () => true, dependencies);
+      const oldCategories = categories(db, providerId);
+      const oldState = syncState(db, providerId);
 
-    await assert.rejects(
-      enqueueCatalogDbWrite(async () => publishNamespace(db, providerId, stagingB, 2)),
-      /staging cardinality changed before publish/i,
-    );
-    assert.deepEqual(liveIds(db, providerId), ["old-good-cardinality"]);
-    assert.deepEqual(liveIds(db, stagingB), ["B-partial"]);
-    db.close();
+      await assert.rejects(
+        commitStalkerLiveStaging(providerId, stagingB, [{ id: "news", name: "News" }], 2, () => true, dependencies),
+        /staging cardinality changed before publish/i,
+      );
+      assert.deepEqual(liveIds(db, providerId), ["old-good-cardinality"]);
+      assert.deepEqual(liveIds(db, stagingB), ["B-partial"]);
+      assert.deepEqual(categories(db, providerId), oldCategories);
+      assert.deepEqual(syncState(db, providerId), oldState);
+    } finally {
+      db.close();
+    }
+  });
+
+  await scenario("production commit ownership loss aborts before destructive mutation", async () => {
+    const providerId = "provider-ownership-loss";
+    const stagingB = stalkerLiveStagingProviderId(providerId, "run-b");
+    const db = createRaceDatabase();
+    const dependencies = { database: createExpoSqliteAdapter(db) };
+    try {
+      seedActiveCatalog(db, providerId, "old-good-ownership");
+      await stageStalkerLivePage(providerId, stagingB, [liveItem(providerId, "B-ready")], 60, () => true, dependencies);
+      const oldCategories = categories(db, providerId);
+      const oldState = syncState(db, providerId);
+      let ownershipChecks = 0;
+      const losesOwnershipBeforeDelete = () => {
+        ownershipChecks += 1;
+        return ownershipChecks < 4;
+      };
+
+      await assert.rejects(
+        commitStalkerLiveStaging(providerId, stagingB, [], 1, losesOwnershipBeforeDelete, dependencies),
+        (caught: unknown) => caught instanceof StalkerPortalError && caught.code === "CANCELLED",
+      );
+      assert.equal(ownershipChecks, 4, "ownership must be challenged after cardinality and before active delete");
+      assert.deepEqual(liveIds(db, providerId), ["old-good-ownership"]);
+      assert.deepEqual(liveIds(db, stagingB), ["B-ready"]);
+      assert.deepEqual(categories(db, providerId), oldCategories);
+      assert.deepEqual(syncState(db, providerId), oldState);
+    } finally {
+      db.close();
+    }
   });
 
   await scenario("player switch aborts pending create_link without auth retry and B proceeds", async () => {

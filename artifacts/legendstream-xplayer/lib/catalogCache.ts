@@ -58,6 +58,7 @@ type CatalogWriteOptions = {
   onBatchStarted?: (batchIndex: number) => void;
   onBatchCommitted?: (observation: CatalogWriteBatchObservation) => void;
   onSqliteStage?: (stage: CatalogWriteSqliteStage) => void;
+  database?: CatalogWriteDatabase;
 };
 
 type CatalogBulkNonCancellableWriteOptions = {
@@ -450,7 +451,7 @@ export async function upsertCatalogItems(
   items: PersistedCatalogItem[],
   options: CatalogWriteOptions = {},
 ) {
-  const db = await database();
+  const db = options.database ?? await database();
   const now = options.seenAt ?? Date.now();
   let written = 0;
 

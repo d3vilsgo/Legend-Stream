@@ -15,6 +15,10 @@ import type { StalkerLiveCategory } from "./stalkerLiveCatalog";
 
 export { stalkerLiveStagingProviderId } from "./stalkerLiveStaging";
 
+export type StalkerLiveCacheDependencies = {
+  database?: SQLite.SQLiteDatabase;
+};
+
 const CATALOG_DB_NAME = "legendstream-catalog-v1.db";
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
@@ -24,9 +28,13 @@ async function database() {
   return databasePromise;
 }
 
-export async function cleanupStalkerLiveStaging(providerId: string, stagingId: string) {
+export async function cleanupStalkerLiveStaging(
+  providerId: string,
+  stagingId: string,
+  dependencies: StalkerLiveCacheDependencies = {},
+) {
   assertStalkerLiveStagingTarget(providerId, stagingId);
-  const db = await database();
+  const db = dependencies.database ?? await database();
   return enqueueCatalogDbWrite(async () => {
     await db.withExclusiveTransactionAsync(async (txn) => {
       await txn.runAsync("DELETE FROM catalog_items WHERE provider_id = ?", stagingId);
@@ -42,6 +50,7 @@ export async function stageStalkerLivePage(
   items: PersistedLiveCatalogItem[],
   seenAt: number,
   isCurrent?: StalkerLiveCommitOwnershipCheck,
+  dependencies: StalkerLiveCacheDependencies = {},
 ) {
   assertStalkerLiveStagingTarget(providerId, stagingId);
   const assertCurrent = () => assertStalkerLiveCommitCurrent(isCurrent);
@@ -57,6 +66,7 @@ export async function stageStalkerLivePage(
     isCancelled: () => Boolean(isCurrent && !isCurrent()),
     onBatchStarted: assertCurrent,
     onSqliteStage: assertCurrent,
+    database: dependencies.database,
   });
   assertCurrent();
   if (written !== staged.length) {
@@ -71,11 +81,12 @@ export async function commitStalkerLiveStaging(
   categories: readonly StalkerLiveCategory[],
   itemCount: number,
   isCurrent?: StalkerLiveCommitOwnershipCheck,
+  dependencies: StalkerLiveCacheDependencies = {},
 ) {
   assertStalkerLiveStagingTarget(providerId, stagingId);
   const assertCurrent = () => assertStalkerLiveCommitCurrent(isCurrent);
   assertCurrent();
-  const db = await database();
+  const db = dependencies.database ?? await database();
 
   return enqueueCatalogDbWrite(async () => {
     assertCurrent();
