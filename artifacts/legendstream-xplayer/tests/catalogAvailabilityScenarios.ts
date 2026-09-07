@@ -25,6 +25,10 @@ const xtreamSource = fs.readFileSync(
   path.join(process.cwd(), "lib/xtreamCatalog.ts"),
   "utf8",
 );
+const xtreamClientSource = fs.readFileSync(
+  path.join(process.cwd(), "lib/xtream/client.ts"),
+  "utf8",
+);
 
 const fullCounts = { live: 5264, vod: 22675, series: 4120 };
 const emptyCounts = { live: 0, vod: 0, series: 0 };
@@ -77,8 +81,11 @@ expect(
   contextSource.includes("getVodCategories(credentials, controller.signal)") &&
   contextSource.includes("getSeries(credentials, category.category_id, controller.signal)") &&
   xtreamSource.includes("signal?: AbortSignal") &&
-  xtreamSource.includes("if (signal?.aborted) throw caught;"),
-  "Cancel must abort the active Xtream fetch through a real AbortController signal",
+  xtreamSource.includes("await run.auth") &&
+  xtreamSource.includes("linkExternalAbort(signal, existing.requestController)") &&
+  xtreamClientSource.includes("external?.aborted") &&
+  xtreamClientSource.includes('"CANCELLED"'),
+  "Cancel must propagate the active Xtream AbortController signal through the canonical auth-gated client",
 );
 
 process.stdout.write(`catalog availability scenarios: ${passed}/7 passed\n`);

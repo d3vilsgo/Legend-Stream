@@ -52,7 +52,8 @@ function main() {
 
   scenario("Xtream routing remains outside M3U classification", () => {
     assert.match(iptvSource, /if \(provider\.type === "xtream"\) return loadXtream\(provider\);/);
-    assert.match(iptvSource, /action", "get_live_streams"/);
+    assert.match(iptvSource, /loadXtreamLiveCatalogFromPreparedRun\(credentials\)/);
+    assert.doesNotMatch(iptvSource, /action", "get_live_streams"/);
     assert.doesNotMatch(iptvSource, /m3uStructuralClassification/);
   });
 

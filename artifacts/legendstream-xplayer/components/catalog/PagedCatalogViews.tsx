@@ -18,11 +18,15 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FocusButton } from "@/components/FocusButton";
 import type { EpgProgram, ProviderConfig, ProviderType } from "@/context/PlayerContext";
-import { selectProgramsAt } from "@/context/PlayerContext";
+import { selectProgramsAt, usePlayer } from "@/context/PlayerContext";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { useCatalogPage } from "@/hooks/useCatalogPage";
 import { getCachedCatalogCategories } from "@/lib/catalogPageRepository";
+import {
+  EPG_PAGED_SEED_LIMIT,
+  registerEpgChannels,
+} from "@/lib/epgRuntime";
 import {
   readCatalogCategorySelection,
   rememberCatalogCategorySelection,
@@ -419,6 +423,7 @@ export function PagedLiveCatalog({
 }) {
   const colors = useColors();
   const { t } = useI18n();
+  const { refreshEpg } = usePlayer();
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [epgClock, setEpgClock] = useState(() => Date.now());
@@ -437,6 +442,10 @@ export function PagedLiveCatalog({
   });
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
+  const epgSeedKey = useMemo(
+    () => page.items.slice(0, EPG_PAGED_SEED_LIMIT).map((channel) => channel.id).join("|"),
+    [page.items],
+  );
 
   useEffect(() => {
     onDrawerVisibilityChange(drawerOpen);
@@ -447,6 +456,15 @@ export function PagedLiveCatalog({
     return () => clearInterval(timer);
   }, []);
   useEffect(() => setEpgClock(Date.now()), [category, search]);
+  useEffect(() => {
+    if (!epgSeedKey) return;
+    const seed = page.items.slice(0, EPG_PAGED_SEED_LIMIT);
+    registerEpgChannels(provider.id, seed);
+    const timer = setTimeout(() => {
+      void refreshEpg(provider.id);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [epgSeedKey, provider.id, refreshEpg]);
   const initialEmpty = page.loadingInitial && page.items.length === 0;
   if (initialEmpty) return <CatalogLoadingSkeleton text={t("loading")} />;
 

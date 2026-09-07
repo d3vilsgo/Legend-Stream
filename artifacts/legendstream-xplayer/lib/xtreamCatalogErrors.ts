@@ -1,8 +1,11 @@
 export type XtreamCatalogErrorCode =
+  | "INVALID_URL"
+  | "AUTHENTICATION"
   | "INVALID_RESPONSE"
   | "UNSUPPORTED_RESPONSE"
   | "NOT_FOUND"
   | "TIMEOUT"
+  | "CANCELLED"
   | "UNREACHABLE"
   | "HTTP_ERROR";
 

@@ -1,4 +1,4 @@
-import { normalizeXtreamBaseUrl } from "@/lib/iptv";
+import { createXtreamClient, type XtreamCredentials } from "@/lib/xtream/client";
 
 export type XtreamAccountInfo = {
   status?: string;
@@ -9,12 +9,6 @@ export type XtreamAccountInfo = {
   maxConnections?: number;
   serverNow?: number;
   checkedAt: number;
-};
-
-type XtreamCredentials = {
-  baseUrl: string;
-  username: string;
-  password: string;
 };
 
 const asFiniteInt = (value: unknown) => {
@@ -44,31 +38,8 @@ const parseTrial = (value: unknown) =>
 export async function getXtreamAccountInfo(
   credentials: XtreamCredentials,
 ): Promise<XtreamAccountInfo> {
-  const baseUrl = normalizeXtreamBaseUrl(credentials.baseUrl);
-  const apiUrl = new URL("player_api.php", `${baseUrl}/`);
-  apiUrl.searchParams.set("username", credentials.username);
-  apiUrl.searchParams.set("password", credentials.password);
-
-  let response: Response;
-  try {
-    response = await fetch(apiUrl.toString(), { signal: AbortSignal.timeout(15_000) });
-  } catch {
-    throw new Error("Abonelik bilgileri sunucudan alınamadı.");
-  }
-
-  if (!response.ok) throw new Error(`Sunucu HTTP ${response.status} döndürdü.`);
-
-  let payload: any;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new Error("Sunucunun abonelik yanıtı geçerli değil.");
-  }
-
-  const user = payload?.user_info;
-  if (!user || user.auth === 0 || user.auth === "0") {
-    throw new Error("Xtream hesabı doğrulanamadı.");
-  }
+  const payload = await createXtreamClient(credentials).authenticate();
+  const user = payload.user_info;
 
   return {
     status: typeof user.status === "string" ? user.status : undefined,

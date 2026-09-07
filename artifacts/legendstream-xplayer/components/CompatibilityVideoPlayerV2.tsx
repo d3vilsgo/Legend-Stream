@@ -25,6 +25,7 @@ import {
   resolveLiveQueue,
   type LiveChannelIdentity,
 } from "@/lib/playerLiveQueue";
+import { registerEpgChannels } from "@/lib/epgRuntime";
 import type { Channel } from "@/lib/iptv";
 import { usePlayerOrientation } from "@/hooks/usePlayerOrientation";
 import {
@@ -111,6 +112,7 @@ export function CompatibilityVideoPlayer({
     channels,
     epg,
     isEpgLoading,
+    refreshEpg,
     recordWatched,
   } = usePlayer();
   const orientation = usePlayerOrientation(autoFullscreen);
@@ -388,10 +390,13 @@ export function CompatibilityVideoPlayer({
   );
   const currentLive = currentLiveIndex >= 0 ? liveQueue[currentLiveIndex] : undefined;
 
-  // EPG is presentation-only while playback is active. Do not start any EPG
-  // network request from the player and do not use an EPG timer in this parent.
-  // The normal VLC progress updates already re-render the overlay often enough
-  // for Date.now() to advance without touching the native video surface.
+  useEffect(() => {
+    if (currentKind !== "live" || !provider || !currentLive) return;
+    if (currentLive.providerId !== provider.id) return;
+    registerEpgChannels(provider.id, [currentLive]);
+    void refreshEpg(provider.id, currentLive.id);
+  }, [currentKind, currentLive?.id, provider?.id, refreshEpg]);
+
   const currentEpg = selectChannelEpg(epg, currentLive, Date.now());
 
   const episodeQueue = useMemo(

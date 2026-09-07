@@ -10,6 +10,7 @@ on:
 # Storage security gate: 6 credential scenarios + 24 backup scenarios must all pass.
 # H1 logging gate: mobile 13/13 + M3U diagnostics K4 6/6 + API 4/4 redaction scenarios must pass.
 # H2 console gate: direct console.* is forbidden outside tests and __DEV__ guards.
+# EPG runtime gate: paged ownership, active-channel lazy recovery, cache/dedupe/race safety, stable ID, XMLTV and UI contracts must pass.
 # M3U diagnostics gate: shape/classification counters, fail-fast validation, primary/cleanup outcome and stale-cache fail-closed invariants must pass.
 # M3U classification gate: structural live signals must beat group-name heuristics without changing Xtream routing.
 # M3U playback ref gate: extensionless credential-path live refs, safe reconstruction, and fail-closed cleanup must pass.
@@ -81,6 +82,13 @@ jobs:
           set -euo pipefail
           node scripts/check-console-usage.mjs --self-test
           node scripts/check-console-usage.mjs
+      - name: EPG runtime regressions (12/12 + UTF-8 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          epg="$(pnpm --filter @workspace/legendstream-xplayer test:epg 2>&1 | tee /dev/stderr)"
+          grep -F 'epg runtime scenarios: 12/12 passed' <<<"$epg"
+          grep -F 'EPG UTF-8 regression samples passed.' <<<"$epg"
       - name: M3U shape diagnostics regressions (8/8 required)
         shell: bash
         run: |

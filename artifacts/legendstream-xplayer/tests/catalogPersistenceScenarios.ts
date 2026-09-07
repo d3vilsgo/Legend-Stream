@@ -113,10 +113,13 @@ expect(
 
 const syncSource = fs.readFileSync(path.join(packageRoot, "context/CatalogSyncContext.tsx"), "utf8");
 expect(
-  syncSource.includes('projectCatalogItems(provider.id, "live", liveRows)') &&
-  syncSource.includes('projectCatalogItems(provider.id, "vod", rows)') &&
-  syncSource.includes('projectCatalogItems(provider.id, "series", rows)'),
-  "all catalog sync writers must project runtime rows before persistence",
+  syncSource.includes('projectCatalogItemsCooperatively(stagingId, "live", liveRows') &&
+  syncSource.includes('projectCatalogItemsCooperatively(stagingId, "vod", rows') &&
+  syncSource.includes('projectCatalogItemsCooperatively(stagingId, "series", rows') &&
+  syncSource.includes("onProjectedItem:") &&
+  syncSource.includes("stableXtreamLiveId(provider.id, item.playbackRef.streamId)") &&
+  syncSource.includes("isCancelled,"),
+  "all Xtream catalog sync writers must cooperatively project runtime rows into generation-scoped staging with cancellation and stable Live identity",
 );
 
 const runtimeDirect = `legendstream-catalog://xtream/movie/${encodeURIComponent(providerId)}/44?ext=mkv`;

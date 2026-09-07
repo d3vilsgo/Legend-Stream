@@ -169,7 +169,8 @@ async function main() {
     assert.match(source, /onSqliteStage\?\.\("insert-statement"\)/);
     assert.match(source, /onSqliteStage\?\.\("commit"\)/);
     assert.doesNotMatch(source, /withTransactionAsync/);
-    assert.match(source, /WRITE_BATCH_SIZE/);
+    assert.match(source, /CATALOG_LOGICAL_BATCH_MAX/);
+    assert.match(source, /executePreparedCatalogMultiRowBatch/);
   });
 
   await scenario("M3U writer uses explicit bulk staging writes before existing staging swap", () => {

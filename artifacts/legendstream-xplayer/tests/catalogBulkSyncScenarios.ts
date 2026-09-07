@@ -5,6 +5,7 @@ import { CATALOG_FALLBACK_CONCURRENCY, runCatalogFetchPlan } from "../lib/catalo
 
 type Category = { category_id: string; category_name: string };
 type Row = { id: number; category_id?: string };
+type VodUnionRow = { stream_id: number; category_id?: string | null };
 
 type PlanOptions = Parameters<typeof runCatalogFetchPlan<Row, Category>>[0];
 
@@ -14,9 +15,14 @@ const categories: Category[] = Array.from({ length: 12 }, (_, index) => ({
 }));
 
 let passed = 0;
+let unionPassed = 0;
 const expect = (condition: unknown, message: string) => {
   if (!condition) throw new Error(message);
   passed += 1;
+};
+const unionExpect = (condition: unknown, message: string) => {
+  if (!condition) throw new Error(message);
+  unionPassed += 1;
 };
 
 const baseOptions = (overrides: Partial<PlanOptions> = {}): PlanOptions => ({
@@ -27,6 +33,57 @@ const baseOptions = (overrides: Partial<PlanOptions> = {}): PlanOptions => ({
   categoryIdOf: (row: Row) => row.category_id,
   ...overrides,
 });
+
+type VodUnionHarnessOptions = {
+  bulkRows?: VodUnionRow[];
+  categoryRows: Record<string, VodUnionRow[]>;
+  bulkFails?: boolean;
+  categoryAlwaysFails?: string;
+};
+
+async function runVodUnionHarness(options: VodUnionHarnessOptions) {
+  const staging = new Map<string, VodUnionRow>();
+  let active = new Map<string, VodUnionRow>([["99", { stream_id: 99, category_id: "old" }]]);
+  let published = false;
+  const categoryDefs = Object.keys(options.categoryRows).map((categoryId) => ({
+    category_id: categoryId,
+    category_name: `Category ${categoryId}`,
+  }));
+
+  try {
+    await runCatalogFetchPlan<VodUnionRow, Category>({
+      categories: categoryDefs,
+      fetchBulk: async () => {
+        if (options.bulkFails) throw new Error("bulk failed");
+        return options.bulkRows ?? [];
+      },
+      fetchCategory: async (category) => {
+        if (category.category_id === options.categoryAlwaysFails) {
+          throw new Error("category verification failed");
+        }
+        return options.categoryRows[category.category_id] ?? [];
+      },
+      writeRows: async (rows) => {
+        for (const row of rows) staging.set(String(row.stream_id), row);
+      },
+      categoryIdOf: (row) => row.category_id ?? undefined,
+      forceCategoryFallback: true,
+    });
+    active = new Map(staging);
+    published = true;
+  } catch {
+    // A failed verification must not publish staging over the old active catalog.
+  }
+
+  return {
+    stagingIds: new Set(staging.keys()),
+    activeIds: new Set(active.keys()),
+    published,
+  };
+}
+
+const sameIds = (actual: Set<string>, expected: string[]) =>
+  actual.size === expected.length && expected.every((id) => actual.has(id));
 
 async function main() {
   let categoryCalls = 0;
@@ -101,8 +158,8 @@ async function main() {
   try { await cancelledRun; } catch { cancelRejected = true; }
   expect(
     bulkAborted && cancelRejected &&
-    contextSource.includes("getVodStreams(\n            credentials,\n            undefined,\n            controller.signal") &&
-    contextSource.includes("getSeries(\n            credentials,\n            undefined,\n            controller.signal"),
+    /getVodStreams\(\s*credentials,\s*undefined,\s*controller\.signal/.test(contextSource) &&
+    /getSeries\(\s*credentials,\s*undefined,\s*controller\.signal/.test(contextSource),
     "Cancel must abort the active bulk request through the existing controller signal",
   );
 
@@ -114,7 +171,97 @@ async function main() {
     "bulk DTO projection must preserve item category_id for SQLite category assignment",
   );
 
+  const bulkSuperset = await runVodUnionHarness({
+    bulkRows: [1, 2, 3, 4].map((stream_id) => ({ stream_id, category_id: String(Math.min(stream_id, 3)) })),
+    categoryRows: {
+      "1": [{ stream_id: 1, category_id: "1" }],
+      "2": [{ stream_id: 2, category_id: "2" }],
+      "3": [{ stream_id: 3, category_id: "3" }],
+    },
+  });
+  unionExpect(
+    bulkSuperset.published && sameIds(bulkSuperset.activeIds, ["1", "2", "3", "4"]),
+    "VOD union must preserve valid bulk-only stream IDs when category verification is a subset",
+  );
+
+  const categorySuperset = await runVodUnionHarness({
+    bulkRows: [1, 2, 3].map((stream_id) => ({ stream_id, category_id: String(stream_id) })),
+    categoryRows: {
+      "1": [{ stream_id: 1, category_id: "1" }],
+      "2": [{ stream_id: 2, category_id: "2" }],
+      "3": [{ stream_id: 3, category_id: "3" }],
+      "4": [{ stream_id: 4, category_id: "4" }],
+    },
+  });
+  unionExpect(
+    categorySuperset.published && sameIds(categorySuperset.activeIds, ["1", "2", "3", "4"]),
+    "VOD union must preserve category-only stream IDs when category verification is a superset",
+  );
+
+  const uncategorizedBulk = await runVodUnionHarness({
+    bulkRows: [
+      { stream_id: 1, category_id: "1" },
+      { stream_id: 2, category_id: "2" },
+      { stream_id: 3, category_id: "3" },
+      { stream_id: 4, category_id: null },
+    ],
+    categoryRows: {
+      "1": [{ stream_id: 1, category_id: "1" }],
+      "2": [{ stream_id: 2, category_id: "2" }],
+      "3": [{ stream_id: 3, category_id: "3" }],
+    },
+  });
+  unionExpect(
+    uncategorizedBulk.published && sameIds(uncategorizedBulk.activeIds, ["1", "2", "3", "4"]),
+    "VOD union must retain a valid uncategorized bulk stream in the All view set",
+  );
+
+  const duplicateAcrossSources = await runVodUnionHarness({
+    bulkRows: [
+      { stream_id: 1, category_id: "1" },
+      { stream_id: 2, category_id: "2" },
+    ],
+    categoryRows: {
+      "1": [{ stream_id: 1, category_id: "1" }, { stream_id: 2, category_id: "1" }],
+      "2": [{ stream_id: 2, category_id: "2" }, { stream_id: 3, category_id: "2" }],
+    },
+  });
+  unionExpect(
+    duplicateAcrossSources.published && sameIds(duplicateAcrossSources.activeIds, ["1", "2", "3"]),
+    "VOD union must dedupe repeated bulk/category identities by stream_id",
+  );
+
+  const failedVerification = await runVodUnionHarness({
+    bulkRows: [
+      { stream_id: 1, category_id: "1" },
+      { stream_id: 2, category_id: "2" },
+    ],
+    categoryRows: {
+      "1": [{ stream_id: 1, category_id: "1" }],
+      "2": [{ stream_id: 2, category_id: "2" }],
+    },
+    categoryAlwaysFails: "2",
+  });
+  unionExpect(
+    !failedVerification.published && sameIds(failedVerification.activeIds, ["99"]),
+    "failed VOD category verification must not publish partial staging over the old active cache",
+  );
+
+  const bulkFailureFallback = await runVodUnionHarness({
+    bulkFails: true,
+    categoryRows: {
+      "1": [{ stream_id: 1, category_id: "1" }],
+      "2": [{ stream_id: 2, category_id: "2" }],
+      "3": [{ stream_id: 3, category_id: "3" }],
+    },
+  });
+  unionExpect(
+    bulkFailureFallback.published && sameIds(bulkFailureFallback.activeIds, ["1", "2", "3"]),
+    "bulk failure must retain the existing category-only fallback publish behavior",
+  );
+
   process.stdout.write(`catalog bulk sync scenarios: ${passed}/7 passed\n`);
+  process.stdout.write(`xtream vod union scenarios: ${unionPassed}/6 passed\n`);
 }
 
 void main().catch((error) => {

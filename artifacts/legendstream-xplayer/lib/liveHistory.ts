@@ -13,6 +13,30 @@ export type LiveHistoryStorageAdapter = {
   setItem: (key: string, value: string) => Promise<void>;
 };
 
+export type LiveHistoryMutation = (history: LiveHistoryV2) => LiveHistoryV2;
+
+export type LiveHistoryMutationRunOptions = {
+  storage: LiveHistoryStorageAdapter;
+  current: () => LiveHistoryV2;
+  mutate: LiveHistoryMutation;
+  publish: (verified: LiveHistoryV2) => void | Promise<void>;
+};
+
+export class LiveHistoryMutationQueue {
+  private tail: Promise<void> = Promise.resolve();
+
+  run(options: LiveHistoryMutationRunOptions): Promise<LiveHistoryV2> {
+    const operation = this.tail.catch(() => undefined).then(async () => {
+      const next = options.mutate(options.current());
+      const verified = await commitLiveHistoryV2(options.storage, next);
+      await options.publish(verified);
+      return verified;
+    });
+    this.tail = operation.then(() => undefined, () => undefined);
+    return operation;
+  }
+}
+
 const asObject = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -40,10 +64,11 @@ export function providerIdFromChannelId(channelId: string): string | null {
   const second = channelId.indexOf(":", first + 1);
   if (second <= first + 1 || second >= channelId.length - 1) return null;
   const providerId = channelId.slice(0, first);
-  const indexPart = channelId.slice(first + 1, second);
+  const identityPart = channelId.slice(first + 1, second);
   const streamPart = channelId.slice(second + 1);
-  if (!providerId || !/^\d+$/.test(indexPart) || !streamPart) return null;
-  return providerId;
+  if (!providerId || !streamPart) return null;
+  if (/^\d+$/.test(identityPart) || identityPart === "xtream-live") return providerId;
+  return null;
 }
 
 export function migrateLiveHistoryV1(history: unknown): LiveHistoryV2 {
@@ -110,14 +135,15 @@ function assertCanonicalLiveHistory(value: unknown): LiveHistoryV2 {
 export function parseLiveHistoryV2Payload(raw: string): LiveHistoryV2 {
   try {
     return assertCanonicalLiveHistory(JSON.parse(raw));
-  } catch {
-    throw asLiveHistoryMigrationError();
+  } catch (caught) {
+    throw asLiveHistoryMigrationError(caught);
   }
 }
 
-export function asLiveHistoryMigrationError(_caught?: unknown): Error {
-  const error = new Error(LIVE_HISTORY_MIGRATION_ERROR);
+export function asLiveHistoryMigrationError(caught?: unknown): Error {
+  const error = new Error(LIVE_HISTORY_MIGRATION_ERROR) as Error & { cause?: unknown };
   error.name = "LiveHistoryMigrationError";
+  if (caught !== undefined) error.cause = caught;
   return error;
 }
 
@@ -132,8 +158,8 @@ export async function commitLiveHistoryV2(
     const readBack = await storage.getItem(LIVE_HISTORY_V2_STORAGE_KEY);
     if (readBack !== serialized) throw asLiveHistoryMigrationError();
     return parseLiveHistoryV2Payload(readBack);
-  } catch {
-    throw asLiveHistoryMigrationError();
+  } catch (caught) {
+    throw asLiveHistoryMigrationError(caught);
   }
 }
 
@@ -163,8 +189,8 @@ export async function migrateLiveHistoryStorage(
     // A cleanup failure leaves the verified v2 usable and the legacy copy available for retry.
     try { await deleteLegacy(); } catch { /* retry on the next hydration */ }
     return verified;
-  } catch {
-    throw asLiveHistoryMigrationError();
+  } catch (caught) {
+    throw asLiveHistoryMigrationError(caught);
   }
 }
 

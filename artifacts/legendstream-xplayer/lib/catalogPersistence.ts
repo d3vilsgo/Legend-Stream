@@ -1,10 +1,12 @@
 import type { Channel } from "./iptv";
 import { normalizeImageUrl } from "./imageUrl";
+import { yieldToUi } from "./cooperative";
 import {
   isSafeM3UPlaybackRef,
   type M3UPathPlaybackRef,
 } from "./m3uCatalogRefs";
 import type { XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
+import { observeXtreamCardinalityProjection } from "./xtreamCardinalityDiagnostics";
 
 export type CatalogKind = "live" | "vod" | "series";
 export type CatalogSourceMode = "canonical" | "direct";
@@ -307,6 +309,38 @@ export function projectCatalogItems(
   return values
     .map((value) => projectCatalogItem(providerId, kind, value))
     .filter((value): value is PersistedCatalogItem => value !== null);
+}
+
+const COOPERATIVE_PROJECTION_BATCH_SIZE = 200;
+
+type CooperativeProjectionOptions = {
+  isCancelled?: () => boolean;
+  onProjectedItem?: (item: PersistedCatalogItem) => void;
+};
+
+export async function projectCatalogItemsCooperatively(
+  providerId: string,
+  kind: CatalogKind,
+  values: Array<Channel | XtreamVodItem | XtreamSeriesItem>,
+  options: CooperativeProjectionOptions = {},
+): Promise<PersistedCatalogItem[]> {
+  const projected: PersistedCatalogItem[] = [];
+  for (let start = 0; start < values.length; start += COOPERATIVE_PROJECTION_BATCH_SIZE) {
+    if (options.isCancelled?.()) break;
+    const end = Math.min(start + COOPERATIVE_PROJECTION_BATCH_SIZE, values.length);
+    for (let index = start; index < end; index += 1) {
+      if (options.isCancelled?.()) break;
+      const item = projectCatalogItem(providerId, kind, values[index]);
+      if (!item) continue;
+      projected.push(item);
+      options.onProjectedItem?.(item);
+    }
+    if (end < values.length && !options.isCancelled?.()) await yieldToUi();
+  }
+  if (!options.isCancelled?.()) {
+    observeXtreamCardinalityProjection(providerId, kind, values, projected);
+  }
+  return projected;
 }
 
 export function normalizePersistedCatalogPayload(

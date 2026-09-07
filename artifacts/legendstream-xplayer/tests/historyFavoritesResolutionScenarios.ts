@@ -126,7 +126,9 @@ async function main() {
   });
 
   await scenario("identity resolution keeps provider scoped chunked SELECT without full Live hydration", () => {
-    assert.match(repositorySource, /for \(const chunk of chunkLiveIdentityIds\(requestedIds\)\)/);
+    assert.match(repositorySource, /const lookupIds = normalizeLiveIdentityIds\(Array\.from\(lookupByRequested\.values\(\)\)\)/);
+    assert.match(repositorySource, /for \(const chunk of chunkLiveIdentityIds\(lookupIds\)\)/);
+    assert.match(repositorySource, /legacyXtreamLiveStreamId[\s\S]*stableXtreamLiveId\(provider\.id, legacyStreamId\)/);
     assert.match(repositorySource, /provider_id = \?[\s\S]*kind = 'live'[\s\S]*item_id IN/);
     assert.doesNotMatch(repositorySource, /getCachedLiveItems\(|hydrateM3UProviderKindCache|getM3UCatalog|installFullCatalog/);
   });

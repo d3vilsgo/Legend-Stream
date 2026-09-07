@@ -13,8 +13,27 @@ export type CatalogFetchMetrics = {
   sqliteWriteMs: number;
   totalMs: number;
   parallelMaxObserved: number;
-  fallbackReason?: BulkSuspicionReason | "bulk-error" | "parallel-error";
+  fallbackReason?: BulkSuspicionReason | "bulk-error" | "parallel-error" | "category-verification";
+  degradedToHealthyBulk?: boolean;
 };
+
+export class CatalogFetchPlanError extends Error {
+  readonly catalogStage = "category-retry";
+  readonly catalogCode = "CATEGORY_RECOVERY_FAILED";
+  readonly fallbackPath = "required-category-recovery";
+  readonly errorClass: string;
+
+  constructor(errorClass: string) {
+    super("Catalog category recovery failed.");
+    this.name = "CatalogFetchPlanError";
+    this.errorClass = errorClass;
+  }
+}
+
+export function catalogErrorClass(error: unknown) {
+  const name = error instanceof Error ? error.name : "";
+  return /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(name) ? name : "UnknownError";
+}
 
 type CategoryLike = { category_id: string | number };
 
@@ -26,6 +45,8 @@ type RunCatalogFetchPlanOptions<T, C extends CategoryLike> = {
   categoryIdOf: (row: T) => string | number | undefined;
   isCancelled?: () => boolean;
   concurrency?: number;
+  forceCategoryFallback?: boolean;
+  allowHealthyBulkOnCategoryFailure?: boolean;
   onFallbackProgress?: (completedCategories: number, totalCategories: number, path: "parallel" | "serial") => Promise<void> | void;
 };
 
@@ -36,13 +57,7 @@ export function suspiciousBulkResult<T, C extends CategoryLike>(
 ): BulkSuspicionReason | null {
   if (rows.length === 0) return "empty";
   if (categories.length < 4) return null;
-
-  // A bulk result with fewer than one item for every two declared categories is
-  // implausibly small for a populated Xtream catalog and is safer to verify by category.
   if (rows.length < Math.ceil(categories.length / 2)) return "too-few-items";
-
-  // Bulk mode is only authoritative when it preserves the category relationship that
-  // downstream SQLite filtering relies on. A majority of rows without category_id is suspect.
   const categorizedRows = rows.reduce((count, row) => {
     const categoryId = categoryIdOf(row);
     return categoryId === undefined || categoryId === null || String(categoryId).trim() === ""
@@ -63,115 +78,113 @@ export async function runCatalogFetchPlan<T, C extends CategoryLike>(
   let itemCount = 0;
   let parallelMaxObserved = 0;
   let fallbackReason: CatalogFetchMetrics["fallbackReason"];
+  let healthyBulk = false;
+  let healthyBulkRows: T[] | null = null;
+  const recoveredRows: T[] = [];
+  const failedCategories: C[] = [];
 
   const cancelled = () => options.isCancelled?.() === true;
-  const write = async (rows: T[]) => {
-    if (cancelled()) return;
-    const writeStartedAt = Date.now();
-    await options.writeRows(rows);
-    sqliteWriteMs += Date.now() - writeStartedAt;
-    itemCount += rows.length;
-  };
-
-  try {
-    const bulkRows = await options.fetchBulk((parseMs) => {
-      bulkParseMs = parseMs;
-    });
-    if (cancelled()) {
-      return { path: "bulk", itemCount: 0, bulkParseMs, sqliteWriteMs, totalMs: Date.now() - startedAt, parallelMaxObserved };
-    }
-    const suspicion = suspiciousBulkResult(bulkRows, options.categories, options.categoryIdOf);
-    if (!suspicion) {
-      await write(bulkRows);
-      return {
-        path: "bulk",
-        itemCount,
-        bulkParseMs,
-        sqliteWriteMs,
-        totalMs: Date.now() - startedAt,
-        parallelMaxObserved,
-      };
-    }
-    fallbackReason = suspicion;
-  } catch (caught) {
-    if (cancelled()) throw caught;
-    fallbackReason = "bulk-error";
-  }
-
-  if (options.categories.length > 0 && !cancelled()) {
-    try {
-      let completedCategories = 0;
-      for (let start = 0; start < options.categories.length; start += limit) {
-        if (cancelled()) break;
-        const batch = options.categories.slice(start, start + limit);
-        parallelMaxObserved = Math.max(parallelMaxObserved, batch.length);
-        const settled = await Promise.allSettled(batch.map((category) => options.fetchCategory(category)));
-        if (cancelled()) break;
-        const failed = settled.find((result) => result.status === "rejected");
-        if (failed?.status === "rejected") throw failed.reason;
-        for (const result of settled) {
-          if (result.status === "fulfilled") await write(result.value);
-        }
-        completedCategories += batch.length;
-        await options.onFallbackProgress?.(completedCategories, options.categories.length, "parallel");
-      }
-      if (!cancelled()) {
-        return {
-          path: "parallel",
-          itemCount,
-          bulkParseMs,
-          sqliteWriteMs,
-          totalMs: Date.now() - startedAt,
-          parallelMaxObserved,
-          fallbackReason,
-        };
-      }
-    } catch (caught) {
-      if (cancelled()) throw caught;
-      fallbackReason = "parallel-error";
-    }
-  }
-
-  if (cancelled()) {
-    return {
-      path: "serial",
-      itemCount,
-      bulkParseMs,
-      sqliteWriteMs,
-      totalMs: Date.now() - startedAt,
-      parallelMaxObserved,
-      fallbackReason,
-    };
-  }
-
-  // Final compatibility path: retry each category exactly as the previous implementation did.
-  // If the provider exposes no categories, retry the bulk call once because there is no category
-  // loop available to fall back to.
-  itemCount = 0;
-  if (options.categories.length === 0) {
-    const rows = await options.fetchBulk((parseMs) => {
-      bulkParseMs = parseMs;
-    });
-    await write(rows);
-  } else {
-    let completedCategories = 0;
-    for (const category of options.categories) {
-      if (cancelled()) break;
-      const rows = await options.fetchCategory(category);
-      if (cancelled()) break;
-      await write(rows);
-      completedCategories += 1;
-      await options.onFallbackProgress?.(completedCategories, options.categories.length, "serial");
-    }
-  }
-
-  return {
-    path: "serial",
+  const metrics = (path: CatalogFetchPath, degradedToHealthyBulk = false): CatalogFetchMetrics => ({
+    path,
     itemCount,
     bulkParseMs,
     sqliteWriteMs,
     totalMs: Date.now() - startedAt,
     parallelMaxObserved,
     fallbackReason,
+    ...(degradedToHealthyBulk ? { degradedToHealthyBulk: true } : {}),
+  });
+  const writeAuthoritative = async (rows: T[]) => {
+    if (cancelled()) return;
+    const writeStartedAt = Date.now();
+    await options.writeRows(rows);
+    sqliteWriteMs += Date.now() - writeStartedAt;
+    itemCount = rows.length;
   };
+
+  try {
+    const bulkRows = await options.fetchBulk((parseMs) => {
+      bulkParseMs = parseMs;
+    });
+    if (cancelled()) return metrics("bulk");
+    const suspicion = suspiciousBulkResult(bulkRows, options.categories, options.categoryIdOf);
+    healthyBulk = suspicion === null;
+    if (healthyBulk) healthyBulkRows = bulkRows;
+    const verifyByCategory = options.forceCategoryFallback === true && options.categories.length > 0;
+    if (healthyBulk && !verifyByCategory) {
+      await writeAuthoritative(bulkRows);
+      return metrics("bulk");
+    }
+    fallbackReason = suspicion ?? "category-verification";
+  } catch (caught) {
+    if (cancelled()) throw caught;
+    fallbackReason = "bulk-error";
+    healthyBulk = false;
+  }
+
+  if (options.categories.length > 0 && !cancelled()) {
+    let completedCategories = 0;
+    for (let start = 0; start < options.categories.length; start += limit) {
+      if (cancelled()) break;
+      const batch = options.categories.slice(start, start + limit);
+      parallelMaxObserved = Math.max(parallelMaxObserved, batch.length);
+      const settled = await Promise.allSettled(batch.map((category) => options.fetchCategory(category)));
+      if (cancelled()) break;
+      for (let index = 0; index < settled.length; index += 1) {
+        const result = settled[index];
+        if (result.status === "fulfilled") recoveredRows.push(...result.value);
+        else failedCategories.push(batch[index]);
+      }
+      completedCategories += batch.length;
+      await options.onFallbackProgress?.(completedCategories, options.categories.length, "parallel");
+    }
+    if (!cancelled() && failedCategories.length === 0) {
+      const authoritative = healthyBulkRows ? [...healthyBulkRows, ...recoveredRows] : recoveredRows;
+      await writeAuthoritative(authoritative);
+      return metrics("parallel");
+    }
+    if (failedCategories.length > 0) fallbackReason = "parallel-error";
+  }
+
+  if (cancelled()) return metrics("serial");
+
+  if (options.categories.length === 0) {
+    const rows = await options.fetchBulk((parseMs) => {
+      bulkParseMs = parseMs;
+    });
+    if (cancelled()) return metrics("serial");
+    const suspicion = suspiciousBulkResult(rows, options.categories, options.categoryIdOf);
+    if (suspicion) throw new CatalogFetchPlanError("CatalogCompletenessError");
+    await writeAuthoritative(rows);
+    return metrics("serial");
+  }
+
+  const retryFailures: unknown[] = [];
+  let completedRetries = 0;
+  for (const category of failedCategories) {
+    if (cancelled()) break;
+    try {
+      const rows = await options.fetchCategory(category);
+      if (cancelled()) break;
+      recoveredRows.push(...rows);
+    } catch (caught) {
+      if (cancelled()) throw caught;
+      retryFailures.push(caught);
+    }
+    completedRetries += 1;
+    await options.onFallbackProgress?.(completedRetries, failedCategories.length, "serial");
+  }
+
+  if (cancelled()) return metrics("serial");
+  if (retryFailures.length > 0) {
+    if (healthyBulkRows && options.allowHealthyBulkOnCategoryFailure === true) {
+      await writeAuthoritative(healthyBulkRows);
+      return metrics("serial", true);
+    }
+    throw new CatalogFetchPlanError(catalogErrorClass(retryFailures[0]));
+  }
+
+  const authoritative = healthyBulkRows ? [...healthyBulkRows, ...recoveredRows] : recoveredRows;
+  await writeAuthoritative(authoritative);
+  return metrics("serial");
 }

@@ -9,6 +9,7 @@
     "test:credentials": "rm -rf .credential-tests && tsc --module commonjs --target ES2020 --moduleResolution node --skipLibCheck --outDir .credential-tests lib/providerCredentialState.ts tests/credentialStorageScenarios.ts && node .credential-tests/tests/credentialStorageScenarios.js && rm -rf .credential-tests",
     "test:backup": "tsx tests/providerBackupScenarios.ts",
     "test:logging": "tsx tests/logRedactionScenarios.ts && tsx tests/m3uDiagnosticsK4Scenarios.ts",
+    "test:epg": "tsx tests/epgRuntimeScenarios.ts && node scripts/verify-epg-utf8.mjs",
     "test:m3u-diagnostics": "tsx tests/m3uDiagnosticsScenarios.ts",
     "test:m3u-classification": "tsx tests/m3uClassificationScenarios.ts",
     "test:m3u-playback-ref": "tsx tests/m3uPlaybackRefScenarios.ts",
@@ -21,13 +22,13 @@
     "test:stalker-protocol": "tsx tests/stalkerPortalScenarios.ts",
     "test:catalog-parity": "pnpm run test:stalker-protocol && tsx tests/catalogParityScenarios.ts && tsx tests/pagedCatalogRemediationScenarios.ts && tsx tests/historyFavoritesResolutionScenarios.ts",
     "test:catalog-category-fallback": "tsx tests/catalogCategoryFallbackScenarios.ts",
-    "test:catalog-availability": "tsx tests/catalogAvailabilityScenarios.ts && tsx tests/catalogSyncIsolationScenarios.ts",
+    "test:catalog-availability": "tsx tests/catalogAvailabilityScenarios.ts && tsx tests/catalogSyncIsolationScenarios.ts && tsx tests/xtreamIndependentKindScenarios.ts",
     "test:provider-switch": "tsx tests/m3uPreviewHydrationScenarios.ts && tsx tests/providerSwitchScenarios.ts && tsx tests/m3uHydrationYieldScenarios.ts && tsx tests/m3uTransportRoutingScenarios.ts",
-    "test:catalog-bulk-sync": "tsx tests/catalogBulkSyncScenarios.ts",
+    "test:catalog-bulk-sync": "tsx tests/catalogBulkSyncScenarios.ts && tsx tests/xtreamRequestFoundationScenarios.ts && tsx tests/xtreamRefreshResponsivenessScenarios.ts",
     "test:poster-image-resilience": "tsx tests/posterImageResilienceScenarios.ts",
     "test:player-live-queue": "tsx tests/playerLiveQueueScenarios.ts",
     "test:media-progress": "tsx tests/mediaProgressScenarios.ts",
-    "test:live-history": "tsx tests/liveHistoryScenarios.ts"
+    "test:live-history": "tsx tests/liveHistoryScenarios.ts && tsx tests/liveHistoryConcurrencyScenarios.ts"
   },
   "expo": {
     "autolinking": {
