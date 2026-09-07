@@ -19,7 +19,7 @@
     "test:catalog-write-benchmark-runner": "tsx tests/catalogWriteBenchmarkRunnerScenarios.ts",
     "test:catalog-benchmark-runtime": "tsx tests/catalogBenchmarkRuntimeIsolationScenarios.ts",
     "test:catalog-persistence": "tsx tests/catalogPersistenceScenarios.ts && tsx tests/catalogPagingScenarios.ts",
-    "test:stalker-protocol": "tsx tests/stalkerPortalScenarios.ts",
+    "test:stalker-protocol": "tsx tests/stalkerPortalScenarios.ts && tsx tests/stalkerPortalRuntimeScenarios.ts",
     "test:stalker-live": "tsx tests/stalkerLiveTreatmentScenarios.ts && tsx tests/stalkerLivePlaybackTimeoutScenarios.ts && node --require ./tests/stalkerSqliteTestLoader.cjs --import tsx ./tests/stalkerRemediationRaceScenarios.ts",
     "test:catalog-parity": "pnpm run test:stalker-protocol && pnpm run test:stalker-live && tsx tests/catalogParityScenarios.ts && tsx tests/pagedCatalogRemediationScenarios.ts && tsx tests/historyFavoritesResolutionScenarios.ts",
     "test:catalog-category-fallback": "tsx tests/catalogCategoryFallbackScenarios.ts",

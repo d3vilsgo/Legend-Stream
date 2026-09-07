@@ -159,6 +159,10 @@ export class StalkerPortalSession {
   #endpointUrl: string;
   #mac: string;
   #token: string | null = null;
+  #handshake: { generation: number; promise: Promise<string> } | null = null;
+  #authenticationGeneration = 0;
+  #lifecycleController = new AbortController();
+  #disposed = false;
   #fetchImpl: FetchLike;
   #timeoutMs: number;
   #afterResponse: () => void | Promise<void>;
@@ -179,7 +183,15 @@ export class StalkerPortalSession {
   }
 
   invalidateSession() {
+    this.#authenticationGeneration += 1;
     this.#token = null;
+  }
+
+  dispose() {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.invalidateSession();
+    this.#lifecycleController.abort();
   }
 
   isAuthenticated() {
@@ -187,27 +199,14 @@ export class StalkerPortalSession {
   }
 
   async handshake(signal?: AbortSignal) {
-    const payload = await this.#requestOnce(
-      { type: "stb", action: "handshake", token: "" },
-      null,
-      signal,
-    );
-    const token = tokenFromHandshake(payload);
-    if (!token) {
-      this.invalidateSession();
-      throw new StalkerPortalError(
-        "MISSING_TOKEN",
-        "Stalker portal handshake did not return a session token.",
-      );
-    }
-    this.#token = token;
+    await this.#ensureAuthenticated(signal);
     return { authenticated: true as const };
   }
 
   async request(params: StalkerActionParams, signal?: AbortSignal) {
-    if (!this.#token) await this.handshake(signal);
+    const requestToken = await this.#ensureAuthenticated(signal);
     try {
-      return await this.#requestOnce(params, this.#token, signal);
+      return await this.#requestOnce(params, requestToken, signal);
     } catch (caught) {
       if (
         !(caught instanceof StalkerPortalError) ||
@@ -216,14 +215,87 @@ export class StalkerPortalSession {
       ) {
         throw caught;
       }
-      this.invalidateSession();
-      await this.handshake(signal);
-      return this.#requestOnce(params, this.#token, signal);
+      this.#invalidateTokenIfCurrent(requestToken);
+      const retryToken = await this.#ensureAuthenticated(signal);
+      return this.#requestOnce(params, retryToken, signal);
     }
   }
 
   async getProfile(signal?: AbortSignal) {
     return this.request({ type: "stb", action: "get_profile" }, signal);
+  }
+
+  async #ensureAuthenticated(signal?: AbortSignal) {
+    if (this.#disposed) {
+      throw new StalkerPortalError("CANCELLED", "Stalker portal session was disposed.");
+    }
+    if (signal?.aborted) {
+      throw new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled.");
+    }
+    if (this.#token) return this.#token;
+
+    const generation = this.#authenticationGeneration;
+    let pending = this.#handshake;
+    if (!pending || pending.generation !== generation) {
+      const promise = this.#performHandshake(generation);
+      pending = { generation, promise };
+      this.#handshake = pending;
+      void promise.finally(() => {
+        if (this.#handshake?.promise === promise) this.#handshake = null;
+      }).catch(() => undefined);
+    }
+    return this.#waitForAuthentication(pending.promise, signal);
+  }
+
+  async #performHandshake(generation: number) {
+    const payload = await this.#requestOnce(
+      { type: "stb", action: "handshake", token: "" },
+      null,
+      this.#lifecycleController.signal,
+    );
+    const token = tokenFromHandshake(payload);
+    if (!token) {
+      if (generation === this.#authenticationGeneration) this.invalidateSession();
+      throw new StalkerPortalError(
+        "MISSING_TOKEN",
+        "Stalker portal handshake did not return a session token.",
+      );
+    }
+    if (this.#disposed || generation !== this.#authenticationGeneration) {
+      throw new StalkerPortalError("CANCELLED", "Stalker portal authentication was superseded.");
+    }
+    this.#token = token;
+    return token;
+  }
+
+  #waitForAuthentication(promise: Promise<string>, signal?: AbortSignal) {
+    if (!signal) return promise;
+    if (signal.aborted) {
+      return Promise.reject(new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled."));
+    }
+    return new Promise<string>((resolve, reject) => {
+      const onAbort = () => {
+        cleanup();
+        reject(new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled."));
+      };
+      const cleanup = () => signal.removeEventListener("abort", onAbort);
+      signal.addEventListener("abort", onAbort, { once: true });
+      promise.then(
+        (token) => {
+          cleanup();
+          resolve(token);
+        },
+        (caught) => {
+          cleanup();
+          reject(caught);
+        },
+      );
+    });
+  }
+
+  #invalidateTokenIfCurrent(token: string) {
+    if (this.#token !== token) return;
+    this.invalidateSession();
   }
 
   async #requestOnce(

@@ -304,6 +304,7 @@ async function main() {
     await timeoutSession.handshake();
     await expectCode(timeoutSession.request({ type: "itv", action: "get_ordered_list", p: 1 }), "TIMEOUT");
     assert.equal(timeoutMock.requests.length, 2);
+    assert.equal(timeoutSession.isAuthenticated(), true);
 
     const networkMock = queuedFetch([
       () => json({ token: TOKEN_1 }),
@@ -313,6 +314,7 @@ async function main() {
     await networkSession.handshake();
     await expectCode(networkSession.request({ type: "itv", action: "get_ordered_list", p: 1 }), "NETWORK_ERROR");
     assert.equal(networkMock.requests.length, 2);
+    assert.equal(networkSession.isAuthenticated(), true);
 
     const serverMock = queuedFetch([
       () => json({ token: TOKEN_1 }),
@@ -322,6 +324,7 @@ async function main() {
     await serverSession.handshake();
     await expectCode(serverSession.request({ type: "itv", action: "get_ordered_list", p: 1 }), "HTTP_ERROR");
     assert.equal(serverMock.requests.length, 2);
+    assert.equal(serverSession.isAuthenticated(), true);
   });
 
   await scenario("missing MAC fails closed before transport", async () => {
@@ -353,8 +356,213 @@ async function main() {
     }
   });
 
-  assert.equal(passed, 16);
-  console.log("stalker portal protocol scenarios: 16/16 passed");
+  await scenario("two concurrent token-less requests share one handshake", async () => {
+    let releaseHandshake!: () => void;
+    const handshakeGate = new Promise<void>((resolve) => { releaseHandshake = resolve; });
+    let handshakeStarted!: () => void;
+    const started = new Promise<void>((resolve) => { handshakeStarted = resolve; });
+    let handshakes = 0;
+    let actions = 0;
+    const session = createStalkerPortalSession({
+      portalUrl: "https://single-flight.invalid",
+      mac: MAC,
+      fetchImpl: async (input) => {
+        const action = new URL(String(input)).searchParams.get("action");
+        if (action === "handshake") {
+          handshakes += 1;
+          handshakeStarted();
+          await handshakeGate;
+          return json({ token: TOKEN_1 });
+        }
+        actions += 1;
+        return json({ marker: action });
+      },
+    });
+    const first = session.request({ type: "itv", action: "first" });
+    const second = session.request({ type: "itv", action: "second" });
+    await started;
+    releaseHandshake();
+    assert.deepEqual(await Promise.all([first, second]), [{ marker: "first" }, { marker: "second" }]);
+    assert.equal(handshakes, 1);
+    assert.equal(actions, 2);
+  });
+
+  await scenario("three concurrent token-less requests share one handshake", async () => {
+    let releaseHandshake!: () => void;
+    const handshakeGate = new Promise<void>((resolve) => { releaseHandshake = resolve; });
+    let handshakeStarted!: () => void;
+    const started = new Promise<void>((resolve) => { handshakeStarted = resolve; });
+    let handshakes = 0;
+    const session = createStalkerPortalSession({
+      portalUrl: "https://three-callers.invalid",
+      mac: MAC,
+      fetchImpl: async (input) => {
+        const action = new URL(String(input)).searchParams.get("action");
+        if (action === "handshake") {
+          handshakes += 1;
+          handshakeStarted();
+          await handshakeGate;
+          return json({ token: TOKEN_1 });
+        }
+        return json({ action });
+      },
+    });
+    const pending = ["one", "two", "three"].map((action) =>
+      session.request({ type: "itv", action }),
+    );
+    await started;
+    releaseHandshake();
+    await Promise.all(pending);
+    assert.equal(handshakes, 1);
+  });
+
+  await scenario("one cancelled waiter does not own the shared handshake", async () => {
+    let releaseHandshake!: () => void;
+    const handshakeGate = new Promise<void>((resolve) => { releaseHandshake = resolve; });
+    let handshakeStarted!: () => void;
+    const started = new Promise<void>((resolve) => { handshakeStarted = resolve; });
+    let handshakes = 0;
+    const session = createStalkerPortalSession({
+      portalUrl: "https://waiter-cancel.invalid",
+      mac: MAC,
+      fetchImpl: async (input, init) => {
+        const action = new URL(String(input)).searchParams.get("action");
+        if (action === "handshake") {
+          handshakes += 1;
+          handshakeStarted();
+          assert.equal(init?.signal?.aborted, false);
+          await handshakeGate;
+          assert.equal(init?.signal?.aborted, false);
+          return json({ token: TOKEN_1 });
+        }
+        return json({ marker: "survivor" });
+      },
+    });
+    const controller = new AbortController();
+    const cancelled = session.request({ type: "itv", action: "cancelled" }, controller.signal);
+    const survivor = session.request({ type: "itv", action: "survivor" });
+    await started;
+    controller.abort();
+    await expectCode(cancelled, "CANCELLED");
+    releaseHandshake();
+    assert.deepEqual(await survivor, { marker: "survivor" });
+    assert.equal(handshakes, 1);
+  });
+
+  await scenario("concurrent stale-token auth failures share reauthentication", async () => {
+    let releaseFirstFailure!: () => void;
+    let releaseLateFailure!: () => void;
+    const firstFailureGate = new Promise<void>((resolve) => { releaseFirstFailure = resolve; });
+    const lateFailureGate = new Promise<void>((resolve) => { releaseLateFailure = resolve; });
+    let staleRequestsStarted!: () => void;
+    const staleStarted = new Promise<void>((resolve) => { staleRequestsStarted = resolve; });
+    let secondHandshakeStarted!: () => void;
+    const secondHandshake = new Promise<void>((resolve) => { secondHandshakeStarted = resolve; });
+    let handshakes = 0;
+    let staleRequests = 0;
+    let retriedRequests = 0;
+    const session = createStalkerPortalSession({
+      portalUrl: "https://stale-token.invalid",
+      mac: MAC,
+      fetchImpl: async (input, init) => {
+        const action = new URL(String(input)).searchParams.get("action");
+        if (action === "handshake") {
+          handshakes += 1;
+          if (handshakes === 2) secondHandshakeStarted();
+          return json({ token: handshakes === 1 ? TOKEN_1 : TOKEN_2 });
+        }
+        const authorization = new Headers(init?.headers).get("Authorization");
+        if (authorization === `Bearer ${TOKEN_1}`) {
+          staleRequests += 1;
+          if (staleRequests === 2) staleRequestsStarted();
+          await (staleRequests === 1 ? firstFailureGate : lateFailureGate);
+          return new Response("", { status: 401 });
+        }
+        assert.equal(authorization, `Bearer ${TOKEN_2}`);
+        retriedRequests += 1;
+        return json({ marker: action });
+      },
+    });
+    await session.handshake();
+    const first = session.request({ type: "itv", action: "first" });
+    const second = session.request({ type: "itv", action: "second" });
+    await staleStarted;
+    releaseFirstFailure();
+    await secondHandshake;
+    releaseLateFailure();
+    assert.deepEqual(await Promise.all([first, second]), [{ marker: "first" }, { marker: "second" }]);
+    assert.equal(handshakes, 2);
+    assert.equal(staleRequests, 2);
+    assert.equal(retriedRequests, 2);
+  });
+
+  await scenario("auth failure on the retry does not recurse", async () => {
+    let handshakes = 0;
+    let actions = 0;
+    const session = createStalkerPortalSession({
+      portalUrl: "https://bounded-retry.invalid",
+      mac: MAC,
+      fetchImpl: async (input) => {
+        const action = new URL(String(input)).searchParams.get("action");
+        if (action === "handshake") {
+          handshakes += 1;
+          return json({ token: handshakes === 1 ? TOKEN_1 : TOKEN_2 });
+        }
+        actions += 1;
+        return new Response("", { status: actions === 1 ? 401 : 403 });
+      },
+    });
+    await expectCode(session.request({ type: "itv", action: "bounded" }), "AUTH_FAILED");
+    assert.equal(handshakes, 2);
+    assert.equal(actions, 2);
+  });
+
+  await scenario("non-auth failure preserves the existing token", async () => {
+    let handshakes = 0;
+    let actions = 0;
+    const session = createStalkerPortalSession({
+      portalUrl: "https://preserve-token.invalid",
+      mac: MAC,
+      fetchImpl: async (input, init) => {
+        const action = new URL(String(input)).searchParams.get("action");
+        if (action === "handshake") {
+          handshakes += 1;
+          return json({ token: TOKEN_1 });
+        }
+        assert.equal(new Headers(init?.headers).get("Authorization"), `Bearer ${TOKEN_1}`);
+        actions += 1;
+        if (actions === 1) throw new Error("network unavailable");
+        return json({ ok: true });
+      },
+    });
+    await expectCode(session.request({ type: "itv", action: "fails" }), "NETWORK_ERROR");
+    assert.equal(session.isAuthenticated(), true);
+    assert.deepEqual(await session.request({ type: "itv", action: "recovers" }), { ok: true });
+    assert.equal(handshakes, 1);
+  });
+
+  await scenario("explicit invalidation requires the next request to authenticate", async () => {
+    let handshakes = 0;
+    const session = createStalkerPortalSession({
+      portalUrl: "https://explicit-invalidation.invalid",
+      mac: MAC,
+      fetchImpl: async (input) => {
+        const action = new URL(String(input)).searchParams.get("action");
+        if (action === "handshake") {
+          handshakes += 1;
+          return json({ token: handshakes === 1 ? TOKEN_1 : TOKEN_2 });
+        }
+        return json({ ok: true });
+      },
+    });
+    await session.request({ type: "itv", action: "before" });
+    session.invalidateSession();
+    await session.request({ type: "itv", action: "after" });
+    assert.equal(handshakes, 2);
+  });
+
+  assert.equal(passed, 23);
+  console.log("stalker portal protocol scenarios: 23/23 passed");
 }
 
 void main().catch((error) => {
