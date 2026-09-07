@@ -230,9 +230,10 @@ export function CompatibilityVideoPlayer({
       setResolvedSource(currentSource);
       return () => { cancelled = true; };
     }
+    const controller = new AbortController();
     setResolvedSource(null);
     setErrorText(null);
-    void resolveCatalogRuntimeSource(currentSource, provider)
+    void resolveCatalogRuntimeSource(currentSource, provider, controller.signal)
       .then((next) => {
         if (!cancelled) setResolvedSource(next);
       })
@@ -243,7 +244,10 @@ export function CompatibilityVideoPlayer({
         revealControls(true);
         revealMediaInfo();
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [
     currentSource,
     provider?.id,
