@@ -23,6 +23,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
 const screenSource = source("components/OptimizedHomeScreenPaged.tsx");
 const stalkerSource = source("components/catalog/StalkerLiveCatalog.tsx");
+const stalkerSyncSource = source("hooks/useStalkerLiveCatalogSync.ts");
+const catalogPageHookSource = source("hooks/useCatalogPage.ts");
 const identityRepositorySource = source("lib/catalogLiveIdentityRepository.ts");
 const categoryViewsSource = source("components/catalog/PagedCatalogViews.tsx");
 const catalogPagingSource = source("lib/catalogPaging.ts");
@@ -45,14 +47,19 @@ const legacyXtream = {
 };
 
 async function main() {
-  await scenario("Stalker Live uses the existing provider channel presentation instead of paged SQLite", () => {
+  await scenario("Stalker Live is provider-gated onto the persisted paged path without full in-memory filtering", () => {
     assert.match(screenSource, /provider\.type === "stalker"[\s\S]*StalkerLiveCatalog/s);
     assert.match(screenSource, /channels=\{playerLiveChannels\}/);
-    assert.match(stalkerSource, /channels\.filter/);
-    assert.match(stalkerSource, /epgByChannel/);
-    assert.match(stalkerSource, /favorites\.includes/);
-    assert.match(stalkerSource, /onOpen\(channel\)/);
-    assert.doesNotMatch(stalkerSource, /useCatalogPage|getCachedCatalogPage|catalogPageRepository/);
+    assert.match(stalkerSource, /PagedLiveCatalog/);
+    assert.match(stalkerSource, /useStalkerLiveCatalogSync/);
+    assert.match(stalkerSource, /snapshotCount=\{\{/);
+    assert.match(stalkerSource, /epgByChannel=\{epgByChannel\}/);
+    assert.match(stalkerSource, /favorites=\{favorites\}/);
+    assert.match(stalkerSource, /onOpen=\{onOpen\}/);
+    assert.doesNotMatch(stalkerSource, /channels\.filter|FlatList|data=\{.*channels/s);
+    assert.match(stalkerSyncSource, /syncStalkerLiveCatalog/);
+    assert.match(catalogPageHookSource, /provider\?\.type === "stalker" && kind === "live"/);
+    assert.match(catalogPageHookSource, /effectiveProviderType: CatalogPageProviderType \| null = stalkerLive \? "stalker" : providerType/);
   });
 
   await scenario("M3U and Xtream Live remain on the persisted paged path", () => {
