@@ -7,31 +7,21 @@ import {
   type PersistedStalkerLivePlaybackRef,
 } from "./catalogPersistence";
 import { assertStalkerLiveCommitCurrent, type StalkerLiveCommitOwnershipCheck } from "./stalkerLiveCommitOwnership";
+import {
+  assertStalkerLiveStagingTarget,
+  stalkerLiveStagingProviderId,
+} from "./stalkerLiveStaging";
 import type { StalkerLiveCategory } from "./stalkerLiveCatalog";
 
+export { stalkerLiveStagingProviderId } from "./stalkerLiveStaging";
+
 const CATALOG_DB_NAME = "legendstream-catalog-v1.db";
-const STALKER_STAGING_PREFIX = "__staging__";
-const STALKER_STAGING_MARKER = "__stalker_run__";
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 async function database() {
   await initCatalogCache();
   if (!databasePromise) databasePromise = SQLite.openDatabaseAsync(CATALOG_DB_NAME);
   return databasePromise;
-}
-
-export function stalkerLiveStagingProviderId(providerId: string, runToken: string) {
-  const provider = providerId.trim();
-  const token = runToken.trim();
-  if (!provider || !token) throw new Error("Stalker Live staging requires provider and run identity.");
-  return `${STALKER_STAGING_PREFIX}${provider}${STALKER_STAGING_MARKER}${token}`;
-}
-
-function assertStalkerLiveStagingTarget(providerId: string, stagingId: string) {
-  const expectedPrefix = `${STALKER_STAGING_PREFIX}${providerId.trim()}${STALKER_STAGING_MARKER}`;
-  if (!providerId.trim() || !stagingId.startsWith(expectedPrefix) || stagingId.length === expectedPrefix.length) {
-    throw new Error("Stalker Live staging target does not belong to this provider run.");
-  }
 }
 
 export async function cleanupStalkerLiveStaging(providerId: string, stagingId: string) {
