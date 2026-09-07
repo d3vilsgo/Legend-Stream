@@ -43,7 +43,8 @@ export async function syncStalkerLiveCatalog(options: Options) {
     isCurrent: options.isCurrent,
     cleanupStaging: () => cleanupStalkerLiveStaging(providerId),
     persistPage: async (items, page) => {
-      await stageStalkerLivePage(providerId, items, syncStartedAt);
+      assertCurrent(options.signal, options.isCurrent);
+      await stageStalkerLivePage(providerId, items, syncStartedAt, options.isCurrent);
       assertCurrent(options.signal, options.isCurrent);
       await options.onProgress?.({ phase: "pages", page: page.page, persisted: items.length });
     },
