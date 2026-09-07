@@ -43,6 +43,7 @@ import { useColors } from "@/hooks/useColors";
 import { useResolvedLiveIdentityChannels } from "@/hooks/useResolvedLiveIdentityChannels";
 import type { DownloadedMedia } from "@/lib/downloads";
 import { homeLiveIdentityPreviewIds } from "@/lib/catalogLiveIdentity";
+import { selectHomeLiveSource } from "@/lib/homeLiveSource";
 import {
   indexLiveChannelsByProviderAndId,
   resolveLiveIdentityPresentationRows,
@@ -241,10 +242,11 @@ export default function OptimizedHomeScreenPaged() {
     () => homeLiveIdentityPreviewIds(history),
     [history],
   );
+  const homeIdentityFallbackChannels = provider?.type === "stalker" ? [] : playerLiveChannels;
   const resolvedHomeIdentityChannels = useResolvedLiveIdentityChannels(
     provider,
     homeIdentityIds,
-    playerLiveChannels,
+    homeIdentityFallbackChannels,
   );
   const fullHistoryIdentityIds = useMemo(
     () => view === "history" ? [...history, ...favorites] : [],
@@ -257,7 +259,13 @@ export default function OptimizedHomeScreenPaged() {
   );
 
   const activeSnapshot = provider && snapshot.providerId === provider.id ? snapshot : null;
-  const homeChannels = activeSnapshot?.live.length ? activeSnapshot.live : playerLiveChannels.slice(0, 48);
+  const homeLiveSource = selectHomeLiveSource({
+    provider,
+    snapshot,
+    hasUsableCache,
+    legacyChannels: playerLiveChannels,
+  });
+  const homeChannels = homeLiveSource.channels;
   const homeIdentityChannels = useMemo(() => {
     const byId = new Map<string, Channel>();
     for (const channel of homeChannels) byId.set(channel.id, channel);
@@ -635,7 +643,7 @@ export default function OptimizedHomeScreenPaged() {
     >
       {view === "home" ? <HomeDiscovery
         provider={provider}
-        live={countKnown ? snapshot.counts.live : (provider.type === "stalker" ? playerLiveChannels.length : null)}
+        live={provider.type === "stalker" ? homeLiveSource.totalCount : countKnown ? snapshot.counts.live : null}
         vod={vodCount.totalCount}
         series={seriesCount.totalCount}
         vodCategories={categoryMetadata?.providerId === provider.id ? categoryMetadata.vodCategories : 0}
