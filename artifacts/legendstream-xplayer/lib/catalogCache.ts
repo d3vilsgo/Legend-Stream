@@ -110,6 +110,9 @@ type StagingSwapOptions = {
   providerId: string;
   vodCategories: XtreamCategory[];
   seriesCategories: XtreamCategory[];
+  liveCategories?: XtreamCategory[];
+  kinds?: readonly CatalogKind[];
+  assertStillOwned?: () => void;
   readyMessage: string;
   readyStamp?: "full" | "background";
   syncTotal: number;
@@ -123,7 +126,7 @@ const STAGING_PROVIDER_PREFIX = "__staging__";
 let databasePromise: ReturnType<typeof SQLite.openDatabaseAsync> | null = null;
 let startupStagingCleanupPromise: Promise<void> | null = null;
 
-function stagingProviderId(providerId: string) {
+export function stagingProviderId(providerId: string) {
   return `${STAGING_PROVIDER_PREFIX}${providerId}`;
 }
 
@@ -269,7 +272,7 @@ async function writeSyncState(
 async function replaceCategories(
   db: SQLite.SQLiteDatabase,
   providerId: string,
-  kind: Exclude<CatalogKind, "live">,
+  kind: CatalogKind,
   categories: XtreamCategory[],
 ) {
   await db.runAsync(
@@ -653,17 +656,58 @@ export async function swapStagingToProvider(options: StagingSwapOptions) {
   return enqueueCatalogDbWrite(async () => {
     const db = await database();
     const stagingId = stagingProviderId(options.providerId);
+    const restrictedKinds = options.kinds ? new Set(options.kinds) : null;
+    const includes = (kind: CatalogKind) => restrictedKinds === null || restrictedKinds.has(kind);
 
+    options.assertStillOwned?.();
     await db.withExclusiveTransactionAsync(async (txn) => {
-      await txn.runAsync("DELETE FROM catalog_items WHERE provider_id = ?", options.providerId);
-      await txn.runAsync("DELETE FROM catalog_categories WHERE provider_id = ?", options.providerId);
-      await txn.runAsync(
-        "UPDATE catalog_items SET provider_id = ? WHERE provider_id = ?",
-        options.providerId,
-        stagingId,
-      );
-      await replaceCategories(txn, options.providerId, "vod", options.vodCategories);
-      await replaceCategories(txn, options.providerId, "series", options.seriesCategories);
+      options.assertStillOwned?.();
+      if (restrictedKinds === null) {
+        await txn.runAsync("DELETE FROM catalog_items WHERE provider_id = ?", options.providerId);
+        options.assertStillOwned?.();
+        await txn.runAsync("DELETE FROM catalog_categories WHERE provider_id = ?", options.providerId);
+        options.assertStillOwned?.();
+        await txn.runAsync(
+          "UPDATE catalog_items SET provider_id = ? WHERE provider_id = ?",
+          options.providerId,
+          stagingId,
+        );
+      } else {
+        for (const kind of restrictedKinds) {
+          options.assertStillOwned?.();
+          await txn.runAsync(
+            "DELETE FROM catalog_items WHERE provider_id = ? AND kind = ?",
+            options.providerId,
+            kind,
+          );
+          options.assertStillOwned?.();
+          await txn.runAsync(
+            "DELETE FROM catalog_categories WHERE provider_id = ? AND kind = ?",
+            options.providerId,
+            kind,
+          );
+          options.assertStillOwned?.();
+          await txn.runAsync(
+            "UPDATE catalog_items SET provider_id = ? WHERE provider_id = ? AND kind = ?",
+            options.providerId,
+            stagingId,
+            kind,
+          );
+        }
+      }
+      if (includes("live") && options.liveCategories) {
+        options.assertStillOwned?.();
+        await replaceCategories(txn, options.providerId, "live", options.liveCategories);
+      }
+      if (includes("vod")) {
+        options.assertStillOwned?.();
+        await replaceCategories(txn, options.providerId, "vod", options.vodCategories);
+      }
+      if (includes("series")) {
+        options.assertStillOwned?.();
+        await replaceCategories(txn, options.providerId, "series", options.seriesCategories);
+      }
+      options.assertStillOwned?.();
       await writeSyncState(
         txn,
         options.providerId,
@@ -673,9 +717,12 @@ export async function swapStagingToProvider(options: StagingSwapOptions) {
         options.readyMessage,
         options.readyStamp,
       );
+      options.assertStillOwned?.();
     });
+    options.assertStillOwned?.();
 
     for (const kind of ["live", "vod", "series"] as const) {
+      if (!includes(kind)) continue;
       const totalRows = options.committedCounts[kind];
       const batchCount = Math.ceil(totalRows / WRITE_BATCH_SIZE);
       for (let batchIndex = 1; batchIndex <= batchCount; batchIndex += 1) {
