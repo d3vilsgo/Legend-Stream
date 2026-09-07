@@ -15,6 +15,7 @@ import {
   noteCatalogPageCommit,
   type CatalogPageItem,
 } from "@/lib/catalogPageRepository";
+import { getCachedStalkerLivePage } from "@/lib/stalkerLivePageRepository";
 import type { CatalogRuntimeProvider } from "@/lib/catalogRuntime";
 
 type ItemForKind<K extends CatalogPageKind> = CatalogPageItem<K>;
@@ -89,19 +90,22 @@ export function useCatalogPage<K extends CatalogPageKind>({
     rowsReturned: number;
     hasMore: boolean;
   } | null>(null);
+  const stalkerLive = provider?.type === "stalker" && kind === "live";
+  const effectiveProviderType: CatalogPageProviderType | null = stalkerLive ? "stalker" : providerType;
+  const effectiveEnabled = stalkerLive ? true : enabled;
 
   const baseRequest = useMemo<CatalogPageRequest | null>(() => {
-    if (!provider || !providerType) return null;
+    if (!provider || !effectiveProviderType) return null;
     return {
       providerId: provider.id,
-      providerType,
+      providerType: effectiveProviderType,
       kind,
       categoryId,
       search,
       sort,
       limit: 100,
     };
-  }, [provider?.id, providerType, kind, categoryId, search, sort]);
+  }, [provider?.id, effectiveProviderType, kind, categoryId, search, sort]);
 
   const queryKey = useMemo(
     () => baseRequest ? catalogPageQueryKey(baseRequest) : null,
@@ -120,7 +124,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
     mode: "initial" | "more",
     generation: number,
   ) => {
-    if (!provider || !baseRequest || !queryKey || !enabled) return;
+    if (!provider || !baseRequest || !queryKey || !effectiveEnabled) return;
     const request: CatalogPageRequest & { kind: K } = {
       ...baseRequest,
       kind,
@@ -136,7 +140,12 @@ export function useCatalogPage<K extends CatalogPageKind>({
     }));
 
     try {
-      const result = await getCachedCatalogPage(provider, request);
+      const result = stalkerLive
+        ? await getCachedStalkerLivePage(
+            provider,
+            request as CatalogPageRequest & { kind: "live" },
+          )
+        : await getCachedCatalogPage(provider, request);
       if (generationRef.current !== generation) return;
       pendingCommitRef.current = {
         startedAt: Date.now(),
@@ -154,13 +163,14 @@ export function useCatalogPage<K extends CatalogPageKind>({
           snapshotCountKnown: snapshotCount?.countKnown ?? false,
         });
         const countKnown = totalCount !== null;
+        const incomingItems = result.items as ItemForKind<K>[];
         const mergedItems = mode === "more"
           ? mergeCatalogPageItems(
               current.items,
-              result.items,
+              incomingItems,
               (item) => itemKey(kind, item),
             )
-          : result.items;
+          : incomingItems;
         const mergedHasMore = countKnown
           ? mergedItems.length < (totalCount ?? 0) && (result.hasMore || result.nextCursor !== null)
           : result.hasMore;
@@ -185,7 +195,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
         }));
       }
     }
-  }, [provider, baseRequest, queryKey, enabled, kind, snapshotCount?.totalCount, snapshotCount?.countKnown]);
+  }, [provider, baseRequest, queryKey, effectiveEnabled, kind, stalkerLive, snapshotCount?.totalCount, snapshotCount?.countKnown]);
 
   useEffect(() => {
     const pending = pendingCommitRef.current;
@@ -207,13 +217,13 @@ export function useCatalogPage<K extends CatalogPageKind>({
       ...emptyState<ItemForKind<K>>(),
       totalCount: resolvedSnapshotTotal,
       countKnown: resolvedSnapshotTotal !== null,
-      loadingInitial: Boolean(enabled && provider && baseRequest),
+      loadingInitial: Boolean(effectiveEnabled && provider && baseRequest),
       queryKey,
     });
-    if (enabled && provider && baseRequest && queryKey) {
+    if (effectiveEnabled && provider && baseRequest && queryKey) {
       void loadPage(null, "initial", generation);
     }
-  }, [queryKey, enabled, provider?.id]);
+  }, [queryKey, effectiveEnabled, provider?.id]);
 
   useEffect(() => {
     if (resolvedSnapshotTotal === null) return;
@@ -230,7 +240,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
 
   const loadMore = useCallback(() => {
     if (
-      !enabled ||
+      !effectiveEnabled ||
       !state.hasMore ||
       state.loadingInitial ||
       state.loadingMore ||
@@ -239,10 +249,10 @@ export function useCatalogPage<K extends CatalogPageKind>({
       return;
     }
     void loadPage(state.nextCursor, "more", generationRef.current);
-  }, [enabled, state.hasMore, state.loadingInitial, state.loadingMore, state.nextCursor, loadPage]);
+  }, [effectiveEnabled, state.hasMore, state.loadingInitial, state.loadingMore, state.nextCursor, loadPage]);
 
   const reload = useCallback(() => {
-    if (!enabled || !provider || !baseRequest || !queryKey) return;
+    if (!effectiveEnabled || !provider || !baseRequest || !queryKey) return;
     generationRef.current += 1;
     const generation = generationRef.current;
     flightGuardRef.current.clear();
@@ -254,7 +264,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
       queryKey,
     });
     void loadPage(null, "initial", generation);
-  }, [enabled, provider, baseRequest, queryKey, resolvedSnapshotTotal, loadPage]);
+  }, [effectiveEnabled, provider, baseRequest, queryKey, resolvedSnapshotTotal, loadPage]);
 
   return {
     ...state,
