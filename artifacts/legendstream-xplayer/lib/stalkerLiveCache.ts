@@ -1,21 +1,21 @@
 import * as SQLite from "expo-sqlite";
-import { enqueueCatalogDbWrite } from "./catalogDbWriter";
-import { initCatalogCache, upsertCatalogItemsBulkNonCancellable } from "./catalogCache";
+import {
+  cleanupStagingCatalog,
+  initCatalogCache,
+  stagingProviderId,
+  swapStagingToProvider,
+  upsertCatalogItemsBulkNonCancellable,
+} from "./catalogCache";
 import {
   normalizePersistedCatalogPayload,
   type PersistedLiveCatalogItem,
   type PersistedStalkerLivePlaybackRef,
 } from "./catalogPersistence";
-import { enqueueOwnedStalkerLiveCommit, type StalkerLiveCommitOwnershipCheck } from "./stalkerLiveCommitOwnership";
+import { assertStalkerLiveCommitCurrent, type StalkerLiveCommitOwnershipCheck } from "./stalkerLiveCommitOwnership";
 import type { StalkerLiveCategory } from "./stalkerLiveCatalog";
 
 const CATALOG_DB_NAME = "legendstream-catalog-v1.db";
-const STAGING_PREFIX = "__staging__";
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
-
-function stagingProviderId(providerId: string) {
-  return `${STAGING_PREFIX}${providerId}`;
-}
 
 async function database() {
   await initCatalogCache();
@@ -24,15 +24,7 @@ async function database() {
 }
 
 export async function cleanupStalkerLiveStaging(providerId: string) {
-  const stagingId = stagingProviderId(providerId);
-  return enqueueCatalogDbWrite(async () => {
-    const db = await database();
-    await db.withExclusiveTransactionAsync(async (txn) => {
-      await txn.runAsync("DELETE FROM catalog_items WHERE provider_id = ? AND kind = 'live'", stagingId);
-      await txn.runAsync("DELETE FROM catalog_categories WHERE provider_id = ? AND kind = 'live'", stagingId);
-      await txn.runAsync("DELETE FROM catalog_sync_state WHERE provider_id = ?", stagingId);
-    });
-  });
+  return cleanupStagingCatalog(providerId);
 }
 
 export async function stageStalkerLivePage(
@@ -51,41 +43,25 @@ export async function stageStalkerLivePage(
 export async function commitStalkerLiveStaging(
   providerId: string,
   categories: readonly StalkerLiveCategory[],
+  itemCount: number,
   isCurrent?: StalkerLiveCommitOwnershipCheck,
 ) {
-  const stagingId = stagingProviderId(providerId);
-  return enqueueOwnedStalkerLiveCommit({
-    enqueue: enqueueCatalogDbWrite,
-    isCurrent,
-    mutate: async (assertCurrent) => {
-      assertCurrent();
-      const db = await database();
-      assertCurrent();
-      await db.withExclusiveTransactionAsync(async (txn) => {
-        assertCurrent();
-        await txn.runAsync("DELETE FROM catalog_items WHERE provider_id = ? AND kind = 'live'", providerId);
-        assertCurrent();
-        await txn.runAsync("DELETE FROM catalog_categories WHERE provider_id = ? AND kind = 'live'", providerId);
-        assertCurrent();
-        await txn.runAsync("UPDATE catalog_items SET provider_id = ? WHERE provider_id = ? AND kind = 'live'", providerId, stagingId);
-        for (const category of categories) {
-          assertCurrent();
-          await txn.runAsync(
-            `INSERT OR REPLACE INTO catalog_categories
-             (provider_id, kind, category_id, category_name, parent_id)
-             VALUES (?, 'live', ?, ?, NULL)`,
-            providerId,
-            category.id,
-            category.name,
-          );
-        }
-        assertCurrent();
-        await txn.runAsync("DELETE FROM catalog_categories WHERE provider_id = ? AND kind = 'live'", stagingId);
-        await txn.runAsync("DELETE FROM catalog_sync_state WHERE provider_id = ?", stagingId);
-        assertCurrent();
-      });
-      assertCurrent();
-    },
+  const assertCurrent = () => assertStalkerLiveCommitCurrent(isCurrent);
+  assertCurrent();
+  return swapStagingToProvider({
+    providerId,
+    kinds: ["live"],
+    liveCategories: categories.map((category) => ({
+      category_id: category.id,
+      category_name: category.name,
+    })),
+    vodCategories: [],
+    seriesCategories: [],
+    readyMessage: "Stalker Live catalog ready",
+    readyStamp: "background",
+    syncTotal: itemCount,
+    committedCounts: { live: itemCount, vod: 0, series: 0 },
+    assertStillOwned: assertCurrent,
   });
 }
 
