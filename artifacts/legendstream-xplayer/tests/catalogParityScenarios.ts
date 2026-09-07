@@ -45,14 +45,13 @@ const legacyXtream = {
 };
 
 async function main() {
-  await scenario("Stalker Live uses the existing provider channel presentation instead of paged SQLite", () => {
+  await scenario("Stalker Live delegates to the persisted PagedLive catalog path", () => {
     assert.match(screenSource, /provider\.type === "stalker"[\s\S]*StalkerLiveCatalog/s);
-    assert.match(screenSource, /channels=\{playerLiveChannels\}/);
-    assert.match(stalkerSource, /channels\.filter/);
-    assert.match(stalkerSource, /epgByChannel/);
-    assert.match(stalkerSource, /favorites\.includes/);
-    assert.match(stalkerSource, /onOpen\(channel\)/);
-    assert.doesNotMatch(stalkerSource, /useCatalogPage|getCachedCatalogPage|catalogPageRepository/);
+    assert.match(stalkerSource, /PagedLiveCatalog/);
+    assert.match(stalkerSource, /refreshCatalog/);
+    assert.doesNotMatch(stalkerSource, /channels\.filter|visible = useMemo|FlatList/);
+    assert.match(categoryViewsSource, /type === "stalker"/);
+    assert.match(catalogPagingSource, /"m3u" \| "xtream" \| "stalker"/);
   });
 
   await scenario("M3U and Xtream Live remain on the persisted paged path", () => {
@@ -100,6 +99,7 @@ async function main() {
     assert.match(identityRepositorySource, /provider\.id/);
     assert.match(identityRepositorySource, /new Map/);
     assert.match(identityRepositorySource, /requestedIds\.map/);
+    assert.match(identityRepositorySource, /provider\.type !== "stalker"/);
   });
 
   await scenario("recognized legacy Xtream catalog-format failure allows exactly-once M3U migration", () => {

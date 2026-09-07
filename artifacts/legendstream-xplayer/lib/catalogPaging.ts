@@ -1,5 +1,5 @@
 export type CatalogPageKind = "live" | "vod" | "series";
-export type CatalogPageProviderType = "m3u" | "xtream";
+export type CatalogPageProviderType = "m3u" | "xtream" | "stalker";
 export type CatalogPageSort = "default" | "alphaAsc" | "alphaDesc" | "idAsc" | "idDesc" | "added";
 
 export const DEFAULT_CATALOG_PAGE_SIZE = 100;
