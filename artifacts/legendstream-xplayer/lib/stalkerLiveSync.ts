@@ -50,7 +50,7 @@ export async function syncStalkerLiveCatalog(options: Options) {
     commit: async (categories, result) => {
       assertCurrent(options.signal, options.isCurrent);
       await options.onProgress?.({ phase: "committing", persisted: result.persisted });
-      await commitStalkerLiveStaging(providerId, categories, options.isCurrent);
+      await commitStalkerLiveStaging(providerId, categories, result.persisted, options.isCurrent);
       assertCurrent(options.signal, options.isCurrent);
     },
     yieldFn: yieldToUi,
