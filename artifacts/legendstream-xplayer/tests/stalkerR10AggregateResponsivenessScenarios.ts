@@ -3,7 +3,6 @@ import {
   STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE,
   normalizeStalkerLiveAggregateCooperatively,
 } from "../lib/stalkerLiveDiscovery";
-import { StalkerPortalError } from "../lib/stalkerPortal";
 
 let passed = 0;
 
@@ -87,7 +86,7 @@ async function main() {
     await verifyBoundedAggregate(10_100);
   });
 
-  await scenario("duplicate stable id across aggregate chunks still fails closed", async () => {
+  await scenario("duplicate stable id across aggregate chunks becomes a bounded fallback decision", async () => {
     const data = Array.from({ length: STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE + 1 }, (_, index) => ({
       id: index === STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE ? 1 : index + 1,
       name: `Channel ${index + 1}`,
@@ -95,15 +94,13 @@ async function main() {
       tv_genre_id: "1",
     }));
     let yields = 0;
-    await assert.rejects(
-      normalizeStalkerLiveAggregateCooperatively({
-        payload: { data },
-        providerId: "r10-duplicate",
-        networkWaitMs: 0,
-        yieldFn: async () => { yields += 1; },
-      }),
-      (caught: unknown) => caught instanceof StalkerPortalError && caught.code === "INVALID_RESPONSE",
-    );
+    const result = await normalizeStalkerLiveAggregateCooperatively({
+      payload: { data },
+      providerId: "r10-duplicate",
+      networkWaitMs: 0,
+      yieldFn: async () => { yields += 1; },
+    });
+    assert.equal(result.kind, "fallback");
     assert.equal(yields, 1);
   });
 
