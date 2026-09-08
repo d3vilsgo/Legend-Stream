@@ -57,6 +57,7 @@ function normalized(id: number | string, overrides: Record<string, unknown> = {}
     yieldFn: async () => {},
   }).then((result) => {
     assert.equal(result.kind, "complete");
+    if (result.kind !== "complete") throw new Error("normalization unexpectedly fell back");
     return result.rows[0];
   });
 }
@@ -163,43 +164,51 @@ async function main() {
     assert.equal(result.duplicateDifferentCommandCount, 1);
   });
 
-  await scenario("duplicate crossing chunk boundary emits fatal summary before unchanged throw", async () => {
+  await scenario("duplicate crossing chunk boundary emits safe fallback summary", async () => {
     const data = Array.from({ length: STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE + 1 }, (_, index) =>
       channel(index === STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE ? 1 : index + 1),
     );
     let yields = 0;
+    let result: Awaited<ReturnType<typeof normalizeStalkerLiveAggregateCooperatively>> | null = null;
     const logs = await captureLogs(async () => {
-      await assert.rejects(
-        normalizeStalkerLiveAggregateCooperatively({
-          payload: { data },
-          providerId: "r12-duplicate",
-          syncRunId: "run-dup",
-          networkWaitMs: 0,
-          yieldFn: async () => { yields += 1; },
-        }),
-        /duplicate stable channel identifier/,
-      );
+      result = await normalizeStalkerLiveAggregateCooperatively({
+        payload: { data },
+        providerId: "r12-duplicate",
+        syncRunId: "run-dup",
+        networkWaitMs: 0,
+        yieldFn: async () => { yields += 1; },
+      });
     });
+    assert.equal(result?.kind, "fallback");
     const summary = events(logs, "LS_STALKER_AGGREGATE_DUPLICATE_SUMMARY")[0]?.details;
     assert.equal(summary?.rawRowCount, STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE + 1);
     assert.equal(summary?.uniqueBeforeFailure, STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE);
     assert.equal(summary?.firstDuplicateChunkIndex, 1);
     assert.equal(summary?.firstDuplicateClass, "DUPLICATE_SAME_COMMAND_SAME_METADATA");
+    assert.equal(events(logs, "LS_STALKER_FALLBACK_DECISION")[0]?.details.decision, "FALLBACK_ORDERED");
     assert.equal(events(logs, "LS_STALKER_FALLBACK_DECISION")[0]?.details.reason, "DUPLICATE_PORTAL_ID");
     assert.equal(yields, 1);
   });
 
-  await scenario("observed-style aggregate shape reports cur_page separately without changing behavior", async () => {
+  await scenario("observed-style aggregate shape reports cur_page and changes discovery strategy", async () => {
     const rows = Array.from({ length: 300 }, (_, index) => channel(index + 1));
-    const transport = createTransport(() => response({
-      js: { data: rows, total_items: 300, max_page_items: 14, cur_page: 0 },
-    }));
+    const transport = createTransport((url) => {
+      const action = url.searchParams.get("action");
+      if (action === "get_all_channels") {
+        return response({ js: { data: rows, total_items: 300, max_page_items: 14, cur_page: 0 } });
+      }
+      if (action === "get_ordered_list") {
+        return response({ js: { data: rows, total_items: 300, max_page_items: 300 } });
+      }
+      throw new Error(`unexpected ${action}`);
+    });
     const logs = await captureLogs(async () => {
-      await discoverStalkerLiveChannels({
+      const result = await discoverStalkerLiveChannels({
         session: transport.session,
         providerId: "r12-observed",
         syncRunId: "run-shape",
       });
+      assert.equal(result.source, "get_ordered_list");
     });
     const shape = events(logs, "LS_STALKER_GET_ALL_SHAPE")[0]?.details;
     assert.equal(shape?.rowCount, 300);
@@ -207,6 +216,9 @@ async function main() {
     assert.equal(shape?.hasMaxPageItems, true);
     assert.equal(shape?.hasCurPageMetadata, true);
     assert.equal(shape?.hasPaginationMetadata, true);
+    assert.ok(events(logs, "LS_STALKER_FALLBACK_DECISION").some((log) =>
+      log.details.reason === "AGGREGATE_PAGINATION_METADATA" && log.details.decision === "FALLBACK_ORDERED",
+    ));
   });
 
   await scenario("two sync starts from different owners emit distinct run owners", async () => {
