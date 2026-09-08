@@ -18,9 +18,10 @@ import {
   type PersistedSeriesCatalogItem,
   type PersistedVodCatalogItem,
 } from "./catalogPersistence";
-import { createStalkerPortalSession } from "./stalkerPortal";
 import { resolveStalkerLiveCreateLink } from "./stalkerLiveCatalog";
 import { getPersistedStalkerLivePlaybackRef } from "./stalkerLiveCache";
+import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
+import type { StalkerPortalSession } from "./stalkerPortal";
 
 export type CatalogRuntimeProvider = {
   id: string;
@@ -33,6 +34,18 @@ export type CatalogRuntimeProvider = {
 };
 
 export type CatalogPageRuntimeItem = Channel | XtreamVodItem | XtreamSeriesItem;
+
+type CatalogRuntimeDependencies = {
+  getStalkerPlaybackRef?: typeof getPersistedStalkerLivePlaybackRef;
+  acquireStalkerSession?: (
+    identity: Parameters<typeof getOrCreateStalkerPortalSession>[0],
+  ) => Pick<StalkerPortalSession, "request">;
+  resolveStalkerLink?: (
+    session: Pick<StalkerPortalSession, "request">,
+    cmd: string,
+    signal?: AbortSignal,
+  ) => Promise<string>;
+};
 
 function normalizeCatalogRuntimeBaseUrl(value: string) {
   const normalized = normalizeXtreamBaseUrl(value);
@@ -222,6 +235,7 @@ export async function resolveCatalogRuntimeSource(
   source: string,
   provider: CatalogRuntimeProvider | null | undefined,
   signal?: AbortSignal,
+  dependencies: CatalogRuntimeDependencies = {},
 ): Promise<string> {
   const ref = parseCatalogRuntimeSource(source);
   if (!ref) return source;
@@ -230,10 +244,14 @@ export async function resolveCatalogRuntimeSource(
   }
   if (ref.kind === "stalker-live") {
     const credentials = requireStalkerCredentials(provider);
-    const playbackRef = await getPersistedStalkerLivePlaybackRef(ref.providerId, ref.itemId);
+    const playbackRef = await (dependencies.getStalkerPlaybackRef ?? getPersistedStalkerLivePlaybackRef)(ref.providerId, ref.itemId);
     if (!playbackRef) throw new Error("Cached Stalker playback reference is unavailable.");
-    const session = createStalkerPortalSession(credentials);
-    return resolveStalkerLiveCreateLink(session, playbackRef.cmd, signal);
+    const session = (dependencies.acquireStalkerSession ?? getOrCreateStalkerPortalSession)({
+      providerId: ref.providerId,
+      portalUrl: credentials.portalUrl,
+      mac: credentials.mac,
+    });
+    return (dependencies.resolveStalkerLink ?? resolveStalkerLiveCreateLink)(session, playbackRef.cmd, signal);
   }
   const credentials = requireXtreamCredentials(provider);
   if (ref.kind === "vod-direct") {

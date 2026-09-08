@@ -256,6 +256,7 @@ export function CompatibilityVideoPlayer({
     provider?.playlistUrl,
     provider?.username,
     provider?.password,
+    provider?.mac,
     revealControls,
     revealMediaInfo,
   ]);
@@ -342,7 +343,7 @@ export function CompatibilityVideoPlayer({
       !currentLiveIdentity ||
       !provider ||
       provider.id !== currentLiveIdentity.providerId ||
-      (provider.type !== "m3u" && provider.type !== "xtream")
+      (provider.type !== "m3u" && provider.type !== "xtream" && provider.type !== "stalker")
     ) {
       setCachedLiveChannels([]);
       return () => { cancelled = true; };
