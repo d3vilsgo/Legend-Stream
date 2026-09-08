@@ -28,6 +28,14 @@ export type StalkerPortalTarget = {
   endpointKind: StalkerPortalEndpointKind;
 };
 
+export type StalkerPortalRequestTiming = {
+  fetchWaitMs: number;
+  bodyReadWaitMs: number;
+  postBodyYieldStartMs: number;
+  postBodyYieldMs: number;
+  jsonParseMs: number;
+};
+
 type FetchLike = (
   input: string | URL | Request,
   init?: RequestInit,
@@ -42,6 +50,7 @@ type StalkerPortalSessionOptions = {
 };
 
 type StalkerActionParams = Record<string, string | number | boolean | undefined>;
+type RequestTimingObserver = (timing: StalkerPortalRequestTiming) => void;
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const USER_AGENT = "Mozilla/5.0 (Linux; Android 12; SmartTV) AppleWebKit/537.36";
@@ -203,10 +212,14 @@ export class StalkerPortalSession {
     return { authenticated: true as const };
   }
 
-  async request(params: StalkerActionParams, signal?: AbortSignal) {
+  async request(
+    params: StalkerActionParams,
+    signal?: AbortSignal,
+    onTiming?: RequestTimingObserver,
+  ) {
     const requestToken = await this.#ensureAuthenticated(signal);
     try {
-      return await this.#requestOnce(params, requestToken, signal);
+      return await this.#requestOnce(params, requestToken, signal, onTiming);
     } catch (caught) {
       if (
         !(caught instanceof StalkerPortalError) ||
@@ -217,7 +230,7 @@ export class StalkerPortalSession {
       }
       this.#invalidateTokenIfCurrent(requestToken);
       const retryToken = await this.#ensureAuthenticated(signal);
-      return this.#requestOnce(params, retryToken, signal);
+      return this.#requestOnce(params, retryToken, signal, onTiming);
     }
   }
 
@@ -302,6 +315,7 @@ export class StalkerPortalSession {
     params: StalkerActionParams,
     token: string | null,
     externalSignal?: AbortSignal,
+    onTiming?: RequestTimingObserver,
   ) {
     const url = new URL(this.#endpointUrl);
     for (const [key, value] of Object.entries(params)) {
@@ -312,9 +326,15 @@ export class StalkerPortalSession {
     }
 
     const requestSignal = linkedRequestSignal(externalSignal, this.#timeoutMs);
+    let fetchWaitMs = 0;
+    let bodyReadWaitMs = 0;
+    let postBodyYieldStartMs = 0;
+    let postBodyYieldMs = 0;
+    let jsonParseMs = 0;
     try {
       let response: Response;
       try {
+        const fetchStartedAt = Date.now();
         response = await this.#fetchImpl(url.toString(), {
           headers: {
             Accept: "*/*",
@@ -325,6 +345,7 @@ export class StalkerPortalSession {
           },
           signal: requestSignal.signal,
         });
+        fetchWaitMs = Math.max(0, Date.now() - fetchStartedAt);
       } catch (caught) {
         if (externalSignal?.aborted) {
           throw new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled.");
@@ -341,7 +362,9 @@ export class StalkerPortalSession {
 
       let text: string;
       try {
+        const bodyReadStartedAt = Date.now();
         text = await response.text();
+        bodyReadWaitMs = Math.max(0, Date.now() - bodyReadStartedAt);
       } catch (caught) {
         if (externalSignal?.aborted) {
           throw new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled.");
@@ -358,7 +381,12 @@ export class StalkerPortalSession {
           "Stalker portal response body could not be read.",
         );
       }
+
+      const bodyReadFinishedAt = Date.now();
+      const postBodyYieldStartedAt = Date.now();
+      postBodyYieldStartMs = Math.max(0, postBodyYieldStartedAt - bodyReadFinishedAt);
       await this.#afterResponse();
+      postBodyYieldMs = Math.max(0, Date.now() - postBodyYieldStartedAt);
 
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) {
@@ -376,14 +404,20 @@ export class StalkerPortalSession {
       }
 
       let parsed: unknown;
+      const jsonParseStartedAt = Date.now();
       try {
         parsed = JSON.parse(text);
       } catch {
+        jsonParseMs = Math.max(0, Date.now() - jsonParseStartedAt);
+        onTiming?.({ fetchWaitMs, bodyReadWaitMs, postBodyYieldStartMs, postBodyYieldMs, jsonParseMs });
         throw new StalkerPortalError(
           "INVALID_RESPONSE",
           "Stalker portal returned an invalid JSON response.",
         );
       }
+      jsonParseMs = Math.max(0, Date.now() - jsonParseStartedAt);
+      onTiming?.({ fetchWaitMs, bodyReadWaitMs, postBodyYieldStartMs, postBodyYieldMs, jsonParseMs });
+
       const payload =
         parsed && typeof parsed === "object" && !Array.isArray(parsed) && "js" in parsed
           ? (parsed as { js?: unknown }).js
