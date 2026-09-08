@@ -234,7 +234,56 @@ async function main() {
     ]);
   });
 
-  await scenario("same-session syncs reuse handshake after first token", async () => {
+  await scenario("overlapping shared-session syncs keep request-scoped diagnostic attribution", async () => {
+    let resolveHandshake!: () => void;
+    let markHandshakeStarted!: () => void;
+    const handshakeStarted = new Promise<void>((resolve) => { markHandshakeStarted = resolve; });
+    const requests: URL[] = [];
+    const fetchImpl: FetchLike = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      requests.push(url);
+      const action = url.searchParams.get("action");
+      if (action === "handshake") {
+        markHandshakeStarted();
+        return new Promise<Response>((resolve) => {
+          resolveHandshake = () => resolve(response({ js: { token: "token-overlap" } }));
+        });
+      }
+      if (action === "get_profile") return response({ js: { id: "profile" } });
+      if (action === "get_genres") return response({ js: [] });
+      if (action === "get_all_channels") return response({ js: { data: [channel(1)], total_items: 1 } });
+      throw new Error(`unexpected ${action}`);
+    };
+    const session = createStalkerPortalSession({
+      portalUrl: "https://portal.invalid",
+      mac: "00:1A:79:12:34:56",
+      fetchImpl,
+    });
+    const provider = { id: "r12-overlap", url: "https://portal.invalid", mac: "00:1A:79:12:34:56" };
+    const logs = await captureLogs(async () => {
+      const first = syncStalkerLiveCatalogWithDependencies(
+        { provider, owner: "CONNECT_PROVIDER" },
+        makeSyncHarness(session),
+      );
+      await handshakeStarted;
+      const second = syncStalkerLiveCatalogWithDependencies(
+        { provider, owner: "LIVE_MOUNT" },
+        makeSyncHarness(session),
+      );
+      resolveHandshake();
+      await Promise.all([first, second]);
+    });
+    assert.equal(requests.filter((url) => url.searchParams.get("action") === "handshake").length, 1);
+    assert.equal(events(logs, "LS_STALKER_HANDSHAKE_START")[0]?.details.syncRunId, events(logs, "LS_STALKER_SYNC_RUN_START")[0]?.details.syncRunId);
+    const pendingReuse = events(logs, "LS_STALKER_HANDSHAKE_REUSE").find((log) => log.details.reason === "PENDING_HANDSHAKE");
+    assert.equal(pendingReuse?.details.syncRunId, events(logs, "LS_STALKER_SYNC_RUN_START")[1]?.details.syncRunId);
+    assert.deepEqual(
+      events(logs, "LS_STALKER_SYNC_RUN_START").map((log) => log.details.owner),
+      ["CONNECT_PROVIDER", "LIVE_MOUNT"],
+    );
+  });
+
+  await scenario("same-session syncs reuse existing token with TOKEN_PRESENT marker", async () => {
     let handshakes = 0;
     const transport = createTransport((url) => {
       if (url.searchParams.get("action") === "get_profile") return response({ js: { id: "profile" } });
@@ -253,6 +302,50 @@ async function main() {
     assert.equal(handshakes, 1);
     assert.equal(transport.requests.filter((url) => url.searchParams.get("action") === "handshake").length, 1);
     assert.equal(events(logs, "LS_STALKER_HANDSHAKE_START").length, 1);
+    assert.ok(events(logs, "LS_STALKER_HANDSHAKE_REUSE").some((log) => log.details.reason === "TOKEN_PRESENT"));
+  });
+
+  await scenario("pending handshake single-flight emits PENDING_HANDSHAKE for second waiter", async () => {
+    let resolveHandshake!: () => void;
+    let markHandshakeStarted!: () => void;
+    const handshakeStarted = new Promise<void>((resolve) => { markHandshakeStarted = resolve; });
+    const requests: URL[] = [];
+    const fetchImpl: FetchLike = async (input) => {
+      const url = new URL(input instanceof Request ? input.url : String(input));
+      requests.push(url);
+      if (url.searchParams.get("action") === "handshake") {
+        markHandshakeStarted();
+        return new Promise<Response>((resolve) => {
+          resolveHandshake = () => resolve(response({ js: { token: "token-pending" } }));
+        });
+      }
+      return response({ js: { ok: true } });
+    };
+    const session = createStalkerPortalSession({
+      portalUrl: "https://portal.invalid",
+      mac: "00:1A:79:12:34:56",
+      fetchImpl,
+    });
+    const logs = await captureLogs(async () => {
+      const first = session.request(
+        { type: "itv", action: "get_all_channels" },
+        undefined,
+        undefined,
+        { syncRunId: "run-pending-a", providerId: "provider-pending" },
+      );
+      await handshakeStarted;
+      const second = session.request(
+        { type: "itv", action: "get_genres" },
+        undefined,
+        undefined,
+        { syncRunId: "run-pending-b", providerId: "provider-pending" },
+      );
+      resolveHandshake();
+      await Promise.all([first, second]);
+    });
+    assert.equal(requests.filter((url) => url.searchParams.get("action") === "handshake").length, 1);
+    const pending = events(logs, "LS_STALKER_HANDSHAKE_REUSE").find((log) => log.details.reason === "PENDING_HANDSHAKE");
+    assert.equal(pending?.details.syncRunId, "run-pending-b");
   });
 
   await scenario("session recreation path emits safe registry acquire reason", async () => {
@@ -306,8 +399,8 @@ async function main() {
     assert.equal(yields, Math.ceil(rows.length / STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE));
   });
 
-  assert.equal(passed, 12);
-  console.log("stalker R12 runtime classification scenarios: 12/12 passed");
+  assert.equal(passed, 14);
+  console.log("stalker R12 runtime classification scenarios: 14/14 passed");
 }
 
 void main().catch((error) => {

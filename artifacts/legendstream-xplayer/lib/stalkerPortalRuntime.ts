@@ -43,7 +43,6 @@ export function getOrCreateStalkerPortalSession(
 
   const current = sessions.get(providerId);
   if (current && current.endpointUrl === target.endpointUrl && current.mac === mac) {
-    current.session.setDiagnosticsContext(identity.diagnostics ?? { providerId });
     safeLog.info("LS_STALKER_SESSION_ACQUIRE", {
       syncRunId: identity.diagnostics?.syncRunId,
       providerId,

@@ -110,16 +110,15 @@ export async function syncStalkerLiveCatalogWithDependencies(
   });
   const diagnostics = { syncRunId, providerId };
   const session = dependencies.acquireSession(options.provider, diagnostics);
-  session.setDiagnosticsContext(diagnostics);
   let primaryError: unknown = null;
 
   await dependencies.cleanupStaging(providerId, stagingId);
   try {
     assertCurrent(options.signal, options.isCurrent);
-    await bootstrapStalkerProfile(session, { signal: options.signal });
+    await bootstrapStalkerProfile(session, { signal: options.signal, diagnostics });
     assertCurrent(options.signal, options.isCurrent);
 
-    const categories = await fetchStalkerLiveCategories(session, options.signal);
+    const categories = await fetchStalkerLiveCategories(session, options.signal, diagnostics);
     assertCurrent(options.signal, options.isCurrent);
     await options.onProgress?.({ phase: "categories" });
 

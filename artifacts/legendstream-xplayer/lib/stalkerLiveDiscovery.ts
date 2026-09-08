@@ -390,6 +390,7 @@ async function discoverViaOrderedList(options: StalkerLiveDiscoveryOptions): Pro
   const result = await traverseStalkerLivePages({
     session: options.session,
     providerId: options.providerId,
+    syncRunId: options.syncRunId,
     categories: options.categories,
     signal: options.signal,
     isCurrent: options.isCurrent,
@@ -436,6 +437,7 @@ export async function discoverStalkerLiveChannels(
       { type: "itv", action: "get_all_channels" },
       options.signal,
       (timing) => { timingHolder.current = timing; },
+      { syncRunId: options.syncRunId, providerId: options.providerId },
     );
   } catch (caught) {
     if (isExplicitUnsupportedHttp(caught)) {

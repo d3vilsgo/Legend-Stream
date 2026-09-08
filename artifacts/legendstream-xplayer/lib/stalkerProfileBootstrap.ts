@@ -1,4 +1,4 @@
-import { StalkerPortalError, type StalkerPortalSession } from "./stalkerPortal";
+import { StalkerPortalError, type StalkerPortalDiagnosticsContext, type StalkerPortalSession } from "./stalkerPortal";
 
 export type StalkerProfileRequestOptions = {
   hd?: string | number | boolean;
@@ -8,6 +8,7 @@ export type StalkerProfileRequestOptions = {
 export type StalkerProfileBootstrapOptions = {
   signal?: AbortSignal;
   profileOptions?: StalkerProfileRequestOptions;
+  diagnostics?: StalkerPortalDiagnosticsContext;
 };
 
 export type StalkerProfileBootstrapResult =
@@ -77,7 +78,12 @@ export async function bootstrapStalkerProfile(
 ): Promise<StalkerProfileBootstrapResult> {
   let payload: unknown;
   try {
-    payload = await session.request(profileRequestParams(options.profileOptions), options.signal);
+    payload = await session.request(
+      profileRequestParams(options.profileOptions),
+      options.signal,
+      undefined,
+      options.diagnostics,
+    );
   } catch (caught) {
     if (
       caught instanceof StalkerPortalError &&
