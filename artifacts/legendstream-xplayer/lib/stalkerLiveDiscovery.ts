@@ -2,7 +2,10 @@ import { yieldToUi } from "./cooperative";
 import { safeLog } from "./safeLog";
 import { StalkerPortalError, type StalkerPortalRequestTiming, type StalkerPortalSession } from "./stalkerPortal";
 import {
+  MAX_STALKER_LIVE_PAGES,
   normalizeStalkerLivePage,
+  normalizedStalkerLivePageCeiling,
+  stalkerLivePageCeilingExceeded,
   traverseStalkerLivePages,
   type StalkerLiveCategory,
   type StalkerLiveChannel,
@@ -121,18 +124,22 @@ function readAdvertisedTotal(payload: unknown) {
   return first;
 }
 
-function hasExplicitPaginationMetadata(payload: unknown) {
+function hasAnyMetadata(payload: unknown, keys: readonly string[]) {
   const { root, nested } = metadataObjects(payload);
-  const keys = [
+  return [root, nested].some((row) => row && keys.some((key) => row[key] !== undefined && row[key] !== null));
+}
+
+function hasExplicitPaginationMetadata(payload: unknown) {
+  return hasAnyMetadata(payload, [
     "max_page_items",
     "max_page_size",
     "page",
     "p",
+    "cur_page",
     "current_page",
     "total_pages",
     "pages",
-  ] as const;
-  return [root, nested].some((row) => row && keys.some((key) => row[key] !== undefined && row[key] !== null));
+  ]);
 }
 
 function assertCurrent(signal?: AbortSignal, isCurrent?: () => boolean) {
@@ -179,11 +186,6 @@ type DuplicateCounters = {
   duplicateDifferentCategoryCount: number;
   duplicateDifferentMetadataCount: number;
 };
-
-function hasAnyMetadata(payload: unknown, keys: readonly string[]) {
-  const { root, nested } = metadataObjects(payload);
-  return [root, nested].some((row) => row && keys.some((key) => row[key] !== undefined && row[key] !== null));
-}
 
 function aggregateShape(payload: unknown, rowCount: number, advertisedTotal: number | null): AggregateShape {
   const hasMaxPageItems = hasAnyMetadata(payload, ["max_page_items", "max_page_size"]);
@@ -237,25 +239,49 @@ export function classifyStalkerAggregateDuplicate(
   };
 }
 
+function logAggregateFallback(options: AggregateNormalizeOptions, reason: string) {
+  safeLog.info("LS_STALKER_FALLBACK_DECISION", {
+    syncRunId: options.syncRunId,
+    providerId: options.providerId,
+    decision: "FALLBACK_ORDERED",
+    reason,
+  });
+}
+
 export async function normalizeStalkerLiveAggregateCooperatively(
   options: AggregateNormalizeOptions,
 ): Promise<AggregateDecision> {
   const now = options.nowFn ?? Date.now;
   const yieldFn = options.yieldFn ?? yieldToUi;
   const value = unwrapKnownJs(options.payload);
-  if (payloadLooksExplicitlyUnsupported(value)) return { kind: "fallback" };
+  if (payloadLooksExplicitlyUnsupported(value)) {
+    logAggregateFallback(options, "AGGREGATE_UNSUPPORTED");
+    return { kind: "fallback" };
+  }
   const rawRows = rowsFromAggregate(value);
   if (!rawRows) {
-    throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live page has an invalid shape.");
+    logAggregateFallback(options, "AGGREGATE_STRUCTURALLY_UNUSABLE");
+    return { kind: "fallback" };
   }
 
-  const totalItems = readAdvertisedTotal(value);
+  let totalItems: number | null;
+  try {
+    totalItems = readAdvertisedTotal(value);
+  } catch (caught) {
+    if (caught instanceof StalkerPortalError && caught.code === "INVALID_RESPONSE") {
+      logAggregateFallback(options, "AGGREGATE_METADATA_INVALID");
+      return { kind: "fallback" };
+    }
+    throw caught;
+  }
+
   const shape = aggregateShape(value, rawRows.length, totalItems);
   safeLog.info("LS_STALKER_GET_ALL_SHAPE", {
     syncRunId: options.syncRunId,
     providerId: options.providerId,
     ...shape,
   });
+
   const rows: StalkerLiveChannel[] = [];
   const seen = new Map<string, StalkerLiveChannel>();
   let normalizeMs = 0;
@@ -269,16 +295,26 @@ export async function normalizeStalkerLiveAggregateCooperatively(
     const rawChunk = rawRows.slice(offset, offset + STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE);
 
     const normalizeStartedAt = now();
-    const page = normalizeStalkerLivePage(
-      { data: rawChunk },
-      options.providerId,
-      1,
-      options.categories ?? [],
-    );
+    let page;
+    try {
+      page = normalizeStalkerLivePage(
+        { data: rawChunk },
+        options.providerId,
+        1,
+        options.categories ?? [],
+      );
+    } catch (caught) {
+      if (caught instanceof StalkerPortalError && caught.code === "INVALID_RESPONSE") {
+        logAggregateFallback(options, "AGGREGATE_STRUCTURALLY_UNUSABLE");
+        return { kind: "fallback" };
+      }
+      throw caught;
+    }
     normalizeMs += Math.max(0, now() - normalizeStartedAt);
 
     const dedupeStartedAt = now();
-    for (const row of page.items) {
+    for (let index = 0; index < page.items.length; index += 1) {
+      const row = page.items[index];
       const firstSeen = seen.get(row.portalId);
       if (firstSeen) {
         const duplicate = classifyStalkerAggregateDuplicate(firstSeen, row);
@@ -292,17 +328,12 @@ export async function normalizeStalkerLiveAggregateCooperatively(
           duplicateDifferentCommandCount: duplicate.duplicateDifferentCommandCount,
           duplicateDifferentCategoryCount: duplicate.duplicateDifferentCategoryCount,
           duplicateDifferentMetadataCount: duplicate.duplicateDifferentMetadataCount,
-          firstDuplicateRowIndex: offset + page.items.indexOf(row),
+          firstDuplicateRowIndex: offset + index,
           firstDuplicateChunkIndex: Math.trunc(offset / STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE),
           firstDuplicateClass: duplicate.duplicateClass,
         });
-        safeLog.info("LS_STALKER_FALLBACK_DECISION", {
-          syncRunId: options.syncRunId,
-          providerId: options.providerId,
-          decision: "FATAL",
-          reason: "DUPLICATE_PORTAL_ID",
-        });
-        throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live aggregate returned a duplicate stable channel identifier.");
+        logAggregateFallback(options, "DUPLICATE_PORTAL_ID");
+        return { kind: "fallback" };
       }
       seen.set(row.portalId, row);
       rows.push(row);
@@ -332,60 +363,201 @@ export async function normalizeStalkerLiveAggregateCooperatively(
   });
 
   if (rows.length === 0) {
-    if (totalItems === 0) {
-      throw new StalkerPortalError("INVALID_RESPONSE", "The Stalker Portal explicitly reports no live channels.");
-    }
-    throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live aggregate response is empty without completeness evidence.");
+    logAggregateFallback(options, "AGGREGATE_EMPTY");
+    return { kind: "fallback" };
   }
 
-  if (totalItems !== null) {
-    if (totalItems > rows.length) {
-      safeLog.info("LS_STALKER_FALLBACK_DECISION", {
-        syncRunId: options.syncRunId,
-        providerId: options.providerId,
-        decision: "FALLBACK_ORDERED",
-        reason: "RAW_LT_ADVERTISED",
-      });
-      return { kind: "fallback" };
-    }
-    if (totalItems < rows.length) {
-      safeLog.info("LS_STALKER_FALLBACK_DECISION", {
-        syncRunId: options.syncRunId,
-        providerId: options.providerId,
-        decision: "FATAL",
-        reason: "RAW_GT_ADVERTISED",
-      });
-      throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live aggregate contains more unique rows than its advertised total.");
-    }
-    safeLog.info("LS_STALKER_FALLBACK_DECISION", {
-      syncRunId: options.syncRunId,
-      providerId: options.providerId,
-      decision: "USE_AGGREGATE",
-      reason: "COMPLETE_TOTAL",
-    });
-    return { kind: "complete", rows, totalItems };
+  if (totalItems !== null && totalItems !== rows.length) {
+    logAggregateFallback(options, totalItems > rows.length ? "RAW_LT_ADVERTISED" : "RAW_GT_ADVERTISED");
+    return { kind: "fallback" };
   }
 
-  if (hasExplicitPaginationMetadata(value)) {
-    safeLog.info("LS_STALKER_FALLBACK_DECISION", {
-      syncRunId: options.syncRunId,
-      providerId: options.providerId,
-      decision: "FATAL",
-      reason: "PAGINATION_METADATA_WITHOUT_TOTAL",
-    });
-    throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live aggregate response contains partial pagination metadata without a total.");
+  if (shape.hasPaginationMetadata) {
+    logAggregateFallback(options, "AGGREGATE_PAGINATION_METADATA");
+    return { kind: "fallback" };
   }
 
   safeLog.info("LS_STALKER_FALLBACK_DECISION", {
     syncRunId: options.syncRunId,
     providerId: options.providerId,
     decision: "USE_AGGREGATE",
-    reason: "NO_TOTAL_NON_EMPTY",
+    reason: totalItems === null ? "NO_TOTAL_NON_EMPTY" : "COMPLETE_TOTAL",
   });
-  return { kind: "complete", rows, totalItems: null };
+  return { kind: "complete", rows, totalItems };
 }
 
-async function discoverViaOrderedList(options: StalkerLiveDiscoveryOptions): Promise<StalkerLiveDiscoveryResult> {
+function canonicalizeGenreChannel(
+  channel: StalkerLiveChannel,
+  category: StalkerLiveCategory,
+): StalkerLiveChannel {
+  if (channel.categoryId !== "0") return channel;
+  return {
+    ...channel,
+    categoryId: category.id,
+    categoryName: category.name,
+  };
+}
+
+async function discoverViaGenreScopedOrderedList(
+  options: StalkerLiveDiscoveryOptions,
+  categories: readonly StalkerLiveCategory[],
+): Promise<StalkerLiveDiscoveryResult> {
+  const usableCategories = categories.filter((category) => category.id.trim());
+  if (usableCategories.length === 0) {
+    return discoverViaLegacyOrderedList(options);
+  }
+
+  const yieldFn = options.yieldFn ?? yieldToUi;
+  const maxPages = normalizedStalkerLivePageCeiling(options.maxPages ?? MAX_STALKER_LIVE_PAGES);
+  const canonical = new Map<string, StalkerLiveChannel>();
+  let pagesFetched = 0;
+  let sameCommandDuplicateCount = 0;
+  let differentCommandAmbiguityCount = 0;
+
+  safeLog.info("LS_STALKER_ORDERED_FALLBACK_START", {
+    syncRunId: options.syncRunId,
+    providerId: options.providerId,
+    genreCount: usableCategories.length,
+    maxPages,
+  });
+
+  for (let genreIndex = 0; genreIndex < usableCategories.length; genreIndex += 1) {
+    const category = usableCategories[genreIndex];
+    const fingerprints = new Set<string>();
+    let pageNumber = 1;
+    let totalItems: number | null = null;
+    let maxPageItems: number | null = null;
+    let acceptedWithinGenre = 0;
+
+    while (true) {
+      assertCurrent(options.signal, options.isCurrent);
+      if (stalkerLivePageCeilingExceeded(pageNumber, maxPages) || pagesFetched >= maxPages) {
+        throw new StalkerPortalError(
+          "INVALID_RESPONSE",
+          "Stalker Live genre pagination exceeded the safety ceiling without terminal evidence.",
+        );
+      }
+
+      const payload = await options.session.request(
+        { type: "itv", action: "get_ordered_list", genre: category.id, p: pageNumber },
+        options.signal,
+        undefined,
+        { syncRunId: options.syncRunId, providerId: options.providerId },
+      );
+      pagesFetched += 1;
+      assertCurrent(options.signal, options.isCurrent);
+
+      const page = normalizeStalkerLivePage(
+        payload,
+        options.providerId,
+        pageNumber,
+        categories,
+      );
+      if (page.totalItems !== null) totalItems = page.totalItems;
+      if (page.maxPageItems !== null) maxPageItems = page.maxPageItems;
+
+      safeLog.info("LS_STALKER_ORDERED_GENRE_PAGE", {
+        syncRunId: options.syncRunId,
+        providerId: options.providerId,
+        genreIndex,
+        page: pageNumber,
+        rawCount: page.rawCount,
+        totalItems: page.totalItems,
+        maxPageItems: page.maxPageItems,
+      });
+
+      if (page.rawCount === 0) break;
+
+      const fingerprint = page.items
+        .map((item) => `${item.portalId}\u001e${item.cmd}`)
+        .join("\u001f");
+      if (!fingerprint || fingerprints.has(fingerprint)) {
+        throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live genre traversal returned a repeated or no-progress page.");
+      }
+      fingerprints.add(fingerprint);
+
+      let newCanonicalThisPage = 0;
+      for (const rawChannel of page.items) {
+        const channel = canonicalizeGenreChannel(rawChannel, category);
+        const first = canonical.get(channel.portalId);
+        if (!first) {
+          canonical.set(channel.portalId, channel);
+          acceptedWithinGenre += 1;
+          newCanonicalThisPage += 1;
+          continue;
+        }
+        if (first.cmd !== channel.cmd) {
+          differentCommandAmbiguityCount += 1;
+          safeLog.info("LS_STALKER_ORDERED_DUPLICATE_SUMMARY", {
+            syncRunId: options.syncRunId,
+            providerId: options.providerId,
+            sameCommandDuplicateCount,
+            differentCommandAmbiguityCount,
+          });
+          throw new StalkerPortalError(
+            "INVALID_RESPONSE",
+            "Stalker Live ordered discovery found ambiguous playback commands for one stable channel identifier.",
+          );
+        }
+        sameCommandDuplicateCount += 1;
+      }
+
+      if (newCanonicalThisPage === 0 && page.rawCount > 0) {
+        const allKnownSameCommand = page.items.every((rawChannel) => {
+          const channel = canonicalizeGenreChannel(rawChannel, category);
+          const first = canonical.get(channel.portalId);
+          return first?.cmd === channel.cmd;
+        });
+        if (!allKnownSameCommand) {
+          throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live genre traversal made no canonical progress.");
+        }
+      }
+
+      await yieldFn();
+      assertCurrent(options.signal, options.isCurrent);
+
+      if (totalItems !== null && maxPageItems !== null) {
+        const totalPages = Math.max(1, Math.ceil(totalItems / maxPageItems));
+        if (pageNumber >= totalPages) break;
+      } else if (totalItems !== null && acceptedWithinGenre >= totalItems) {
+        break;
+      } else if (maxPageItems !== null && page.rawCount < maxPageItems) {
+        break;
+      }
+      pageNumber += 1;
+    }
+  }
+
+  const rows = [...canonical.values()];
+  if (rows.length === 0) {
+    throw new StalkerPortalError("INVALID_RESPONSE", "The Stalker Portal returned no live channels.");
+  }
+
+  safeLog.info("LS_STALKER_ORDERED_DUPLICATE_SUMMARY", {
+    syncRunId: options.syncRunId,
+    providerId: options.providerId,
+    sameCommandDuplicateCount,
+    differentCommandAmbiguityCount,
+  });
+  safeLog.info("LS_STALKER_DISCOVERY_COMPLETE", {
+    syncRunId: options.syncRunId,
+    providerId: options.providerId,
+    source: "get_ordered_list",
+    genreCount: usableCategories.length,
+    pagesFetched,
+    uniqueItems: rows.length,
+  });
+
+  return {
+    source: "get_ordered_list",
+    rows,
+    totalItems: rows.length,
+    pagesFetched,
+    complete: true,
+  };
+}
+
+async function discoverViaLegacyOrderedList(options: StalkerLiveDiscoveryOptions): Promise<StalkerLiveDiscoveryResult> {
   const rows: StalkerLiveChannel[] = [];
   const result = await traverseStalkerLivePages({
     session: options.session,
@@ -420,6 +592,10 @@ async function discoverViaOrderedList(options: StalkerLiveDiscoveryOptions): Pro
   };
 }
 
+async function discoverViaOrderedList(options: StalkerLiveDiscoveryOptions): Promise<StalkerLiveDiscoveryResult> {
+  return discoverViaGenreScopedOrderedList(options, options.categories ?? []);
+}
+
 export async function discoverStalkerLiveChannels(
   options: StalkerLiveDiscoveryOptions,
 ): Promise<StalkerLiveDiscoveryResult> {
@@ -441,10 +617,17 @@ export async function discoverStalkerLiveChannels(
     );
   } catch (caught) {
     if (isExplicitUnsupportedHttp(caught)) {
+      safeLog.info("LS_STALKER_FALLBACK_DECISION", {
+        syncRunId: options.syncRunId,
+        providerId: options.providerId,
+        decision: "FALLBACK_ORDERED",
+        reason: "AGGREGATE_HTTP_UNSUPPORTED",
+      });
       return discoverViaOrderedList(options);
     }
     throw caught;
   }
+
   const requestRoundTripMs = Math.max(0, now() - requestStartedAt);
   const measuredTiming = timingHolder.current;
   const networkWaitMs = measuredTiming
@@ -453,7 +636,12 @@ export async function discoverStalkerLiveChannels(
   const value = unwrapKnownJs(aggregatePayload);
   const rawRows = rowsFromAggregate(value);
   if (rawRows) {
-    const totalItems = readAdvertisedTotal(value);
+    let totalItems: number | null = null;
+    try {
+      totalItems = readAdvertisedTotal(value);
+    } catch {
+      totalItems = null;
+    }
     const shape = aggregateShape(value, rawRows.length, totalItems);
     safeLog.info("LS_STALKER_DISCOVERY_GET_ALL_DONE", {
       syncRunId: options.syncRunId,
@@ -481,9 +669,19 @@ export async function discoverStalkerLiveChannels(
     postBodyYieldStartMs: measuredTiming?.postBodyYieldStartMs ?? 0,
     postBodyYieldMs: measuredTiming?.postBodyYieldMs ?? 0,
   });
+
   if (aggregate.kind === "fallback") {
     return discoverViaOrderedList(options);
   }
+
+  safeLog.info("LS_STALKER_DISCOVERY_COMPLETE", {
+    syncRunId: options.syncRunId,
+    providerId: options.providerId,
+    source: "get_all_channels",
+    genreCount: options.categories?.length ?? 0,
+    pagesFetched: 1,
+    uniqueItems: aggregate.rows.length,
+  });
 
   return {
     source: "get_all_channels",
