@@ -62,7 +62,7 @@ function normalized(id: number | string, overrides: Record<string, unknown> = {}
   });
 }
 
-async function captureLogs(run: () => Promise<void> | void) {
+async function captureLogs<T>(run: () => Promise<T> | T): Promise<LogEntry[] & { result: T }> {
   const originalInfo = console.info;
   const logs: LogEntry[] = [];
   console.info = (event?: unknown, details?: unknown) => {
@@ -70,12 +70,13 @@ async function captureLogs(run: () => Promise<void> | void) {
       logs.push({ event, details: details as Record<string, unknown> });
     }
   };
+  let result!: T;
   try {
-    await run();
+    result = await run();
   } finally {
     console.info = originalInfo;
   }
-  return logs;
+  return Object.assign(logs, { result });
 }
 
 function events(logs: readonly LogEntry[], event: string) {
@@ -169,9 +170,8 @@ async function main() {
       channel(index === STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE ? 1 : index + 1),
     );
     let yields = 0;
-    let result: Awaited<ReturnType<typeof normalizeStalkerLiveAggregateCooperatively>> | null = null;
     const logs = await captureLogs(async () => {
-      result = await normalizeStalkerLiveAggregateCooperatively({
+      return normalizeStalkerLiveAggregateCooperatively({
         payload: { data },
         providerId: "r12-duplicate",
         syncRunId: "run-dup",
@@ -179,7 +179,7 @@ async function main() {
         yieldFn: async () => { yields += 1; },
       });
     });
-    assert.equal(result?.kind, "fallback");
+    assert.equal(logs.result.kind, "fallback");
     const summary = events(logs, "LS_STALKER_AGGREGATE_DUPLICATE_SUMMARY")[0]?.details;
     assert.equal(summary?.rawRowCount, STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE + 1);
     assert.equal(summary?.uniqueBeforeFailure, STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE);
