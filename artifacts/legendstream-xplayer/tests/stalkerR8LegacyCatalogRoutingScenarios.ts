@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import {
   removeLegacyStalkerCatalogChannels,
   syncStalkerCatalogForLifecycle,
@@ -20,7 +21,7 @@ const provider = {
 };
 
 function source(path: string) {
-  return readFileSync(new URL(path, import.meta.url), "utf8");
+  return readFileSync(fileURLToPath(String(new URL(path, import.meta.url))), "utf8");
 }
 
 function blockBetween(text: string, start: string, end: string) {
