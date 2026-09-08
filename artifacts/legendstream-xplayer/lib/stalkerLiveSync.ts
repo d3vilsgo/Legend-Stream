@@ -1,4 +1,5 @@
 import { yieldToUi } from "./cooperative";
+import { safeLog } from "./safeLog";
 import { StalkerPortalError, type StalkerPortalSession } from "./stalkerPortal";
 import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
 import { bootstrapStalkerProfile } from "./stalkerProfileBootstrap";
@@ -117,6 +118,13 @@ export async function syncStalkerLiveCatalogWithDependencies(
     if (expectedCount === 0) {
       throw new StalkerPortalError("INVALID_RESPONSE", "The Stalker Portal returned no live channels.");
     }
+
+    safeLog.info("LS_STALKER_STAGE_START", {
+      rowCount: expectedCount,
+      discoverySource: discovery.source,
+      elapsedSinceSyncStartMs: Math.max(0, Date.now() - syncStartedAt),
+      chunkSize: STALKER_LIVE_STAGE_CHUNK_SIZE,
+    });
 
     let persisted = 0;
     let chunkNumber = 0;
