@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getCatalogCounts, initCatalogCache } from "@/lib/catalogCache";
-import { syncStalkerLiveCatalog } from "@/lib/stalkerLiveSync";
+import { syncStalkerLiveCatalog, type StalkerLiveSyncOwner } from "@/lib/stalkerLiveSync";
 import type { ProviderConfig } from "@/context/PlayerContext";
 
 const BACKGROUND_SYNC_DELAY_MS = 1_250;
@@ -22,7 +22,7 @@ export function useStalkerLiveCatalogSync(provider: ProviderConfig | null) {
     setState((current) => ({ ...current, totalCount: counts.live, countKnown: true }));
   }, [provider?.id]);
 
-  const run = useCallback(async () => {
+  const run = useCallback(async (owner: StalkerLiveSyncOwner = "LIVE_MANUAL_REFRESH") => {
     if (!provider || provider.type !== "stalker") return;
     const portalUrl = provider.url;
     const mac = provider.mac?.trim() || "";
@@ -43,6 +43,7 @@ export function useStalkerLiveCatalogSync(provider: ProviderConfig | null) {
         provider: { id: providerId, url: portalUrl, mac },
         signal: controller.signal,
         isCurrent,
+        owner,
       });
       if (isCurrent()) await readCount(providerId, generation);
     } finally {
@@ -67,10 +68,10 @@ export function useStalkerLiveCatalogSync(provider: ProviderConfig | null) {
       setState({ totalCount: counts.live, countKnown: true, syncing: false });
       if (counts.live > 0) {
         timer = setTimeout(() => {
-          if (!disposed && generationRef.current === generation) void run().catch(() => undefined);
+          if (!disposed && generationRef.current === generation) void run("LIVE_MOUNT").catch(() => undefined);
         }, BACKGROUND_SYNC_DELAY_MS);
       } else {
-        void run().catch(() => undefined);
+        void run("LIVE_MOUNT").catch(() => undefined);
       }
     })().catch(() => undefined);
     return () => {
@@ -82,5 +83,5 @@ export function useStalkerLiveCatalogSync(provider: ProviderConfig | null) {
     };
   }, [provider?.id, run]);
 
-  return { ...state, refresh: run };
+  return { ...state, refresh: () => run("LIVE_MANUAL_REFRESH") };
 }

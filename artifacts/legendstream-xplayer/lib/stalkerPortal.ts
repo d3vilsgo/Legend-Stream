@@ -1,3 +1,5 @@
+import { safeLog } from "./safeLog";
+
 export type StalkerPortalErrorCode =
   | "INVALID_URL"
   | "MISSING_MAC"
@@ -36,6 +38,11 @@ export type StalkerPortalRequestTiming = {
   jsonParseMs: number;
 };
 
+export type StalkerPortalDiagnosticsContext = {
+  syncRunId?: string;
+  providerId?: string;
+};
+
 type FetchLike = (
   input: string | URL | Request,
   init?: RequestInit,
@@ -47,6 +54,7 @@ type StalkerPortalSessionOptions = {
   fetchImpl?: FetchLike;
   timeoutMs?: number;
   afterResponse?: () => void | Promise<void>;
+  diagnostics?: StalkerPortalDiagnosticsContext;
 };
 
 type StalkerActionParams = Record<string, string | number | boolean | undefined>;
@@ -175,6 +183,7 @@ export class StalkerPortalSession {
   #fetchImpl: FetchLike;
   #timeoutMs: number;
   #afterResponse: () => void | Promise<void>;
+  #diagnostics: StalkerPortalDiagnosticsContext;
 
   constructor(options: StalkerPortalSessionOptions) {
     const mac = options.mac.trim();
@@ -189,11 +198,22 @@ export class StalkerPortalSession {
     this.#fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.#afterResponse = options.afterResponse ?? (() => undefined);
+    this.#diagnostics = options.diagnostics ?? {};
+  }
+
+  setDiagnosticsContext(context: StalkerPortalDiagnosticsContext = {}) {
+    this.#diagnostics = context;
   }
 
   invalidateSession() {
     this.#authenticationGeneration += 1;
     this.#token = null;
+    safeLog.info("LS_STALKER_HANDSHAKE_INVALIDATE", {
+      syncRunId: this.#diagnostics.syncRunId,
+      providerId: this.#diagnostics.providerId,
+      authGeneration: this.#authenticationGeneration,
+      reason: "EXPLICIT_OR_AUTH",
+    });
   }
 
   dispose() {
@@ -256,11 +276,25 @@ export class StalkerPortalSession {
       void promise.finally(() => {
         if (this.#handshake?.promise === promise) this.#handshake = null;
       }).catch(() => undefined);
+    } else {
+      safeLog.info("LS_STALKER_HANDSHAKE_REUSE", {
+        syncRunId: this.#diagnostics.syncRunId,
+        providerId: this.#diagnostics.providerId,
+        authGeneration: generation,
+        reason: "PENDING",
+      });
     }
     return this.#waitForAuthentication(pending.promise, signal);
   }
 
   async #performHandshake(generation: number) {
+    const startedAt = Date.now();
+    safeLog.info("LS_STALKER_HANDSHAKE_START", {
+      syncRunId: this.#diagnostics.syncRunId,
+      providerId: this.#diagnostics.providerId,
+      authGeneration: generation,
+      reason: "TOKEN_MISSING",
+    });
     const payload = await this.#requestOnce(
       { type: "stb", action: "handshake", token: "" },
       null,
@@ -278,6 +312,12 @@ export class StalkerPortalSession {
       throw new StalkerPortalError("CANCELLED", "Stalker portal authentication was superseded.");
     }
     this.#token = token;
+    safeLog.info("LS_STALKER_HANDSHAKE_SUCCESS", {
+      syncRunId: this.#diagnostics.syncRunId,
+      providerId: this.#diagnostics.providerId,
+      authGeneration: generation,
+      elapsedMs: Math.max(0, Date.now() - startedAt),
+    });
     return token;
   }
 

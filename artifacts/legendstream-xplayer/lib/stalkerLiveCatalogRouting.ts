@@ -1,5 +1,5 @@
 import type { Channel, Provider } from "./iptv";
-import { syncStalkerLiveCatalog } from "./stalkerLiveSync";
+import { syncStalkerLiveCatalog, type StalkerLiveSyncOwner } from "./stalkerLiveSync";
 
 export type StalkerCatalogLifecycleProvider = Pick<
   Provider,
@@ -9,6 +9,7 @@ export type StalkerCatalogLifecycleProvider = Pick<
 export type StalkerCatalogLifecycleOptions = {
   signal?: AbortSignal;
   isCurrent?: () => boolean;
+  owner?: StalkerLiveSyncOwner;
 };
 
 type StalkerCatalogSync = typeof syncStalkerLiveCatalog;
@@ -35,5 +36,6 @@ export async function syncStalkerCatalogForLifecycle(
     provider: { id: provider.id, url: portalUrl, mac },
     signal: options.signal,
     isCurrent: options.isCurrent,
+    owner: options.owner,
   });
 }

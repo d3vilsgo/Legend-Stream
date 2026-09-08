@@ -1,6 +1,6 @@
 import { yieldToUi } from "./cooperative";
 import { safeLog } from "./safeLog";
-import { StalkerPortalError, type StalkerPortalSession } from "./stalkerPortal";
+import { StalkerPortalError, type StalkerPortalDiagnosticsContext, type StalkerPortalSession } from "./stalkerPortal";
 import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
 import { bootstrapStalkerProfile } from "./stalkerProfileBootstrap";
 import {
@@ -19,6 +19,12 @@ import { noteStalkerLivePublishSuccess } from "./stalkerLivePublishRevision";
 import type { PersistedLiveCatalogItem } from "./catalogPersistence";
 
 export type StalkerLiveSyncProvider = { id: string; url: string; mac: string };
+export type StalkerLiveSyncOwner =
+  | "CONNECT_PROVIDER"
+  | "REFRESH_PROVIDER"
+  | "LIVE_MOUNT"
+  | "LIVE_MANUAL_REFRESH"
+  | "OTHER_EXPLICIT_CALLER";
 export type StalkerLiveSyncProgress = {
   phase: "categories" | "pages" | "committing";
   page?: number;
@@ -30,10 +36,11 @@ type Options = {
   signal?: AbortSignal;
   isCurrent?: () => boolean;
   onProgress?: (progress: StalkerLiveSyncProgress) => void | Promise<void>;
+  owner?: StalkerLiveSyncOwner;
 };
 
 type SyncDependencies = {
-  acquireSession: (provider: StalkerLiveSyncProvider) => StalkerPortalSession;
+  acquireSession: (provider: StalkerLiveSyncProvider, diagnostics?: StalkerPortalDiagnosticsContext) => StalkerPortalSession;
   cleanupStaging: (providerId: string, stagingId: string) => Promise<unknown>;
   stageItems: (
     providerId: string,
@@ -57,10 +64,11 @@ const STALKER_LIVE_STAGE_CHUNK_SIZE = 250;
 let stalkerLiveSyncRunSequence = 0;
 
 const productionDependencies: SyncDependencies = {
-  acquireSession: (provider) => getOrCreateStalkerPortalSession({
+  acquireSession: (provider, diagnostics) => getOrCreateStalkerPortalSession({
     providerId: provider.id,
     portalUrl: provider.url,
     mac: provider.mac,
+    diagnostics,
   }),
   cleanupStaging: cleanupStalkerLiveStaging,
   stageItems: stageStalkerLivePage,
@@ -86,12 +94,23 @@ export async function syncStalkerLiveCatalogWithDependencies(
   dependencies: SyncDependencies,
 ) {
   const providerId = options.provider.id;
+  const owner = options.owner ?? "OTHER_EXPLICIT_CALLER";
   const syncStartedAt = Date.now();
+  const syncRunId = nextStalkerLiveSyncRunToken(syncStartedAt);
   const stagingId = stalkerLiveStagingProviderId(
     providerId,
-    nextStalkerLiveSyncRunToken(syncStartedAt),
+    syncRunId,
   );
-  const session = dependencies.acquireSession(options.provider);
+  safeLog.info("LS_STALKER_SYNC_RUN_START", {
+    syncRunId,
+    owner,
+    providerId,
+    generation: syncRunId,
+    startedAtMs: syncStartedAt,
+  });
+  const diagnostics = { syncRunId, providerId };
+  const session = dependencies.acquireSession(options.provider, diagnostics);
+  session.setDiagnosticsContext(diagnostics);
   let primaryError: unknown = null;
 
   await dependencies.cleanupStaging(providerId, stagingId);
@@ -107,6 +126,7 @@ export async function syncStalkerLiveCatalogWithDependencies(
     const discovery = await discoverStalkerLiveChannels({
       session,
       providerId,
+      syncRunId,
       categories,
       signal: options.signal,
       isCurrent: options.isCurrent,
@@ -166,7 +186,7 @@ export async function syncStalkerLiveCatalogWithDependencies(
     assertCurrent(options.signal, options.isCurrent);
     dependencies.notePublishSuccess?.(providerId, "live");
 
-    return {
+    const result = {
       pagesFetched: discovery.pagesFetched,
       uniqueItems: expectedCount,
       persisted,
@@ -176,8 +196,22 @@ export async function syncStalkerLiveCatalogWithDependencies(
       discoverySource: discovery.source,
       elapsedMs: Date.now() - syncStartedAt,
     };
+    safeLog.info("LS_STALKER_SYNC_RUN_END", {
+      syncRunId,
+      owner,
+      result: "SUCCESS",
+      elapsedMs: Math.max(0, Date.now() - syncStartedAt),
+    });
+    return result;
   } catch (caught) {
     primaryError = caught;
+    safeLog.info("LS_STALKER_SYNC_RUN_END", {
+      syncRunId,
+      owner,
+      result: caught instanceof StalkerPortalError && caught.code === "CANCELLED" ? "CANCELLED" : "ERROR",
+      elapsedMs: Math.max(0, Date.now() - syncStartedAt),
+      errorCode: caught instanceof StalkerPortalError ? caught.code : "UNKNOWN",
+    });
     throw caught;
   } finally {
     try {

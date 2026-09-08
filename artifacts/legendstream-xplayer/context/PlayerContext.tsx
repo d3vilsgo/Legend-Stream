@@ -76,6 +76,7 @@ import {
   removeLegacyStalkerCatalogChannels,
   syncStalkerCatalogForLifecycle,
 } from "@/lib/stalkerLiveCatalogRouting";
+import type { StalkerLiveSyncOwner } from "@/lib/stalkerLiveSync";
 
 export { ProviderType };
 export type { Channel, EpgProgram };
@@ -373,12 +374,14 @@ async function loadProviderSmart(
     persistM3U?: boolean;
     signal?: AbortSignal;
     isCurrent?: () => boolean;
+    stalkerSyncOwner?: StalkerLiveSyncOwner;
   } = {},
 ) {
   if (provider.type === "stalker") {
     const result = await syncStalkerCatalogForLifecycle(provider, {
       signal: options.signal,
       isCurrent: options.isCurrent,
+      owner: options.stalkerSyncOwner,
     });
     if (!result) throw new Error("Stalker catalog routing could not start canonical sync.");
     return {
@@ -1123,7 +1126,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const providerToLoad = duplicate
         ? { ...candidate, id: duplicate.id, createdAt: duplicate.createdAt }
         : candidate;
-      const smart = await withProviderConnectDeadline(loadProviderSmart(providerToLoad));
+      const smart = await withProviderConnectDeadline(loadProviderSmart(providerToLoad, {
+        stalkerSyncOwner: providerToLoad.type === "stalker" ? "CONNECT_PROVIDER" : undefined,
+      }));
       const savedProvider = toProvider({
         ...smart.provider,
         lastLoadedAt: Date.now(),
@@ -1176,6 +1181,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         isCurrent: existing.type === "stalker"
           ? () => isCurrentProviderLoad(ownership)
           : undefined,
+        stalkerSyncOwner: existing.type === "stalker" ? "REFRESH_PROVIDER" : undefined,
       });
       if (!isCurrentProviderLoad(ownership)) return;
       const updated = toProvider({

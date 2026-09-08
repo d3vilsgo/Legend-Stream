@@ -23,6 +23,7 @@ export type StalkerLiveDiscoveryResult = {
 export type StalkerLiveDiscoveryOptions = {
   session: Portal;
   providerId: string;
+  syncRunId?: string;
   categories?: readonly StalkerLiveCategory[];
   signal?: AbortSignal;
   isCurrent?: () => boolean;
@@ -145,7 +146,7 @@ type AggregateDecision =
   | { kind: "fallback" };
 
 type AggregateNormalizeOptions = Pick<StalkerLiveDiscoveryOptions,
-  "providerId" | "categories" | "signal" | "isCurrent" | "yieldFn" | "nowFn"
+  "providerId" | "syncRunId" | "categories" | "signal" | "isCurrent" | "yieldFn" | "nowFn"
 > & {
   payload: unknown;
   networkWaitMs: number;
@@ -153,6 +154,88 @@ type AggregateNormalizeOptions = Pick<StalkerLiveDiscoveryOptions,
   postBodyYieldStartMs?: number;
   postBodyYieldMs?: number;
 };
+
+type AggregateShape = {
+  rowCount: number;
+  advertisedTotal: number | null;
+  hasPaginationMetadata: boolean;
+  hasMaxPageItems: boolean;
+  hasPageLikeMetadata: boolean;
+  hasCurrentPageLikeMetadata: boolean;
+  hasCurPageMetadata: boolean;
+  rawVsAdvertisedRelation: "EQUAL" | "RAW_LT_ADVERTISED" | "RAW_GT_ADVERTISED" | "NO_TOTAL";
+};
+
+export type StalkerDuplicateClass =
+  | "DUPLICATE_SAME_COMMAND_SAME_METADATA"
+  | "DUPLICATE_SAME_COMMAND_CATEGORY_VARIANT"
+  | "DUPLICATE_SAME_COMMAND_METADATA_VARIANT"
+  | "DUPLICATE_DIFFERENT_COMMAND";
+
+type DuplicateCounters = {
+  duplicateCount: number;
+  duplicateSameCommandCount: number;
+  duplicateDifferentCommandCount: number;
+  duplicateDifferentCategoryCount: number;
+  duplicateDifferentMetadataCount: number;
+};
+
+function hasAnyMetadata(payload: unknown, keys: readonly string[]) {
+  const { root, nested } = metadataObjects(payload);
+  return [root, nested].some((row) => row && keys.some((key) => row[key] !== undefined && row[key] !== null));
+}
+
+function aggregateShape(payload: unknown, rowCount: number, advertisedTotal: number | null): AggregateShape {
+  const hasMaxPageItems = hasAnyMetadata(payload, ["max_page_items", "max_page_size"]);
+  const hasPageLikeMetadata = hasAnyMetadata(payload, ["page", "p", "total_pages", "pages"]);
+  const hasCurrentPageLikeMetadata = hasAnyMetadata(payload, ["current_page"]);
+  const hasCurPageMetadata = hasAnyMetadata(payload, ["cur_page"]);
+  const rawVsAdvertisedRelation = advertisedTotal === null
+    ? "NO_TOTAL"
+    : rowCount === advertisedTotal
+      ? "EQUAL"
+      : rowCount < advertisedTotal
+        ? "RAW_LT_ADVERTISED"
+        : "RAW_GT_ADVERTISED";
+  return {
+    rowCount,
+    advertisedTotal,
+    hasPaginationMetadata: hasExplicitPaginationMetadata(payload),
+    hasMaxPageItems,
+    hasPageLikeMetadata,
+    hasCurrentPageLikeMetadata,
+    hasCurPageMetadata,
+    rawVsAdvertisedRelation,
+  };
+}
+
+export function classifyStalkerAggregateDuplicate(
+  first: StalkerLiveChannel,
+  duplicate: StalkerLiveChannel,
+): { duplicateClass: StalkerDuplicateClass } & DuplicateCounters {
+  const sameCommand = first.cmd === duplicate.cmd;
+  const sameCategory = first.categoryId === duplicate.categoryId;
+  const sameName = first.name === duplicate.name;
+  const sameLogo = (first.logoUrl ?? "") === (duplicate.logoUrl ?? "");
+  const sameTvgId = (first.tvgId ?? "") === (duplicate.tvgId ?? "");
+  const differentMetadata = !sameName || !sameLogo || !sameTvgId;
+  const duplicateClass: StalkerDuplicateClass = !sameCommand
+    ? "DUPLICATE_DIFFERENT_COMMAND"
+    : !sameCategory
+      ? "DUPLICATE_SAME_COMMAND_CATEGORY_VARIANT"
+      : differentMetadata
+        ? "DUPLICATE_SAME_COMMAND_METADATA_VARIANT"
+        : "DUPLICATE_SAME_COMMAND_SAME_METADATA";
+
+  return {
+    duplicateClass,
+    duplicateCount: 1,
+    duplicateSameCommandCount: sameCommand ? 1 : 0,
+    duplicateDifferentCommandCount: sameCommand ? 0 : 1,
+    duplicateDifferentCategoryCount: sameCategory ? 0 : 1,
+    duplicateDifferentMetadataCount: differentMetadata ? 1 : 0,
+  };
+}
 
 export async function normalizeStalkerLiveAggregateCooperatively(
   options: AggregateNormalizeOptions,
@@ -167,8 +250,14 @@ export async function normalizeStalkerLiveAggregateCooperatively(
   }
 
   const totalItems = readAdvertisedTotal(value);
+  const shape = aggregateShape(value, rawRows.length, totalItems);
+  safeLog.info("LS_STALKER_GET_ALL_SHAPE", {
+    syncRunId: options.syncRunId,
+    providerId: options.providerId,
+    ...shape,
+  });
   const rows: StalkerLiveChannel[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, StalkerLiveChannel>();
   let normalizeMs = 0;
   let dedupeMs = 0;
   let yieldCount = 0;
@@ -190,10 +279,32 @@ export async function normalizeStalkerLiveAggregateCooperatively(
 
     const dedupeStartedAt = now();
     for (const row of page.items) {
-      if (seen.has(row.portalId)) {
+      const firstSeen = seen.get(row.portalId);
+      if (firstSeen) {
+        const duplicate = classifyStalkerAggregateDuplicate(firstSeen, row);
+        safeLog.info("LS_STALKER_AGGREGATE_DUPLICATE_SUMMARY", {
+          syncRunId: options.syncRunId,
+          providerId: options.providerId,
+          rawRowCount: rawRows.length,
+          uniqueBeforeFailure: rows.length,
+          duplicateCount: duplicate.duplicateCount,
+          duplicateSameCommandCount: duplicate.duplicateSameCommandCount,
+          duplicateDifferentCommandCount: duplicate.duplicateDifferentCommandCount,
+          duplicateDifferentCategoryCount: duplicate.duplicateDifferentCategoryCount,
+          duplicateDifferentMetadataCount: duplicate.duplicateDifferentMetadataCount,
+          firstDuplicateRowIndex: offset + page.items.indexOf(row),
+          firstDuplicateChunkIndex: Math.trunc(offset / STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE),
+          firstDuplicateClass: duplicate.duplicateClass,
+        });
+        safeLog.info("LS_STALKER_FALLBACK_DECISION", {
+          syncRunId: options.syncRunId,
+          providerId: options.providerId,
+          decision: "FATAL",
+          reason: "DUPLICATE_PORTAL_ID",
+        });
         throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live aggregate returned a duplicate stable channel identifier.");
       }
-      seen.add(row.portalId);
+      seen.set(row.portalId, row);
       rows.push(row);
     }
     dedupeMs += Math.max(0, now() - dedupeStartedAt);
@@ -228,17 +339,49 @@ export async function normalizeStalkerLiveAggregateCooperatively(
   }
 
   if (totalItems !== null) {
-    if (totalItems > rows.length) return { kind: "fallback" };
+    if (totalItems > rows.length) {
+      safeLog.info("LS_STALKER_FALLBACK_DECISION", {
+        syncRunId: options.syncRunId,
+        providerId: options.providerId,
+        decision: "FALLBACK_ORDERED",
+        reason: "RAW_LT_ADVERTISED",
+      });
+      return { kind: "fallback" };
+    }
     if (totalItems < rows.length) {
+      safeLog.info("LS_STALKER_FALLBACK_DECISION", {
+        syncRunId: options.syncRunId,
+        providerId: options.providerId,
+        decision: "FATAL",
+        reason: "RAW_GT_ADVERTISED",
+      });
       throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live aggregate contains more unique rows than its advertised total.");
     }
+    safeLog.info("LS_STALKER_FALLBACK_DECISION", {
+      syncRunId: options.syncRunId,
+      providerId: options.providerId,
+      decision: "USE_AGGREGATE",
+      reason: "COMPLETE_TOTAL",
+    });
     return { kind: "complete", rows, totalItems };
   }
 
   if (hasExplicitPaginationMetadata(value)) {
+    safeLog.info("LS_STALKER_FALLBACK_DECISION", {
+      syncRunId: options.syncRunId,
+      providerId: options.providerId,
+      decision: "FATAL",
+      reason: "PAGINATION_METADATA_WITHOUT_TOTAL",
+    });
     throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live aggregate response contains partial pagination metadata without a total.");
   }
 
+  safeLog.info("LS_STALKER_FALLBACK_DECISION", {
+    syncRunId: options.syncRunId,
+    providerId: options.providerId,
+    decision: "USE_AGGREGATE",
+    reason: "NO_TOTAL_NON_EMPTY",
+  });
   return { kind: "complete", rows, totalItems: null };
 }
 
@@ -283,6 +426,11 @@ export async function discoverStalkerLiveChannels(
   let aggregatePayload: unknown;
   const timingHolder: { current?: StalkerPortalRequestTiming } = {};
   const requestStartedAt = now();
+  safeLog.info("LS_STALKER_DISCOVERY_GET_ALL_START", {
+    syncRunId: options.syncRunId,
+    providerId: options.providerId,
+    timestamp: requestStartedAt,
+  });
   try {
     aggregatePayload = await options.session.request(
       { type: "itv", action: "get_all_channels" },
@@ -300,10 +448,27 @@ export async function discoverStalkerLiveChannels(
   const networkWaitMs = measuredTiming
     ? measuredTiming.fetchWaitMs + measuredTiming.bodyReadWaitMs
     : requestRoundTripMs;
+  const value = unwrapKnownJs(aggregatePayload);
+  const rawRows = rowsFromAggregate(value);
+  if (rawRows) {
+    const totalItems = readAdvertisedTotal(value);
+    const shape = aggregateShape(value, rawRows.length, totalItems);
+    safeLog.info("LS_STALKER_DISCOVERY_GET_ALL_DONE", {
+      syncRunId: options.syncRunId,
+      providerId: options.providerId,
+      rowCount: shape.rowCount,
+      advertisedTotal: shape.advertisedTotal,
+      networkWaitMs,
+      responseParseMs: measuredTiming?.jsonParseMs ?? 0,
+      hasPaginationMetadata: shape.hasPaginationMetadata,
+      hasCurPageMetadata: shape.hasCurPageMetadata,
+    });
+  }
 
   const aggregate = await normalizeStalkerLiveAggregateCooperatively({
     payload: aggregatePayload,
     providerId: options.providerId,
+    syncRunId: options.syncRunId,
     categories: options.categories ?? [],
     signal: options.signal,
     isCurrent: options.isCurrent,
