@@ -1,3 +1,5 @@
+import { yieldToUi } from "./cooperative";
+import { safeLog } from "./safeLog";
 import { StalkerPortalError, type StalkerPortalSession } from "./stalkerPortal";
 import {
   normalizeStalkerLivePage,
@@ -26,7 +28,10 @@ export type StalkerLiveDiscoveryOptions = {
   isCurrent?: () => boolean;
   yieldFn?: () => void | Promise<void>;
   maxPages?: number;
+  nowFn?: () => number;
 };
+
+export const STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE = 250;
 
 const EXPLICIT_UNSUPPORTED_PATTERNS = [
   /\bunknown\s+(?:action|method|command)\b/i,
@@ -43,6 +48,22 @@ const asObject = (value: unknown): Record<string, unknown> | null =>
 function unwrapKnownJs(payload: unknown) {
   const root = asObject(payload);
   return root && "js" in root ? root.js : payload;
+}
+
+function rowsFromAggregate(payload: unknown): unknown[] | null {
+  if (Array.isArray(payload)) return payload;
+  const root = asObject(payload);
+  if (!root) return null;
+  for (const key of ["data", "items", "channels"] as const) {
+    if (Array.isArray(root[key])) return root[key] as unknown[];
+  }
+  const nested = asObject(root.data);
+  if (nested) {
+    for (const key of ["data", "items", "channels"] as const) {
+      if (Array.isArray(nested[key])) return nested[key] as unknown[];
+    }
+  }
+  return null;
 }
 
 function textLooksExplicitlyUnsupported(value: unknown) {
@@ -113,13 +134,9 @@ function hasExplicitPaginationMetadata(payload: unknown) {
   return [root, nested].some((row) => row && keys.some((key) => row[key] !== undefined && row[key] !== null));
 }
 
-function assertUniqueAggregateRows(rows: readonly StalkerLiveChannel[]) {
-  const seen = new Set<string>();
-  for (const row of rows) {
-    if (seen.has(row.portalId)) {
-      throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live aggregate returned a duplicate stable channel identifier.");
-    }
-    seen.add(row.portalId);
+function assertCurrent(signal?: AbortSignal, isCurrent?: () => boolean) {
+  if (signal?.aborted || (isCurrent && !isCurrent())) {
+    throw new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled.");
   }
 }
 
@@ -127,19 +144,74 @@ type AggregateDecision =
   | { kind: "complete"; rows: StalkerLiveChannel[]; totalItems: number | null }
   | { kind: "fallback" };
 
-function normalizeAggregate(
-  payload: unknown,
-  providerId: string,
-  categories: readonly StalkerLiveCategory[],
-): AggregateDecision {
-  const value = unwrapKnownJs(payload);
+type AggregateNormalizeOptions = Pick<StalkerLiveDiscoveryOptions,
+  "providerId" | "categories" | "signal" | "isCurrent" | "yieldFn" | "nowFn"
+> & { payload: unknown; networkWaitMs: number };
+
+export async function normalizeStalkerLiveAggregateCooperatively(
+  options: AggregateNormalizeOptions,
+): Promise<AggregateDecision> {
+  const now = options.nowFn ?? Date.now;
+  const yieldFn = options.yieldFn ?? yieldToUi;
+  const value = unwrapKnownJs(options.payload);
   if (payloadLooksExplicitlyUnsupported(value)) return { kind: "fallback" };
+  const rawRows = rowsFromAggregate(value);
+  if (!rawRows) {
+    throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live page has an invalid shape.");
+  }
 
-  const page = normalizeStalkerLivePage(value, providerId, 1, categories);
-  assertUniqueAggregateRows(page.items);
   const totalItems = readAdvertisedTotal(value);
+  const rows: StalkerLiveChannel[] = [];
+  const seen = new Set<string>();
+  let normalizeMs = 0;
+  let dedupeMs = 0;
+  let yieldCount = 0;
+  let firstYieldAfterNetworkMs: number | null = null;
+  const cpuStartedAt = now();
 
-  if (page.items.length === 0) {
+  for (let offset = 0; offset < rawRows.length; offset += STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE) {
+    assertCurrent(options.signal, options.isCurrent);
+    const rawChunk = rawRows.slice(offset, offset + STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE);
+
+    const normalizeStartedAt = now();
+    const page = normalizeStalkerLivePage(
+      { data: rawChunk },
+      options.providerId,
+      1,
+      options.categories ?? [],
+    );
+    normalizeMs += Math.max(0, now() - normalizeStartedAt);
+
+    const dedupeStartedAt = now();
+    for (const row of page.items) {
+      if (seen.has(row.portalId)) {
+        throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live aggregate returned a duplicate stable channel identifier.");
+      }
+      seen.add(row.portalId);
+      rows.push(row);
+    }
+    dedupeMs += Math.max(0, now() - dedupeStartedAt);
+
+    assertCurrent(options.signal, options.isCurrent);
+    await yieldFn();
+    yieldCount += 1;
+    if (firstYieldAfterNetworkMs === null) {
+      firstYieldAfterNetworkMs = Math.max(0, now() - cpuStartedAt);
+    }
+    assertCurrent(options.signal, options.isCurrent);
+  }
+
+  safeLog.info("LS_STALKER_AGGREGATE_CPU", {
+    rowCount: rawRows.length,
+    networkWaitMs: Math.max(0, options.networkWaitMs),
+    normalizeMs,
+    dedupeMs,
+    firstYieldAfterNetworkMs: firstYieldAfterNetworkMs ?? 0,
+    yieldCount,
+    chunkSize: STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE,
+  });
+
+  if (rows.length === 0) {
     if (totalItems === 0) {
       throw new StalkerPortalError("INVALID_RESPONSE", "The Stalker Portal explicitly reports no live channels.");
     }
@@ -147,18 +219,18 @@ function normalizeAggregate(
   }
 
   if (totalItems !== null) {
-    if (totalItems > page.items.length) return { kind: "fallback" };
-    if (totalItems < page.items.length) {
+    if (totalItems > rows.length) return { kind: "fallback" };
+    if (totalItems < rows.length) {
       throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live aggregate contains more unique rows than its advertised total.");
     }
-    return { kind: "complete", rows: page.items, totalItems };
+    return { kind: "complete", rows, totalItems };
   }
 
   if (hasExplicitPaginationMetadata(value)) {
     throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live aggregate response contains partial pagination metadata without a total.");
   }
 
-  return { kind: "complete", rows: page.items, totalItems: null };
+  return { kind: "complete", rows, totalItems: null };
 }
 
 async function discoverViaOrderedList(options: StalkerLiveDiscoveryOptions): Promise<StalkerLiveDiscoveryResult> {
@@ -198,7 +270,9 @@ async function discoverViaOrderedList(options: StalkerLiveDiscoveryOptions): Pro
 export async function discoverStalkerLiveChannels(
   options: StalkerLiveDiscoveryOptions,
 ): Promise<StalkerLiveDiscoveryResult> {
+  const now = options.nowFn ?? Date.now;
   let aggregatePayload: unknown;
+  const networkStartedAt = now();
   try {
     aggregatePayload = await options.session.request(
       { type: "itv", action: "get_all_channels" },
@@ -210,12 +284,18 @@ export async function discoverStalkerLiveChannels(
     }
     throw caught;
   }
+  const networkWaitMs = Math.max(0, now() - networkStartedAt);
 
-  const aggregate = normalizeAggregate(
-    aggregatePayload,
-    options.providerId,
-    options.categories ?? [],
-  );
+  const aggregate = await normalizeStalkerLiveAggregateCooperatively({
+    payload: aggregatePayload,
+    providerId: options.providerId,
+    categories: options.categories ?? [],
+    signal: options.signal,
+    isCurrent: options.isCurrent,
+    yieldFn: options.yieldFn,
+    nowFn: options.nowFn,
+    networkWaitMs,
+  });
   if (aggregate.kind === "fallback") {
     return discoverViaOrderedList(options);
   }
