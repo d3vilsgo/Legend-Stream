@@ -149,10 +149,16 @@ async function main() {
     );
   });
 
-  await scenario("aggregate advertised total below unique rows fails closed", async () => {
-    const transport = createTransport(() => json({ js: { data: [channel(1), channel(2)], total_items: 1 } }));
-    await expectCode(discoverStalkerLiveChannels({ session: transport.session, providerId: "provider-e" }), "INVALID_RESPONSE");
-    assert.equal(actions(transport.state).includes("get_ordered_list"), false);
+  await scenario("aggregate advertised total below unique rows changes to ordered discovery", async () => {
+    const transport = orderedPages(
+      json({ js: { data: [channel(1), channel(2)], total_items: 1 } }),
+      [[channel(9)]],
+      1,
+    );
+    const result = await discoverStalkerLiveChannels({ session: transport.session, providerId: "provider-e" });
+    assert.equal(result.source, "get_ordered_list");
+    assert.deepEqual(result.rows.map((row) => row.portalId), ["9"]);
+    assert.equal(actions(transport.state).includes("get_ordered_list"), true);
   });
 
   for (const status of [404, 405]) {
@@ -209,22 +215,25 @@ async function main() {
     assert.equal(actions(transport.state).includes("get_ordered_list"), false);
   });
 
-  await scenario("generic error payload is not unsupported and does not fallback", async () => {
-    const transport = createTransport(() => json({ js: { error: "failed" } }));
-    await expectCode(discoverStalkerLiveChannels({ session: transport.session, providerId: "provider-generic-error" }), "INVALID_RESPONSE");
-    assert.equal(actions(transport.state).includes("get_ordered_list"), false);
+  await scenario("generic structurally unusable aggregate changes to ordered discovery", async () => {
+    const transport = orderedPages(json({ js: { error: "failed" } }), [[channel(10)]], 1);
+    const result = await discoverStalkerLiveChannels({ session: transport.session, providerId: "provider-generic-error" });
+    assert.equal(result.source, "get_ordered_list");
+    assert.deepEqual(result.rows.map((row) => row.portalId), ["10"]);
   });
 
-  await scenario("empty aggregate with explicit total zero fails closed", async () => {
-    const transport = createTransport(() => json({ js: { data: [], total_items: 0 } }));
-    await expectCode(discoverStalkerLiveChannels({ session: transport.session, providerId: "provider-zero" }), "INVALID_RESPONSE");
-    assert.equal(actions(transport.state).includes("get_ordered_list"), false);
+  await scenario("empty aggregate with explicit total zero changes to ordered discovery", async () => {
+    const transport = orderedPages(json({ js: { data: [], total_items: 0 } }), [[channel(11)]], 1);
+    const result = await discoverStalkerLiveChannels({ session: transport.session, providerId: "provider-zero" });
+    assert.equal(result.source, "get_ordered_list");
+    assert.deepEqual(result.rows.map((row) => row.portalId), ["11"]);
   });
 
-  await scenario("empty aggregate without total is ambiguous and fails closed", async () => {
-    const transport = createTransport(() => json({ js: { data: [] } }));
-    await expectCode(discoverStalkerLiveChannels({ session: transport.session, providerId: "provider-empty" }), "INVALID_RESPONSE");
-    assert.equal(actions(transport.state).includes("get_ordered_list"), false);
+  await scenario("empty aggregate without total changes to ordered discovery", async () => {
+    const transport = orderedPages(json({ js: { data: [] } }), [[channel(12)]], 1);
+    const result = await discoverStalkerLiveChannels({ session: transport.session, providerId: "provider-empty" });
+    assert.equal(result.source, "get_ordered_list");
+    assert.deepEqual(result.rows.map((row) => row.portalId), ["12"]);
   });
 
   await scenario("ordered fallback traverses p1 p2 p3 to exact total", async () => {
