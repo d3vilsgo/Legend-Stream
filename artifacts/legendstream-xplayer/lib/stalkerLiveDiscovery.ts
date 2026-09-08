@@ -1,6 +1,6 @@
 import { yieldToUi } from "./cooperative";
 import { safeLog } from "./safeLog";
-import { StalkerPortalError, type StalkerPortalSession } from "./stalkerPortal";
+import { StalkerPortalError, type StalkerPortalRequestTiming, type StalkerPortalSession } from "./stalkerPortal";
 import {
   normalizeStalkerLivePage,
   traverseStalkerLivePages,
@@ -146,7 +146,13 @@ type AggregateDecision =
 
 type AggregateNormalizeOptions = Pick<StalkerLiveDiscoveryOptions,
   "providerId" | "categories" | "signal" | "isCurrent" | "yieldFn" | "nowFn"
-> & { payload: unknown; networkWaitMs: number };
+> & {
+  payload: unknown;
+  networkWaitMs: number;
+  responseParseMs?: number;
+  postBodyYieldStartMs?: number;
+  postBodyYieldMs?: number;
+};
 
 export async function normalizeStalkerLiveAggregateCooperatively(
   options: AggregateNormalizeOptions,
@@ -166,7 +172,7 @@ export async function normalizeStalkerLiveAggregateCooperatively(
   let normalizeMs = 0;
   let dedupeMs = 0;
   let yieldCount = 0;
-  let firstYieldAfterNetworkMs: number | null = null;
+  let firstNormalizeYieldAfterParseMs: number | null = null;
   const cpuStartedAt = now();
 
   for (let offset = 0; offset < rawRows.length; offset += STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE) {
@@ -195,8 +201,8 @@ export async function normalizeStalkerLiveAggregateCooperatively(
     assertCurrent(options.signal, options.isCurrent);
     await yieldFn();
     yieldCount += 1;
-    if (firstYieldAfterNetworkMs === null) {
-      firstYieldAfterNetworkMs = Math.max(0, now() - cpuStartedAt);
+    if (firstNormalizeYieldAfterParseMs === null) {
+      firstNormalizeYieldAfterParseMs = Math.max(0, now() - cpuStartedAt);
     }
     assertCurrent(options.signal, options.isCurrent);
   }
@@ -204,9 +210,12 @@ export async function normalizeStalkerLiveAggregateCooperatively(
   safeLog.info("LS_STALKER_AGGREGATE_CPU", {
     rowCount: rawRows.length,
     networkWaitMs: Math.max(0, options.networkWaitMs),
+    responseParseMs: Math.max(0, options.responseParseMs ?? 0),
+    postBodyYieldStartMs: Math.max(0, options.postBodyYieldStartMs ?? 0),
+    postBodyYieldMs: Math.max(0, options.postBodyYieldMs ?? 0),
     normalizeMs,
     dedupeMs,
-    firstYieldAfterNetworkMs: firstYieldAfterNetworkMs ?? 0,
+    firstNormalizeYieldAfterParseMs: firstNormalizeYieldAfterParseMs ?? 0,
     yieldCount,
     chunkSize: STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE,
   });
@@ -272,11 +281,13 @@ export async function discoverStalkerLiveChannels(
 ): Promise<StalkerLiveDiscoveryResult> {
   const now = options.nowFn ?? Date.now;
   let aggregatePayload: unknown;
-  const networkStartedAt = now();
+  let requestTiming: StalkerPortalRequestTiming | null = null;
+  const requestStartedAt = now();
   try {
     aggregatePayload = await options.session.request(
       { type: "itv", action: "get_all_channels" },
       options.signal,
+      (timing) => { requestTiming = timing; },
     );
   } catch (caught) {
     if (isExplicitUnsupportedHttp(caught)) {
@@ -284,7 +295,11 @@ export async function discoverStalkerLiveChannels(
     }
     throw caught;
   }
-  const networkWaitMs = Math.max(0, now() - networkStartedAt);
+  const requestRoundTripMs = Math.max(0, now() - requestStartedAt);
+  const measuredTiming: StalkerPortalRequestTiming | null = requestTiming;
+  const networkWaitMs = measuredTiming
+    ? measuredTiming.fetchWaitMs + measuredTiming.bodyReadWaitMs
+    : requestRoundTripMs;
 
   const aggregate = await normalizeStalkerLiveAggregateCooperatively({
     payload: aggregatePayload,
@@ -295,6 +310,9 @@ export async function discoverStalkerLiveChannels(
     yieldFn: options.yieldFn,
     nowFn: options.nowFn,
     networkWaitMs,
+    responseParseMs: measuredTiming?.jsonParseMs ?? 0,
+    postBodyYieldStartMs: measuredTiming?.postBodyYieldStartMs ?? 0,
+    postBodyYieldMs: measuredTiming?.postBodyYieldMs ?? 0,
   });
   if (aggregate.kind === "fallback") {
     return discoverViaOrderedList(options);
