@@ -281,13 +281,13 @@ export async function discoverStalkerLiveChannels(
 ): Promise<StalkerLiveDiscoveryResult> {
   const now = options.nowFn ?? Date.now;
   let aggregatePayload: unknown;
-  let requestTiming: StalkerPortalRequestTiming | null = null;
+  const timingHolder: { current?: StalkerPortalRequestTiming } = {};
   const requestStartedAt = now();
   try {
     aggregatePayload = await options.session.request(
       { type: "itv", action: "get_all_channels" },
       options.signal,
-      (timing) => { requestTiming = timing; },
+      (timing) => { timingHolder.current = timing; },
     );
   } catch (caught) {
     if (isExplicitUnsupportedHttp(caught)) {
@@ -296,7 +296,7 @@ export async function discoverStalkerLiveChannels(
     throw caught;
   }
   const requestRoundTripMs = Math.max(0, now() - requestStartedAt);
-  const measuredTiming: StalkerPortalRequestTiming | null = requestTiming;
+  const measuredTiming = timingHolder.current;
   const networkWaitMs = measuredTiming
     ? measuredTiming.fetchWaitMs + measuredTiming.bodyReadWaitMs
     : requestRoundTripMs;
