@@ -64,6 +64,11 @@ import {
 } from "@/lib/providerSwitchUx";
 import { redactSensitiveText } from "@/lib/safeLog";
 import {
+  getStalkerConnectTraceSnapshot,
+  subscribeStalkerConnectTrace,
+  type StalkerConnectTraceSnapshot,
+} from "@/lib/stalkerConnectTrace";
+import {
   buildEpisodeStreamUrl,
   buildVodStreamUrl,
   getSeriesInfo,
@@ -743,7 +748,12 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   const [mac, setMac] = useState(existing?.mac ?? "");
   const [epgUrl, setEpgUrl] = useState(existing?.epgUrl ?? "");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [traceSnapshot, setTraceSnapshot] = useState<StalkerConnectTraceSnapshot | null>(() =>
+    getStalkerConnectTraceSnapshot(),
+  );
   const credentialsOnly = Boolean(existing?.needsCredentials);
+
+  React.useEffect(() => subscribeStalkerConnectTrace(setTraceSnapshot), []);
 
   const submit = async () => {
     const clean = url.trim();
@@ -796,6 +806,11 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
       {type === "stalker" ? <Input label={t("macAddress")} value={mac} onChangeText={setMac} autoCapitalize="none" /> : null}
       <Input label={t("epgOptional")} value={epgUrl} onChangeText={setEpgUrl} autoCapitalize="none" editable={!credentialsOnly} />
       {localError || error ? <Text style={{ color: colors.destructive }}>{visibleErrorText(localError || error)}</Text> : null}
+      {type === "stalker" && traceSnapshot ? <View style={[s.tracePanel, { borderColor: colors.border, backgroundColor: colors.card }]}>
+        <Text style={[s.traceTitle, { color: colors.mutedForeground }]}>STALKER TRACE</Text>
+        <Text style={{ color: colors.foreground }}>{traceSnapshot.checkpoint}</Text>
+        <Text style={{ color: colors.mutedForeground }}>+{traceSnapshot.elapsedMs} ms</Text>
+      </View> : null}
       <View style={s.row}>
         <FocusButton label={busy ? t("connecting") : existing ? t("saveConnect") : t("addConnect")} icon="log-in" variant="primary" onPress={() => void submit()} disabled={busy} />
         {onCancel ? <FocusButton label={t("cancel")} variant="ghost" onPress={onCancel} /> : null}
@@ -958,6 +973,8 @@ const s = StyleSheet.create({
   rowBetween: { flexDirection: "row", alignItems: "center", gap: 8 },
   input: { borderWidth: 1, borderRadius: 12, minHeight: 50, paddingHorizontal: 14 },
   inputTrailingAction: { position: "absolute", right: 4, top: 0, bottom: 0, justifyContent: "center", alignItems: "center" },
+  tracePanel: { borderWidth: 1, borderRadius: 8, padding: 10, gap: 2 },
+  traceTitle: { fontSize: 12, fontWeight: "800" },
   iconButton: { padding: 10 },
   accountCard: { borderWidth: 1, borderRadius: 14, padding: 14, flexDirection: "row", alignItems: "center", gap: 10 },
   settings: { borderWidth: 1, borderRadius: 16, padding: 18, gap: 8 },
