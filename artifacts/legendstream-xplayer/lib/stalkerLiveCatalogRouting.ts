@@ -1,6 +1,6 @@
 import type { Channel, Provider } from "./iptv";
 import { bootstrapStalkerProviderForLifecycle } from "./stalkerCatalogBootstrap";
-import { syncStalkerLiveCatalog, type StalkerLiveSyncOwner } from "./stalkerLiveSync";
+import type { StalkerLiveSyncOwner } from "./stalkerLiveSync";
 
 export type StalkerCatalogLifecycleProvider = Pick<
   Provider,
@@ -13,7 +13,21 @@ export type StalkerCatalogLifecycleOptions = {
   owner?: StalkerLiveSyncOwner;
 };
 
-type StalkerCatalogSync = typeof syncStalkerLiveCatalog;
+type StalkerCatalogSync = (options: {
+  provider: { id: string; url: string; mac: string };
+  signal?: AbortSignal;
+  isCurrent?: () => boolean;
+  owner?: StalkerLiveSyncOwner;
+}) => Promise<{
+  pagesFetched: number;
+  uniqueItems: number;
+  persisted: number;
+  totalItems: number | null;
+  maxPageItems: number | null;
+  categories: number;
+  discoverySource: string;
+  elapsedMs: number;
+}>;
 
 export function removeLegacyStalkerCatalogChannels(
   channels: readonly Channel[],
@@ -64,8 +78,8 @@ export async function syncStalkerCatalogForLifecycle(
     persisted: bootstrap.cachedCatalogCount,
     totalItems: bootstrap.cachedCatalogCount,
     maxPageItems: null,
-    categories: 0,
-    discoverySource: "bootstrap" as const,
+    categories: bootstrap.liveCategories.length,
+    discoverySource: "bootstrap",
     elapsedMs: 0,
   };
 }
