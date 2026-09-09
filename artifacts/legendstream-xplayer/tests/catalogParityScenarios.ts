@@ -57,7 +57,11 @@ async function main() {
     assert.match(stalkerSource, /favorites=\{favorites\}/);
     assert.match(stalkerSource, /onOpen=\{onOpen\}/);
     assert.doesNotMatch(stalkerSource, /channels\.filter|FlatList|data=\{.*channels/s);
-    assert.match(stalkerSyncSource, /syncStalkerLiveCatalog/);
+    assert.match(stalkerSyncSource, /getOrCreateStalkerPortalSession/);
+    assert.match(stalkerSyncSource, /fetchStalkerLiveCategories/);
+    assert.match(stalkerSyncSource, /persistStalkerLiveCategories/);
+    assert.match(stalkerSyncSource, /getCatalogCounts/);
+    assert.doesNotMatch(stalkerSyncSource, /syncStalkerLiveCatalog/);
     assert.match(catalogPageHookSource, /provider\?\.type === "stalker" && kind === "live"/);
     assert.match(catalogPageHookSource, /effectiveProviderType: CatalogPageProviderType \| null = stalkerLive \? "stalker" : providerType/);
   });
