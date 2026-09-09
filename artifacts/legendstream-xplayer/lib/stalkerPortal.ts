@@ -9,7 +9,8 @@ export type StalkerPortalErrorCode =
   | "HTTP_ERROR"
   | "INVALID_RESPONSE"
   | "AUTH_FAILED"
-  | "MISSING_TOKEN";
+  | "MISSING_TOKEN"
+  | "PORTAL_RATE_LIMITED_OR_ANTI_DDOS";
 
 export class StalkerPortalError extends Error {
   constructor(
@@ -159,6 +160,34 @@ function payloadLooksLikeAuthFailure(payload: unknown) {
   return [row.error, row.message, row.reason, row.status].some(textLooksLikeAuthFailure);
 }
 
+function textLooksLikePortalTrafficProtection(value: unknown) {
+  if (typeof value !== "string") return false;
+  const text = value.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!text) return false;
+  const ddosProtection = /\bddos\b/.test(text) && /protect|protection|blocked|blocking|limit/.test(text);
+  const explicitRateLimit = /\brate[ -]?limit(?:ed|ing)?\b|\btoo many requests\b/.test(text);
+  return ddosProtection || explicitRateLimit;
+}
+
+function payloadLooksLikePortalTrafficProtection(payload: unknown) {
+  if (textLooksLikePortalTrafficProtection(payload)) return true;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const row = payload as Record<string, unknown>;
+  return [row.error, row.message, row.reason, row.status].some(textLooksLikePortalTrafficProtection);
+}
+
+function portalTrafficProtectionError(diagnostics: StalkerPortalDiagnosticsContext) {
+  safeLog.info("LS_STALKER_PORTAL_PROTECTION", {
+    syncRunId: diagnostics.syncRunId,
+    providerId: diagnostics.providerId,
+    antiDdosDetected: true,
+  });
+  return new StalkerPortalError(
+    "PORTAL_RATE_LIMITED_OR_ANTI_DDOS",
+    "Stalker portal temporarily rejected request traffic.",
+  );
+}
+
 function tokenFromHandshake(payload: unknown) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "";
   const row = payload as Record<string, unknown>;
@@ -236,7 +265,7 @@ export class StalkerPortalSession {
   ) {
     const requestToken = await this.#ensureAuthenticated(signal, diagnostics);
     try {
-      return await this.#requestOnce(params, requestToken, signal, onTiming);
+      return await this.#requestOnce(params, requestToken, signal, onTiming, diagnostics);
     } catch (caught) {
       if (
         !(caught instanceof StalkerPortalError) ||
@@ -247,7 +276,7 @@ export class StalkerPortalSession {
       }
       this.#invalidateTokenIfCurrent(requestToken, diagnostics);
       const retryToken = await this.#ensureAuthenticated(signal, diagnostics);
-      return this.#requestOnce(params, retryToken, signal, onTiming);
+      return this.#requestOnce(params, retryToken, signal, onTiming, diagnostics);
     }
   }
 
@@ -304,6 +333,8 @@ export class StalkerPortalSession {
       { type: "stb", action: "handshake", token: "" },
       null,
       this.#lifecycleController.signal,
+      undefined,
+      diagnostics,
     );
     const token = tokenFromHandshake(payload);
     if (!token) {
@@ -361,6 +392,7 @@ export class StalkerPortalSession {
     token: string | null,
     externalSignal?: AbortSignal,
     onTiming?: RequestTimingObserver,
+    diagnostics: StalkerPortalDiagnosticsContext = {},
   ) {
     const url = new URL(this.#endpointUrl);
     for (const [key, value] of Object.entries(params)) {
@@ -448,6 +480,13 @@ export class StalkerPortalSession {
         );
       }
 
+      if (textLooksLikePortalTrafficProtection(text)) {
+        throw portalTrafficProtectionError({
+          syncRunId: diagnostics.syncRunId,
+          providerId: diagnostics.providerId ?? this.#providerId,
+        });
+      }
+
       let parsed: unknown;
       const jsonParseStartedAt = Date.now();
       try {
@@ -467,6 +506,12 @@ export class StalkerPortalSession {
         parsed && typeof parsed === "object" && !Array.isArray(parsed) && "js" in parsed
           ? (parsed as { js?: unknown }).js
           : parsed;
+      if (payloadLooksLikePortalTrafficProtection(payload)) {
+        throw portalTrafficProtectionError({
+          syncRunId: diagnostics.syncRunId,
+          providerId: diagnostics.providerId ?? this.#providerId,
+        });
+      }
       if (payloadLooksLikeAuthFailure(payload)) {
         throw new StalkerPortalError(
           "AUTH_FAILED",
