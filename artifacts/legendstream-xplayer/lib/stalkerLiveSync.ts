@@ -18,6 +18,11 @@ import {
 import { noteStalkerLivePublishSuccess } from "./stalkerLivePublishRevision";
 import type { PersistedLiveCatalogItem } from "./catalogPersistence";
 import { StalkerLiveSyncSingleFlight } from "./stalkerLiveSyncSingleFlight";
+import {
+  beginStalkerDiagnosticTimer,
+  logStalkerDiagnosticMarker,
+  stalkerDiagnosticNowMs,
+} from "./stalkerDiagnostics";
 export { StalkerLiveSyncSingleFlight } from "./stalkerLiveSyncSingleFlight";
 
 export type StalkerLiveSyncProvider = { id: string; url: string; mac: string };
@@ -98,6 +103,8 @@ export async function syncStalkerLiveCatalogWithDependencies(
   const providerId = options.provider.id;
   const owner = options.owner ?? "OTHER_EXPLICIT_CALLER";
   const syncStartedAt = Date.now();
+  const diagnosticSyncStartedAt = stalkerDiagnosticNowMs();
+  const diagnosticSyncElapsed = () => Math.max(0, stalkerDiagnosticNowMs() - diagnosticSyncStartedAt);
   const syncRunId = nextStalkerLiveSyncRunToken(syncStartedAt);
   const stagingId = stalkerLiveStagingProviderId(providerId, syncRunId);
   safeLog.info("LS_STALKER_SYNC_RUN_START", {
@@ -110,6 +117,8 @@ export async function syncStalkerLiveCatalogWithDependencies(
   const diagnostics = { syncRunId, providerId };
   const session = dependencies.acquireSession(options.provider, diagnostics);
   let primaryError: unknown = null;
+  let diagnosticResult: "SUCCESS" | "CANCELLED" | "ERROR" = "ERROR";
+  let diagnosticErrorCode: string | undefined;
 
   await dependencies.cleanupStaging(providerId, stagingId);
   try {
@@ -143,14 +152,36 @@ export async function syncStalkerLiveCatalogWithDependencies(
       elapsedSinceSyncStartMs: Math.max(0, Date.now() - syncStartedAt),
       chunkSize: STALKER_LIVE_STAGE_CHUNK_SIZE,
     });
+    const stageStartedAt = stalkerDiagnosticNowMs();
+    logStalkerDiagnosticMarker("STALKER_STAGE_START", {
+      syncRunId,
+      providerId,
+      elapsedMs: diagnosticSyncElapsed(),
+      rowCount: expectedCount,
+      expectedCount,
+      chunkSize: STALKER_LIVE_STAGE_CHUNK_SIZE,
+      discoverySource: discovery.source,
+    });
 
     let persisted = 0;
     let chunkNumber = 0;
+    let firstStageProbe: ReturnType<typeof beginStalkerDiagnosticTimer> | null = null;
     for (let offset = 0; offset < discovery.rows.length; offset += STALKER_LIVE_STAGE_CHUNK_SIZE) {
       assertCurrent(options.signal, options.isCurrent);
       const chunk = discovery.rows
         .slice(offset, offset + STALKER_LIVE_STAGE_CHUNK_SIZE)
         .map((channel) => projectStalkerLiveItem(providerId, channel));
+      if (chunkNumber === 0) {
+        firstStageProbe = beginStalkerDiagnosticTimer();
+        logStalkerDiagnosticMarker("STALKER_FIRST_STAGE_WRITE_START", {
+          syncRunId,
+          providerId,
+          elapsedMs: diagnosticSyncElapsed(),
+          chunkIndex: 0,
+          chunkRows: chunk.length,
+          expectedCount,
+        });
+      }
       const written = await dependencies.stageItems(
         providerId,
         stagingId,
@@ -159,6 +190,19 @@ export async function syncStalkerLiveCatalogWithDependencies(
         options.isCurrent,
       );
       assertCurrent(options.signal, options.isCurrent);
+      if (chunkNumber === 0 && firstStageProbe) {
+        logStalkerDiagnosticMarker("STALKER_FIRST_STAGE_WRITE_END", {
+          syncRunId,
+          providerId,
+          elapsedMs: diagnosticSyncElapsed(),
+          durationMs: firstStageProbe.elapsed(),
+          timerLatenessMs: firstStageProbe.lateness(),
+          chunkIndex: 0,
+          chunkRows: chunk.length,
+          persisted: written,
+          expectedCount,
+        });
+      }
       if (written !== chunk.length) {
         throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live staging write did not persist the complete discovery chunk.");
       }
@@ -166,7 +210,32 @@ export async function syncStalkerLiveCatalogWithDependencies(
       chunkNumber += 1;
       await options.onProgress?.({ phase: "pages", page: chunkNumber, persisted });
       await dependencies.yieldFn();
+      if (chunkNumber === 1 && firstStageProbe) {
+        logStalkerDiagnosticMarker("STALKER_FIRST_STAGE_YIELD", {
+          syncRunId,
+          providerId,
+          elapsedMs: diagnosticSyncElapsed(),
+          durationMs: firstStageProbe.elapsed(),
+          timerLatenessMs: firstStageProbe.lateness(),
+          chunkIndex: 0,
+          chunkRows: chunk.length,
+          persisted,
+          expectedCount,
+        });
+        firstStageProbe.cancel();
+        firstStageProbe = null;
+      }
     }
+
+    logStalkerDiagnosticMarker("STALKER_STAGE_END", {
+      syncRunId,
+      providerId,
+      elapsedMs: diagnosticSyncElapsed(),
+      durationMs: Math.max(0, stalkerDiagnosticNowMs() - stageStartedAt),
+      persisted,
+      expectedCount,
+      chunkSize: STALKER_LIVE_STAGE_CHUNK_SIZE,
+    });
 
     assertCurrent(options.signal, options.isCurrent);
     if (persisted !== expectedCount) {
@@ -174,6 +243,15 @@ export async function syncStalkerLiveCatalogWithDependencies(
     }
 
     await options.onProgress?.({ phase: "committing", persisted });
+    const commitProbe = beginStalkerDiagnosticTimer();
+    logStalkerDiagnosticMarker("STALKER_COMMIT_START", {
+      syncRunId,
+      providerId,
+      elapsedMs: diagnosticSyncElapsed(),
+      persisted,
+      expectedCount,
+      categoryCount: categories.length,
+    });
     await dependencies.commitStaging(
       providerId,
       stagingId,
@@ -181,6 +259,17 @@ export async function syncStalkerLiveCatalogWithDependencies(
       expectedCount,
       options.isCurrent,
     );
+    logStalkerDiagnosticMarker("STALKER_COMMIT_END", {
+      syncRunId,
+      providerId,
+      elapsedMs: diagnosticSyncElapsed(),
+      durationMs: commitProbe.elapsed(),
+      timerLatenessMs: commitProbe.lateness(),
+      persisted,
+      expectedCount,
+      categoryCount: categories.length,
+    });
+    commitProbe.cancel();
     assertCurrent(options.signal, options.isCurrent);
     dependencies.notePublishSuccess?.(providerId, "live");
 
@@ -194,6 +283,7 @@ export async function syncStalkerLiveCatalogWithDependencies(
       discoverySource: discovery.source,
       elapsedMs: Date.now() - syncStartedAt,
     };
+    diagnosticResult = "SUCCESS";
     safeLog.info("LS_STALKER_SYNC_RUN_END", {
       syncRunId,
       owner,
@@ -203,19 +293,34 @@ export async function syncStalkerLiveCatalogWithDependencies(
     return result;
   } catch (caught) {
     primaryError = caught;
+    diagnosticResult = caught instanceof StalkerPortalError && caught.code === "CANCELLED" ? "CANCELLED" : "ERROR";
+    diagnosticErrorCode = caught instanceof StalkerPortalError ? caught.code : "UNKNOWN";
     safeLog.info("LS_STALKER_SYNC_RUN_END", {
       syncRunId,
       owner,
-      result: caught instanceof StalkerPortalError && caught.code === "CANCELLED" ? "CANCELLED" : "ERROR",
+      result: diagnosticResult,
       elapsedMs: Math.max(0, Date.now() - syncStartedAt),
-      errorCode: caught instanceof StalkerPortalError ? caught.code : "UNKNOWN",
+      errorCode: diagnosticErrorCode,
     });
     throw caught;
   } finally {
     try {
       await dependencies.cleanupStaging(providerId, stagingId);
     } catch (cleanupError) {
-      if (primaryError === null) throw cleanupError;
+      if (primaryError === null) {
+        diagnosticResult = "ERROR";
+        diagnosticErrorCode = cleanupError instanceof StalkerPortalError ? cleanupError.code : "UNKNOWN";
+        throw cleanupError;
+      }
+    } finally {
+      logStalkerDiagnosticMarker("STALKER_SYNC_END", {
+        syncRunId,
+        providerId,
+        elapsedMs: diagnosticSyncElapsed(),
+        durationMs: diagnosticSyncElapsed(),
+        result: diagnosticResult,
+        errorCode: diagnosticErrorCode,
+      });
     }
   }
 }
