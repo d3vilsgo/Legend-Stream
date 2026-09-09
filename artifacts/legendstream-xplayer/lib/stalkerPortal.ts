@@ -1,4 +1,10 @@
 import { safeLog } from "./safeLog";
+import {
+  beginStalkerDiagnosticTimer,
+  classifyStalkerDiagnosticAction,
+  logStalkerDiagnosticMarker,
+  stalkerDiagnosticNowMs,
+} from "./stalkerDiagnostics";
 
 export type StalkerPortalErrorCode =
   | "INVALID_URL"
@@ -402,6 +408,10 @@ export class StalkerPortalSession {
       url.searchParams.set("JsHttpRequest", "1-xml");
     }
 
+    const providerId = diagnostics.providerId ?? this.#providerId;
+    const action = classifyStalkerDiagnosticAction(params.action);
+    const requestStartedAt = stalkerDiagnosticNowMs();
+    const elapsed = () => Math.max(0, stalkerDiagnosticNowMs() - requestStartedAt);
     const requestSignal = linkedRequestSignal(externalSignal, this.#timeoutMs);
     let fetchWaitMs = 0;
     let bodyReadWaitMs = 0;
@@ -410,6 +420,14 @@ export class StalkerPortalSession {
     let jsonParseMs = 0;
     try {
       let response: Response;
+      const fetchProbe = beginStalkerDiagnosticTimer();
+      logStalkerDiagnosticMarker("STALKER_FETCH_START", {
+        syncRunId: diagnostics.syncRunId,
+        providerId,
+        action,
+        endpointKind: this.endpointKind,
+        elapsedMs: elapsed(),
+      });
       try {
         const fetchStartedAt = Date.now();
         response = await this.#fetchImpl(url.toString(), {
@@ -423,6 +441,17 @@ export class StalkerPortalSession {
           signal: requestSignal.signal,
         });
         fetchWaitMs = Math.max(0, Date.now() - fetchStartedAt);
+        logStalkerDiagnosticMarker("STALKER_FETCH_RESOLVED", {
+          syncRunId: diagnostics.syncRunId,
+          providerId,
+          action,
+          endpointKind: this.endpointKind,
+          elapsedMs: elapsed(),
+          durationMs: fetchProbe.elapsed(),
+          timerLatenessMs: fetchProbe.lateness(),
+          status: response.status,
+          ok: response.ok,
+        });
       } catch (caught) {
         if (externalSignal?.aborted) {
           throw new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled.");
@@ -435,13 +464,34 @@ export class StalkerPortalSession {
           throw new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled.");
         }
         throw new StalkerPortalError("NETWORK_ERROR", "Stalker portal could not be reached.");
+      } finally {
+        fetchProbe.cancel();
       }
 
       let text: string;
+      const bodyProbe = beginStalkerDiagnosticTimer();
+      logStalkerDiagnosticMarker("STALKER_BODY_READ_START", {
+        syncRunId: diagnostics.syncRunId,
+        providerId,
+        action,
+        endpointKind: this.endpointKind,
+        elapsedMs: elapsed(),
+      });
       try {
         const bodyReadStartedAt = Date.now();
         text = await response.text();
         bodyReadWaitMs = Math.max(0, Date.now() - bodyReadStartedAt);
+        logStalkerDiagnosticMarker("STALKER_BODY_READ_END", {
+          syncRunId: diagnostics.syncRunId,
+          providerId,
+          action,
+          endpointKind: this.endpointKind,
+          elapsedMs: elapsed(),
+          durationMs: bodyProbe.elapsed(),
+          timerLatenessMs: bodyProbe.lateness(),
+          status: response.status,
+          ok: true,
+        });
       } catch (caught) {
         if (externalSignal?.aborted) {
           throw new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled.");
@@ -457,13 +507,33 @@ export class StalkerPortalSession {
           "NETWORK_ERROR",
           "Stalker portal response body could not be read.",
         );
+      } finally {
+        bodyProbe.cancel();
       }
 
       const bodyReadFinishedAt = Date.now();
       const postBodyYieldStartedAt = Date.now();
+      const postBodyProbe = beginStalkerDiagnosticTimer();
       postBodyYieldStartMs = Math.max(0, postBodyYieldStartedAt - bodyReadFinishedAt);
+      logStalkerDiagnosticMarker("STALKER_POST_BODY_YIELD_START", {
+        syncRunId: diagnostics.syncRunId,
+        providerId,
+        action,
+        endpointKind: this.endpointKind,
+        elapsedMs: elapsed(),
+      });
       await this.#afterResponse();
       postBodyYieldMs = Math.max(0, Date.now() - postBodyYieldStartedAt);
+      logStalkerDiagnosticMarker("STALKER_POST_BODY_YIELD_END", {
+        syncRunId: diagnostics.syncRunId,
+        providerId,
+        action,
+        endpointKind: this.endpointKind,
+        elapsedMs: elapsed(),
+        durationMs: postBodyProbe.elapsed(),
+        timerLatenessMs: postBodyProbe.lateness(),
+      });
+      postBodyProbe.cancel();
 
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) {
@@ -483,16 +553,35 @@ export class StalkerPortalSession {
       if (textLooksLikePortalTrafficProtection(text)) {
         throw portalTrafficProtectionError({
           syncRunId: diagnostics.syncRunId,
-          providerId: diagnostics.providerId ?? this.#providerId,
+          providerId,
         });
       }
 
       let parsed: unknown;
+      const parseProbe = beginStalkerDiagnosticTimer();
+      logStalkerDiagnosticMarker("STALKER_JSON_PARSE_START", {
+        syncRunId: diagnostics.syncRunId,
+        providerId,
+        action,
+        endpointKind: this.endpointKind,
+        elapsedMs: elapsed(),
+      });
       const jsonParseStartedAt = Date.now();
       try {
         parsed = JSON.parse(text);
       } catch {
         jsonParseMs = Math.max(0, Date.now() - jsonParseStartedAt);
+        logStalkerDiagnosticMarker("STALKER_JSON_PARSE_END", {
+          syncRunId: diagnostics.syncRunId,
+          providerId,
+          action,
+          endpointKind: this.endpointKind,
+          elapsedMs: elapsed(),
+          durationMs: parseProbe.elapsed(),
+          timerLatenessMs: parseProbe.lateness(),
+          ok: false,
+        });
+        parseProbe.cancel();
         onTiming?.({ fetchWaitMs, bodyReadWaitMs, postBodyYieldStartMs, postBodyYieldMs, jsonParseMs });
         throw new StalkerPortalError(
           "INVALID_RESPONSE",
@@ -500,6 +589,17 @@ export class StalkerPortalSession {
         );
       }
       jsonParseMs = Math.max(0, Date.now() - jsonParseStartedAt);
+      logStalkerDiagnosticMarker("STALKER_JSON_PARSE_END", {
+        syncRunId: diagnostics.syncRunId,
+        providerId,
+        action,
+        endpointKind: this.endpointKind,
+        elapsedMs: elapsed(),
+        durationMs: parseProbe.elapsed(),
+        timerLatenessMs: parseProbe.lateness(),
+        ok: true,
+      });
+      parseProbe.cancel();
       onTiming?.({ fetchWaitMs, bodyReadWaitMs, postBodyYieldStartMs, postBodyYieldMs, jsonParseMs });
 
       const payload =
@@ -509,7 +609,7 @@ export class StalkerPortalSession {
       if (payloadLooksLikePortalTrafficProtection(payload)) {
         throw portalTrafficProtectionError({
           syncRunId: diagnostics.syncRunId,
-          providerId: diagnostics.providerId ?? this.#providerId,
+          providerId,
         });
       }
       if (payloadLooksLikeAuthFailure(payload)) {
@@ -518,6 +618,16 @@ export class StalkerPortalSession {
           "Stalker portal session is not authorized.",
         );
       }
+      logStalkerDiagnosticMarker("STALKER_REQUEST_RETURN", {
+        syncRunId: diagnostics.syncRunId,
+        providerId,
+        action,
+        endpointKind: this.endpointKind,
+        elapsedMs: elapsed(),
+        durationMs: elapsed(),
+        status: response.status,
+        ok: true,
+      });
       return payload;
     } finally {
       requestSignal.cleanup();
