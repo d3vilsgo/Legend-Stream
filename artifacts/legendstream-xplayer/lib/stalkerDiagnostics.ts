@@ -53,7 +53,12 @@ type MarkerDetails = {
   errorCode?: string;
 };
 
-const nowMs = () => Date.now();
+export const stalkerDiagnosticNowMs = () => {
+  const performanceNow = globalThis.performance?.now;
+  return typeof performanceNow === "function"
+    ? performanceNow.call(globalThis.performance)
+    : Date.now();
+};
 
 export function classifyStalkerDiagnosticAction(value: unknown): StalkerDiagnosticAction {
   switch (value) {
@@ -68,7 +73,7 @@ export function classifyStalkerDiagnosticAction(value: unknown): StalkerDiagnost
   }
 }
 
-export function beginStalkerDiagnosticTimer(nowFn: () => number = nowMs) {
+export function beginStalkerDiagnosticTimer(nowFn: () => number = stalkerDiagnosticNowMs) {
   const startedAt = nowFn();
   let firedAt: number | null = null;
   const setTimer = globalThis.setTimeout;
