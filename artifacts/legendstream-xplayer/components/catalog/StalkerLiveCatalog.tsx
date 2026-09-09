@@ -1,4 +1,5 @@
 import React from "react";
+import { ActivityIndicator, View } from "react-native";
 import { PagedLiveCatalog } from "./PagedCatalogViews";
 import type { EpgProgram } from "@/context/PlayerContext";
 import { usePlayer } from "@/context/PlayerContext";
@@ -32,6 +33,11 @@ export function StalkerLiveCatalog({
   );
 
   if (!provider || provider.id !== providerId || provider.type !== "stalker") return null;
+  if (!sync.categoriesReady) {
+    return <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
+      <ActivityIndicator size="small" />
+    </View>;
+  }
 
   return <PagedLiveCatalog
     provider={provider}
