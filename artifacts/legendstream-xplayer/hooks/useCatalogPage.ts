@@ -15,7 +15,7 @@ import {
   noteCatalogPageCommit,
   type CatalogPageItem,
 } from "@/lib/catalogPageRepository";
-import { getCachedStalkerLivePage } from "@/lib/stalkerLivePageRepository";
+import { getStalkerLazyLivePage } from "@/lib/stalkerLazyLivePageRepository";
 import {
   readStalkerLivePublishRevision,
   subscribeStalkerLivePublishRevision,
@@ -89,6 +89,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
   const [stalkerLivePublishRevision, setStalkerLivePublishRevision] = useState(0);
   const flightGuardRef = useRef(new CatalogPageFlightGuard());
   const generationRef = useRef(0);
+  const stalkerRequestRef = useRef<AbortController | null>(null);
   const observedStalkerLivePublishRevisionRef = useRef(0);
   const pendingCommitRef = useRef<{
     startedAt: number;
@@ -155,6 +156,13 @@ export function useCatalogPage<K extends CatalogPageKind>({
     const flightKey = `${queryKey}|${cursor ?? "first"}`;
     if (!flightGuardRef.current.tryStart(flightKey)) return;
 
+    let stalkerController: AbortController | null = null;
+    if (stalkerLive) {
+      if (mode === "initial") stalkerRequestRef.current?.abort();
+      stalkerController = new AbortController();
+      stalkerRequestRef.current = stalkerController;
+    }
+
     setState((current) => ({
       ...current,
       loadingInitial: mode === "initial" ? current.items.length === 0 : current.loadingInitial,
@@ -163,12 +171,14 @@ export function useCatalogPage<K extends CatalogPageKind>({
 
     try {
       const result = stalkerLive
-        ? await getCachedStalkerLivePage(
+        ? await getStalkerLazyLivePage({
             provider,
-            request as CatalogPageRequest & { kind: "live" },
-          )
+            categoryId: request.categoryId,
+            cursor: request.cursor,
+            signal: stalkerController?.signal,
+          })
         : await getCachedCatalogPage(provider, request);
-      if (generationRef.current !== generation) return;
+      if (generationRef.current !== generation || stalkerController?.signal.aborted) return;
       pendingCommitRef.current = {
         startedAt: Date.now(),
         request,
@@ -207,8 +217,19 @@ export function useCatalogPage<K extends CatalogPageKind>({
           queryKey,
         };
       });
+    } catch {
+      if (generationRef.current !== generation || stalkerController?.signal.aborted) return;
+      setState((current) => ({
+        ...current,
+        loadingInitial: false,
+        loadingMore: false,
+        hasMore: false,
+      }));
     } finally {
       flightGuardRef.current.finish(flightKey);
+      if (stalkerController && stalkerRequestRef.current === stalkerController) {
+        stalkerRequestRef.current = null;
+      }
       if (generationRef.current === generation) {
         setState((current) => ({
           ...current,
@@ -234,6 +255,8 @@ export function useCatalogPage<K extends CatalogPageKind>({
   useEffect(() => {
     generationRef.current += 1;
     const generation = generationRef.current;
+    stalkerRequestRef.current?.abort();
+    stalkerRequestRef.current = null;
     flightGuardRef.current.clear();
     setState({
       ...emptyState<ItemForKind<K>>(),
@@ -245,6 +268,12 @@ export function useCatalogPage<K extends CatalogPageKind>({
     if (effectiveEnabled && provider && baseRequest && queryKey) {
       void loadPage(null, "initial", generation);
     }
+    return () => {
+      if (generationRef.current === generation) {
+        stalkerRequestRef.current?.abort();
+        stalkerRequestRef.current = null;
+      }
+    };
   }, [queryKey, effectiveEnabled, provider?.id]);
 
   useEffect(() => {
@@ -277,6 +306,8 @@ export function useCatalogPage<K extends CatalogPageKind>({
     if (!effectiveEnabled || !provider || !baseRequest || !queryKey) return;
     generationRef.current += 1;
     const generation = generationRef.current;
+    stalkerRequestRef.current?.abort();
+    stalkerRequestRef.current = null;
     flightGuardRef.current.clear();
     setState({
       ...emptyState<ItemForKind<K>>(),
@@ -294,6 +325,11 @@ export function useCatalogPage<K extends CatalogPageKind>({
     observedStalkerLivePublishRevisionRef.current = stalkerLivePublishRevision;
     reload();
   }, [stalkerLive, stalkerLivePublishRevision, reload]);
+
+  useEffect(() => () => {
+    stalkerRequestRef.current?.abort();
+    stalkerRequestRef.current = null;
+  }, []);
 
   return {
     ...state,
