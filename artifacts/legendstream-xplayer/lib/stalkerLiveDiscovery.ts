@@ -2,6 +2,11 @@ import { yieldToUi } from "./cooperative";
 import { safeLog } from "./safeLog";
 import { StalkerPortalError, type StalkerPortalRequestTiming, type StalkerPortalSession } from "./stalkerPortal";
 import {
+  beginStalkerDiagnosticTimer,
+  logStalkerDiagnosticMarker,
+  stalkerDiagnosticNowMs,
+} from "./stalkerDiagnostics";
+import {
   MAX_STALKER_LIVE_PAGES,
   normalizeStalkerLivePage,
   normalizedStalkerLivePageCeiling,
@@ -282,6 +287,17 @@ export async function normalizeStalkerLiveAggregateCooperatively(
     ...shape,
   });
 
+  const diagnosticStartedAt = stalkerDiagnosticNowMs();
+  const diagnosticElapsed = () => Math.max(0, stalkerDiagnosticNowMs() - diagnosticStartedAt);
+  const normalizeProbe = beginStalkerDiagnosticTimer();
+  logStalkerDiagnosticMarker("STALKER_AGGREGATE_NORMALIZE_START", {
+    syncRunId: options.syncRunId,
+    providerId: options.providerId,
+    elapsedMs: 0,
+    rowCount: rawRows.length,
+    chunkSize: STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE,
+  });
+
   const rows: StalkerLiveChannel[] = [];
   const seen = new Map<string, StalkerLiveChannel>();
   let normalizeMs = 0;
@@ -345,9 +361,31 @@ export async function normalizeStalkerLiveAggregateCooperatively(
     yieldCount += 1;
     if (firstNormalizeYieldAfterParseMs === null) {
       firstNormalizeYieldAfterParseMs = Math.max(0, now() - cpuStartedAt);
+      logStalkerDiagnosticMarker("STALKER_FIRST_NORMALIZE_YIELD", {
+        syncRunId: options.syncRunId,
+        providerId: options.providerId,
+        elapsedMs: diagnosticElapsed(),
+        durationMs: normalizeProbe.elapsed(),
+        timerLatenessMs: normalizeProbe.lateness(),
+        chunkIndex: Math.trunc(offset / STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE),
+        chunkRows: rawChunk.length,
+        rowCount: rawRows.length,
+        chunkSize: STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE,
+      });
     }
     assertCurrent(options.signal, options.isCurrent);
   }
+
+  logStalkerDiagnosticMarker("STALKER_AGGREGATE_NORMALIZE_END", {
+    syncRunId: options.syncRunId,
+    providerId: options.providerId,
+    elapsedMs: diagnosticElapsed(),
+    durationMs: normalizeProbe.elapsed(),
+    timerLatenessMs: normalizeProbe.lateness(),
+    rowCount: rawRows.length,
+    chunkSize: STALKER_AGGREGATE_NORMALIZE_CHUNK_SIZE,
+  });
+  normalizeProbe.cancel();
 
   safeLog.info("LS_STALKER_AGGREGATE_CPU", {
     rowCount: rawRows.length,
