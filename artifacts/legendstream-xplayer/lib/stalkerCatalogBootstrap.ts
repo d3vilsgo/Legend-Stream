@@ -1,5 +1,7 @@
 import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
 import { bootstrapStalkerProfile } from "./stalkerProfileBootstrap";
+import { fetchStalkerLiveCategories } from "./stalkerLiveCatalog";
+import { rememberStalkerLiveCategories } from "./stalkerCategoryCapability";
 import { StalkerPortalError } from "./stalkerPortal";
 
 export type StalkerBootstrapProvider = {
@@ -45,10 +47,14 @@ export async function bootstrapStalkerProviderForLifecycle(
     diagnostics,
   });
   assertCurrent(options.signal, options.isCurrent);
+  const liveCategories = await fetchStalkerLiveCategories(session, options.signal, diagnostics);
+  assertCurrent(options.signal, options.isCurrent);
+  rememberStalkerLiveCategories(provider.id, liveCategories);
 
   return {
     authenticated: true as const,
     profileSupported: profile.supported,
+    liveCategories,
     cachedCatalogCount: Math.max(0, Number(provider.channelCount ?? 0) || 0),
   };
 }
