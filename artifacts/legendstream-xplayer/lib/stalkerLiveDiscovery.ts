@@ -372,8 +372,8 @@ export async function normalizeStalkerLiveAggregateCooperatively(
     return { kind: "fallback" };
   }
 
-  if (shape.hasPaginationMetadata) {
-    logAggregateFallback(options, "AGGREGATE_PAGINATION_METADATA");
+  if (totalItems === null && shape.hasPaginationMetadata) {
+    logAggregateFallback(options, "AGGREGATE_PAGINATION_METADATA_WITHOUT_TOTAL");
     return { kind: "fallback" };
   }
 
@@ -402,7 +402,9 @@ async function discoverViaGenreScopedOrderedList(
   options: StalkerLiveDiscoveryOptions,
   categories: readonly StalkerLiveCategory[],
 ): Promise<StalkerLiveDiscoveryResult> {
-  const usableCategories = categories.filter((category) => category.id.trim());
+  const allUsableCategories = categories.filter((category) => category.id.trim());
+  const concreteCategories = allUsableCategories.filter((category) => category.id.trim() !== "*");
+  const usableCategories = concreteCategories.length > 0 ? concreteCategories : allUsableCategories;
   if (usableCategories.length === 0) {
     return discoverViaLegacyOrderedList(options);
   }
