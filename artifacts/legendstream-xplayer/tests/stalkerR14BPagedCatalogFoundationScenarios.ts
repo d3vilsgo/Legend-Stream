@@ -39,7 +39,9 @@ function invalidDialect(status = 400) {
   return new StalkerPortalError("HTTP_ERROR", "dialect rejected", status);
 }
 
-function controllerItem(id: string, semantic = `cmd-${id}`) {
+type ControllerItem = { id: string; semantic: string };
+
+function controllerItem(id: string, semantic = `cmd-${id}`): ControllerItem {
   return { id, semantic };
 }
 
@@ -160,8 +162,8 @@ async function main() {
     const wait = new Promise<void>((resolve) => { release = resolve; });
     const controller = new StalkerPagedCatalogController({
       categoryId: "0",
-      identityKey: (item: { id: string }) => item.id,
-      semanticKey: (item: { semantic: string }) => item.semantic,
+      identityKey: (item: ControllerItem) => item.id,
+      semanticKey: (item: ControllerItem) => item.semantic,
       fetchPage: async (page) => {
         if (page === 2) { pageTwoCalls += 1; await wait; }
         return { items: [controllerItem(String(page))], totalItems: 3, maxPageItems: 1, hasMore: page < 3, fingerprint: `page-${page}` };
@@ -178,8 +180,8 @@ async function main() {
   await scenario("L same-page same-semantic duplicate is suppressed", async () => {
     const controller = new StalkerPagedCatalogController({
       categoryId: "0",
-      identityKey: (item: { id: string }) => item.id,
-      semanticKey: (item: { semantic: string }) => item.semantic,
+      identityKey: (item: ControllerItem) => item.id,
+      semanticKey: (item: ControllerItem) => item.semantic,
       fetchPage: async () => ({
         items: [controllerItem("1", "same"), controllerItem("1", "same")],
         totalItems: 1, maxPageItems: 2, hasMore: false, fingerprint: "dup-same",
@@ -193,8 +195,8 @@ async function main() {
     let oldAborted = false;
     const controller = new StalkerPagedCatalogController({
       categoryId: "1",
-      identityKey: (item: { id: string }) => item.id,
-      semanticKey: (item: { semantic: string }) => item.semantic,
+      identityKey: (item: ControllerItem) => item.id,
+      semanticKey: (item: ControllerItem) => item.semantic,
       fetchPage: (page, category, signal) => new Promise((resolve, reject) => {
         if (category !== "1") return resolve({ items: [controllerItem("2")], totalItems: 1, maxPageItems: 1, hasMore: false, fingerprint: "new" });
         signal.addEventListener("abort", () => { oldAborted = true; reject(new StalkerPortalError("CANCELLED", "old")); }, { once: true });
@@ -212,8 +214,8 @@ async function main() {
     let aborted = false;
     const controller = new StalkerPagedCatalogController({
       categoryId: "0",
-      identityKey: (item: { id: string }) => item.id,
-      semanticKey: (item: { semantic: string }) => item.semantic,
+      identityKey: (item: ControllerItem) => item.id,
+      semanticKey: (item: ControllerItem) => item.semantic,
       fetchPage: (_page, _category, signal) => new Promise((_resolve, reject) => {
         signal.addEventListener("abort", () => { aborted = true; reject(new StalkerPortalError("CANCELLED", "cancel")); }, { once: true });
       }),
@@ -229,8 +231,8 @@ async function main() {
   await scenario("O empty first page terminates as END_REACHED", async () => {
     const controller = new StalkerPagedCatalogController({
       categoryId: "0",
-      identityKey: (item: { id: string }) => item.id,
-      semanticKey: (item: { semantic: string }) => item.semantic,
+      identityKey: (item: ControllerItem) => item.id,
+      semanticKey: (item: ControllerItem) => item.semantic,
       fetchPage: async () => ({ items: [], totalItems: 0, maxPageItems: 14, hasMore: false, fingerprint: "empty" }),
     });
     await controller.loadFirst();
@@ -240,8 +242,8 @@ async function main() {
   await scenario("P repeated page fingerprint fails bounded", async () => {
     const controller = new StalkerPagedCatalogController({
       categoryId: "0",
-      identityKey: (item: { id: string }) => item.id,
-      semanticKey: (item: { semantic: string }) => item.semantic,
+      identityKey: (item: ControllerItem) => item.id,
+      semanticKey: (item: ControllerItem) => item.semantic,
       fetchPage: async (page) => ({ items: [controllerItem(String(page))], totalItems: 3, maxPageItems: 1, hasMore: true, fingerprint: "same-page" }),
     });
     await controller.loadFirst();
@@ -261,8 +263,8 @@ async function main() {
     let calls = 0;
     const controller = new StalkerPagedCatalogController({
       categoryId: "0",
-      identityKey: (item: { id: string }) => item.id,
-      semanticKey: (item: { semantic: string }) => item.semantic,
+      identityKey: (item: ControllerItem) => item.id,
+      semanticKey: (item: ControllerItem) => item.semantic,
       fetchPage: async (_page, category) => {
         calls += 1;
         return { items: [controllerItem(category)], totalItems: 1, maxPageItems: 1, hasMore: false, fingerprint: `${category}-${calls}` };
@@ -278,8 +280,8 @@ async function main() {
   await scenario("T same id and same semantic reference keeps first canonical occurrence", async () => {
     const controller = new StalkerPagedCatalogController({
       categoryId: "0",
-      identityKey: (item: { id: string }) => item.id,
-      semanticKey: (item: { semantic: string }) => item.semantic,
+      identityKey: (item: ControllerItem) => item.id,
+      semanticKey: (item: ControllerItem) => item.semantic,
       fetchPage: async (page) => ({
         items: [controllerItem("1", "cmd-a")], totalItems: 2, maxPageItems: 1, hasMore: page === 1, fingerprint: `t-${page}`,
       }),
@@ -292,8 +294,8 @@ async function main() {
   await scenario("U same id with different semantic reference fails bounded", async () => {
     const controller = new StalkerPagedCatalogController({
       categoryId: "0",
-      identityKey: (item: { id: string }) => item.id,
-      semanticKey: (item: { semantic: string }) => item.semantic,
+      identityKey: (item: ControllerItem) => item.id,
+      semanticKey: (item: ControllerItem) => item.semantic,
       fetchPage: async (page) => ({
         items: [controllerItem("1", page === 1 ? "cmd-a" : "cmd-b")], totalItems: 2, maxPageItems: 1, hasMore: page === 1, fingerprint: `u-${page}`,
       }),
