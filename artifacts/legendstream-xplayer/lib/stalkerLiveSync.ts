@@ -63,6 +63,13 @@ type SyncDependencies = {
 const STALKER_LIVE_STAGE_CHUNK_SIZE = 250;
 let stalkerLiveSyncRunSequence = 0;
 
+type ProductionSyncResult = Awaited<ReturnType<typeof syncStalkerLiveCatalogWithDependencies>>;
+type InFlightProductionSync = {
+  promise: Promise<ProductionSyncResult>;
+  signal?: AbortSignal;
+};
+const inFlightProductionSyncs = new Map<string, InFlightProductionSync>();
+
 const productionDependencies: SyncDependencies = {
   acquireSession: (provider, diagnostics) => getOrCreateStalkerPortalSession({
     providerId: provider.id,
@@ -221,6 +228,29 @@ export async function syncStalkerLiveCatalogWithDependencies(
   }
 }
 
-export async function syncStalkerLiveCatalog(options: Options) {
-  return syncStalkerLiveCatalogWithDependencies(options, productionDependencies);
+export function syncStalkerLiveCatalog(options: Options): Promise<ProductionSyncResult> {
+  const providerId = options.provider.id;
+  const owner = options.owner ?? "OTHER_EXPLICIT_CALLER";
+  const existing = inFlightProductionSyncs.get(providerId);
+  if (existing && !existing.signal?.aborted) {
+    safeLog.info("LS_STALKER_SYNC_SINGLE_FLIGHT_JOIN", {
+      providerId,
+      owner,
+      activeSyncCountForProvider: 1,
+    });
+    return existing.promise;
+  }
+  if (existing?.signal?.aborted) {
+    inFlightProductionSyncs.delete(providerId);
+  }
+
+  const promise = syncStalkerLiveCatalogWithDependencies(options, productionDependencies);
+  const entry: InFlightProductionSync = { promise, signal: options.signal };
+  inFlightProductionSyncs.set(providerId, entry);
+  void promise.finally(() => {
+    if (inFlightProductionSyncs.get(providerId) === entry) {
+      inFlightProductionSyncs.delete(providerId);
+    }
+  }).catch(() => undefined);
+  return promise;
 }
