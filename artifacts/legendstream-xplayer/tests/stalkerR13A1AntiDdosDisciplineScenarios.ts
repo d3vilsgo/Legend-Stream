@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { discoverStalkerLiveChannels } from "../lib/stalkerLiveDiscovery";
 import { createStalkerPortalSession, StalkerPortalError } from "../lib/stalkerPortal";
+import { StalkerLiveSyncSingleFlight } from "../lib/stalkerLiveSync";
 
 let passed = 0;
 async function scenario(name: string, run: () => void | Promise<void>) {
@@ -17,7 +18,75 @@ function response(body: string) {
   return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 async function main() {
+  await scenario("T1 same-provider equivalent sync work joins one in-flight task", async () => {
+    const gate = new StalkerLiveSyncSingleFlight<number>();
+    const pending = deferred<number>();
+    let starts = 0;
+    const first = gate.run("provider-a", undefined, () => {
+      starts += 1;
+      return pending.promise;
+    });
+    const second = gate.run("provider-a", undefined, () => {
+      starts += 1;
+      return Promise.resolve(2);
+    });
+    assert.equal(first, second);
+    assert.equal(starts, 1);
+    pending.resolve(1);
+    assert.equal(await second, 1);
+  });
+
+  await scenario("T2 aborted same-provider work may be superseded without joining stale work", async () => {
+    const gate = new StalkerLiveSyncSingleFlight<number>();
+    const controller = new AbortController();
+    const firstPending = deferred<number>();
+    let starts = 0;
+    const first = gate.run("provider-a", controller.signal, () => {
+      starts += 1;
+      return firstPending.promise;
+    });
+    controller.abort();
+    const second = gate.run("provider-a", undefined, () => {
+      starts += 1;
+      return Promise.resolve(2);
+    });
+    assert.notEqual(first, second);
+    assert.equal(starts, 2);
+    assert.equal(await second, 2);
+    firstPending.resolve(1);
+    assert.equal(await first, 1);
+  });
+
+  await scenario("T3 different providers remain independent", async () => {
+    const gate = new StalkerLiveSyncSingleFlight<number>();
+    const one = deferred<number>();
+    const two = deferred<number>();
+    let starts = 0;
+    const first = gate.run("provider-a", undefined, () => {
+      starts += 1;
+      return one.promise;
+    });
+    const second = gate.run("provider-b", undefined, () => {
+      starts += 1;
+      return two.promise;
+    });
+    assert.equal(starts, 2);
+    one.resolve(1);
+    two.resolve(2);
+    assert.deepEqual(await Promise.all([first, second]), [1, 2]);
+  });
+
   await scenario("T7/T8 plain HTTP-200 anti-DDoS body is terminal and does not re-handshake or retry", async () => {
     let fetchCount = 0;
     const session = createStalkerPortalSession({
@@ -150,8 +219,8 @@ async function main() {
     assert.equal(result.rows.length, 3);
   });
 
-  assert.equal(passed, 6);
-  process.stdout.write("stalker R13-A.1 anti-DDoS discipline scenarios: 6/6 passed\n");
+  assert.equal(passed, 9);
+  process.stdout.write("stalker R13-A.1 anti-DDoS discipline scenarios: 9/9 passed\n");
 }
 
 void main().catch((error) => {
