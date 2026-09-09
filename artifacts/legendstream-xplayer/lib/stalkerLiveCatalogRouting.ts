@@ -1,9 +1,10 @@
 import type { Channel, Provider } from "./iptv";
+import { bootstrapStalkerProviderForLifecycle } from "./stalkerCatalogBootstrap";
 import { syncStalkerLiveCatalog, type StalkerLiveSyncOwner } from "./stalkerLiveSync";
 
 export type StalkerCatalogLifecycleProvider = Pick<
   Provider,
-  "id" | "type" | "url" | "mac"
+  "id" | "type" | "url" | "mac" | "channelCount"
 >;
 
 export type StalkerCatalogLifecycleOptions = {
@@ -21,6 +22,18 @@ export function removeLegacyStalkerCatalogChannels(
   return channels.filter((channel) => channel.providerId !== providerId);
 }
 
+export async function bootstrapStalkerCatalogForLifecycle(
+  provider: StalkerCatalogLifecycleProvider,
+  options: StalkerCatalogLifecycleOptions = {},
+) {
+  return bootstrapStalkerProviderForLifecycle(provider, {
+    signal: options.signal,
+    isCurrent: options.isCurrent,
+  });
+}
+
+// Retained only for explicit legacy/compatibility callers. Normal provider
+// connect/refresh no longer acquires a full Stalker catalog.
 export async function syncStalkerCatalogForLifecycle(
   provider: StalkerCatalogLifecycleProvider,
   options: StalkerCatalogLifecycleOptions = {},
