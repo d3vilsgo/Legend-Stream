@@ -3,7 +3,6 @@ import { bootstrapStalkerProfile } from "./stalkerProfileBootstrap";
 import { fetchStalkerLiveCategories } from "./stalkerLiveCatalog";
 import { rememberStalkerLiveCategories } from "./stalkerCategoryCapability";
 import { StalkerPortalError, type StalkerPortalSession } from "./stalkerPortal";
-import { traceStalkerConnectCheckpoint } from "./stalkerConnectTrace";
 
 export type StalkerBootstrapProvider = {
   id: string;
@@ -41,7 +40,6 @@ export async function bootstrapStalkerProviderForLifecycle(
   const mac = provider.mac?.trim() || "";
   if (!portalUrl || !mac) throw new Error("Stalker provider credentials are incomplete.");
 
-  traceStalkerConnectCheckpoint("BOOTSTRAP_START");
   assertCurrent(options.signal, options.isCurrent);
   const diagnostics = { providerId: provider.id };
   const session = dependencies.acquireSession?.(provider) ?? getOrCreateStalkerPortalSession({
@@ -51,13 +49,11 @@ export async function bootstrapStalkerProviderForLifecycle(
     diagnostics,
   });
   await session.handshake(options.signal);
-  traceStalkerConnectCheckpoint("HANDSHAKE_DONE");
   assertCurrent(options.signal, options.isCurrent);
   const profile = await (dependencies.bootstrapProfile ?? bootstrapStalkerProfile)(session as StalkerPortalSession, {
     signal: options.signal,
     diagnostics,
   });
-  traceStalkerConnectCheckpoint("PROFILE_DONE", { profileSupported: profile.supported });
   assertCurrent(options.signal, options.isCurrent);
   const liveCategories = await (dependencies.fetchLiveCategories ?? fetchStalkerLiveCategories)(
     session,
@@ -66,9 +62,7 @@ export async function bootstrapStalkerProviderForLifecycle(
   );
   assertCurrent(options.signal, options.isCurrent);
   (dependencies.rememberLiveCategories ?? rememberStalkerLiveCategories)(provider.id, liveCategories);
-  traceStalkerConnectCheckpoint("CATEGORIES_REMEMBERED", { categoryCount: liveCategories.length });
 
-  traceStalkerConnectCheckpoint("BOOTSTRAP_DONE", { categoryCount: liveCategories.length });
   return {
     authenticated: true as const,
     profileSupported: profile.supported,

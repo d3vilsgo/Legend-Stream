@@ -1,6 +1,5 @@
 import { StalkerPortalError, type StalkerPortalDiagnosticsContext, type StalkerPortalSession } from "./stalkerPortal";
 import type { PersistedLiveCatalogItem } from "./catalogPersistence";
-import { traceStalkerConnectCheckpoint } from "./stalkerConnectTrace";
 
 export const MAX_STALKER_LIVE_PAGES = 5_000;
 
@@ -110,10 +109,9 @@ export async function fetchStalkerLiveCategories(
   diagnostics?: StalkerPortalDiagnosticsContext,
 ) {
   try {
-    const payload = await session.request({ type: "itv", action: "get_genres" }, signal, undefined, diagnostics);
-    const categories = normalizeStalkerLiveCategories(payload);
-    traceStalkerConnectCheckpoint("CATEGORIES_NORMALIZED", { categoryCount: categories.length });
-    return categories;
+    return normalizeStalkerLiveCategories(
+      await session.request({ type: "itv", action: "get_genres" }, signal, undefined, diagnostics),
+    );
   } catch (caught) {
     if (isStalkerLiveCategoryCapabilityAbsent(caught)) return [];
     throw caught;

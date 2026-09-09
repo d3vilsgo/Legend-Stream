@@ -5,7 +5,6 @@ import {
   logStalkerDiagnosticMarker,
   stalkerDiagnosticNowMs,
 } from "./stalkerDiagnostics";
-import { traceStalkerConnectCheckpoint } from "./stalkerConnectTrace";
 
 export type StalkerPortalErrorCode =
   | "INVALID_URL"
@@ -422,9 +421,6 @@ export class StalkerPortalSession {
     try {
       let response: Response;
       const fetchProbe = beginStalkerDiagnosticTimer();
-      if (params.action === "get_genres") {
-        traceStalkerConnectCheckpoint("GET_GENRES_REQUEST_START");
-      }
       logStalkerDiagnosticMarker("STALKER_FETCH_START", {
         syncRunId: diagnostics.syncRunId,
         providerId,
@@ -445,9 +441,6 @@ export class StalkerPortalSession {
           signal: requestSignal.signal,
         });
         fetchWaitMs = Math.max(0, Date.now() - fetchStartedAt);
-        if (params.action === "get_genres") {
-          traceStalkerConnectCheckpoint("GET_GENRES_RESPONSE_HEADERS", { status: response.status });
-        }
         logStalkerDiagnosticMarker("STALKER_FETCH_RESOLVED", {
           syncRunId: diagnostics.syncRunId,
           providerId,
@@ -488,9 +481,6 @@ export class StalkerPortalSession {
         const bodyReadStartedAt = Date.now();
         text = await response.text();
         bodyReadWaitMs = Math.max(0, Date.now() - bodyReadStartedAt);
-        if (params.action === "get_genres") {
-          traceStalkerConnectCheckpoint("GET_GENRES_BODY_DONE", { status: response.status });
-        }
         logStalkerDiagnosticMarker("STALKER_BODY_READ_END", {
           syncRunId: diagnostics.syncRunId,
           providerId,
@@ -534,9 +524,6 @@ export class StalkerPortalSession {
       });
       await this.#afterResponse();
       postBodyYieldMs = Math.max(0, Date.now() - postBodyYieldStartedAt);
-      if (params.action === "get_genres") {
-        traceStalkerConnectCheckpoint("GET_GENRES_AFTER_YIELD");
-      }
       logStalkerDiagnosticMarker("STALKER_POST_BODY_YIELD_END", {
         syncRunId: diagnostics.syncRunId,
         providerId,
@@ -614,9 +601,6 @@ export class StalkerPortalSession {
       });
       parseProbe.cancel();
       onTiming?.({ fetchWaitMs, bodyReadWaitMs, postBodyYieldStartMs, postBodyYieldMs, jsonParseMs });
-      if (params.action === "get_genres") {
-        traceStalkerConnectCheckpoint("GET_GENRES_PARSED");
-      }
 
       const payload =
         parsed && typeof parsed === "object" && !Array.isArray(parsed) && "js" in parsed

@@ -76,7 +76,6 @@ import {
   removeLegacyStalkerCatalogChannels,
   syncStalkerCatalogForLifecycle,
 } from "@/lib/stalkerLiveCatalogRouting";
-import { traceStalkerConnectCheckpoint } from "@/lib/stalkerConnectTrace";
 import type { StalkerLiveSyncOwner } from "@/lib/stalkerLiveSync";
 
 export { ProviderType };
@@ -379,14 +378,12 @@ async function loadProviderSmart(
   } = {},
 ) {
   if (provider.type === "stalker") {
-    traceStalkerConnectCheckpoint("STALKER_LOAD_START");
     const result = await syncStalkerCatalogForLifecycle(provider, {
       signal: options.signal,
       isCurrent: options.isCurrent,
       owner: options.stalkerSyncOwner,
     });
     if (!result) throw new Error("Stalker catalog routing could not start canonical sync.");
-    traceStalkerConnectCheckpoint("LOAD_PROVIDER_SMART_DONE", { catalogCount: result.persisted });
     return {
       provider,
       loaded: { channels: [], liveChannels: [], epgUrl: provider.epgUrl } as ProviderLoadResult,
@@ -577,16 +574,12 @@ async function hydrateStoredProvider(
   return { provider, secureVerified };
 }
 
-async function saveProviderSecrets(provider: ProviderConfig, traceStalkerVerify = false) {
+async function saveProviderSecrets(provider: ProviderConfig) {
   const secrets = providerSecretsFrom(provider);
   if (!hasRequiredCredentialFields(provider.type, secrets)) {
     throw new Error("Provider credentials are incomplete.");
   }
-  await saveCredentials(provider.id, secrets, undefined, traceStalkerVerify ? {
-    onWriteDone: () => traceStalkerConnectCheckpoint("SAVE_PROVIDER_SECRETS_DONE"),
-    onVerifyStart: () => traceStalkerConnectCheckpoint("VERIFY_PROVIDER_SECRETS_START"),
-    onVerifyDone: () => traceStalkerConnectCheckpoint("VERIFY_PROVIDER_SECRETS_DONE"),
-  } : undefined);
+  await saveCredentials(provider.id, secrets);
 }
 
 type HydratedState = { state: PlayerState; liveHistory: LiveHistoryV2 };
@@ -831,13 +824,12 @@ async function loadBulkProviderEpg(
   return normalizeProgramText(programs);
 }
 
-function withProviderConnectDeadline<T>(promise: Promise<T>, traceStalkerConnect = false): Promise<T> {
+function withProviderConnectDeadline<T>(promise: Promise<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     let settled = false;
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      if (traceStalkerConnect) traceStalkerConnectCheckpoint("CONNECT_DEADLINE_FIRED");
       reject(
         new ProviderLoadError(
           "The provider connection timed out. Check the URL, server response time, and try again.",
@@ -845,27 +837,18 @@ function withProviderConnectDeadline<T>(promise: Promise<T>, traceStalkerConnect
         ),
       );
     }, PROVIDER_CONNECT_TIMEOUT_MS);
-    if (traceStalkerConnect) traceStalkerConnectCheckpoint("CONNECT_DEADLINE_ARMED");
 
     promise.then(
       (value) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        if (traceStalkerConnect) traceStalkerConnectCheckpoint("CONNECT_CHILD_RESOLVED");
         resolve(value);
       },
       (error) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
-        if (traceStalkerConnect) {
-          traceStalkerConnectCheckpoint("CONNECT_CHILD_REJECTED", {
-            errorName: error instanceof Error ? error.name : "NonError",
-            errorCode: typeof (error as { code?: unknown })?.code === "string" ? (error as { code: string }).code : undefined,
-            message: error instanceof Error ? error.message : String(error),
-          });
-        }
         reject(error);
       },
     );
@@ -1116,10 +1099,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const connectProvider = async (config: ProviderInput) => {
-    const traceStalkerConnect = config.type === "stalker";
-    if (traceStalkerConnect) {
-      traceStalkerConnectCheckpoint("CONNECT_START");
-    }
     providerLoadGateRef.current.invalidateAll();
     const busyId = beginPlayerBusy();
     setError(null);
@@ -1149,24 +1128,20 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         : candidate;
       const smart = await withProviderConnectDeadline(loadProviderSmart(providerToLoad, {
         stalkerSyncOwner: providerToLoad.type === "stalker" ? "CONNECT_PROVIDER" : undefined,
-      }), traceStalkerConnect);
+      }));
       const savedProvider = toProvider({
         ...smart.provider,
         lastLoadedAt: Date.now(),
         channelCount: smart.catalogCount,
         epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
       });
-      if (traceStalkerConnect) {
-        traceStalkerConnectCheckpoint("SAVE_PROVIDER_SECRETS_START");
-      }
-      await saveProviderSecrets(savedProvider, traceStalkerConnect);
+      await saveProviderSecrets(savedProvider);
       const providers = duplicate
         ? current.providers.map((item) =>
             item.id === duplicate.id ? savedProvider : item,
           )
         : [...current.providers, savedProvider];
       clearEpgProviderCache(savedProvider.id);
-      if (traceStalkerConnect) traceStalkerConnectCheckpoint("PERSIST_PROVIDER_START");
       const generation = await persist({
         ...current,
         providers,
@@ -1180,29 +1155,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           ...smart.loaded.channels,
         ],
       });
-      if (traceStalkerConnect) traceStalkerConnectCheckpoint("PERSIST_PROVIDER_DONE");
       observeM3UCacheWrite(savedProvider.id, generation, smart.cacheWriteTask);
-      if (traceStalkerConnect) traceStalkerConnectCheckpoint("CONNECT_RETURN_TRUE");
       return true;
     } catch (caught) {
-      if (traceStalkerConnect) {
-        traceStalkerConnectCheckpoint("CONNECT_CATCH", {
-          errorName: caught instanceof Error ? caught.name : "NonError",
-          errorCode: typeof (caught as { code?: unknown })?.code === "string" ? (caught as { code: string }).code : undefined,
-          message: caught instanceof Error ? caught.message : String(caught),
-        });
-      }
       setError(
         caught instanceof Error ? caught.message : "The provider could not be loaded.",
       );
       return false;
     } finally {
-      if (traceStalkerConnect) traceStalkerConnectCheckpoint("CONNECT_FINALLY_ENTER");
       finishPlayerBusy(busyId);
-      if (traceStalkerConnect) {
-        traceStalkerConnectCheckpoint("CONNECT_BUSY_CLEARED");
-        traceStalkerConnectCheckpoint("CONNECT_FINALLY_EXIT");
-      }
     }
   };
 

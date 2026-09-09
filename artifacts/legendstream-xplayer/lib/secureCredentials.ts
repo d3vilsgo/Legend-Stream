@@ -12,12 +12,6 @@ export type SecureCredentialWriteMetrics = {
   verifyReadMs: number;
 };
 
-export type SecureCredentialWriteTrace = {
-  onWriteDone?: () => void;
-  onVerifyStart?: () => void;
-  onVerifyDone?: () => void;
-};
-
 export type CredentialReadResult =
   | { status: "found"; secrets: ProviderSecrets }
   | { status: "missing" }
@@ -77,7 +71,6 @@ export async function saveCredentials(
   providerId: string,
   secrets: ProviderSecrets,
   onMetrics?: (metrics: SecureCredentialWriteMetrics) => void,
-  trace?: SecureCredentialWriteTrace,
 ): Promise<void> {
   const expected = compactCredentialFields(secrets);
   const writeStartedAt = Date.now();
@@ -86,15 +79,12 @@ export async function saveCredentials(
     JSON.stringify(expected),
   );
   const writeMs = Date.now() - writeStartedAt;
-  trace?.onWriteDone?.();
 
   // K1: a write is not successful until the exact compact payload can be
   // read back from SecureStore. Callers may only migrate/strip plaintext
   // after this function resolves.
   const verifyStartedAt = Date.now();
-  trace?.onVerifyStart?.();
   const verification = await readCredentials(providerId);
-  trace?.onVerifyDone?.();
   const verifyReadMs = Date.now() - verifyStartedAt;
   onMetrics?.({ writeMs, verifyReadMs });
   if (verification.status === "error") throw verification.error;

@@ -64,10 +64,10 @@ import {
 } from "@/lib/providerSwitchUx";
 import { redactSensitiveText } from "@/lib/safeLog";
 import {
-  getStalkerConnectTraceSnapshot,
-  subscribeStalkerConnectTrace,
-  type StalkerConnectTraceSnapshot,
-} from "@/lib/stalkerConnectTrace";
+  runIsolatedStalkerLogin,
+  type StalkerIsolatedAccountInfo,
+  type StalkerIsolatedLoginStatus,
+} from "@/lib/stalkerIsolatedLogin";
 import {
   buildEpisodeStreamUrl,
   buildVodStreamUrl,
@@ -748,18 +748,31 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   const [mac, setMac] = useState(existing?.mac ?? "");
   const [epgUrl, setEpgUrl] = useState(existing?.epgUrl ?? "");
   const [localError, setLocalError] = useState<string | null>(null);
-  const [traceSnapshot, setTraceSnapshot] = useState<StalkerConnectTraceSnapshot | null>(() =>
-    getStalkerConnectTraceSnapshot(),
-  );
+  const [stalkerStatus, setStalkerStatus] = useState<StalkerIsolatedLoginStatus>("IDLE");
+  const [stalkerAccountInfo, setStalkerAccountInfo] = useState<StalkerIsolatedAccountInfo | null>(null);
+  const [showStalkerSurface, setShowStalkerSurface] = useState(false);
   const credentialsOnly = Boolean(existing?.needsCredentials);
-
-  React.useEffect(() => subscribeStalkerConnectTrace(setTraceSnapshot), []);
 
   const submit = async () => {
     const clean = url.trim();
     if (!/^https?:\/\//i.test(clean)) return setLocalError(t("invalidUrl"));
+    if (type === "stalker" && !mac.trim()) return setLocalError("Stalker için MAC adresi gerekir.");
     if (type === "xtream" && (!username.trim() || !password)) return setLocalError(t("xtreamCredentials"));
     setLocalError(null);
+    if (type === "stalker") {
+      setStalkerStatus("CONNECTING");
+      setStalkerAccountInfo(null);
+      setShowStalkerSurface(false);
+      try {
+        const result = await runIsolatedStalkerLogin({ portalUrl: clean, mac: mac.trim() });
+        setStalkerAccountInfo(result.accountInfo);
+        setStalkerStatus("CONNECTED");
+      } catch (caught) {
+        setLocalError(caught instanceof Error ? caught.message : "Stalker bağlantısı kurulamadı.");
+        setStalkerStatus("ERROR");
+      }
+      return;
+    }
     await onSubmit({
       providerId: existing?.id,
       name: name.trim() || "My provider",
@@ -767,10 +780,40 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
       playlistUrl: clean,
       username: type === "xtream" ? username.trim() : undefined,
       password: type === "xtream" ? password : undefined,
-      mac: type === "stalker" ? mac.trim() : undefined,
       epgUrl: epgUrl.trim() || undefined,
     });
   };
+
+  if (type === "stalker" && stalkerStatus === "CONNECTED" && stalkerAccountInfo) {
+    return <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.background }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
+      <ScrollView contentContainerStyle={[s.setup, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 140 }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+        <Text style={[s.brandLarge, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text>
+        {!showStalkerSurface ? <>
+          <Text style={[s.title, { color: colors.foreground }]}>Bağlantı başarılı</Text>
+          <View style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
+            <View style={{ flex: 1, gap: 4 }}>
+              <Text style={{ color: colors.foreground, fontWeight: "800" }}>Stalker oturumu doğrulandı</Text>
+              {stalkerAccountInfo.profileName ? <Text style={{ color: colors.mutedForeground }}>Profil: {stalkerAccountInfo.profileName}</Text> : null}
+              {stalkerAccountInfo.accountStatus ? <Text style={{ color: colors.mutedForeground }}>Durum: {stalkerAccountInfo.accountStatus}</Text> : null}
+              {stalkerAccountInfo.expiry ? <Text style={{ color: colors.mutedForeground }}>Bitiş: {stalkerAccountInfo.expiry}</Text> : null}
+              {!stalkerAccountInfo.profileName && !stalkerAccountInfo.accountStatus && !stalkerAccountInfo.expiry ? (
+                <Text style={{ color: colors.mutedForeground }}>Hesap detayı sağlanmadı.</Text>
+              ) : null}
+              <Text style={{ color: colors.mutedForeground }}>Main info: {stalkerAccountInfo.mainInfoClassification}</Text>
+            </View>
+          </View>
+          <View style={s.row}>
+            <FocusButton label="Devam" icon="log-in" variant="primary" onPress={() => setShowStalkerSurface(true)} />
+            {onCancel ? <FocusButton label={t("cancel")} variant="ghost" onPress={onCancel} /> : null}
+          </View>
+        </> : <>
+          <Text style={[s.title, { color: colors.foreground }]}>STALKER_CONNECTED</Text>
+          <Text style={{ color: colors.mutedForeground }}>R15-A izole Stalker yüzeyi hazır. Bu aşamada katalog, türler veya kanal listesi yüklenmez.</Text>
+          {onCancel ? <FocusButton label={t("back")} variant="secondary" onPress={onCancel} /> : null}
+        </>}
+      </ScrollView>
+    </KeyboardAvoidingView>;
+  }
 
   return <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.background }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
     <ScrollView contentContainerStyle={[s.setup, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 140 }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
@@ -783,7 +826,7 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
         onPress={() => setType(item)}
         disabled={credentialsOnly}
       />)}</View>
-      <Input label={t("sourceName")} value={name} onChangeText={setName} editable={!credentialsOnly} />
+      {type !== "stalker" ? <Input label={t("sourceName")} value={name} onChangeText={setName} editable={!credentialsOnly} /> : null}
       <Input label={t("serverUrl")} value={url} onChangeText={setUrl} autoCapitalize="none" editable={!credentialsOnly || !url} />
       {type === "xtream" ? <>
         <Input label={t("username")} value={username} onChangeText={setUsername} autoCapitalize="none" />
@@ -804,15 +847,10 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
         />
       </> : null}
       {type === "stalker" ? <Input label={t("macAddress")} value={mac} onChangeText={setMac} autoCapitalize="none" /> : null}
-      <Input label={t("epgOptional")} value={epgUrl} onChangeText={setEpgUrl} autoCapitalize="none" editable={!credentialsOnly} />
+      {type !== "stalker" ? <Input label={t("epgOptional")} value={epgUrl} onChangeText={setEpgUrl} autoCapitalize="none" editable={!credentialsOnly} /> : null}
       {localError || error ? <Text style={{ color: colors.destructive }}>{visibleErrorText(localError || error)}</Text> : null}
-      {type === "stalker" && traceSnapshot ? <View style={[s.tracePanel, { borderColor: colors.border, backgroundColor: colors.card }]}>
-        <Text style={[s.traceTitle, { color: colors.mutedForeground }]}>STALKER TRACE</Text>
-        <Text style={{ color: colors.foreground }}>{traceSnapshot.checkpoint}</Text>
-        <Text style={{ color: colors.mutedForeground }}>+{traceSnapshot.elapsedMs} ms</Text>
-      </View> : null}
       <View style={s.row}>
-        <FocusButton label={busy ? t("connecting") : existing ? t("saveConnect") : t("addConnect")} icon="log-in" variant="primary" onPress={() => void submit()} disabled={busy} />
+        <FocusButton label={(busy || stalkerStatus === "CONNECTING") ? t("connecting") : existing ? t("saveConnect") : t("addConnect")} icon="log-in" variant="primary" onPress={() => void submit()} disabled={busy || stalkerStatus === "CONNECTING"} />
         {onCancel ? <FocusButton label={t("cancel")} variant="ghost" onPress={onCancel} /> : null}
       </View>
     </ScrollView>
@@ -973,8 +1011,6 @@ const s = StyleSheet.create({
   rowBetween: { flexDirection: "row", alignItems: "center", gap: 8 },
   input: { borderWidth: 1, borderRadius: 12, minHeight: 50, paddingHorizontal: 14 },
   inputTrailingAction: { position: "absolute", right: 4, top: 0, bottom: 0, justifyContent: "center", alignItems: "center" },
-  tracePanel: { borderWidth: 1, borderRadius: 8, padding: 10, gap: 2 },
-  traceTitle: { fontSize: 12, fontWeight: "800" },
   iconButton: { padding: 10 },
   accountCard: { borderWidth: 1, borderRadius: 14, padding: 14, flexDirection: "row", alignItems: "center", gap: 10 },
   settings: { borderWidth: 1, borderRadius: 16, padding: 18, gap: 8 },
