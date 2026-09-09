@@ -32,12 +32,13 @@ export async function bootstrapStalkerCatalogForLifecycle(
   });
 }
 
-// Retained only for explicit legacy/compatibility callers. Normal provider
-// connect/refresh no longer acquires a full Stalker catalog.
+// The historical name is intentionally retained because PlayerContext and
+// older deterministic harnesses own this seam. Without an injected legacy
+// sync implementation, lifecycle work is now validation/bootstrap only.
 export async function syncStalkerCatalogForLifecycle(
   provider: StalkerCatalogLifecycleProvider,
   options: StalkerCatalogLifecycleOptions = {},
-  sync: StalkerCatalogSync = syncStalkerLiveCatalog,
+  legacySync?: StalkerCatalogSync,
 ) {
   if (provider.type !== "stalker") return null;
   const portalUrl = provider.url.trim();
@@ -45,10 +46,26 @@ export async function syncStalkerCatalogForLifecycle(
   if (!portalUrl || !mac) {
     throw new Error("Stalker provider credentials are incomplete.");
   }
-  return sync({
-    provider: { id: provider.id, url: portalUrl, mac },
-    signal: options.signal,
-    isCurrent: options.isCurrent,
-    owner: options.owner,
-  });
+
+  if (legacySync) {
+    return legacySync({
+      provider: { id: provider.id, url: portalUrl, mac },
+      signal: options.signal,
+      isCurrent: options.isCurrent,
+      owner: options.owner,
+    });
+  }
+
+  const bootstrap = await bootstrapStalkerCatalogForLifecycle(provider, options);
+  if (!bootstrap) return null;
+  return {
+    pagesFetched: 0,
+    uniqueItems: bootstrap.cachedCatalogCount,
+    persisted: bootstrap.cachedCatalogCount,
+    totalItems: bootstrap.cachedCatalogCount,
+    maxPageItems: null,
+    categories: 0,
+    discoverySource: "bootstrap" as const,
+    elapsedMs: 0,
+  };
 }
