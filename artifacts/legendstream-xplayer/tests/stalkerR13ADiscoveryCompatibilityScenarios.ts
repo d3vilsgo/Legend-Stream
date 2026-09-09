@@ -102,16 +102,16 @@ async function main() {
     assert.equal(result.source, "get_ordered_list");
   });
 
-  await scenario("G ordered fallback scopes requests to every genre", async () => {
+  await scenario("G complete aggregate with max_page_items and cur_page is accepted without fallback", async () => {
     const fake = sessionFor((params) => {
-      if (params.action === "get_all_channels") return { data: [channel(1)], total_items: 1, cur_page: 0, max_page_items: 14 };
-      return page([channel(String(params.genre), { genre: String(params.genre) })], 1, 1);
+      assert.equal(params.action, "get_all_channels");
+      return { data: [channel(1)], total_items: 1, cur_page: 0, max_page_items: 14 };
     });
-    await discoverStalkerLiveChannels({ session: fake.session as any, providerId: "p", categories });
-    const ordered = fake.calls.filter((call) => call.action === "get_ordered_list");
-    assert.deepEqual(ordered.map((call) => call.genre), ["1", "2"]);
-    assert.ok(ordered.every((call) => call.p === 1));
-    assert.ok(ordered.every((call) => !("limit" in call) && !("per_page" in call) && !("page_size" in call)));
+    const result = await discoverStalkerLiveChannels({ session: fake.session as any, providerId: "p", categories });
+    assert.equal(result.source, "get_all_channels");
+    assert.equal(result.rows.length, 1);
+    assert.equal(fake.calls.length, 1);
+    assert.equal(fake.calls.some((call) => call.action === "get_ordered_list"), false);
   });
 
   await scenario("H total_items and max_page_items derive page count", async () => {
