@@ -2,7 +2,7 @@ import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
 import { bootstrapStalkerProfile } from "./stalkerProfileBootstrap";
 import { fetchStalkerLiveCategories } from "./stalkerLiveCatalog";
 import { rememberStalkerLiveCategories } from "./stalkerCategoryCapability";
-import { StalkerPortalError } from "./stalkerPortal";
+import { StalkerPortalError, type StalkerPortalSession } from "./stalkerPortal";
 
 export type StalkerBootstrapProvider = {
   id: string;
@@ -17,6 +17,13 @@ export type StalkerBootstrapOptions = {
   isCurrent?: () => boolean;
 };
 
+type StalkerBootstrapDependencies = {
+  acquireSession?: (provider: StalkerBootstrapProvider) => Pick<StalkerPortalSession, "handshake" | "request">;
+  bootstrapProfile?: typeof bootstrapStalkerProfile;
+  fetchLiveCategories?: typeof fetchStalkerLiveCategories;
+  rememberLiveCategories?: typeof rememberStalkerLiveCategories;
+};
+
 function assertCurrent(signal?: AbortSignal, isCurrent?: () => boolean) {
   if (signal?.aborted || (isCurrent && !isCurrent())) {
     throw new StalkerPortalError("CANCELLED", "Stalker provider bootstrap was cancelled.");
@@ -26,6 +33,7 @@ function assertCurrent(signal?: AbortSignal, isCurrent?: () => boolean) {
 export async function bootstrapStalkerProviderForLifecycle(
   provider: StalkerBootstrapProvider,
   options: StalkerBootstrapOptions = {},
+  dependencies: StalkerBootstrapDependencies = {},
 ) {
   if (provider.type !== "stalker") return null;
   const portalUrl = provider.url.trim();
@@ -34,7 +42,7 @@ export async function bootstrapStalkerProviderForLifecycle(
 
   assertCurrent(options.signal, options.isCurrent);
   const diagnostics = { providerId: provider.id };
-  const session = getOrCreateStalkerPortalSession({
+  const session = dependencies.acquireSession?.(provider) ?? getOrCreateStalkerPortalSession({
     providerId: provider.id,
     portalUrl,
     mac,
@@ -42,14 +50,18 @@ export async function bootstrapStalkerProviderForLifecycle(
   });
   await session.handshake(options.signal);
   assertCurrent(options.signal, options.isCurrent);
-  const profile = await bootstrapStalkerProfile(session, {
+  const profile = await (dependencies.bootstrapProfile ?? bootstrapStalkerProfile)(session as StalkerPortalSession, {
     signal: options.signal,
     diagnostics,
   });
   assertCurrent(options.signal, options.isCurrent);
-  const liveCategories = await fetchStalkerLiveCategories(session, options.signal, diagnostics);
+  const liveCategories = await (dependencies.fetchLiveCategories ?? fetchStalkerLiveCategories)(
+    session,
+    options.signal,
+    diagnostics,
+  );
   assertCurrent(options.signal, options.isCurrent);
-  rememberStalkerLiveCategories(provider.id, liveCategories);
+  (dependencies.rememberLiveCategories ?? rememberStalkerLiveCategories)(provider.id, liveCategories);
 
   return {
     authenticated: true as const,
