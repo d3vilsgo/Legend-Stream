@@ -17,6 +17,8 @@ import {
 } from "./stalkerLiveCache";
 import { noteStalkerLivePublishSuccess } from "./stalkerLivePublishRevision";
 import type { PersistedLiveCatalogItem } from "./catalogPersistence";
+import { StalkerLiveSyncSingleFlight } from "./stalkerLiveSyncSingleFlight";
+export { StalkerLiveSyncSingleFlight } from "./stalkerLiveSyncSingleFlight";
 
 export type StalkerLiveSyncProvider = { id: string; url: string; mac: string };
 export type StalkerLiveSyncOwner =
@@ -62,34 +64,6 @@ type SyncDependencies = {
 
 const STALKER_LIVE_STAGE_CHUNK_SIZE = 250;
 let stalkerLiveSyncRunSequence = 0;
-
-type InFlightSync<T> = { promise: Promise<T>; signal?: AbortSignal };
-
-export class StalkerLiveSyncSingleFlight<T> {
-  #inFlight = new Map<string, InFlightSync<T>>();
-
-  run(
-    providerId: string,
-    signal: AbortSignal | undefined,
-    task: () => Promise<T>,
-    onJoin?: () => void,
-  ): Promise<T> {
-    const existing = this.#inFlight.get(providerId);
-    if (existing && !existing.signal?.aborted) {
-      onJoin?.();
-      return existing.promise;
-    }
-    if (existing?.signal?.aborted) this.#inFlight.delete(providerId);
-
-    const promise = task();
-    const entry: InFlightSync<T> = { promise, signal };
-    this.#inFlight.set(providerId, entry);
-    void promise.finally(() => {
-      if (this.#inFlight.get(providerId) === entry) this.#inFlight.delete(providerId);
-    }).catch(() => undefined);
-    return promise;
-  }
-}
 
 const productionDependencies: SyncDependencies = {
   acquireSession: (provider, diagnostics) => getOrCreateStalkerPortalSession({

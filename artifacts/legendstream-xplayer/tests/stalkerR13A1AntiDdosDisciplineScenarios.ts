@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { fetchStalkerLiveCategories } from "../lib/stalkerLiveCatalog";
 import { discoverStalkerLiveChannels } from "../lib/stalkerLiveDiscovery";
 import { createStalkerPortalSession, StalkerPortalError } from "../lib/stalkerPortal";
-import { StalkerLiveSyncSingleFlight } from "../lib/stalkerLiveSync";
+import { bootstrapStalkerProfile } from "../lib/stalkerProfileBootstrap";
+import { StalkerLiveSyncSingleFlight } from "../lib/stalkerLiveSyncSingleFlight";
 
 let passed = 0;
 async function scenario(name: string, run: () => void | Promise<void>) {
@@ -219,8 +221,86 @@ async function main() {
     assert.equal(result.rows.length, 3);
   });
 
-  assert.equal(passed, 9);
-  process.stdout.write("stalker R13-A.1 anti-DDoS discipline scenarios: 9/9 passed\n");
+  await scenario("T16 modeled same-provider physical request graph stays on complete aggregate", async () => {
+    const rows = Array.from({ length: 28 }, (_, index) => channel(index + 1));
+    const aggregatePending = deferred<Response>();
+    const counts = {
+      handshake: 0,
+      profile: 0,
+      genres: 0,
+      aggregate: 0,
+      ordered: 0,
+      syncStarts: 0,
+      syncJoins: 0,
+    };
+    const session = createStalkerPortalSession({
+      portalUrl: "https://example.invalid/portal.php",
+      mac: "00:00:00:00:00:00",
+      fetchImpl: async (input) => {
+        const url = new URL(String(input));
+        const action = url.searchParams.get("action");
+        if (action === "handshake") {
+          counts.handshake += 1;
+          return response(JSON.stringify({ js: { token: "sanitized-token" } }));
+        }
+        if (action === "get_profile") {
+          counts.profile += 1;
+          return response(JSON.stringify({ js: { id: 1, name: "profile" } }));
+        }
+        if (action === "get_genres") {
+          counts.genres += 1;
+          return response(JSON.stringify({ js: [{ id: "1", title: "One" }] }));
+        }
+        if (action === "get_all_channels") {
+          counts.aggregate += 1;
+          return aggregatePending.promise;
+        }
+        if (action === "get_ordered_list") {
+          counts.ordered += 1;
+          return response(JSON.stringify({ js: { data: [] } }));
+        }
+        throw new Error(`unexpected action ${action ?? "missing"}`);
+      },
+      afterResponse: () => undefined,
+    });
+    const gate = new StalkerLiveSyncSingleFlight<Awaited<ReturnType<typeof discoverStalkerLiveChannels>>>();
+    const runSync = () => gate.run("provider-safe", undefined, async () => {
+      counts.syncStarts += 1;
+      await bootstrapStalkerProfile(session);
+      const categories = await fetchStalkerLiveCategories(session);
+      return discoverStalkerLiveChannels({
+        session,
+        providerId: "provider-safe",
+        categories,
+        yieldFn: () => undefined,
+      });
+    }, () => {
+      counts.syncJoins += 1;
+    });
+
+    const first = runSync();
+    while (counts.aggregate === 0) await Promise.resolve();
+    const second = runSync();
+    assert.equal(first, second);
+    aggregatePending.resolve(response(JSON.stringify({
+      js: { data: rows, total_items: rows.length, max_page_items: 14, cur_page: 0 },
+    })));
+    const result = await second;
+    assert.equal(result.source, "get_all_channels");
+    assert.equal(result.rows.length, rows.length);
+    assert.deepEqual(counts, {
+      handshake: 1,
+      profile: 1,
+      genres: 1,
+      aggregate: 1,
+      ordered: 0,
+      syncStarts: 1,
+      syncJoins: 1,
+    });
+  });
+
+  assert.equal(passed, 10);
+  process.stdout.write("stalker R13-A.1 anti-DDoS discipline scenarios: 10/10 passed\n");
 }
 
 void main().catch((error) => {

@@ -190,7 +190,7 @@ async function main() {
     assert.equal(yields, 1);
   });
 
-  await scenario("observed-style aggregate shape reports cur_page and changes discovery strategy", async () => {
+  await scenario("observed-style complete aggregate keeps get_all_channels despite cur_page metadata", async () => {
     const rows = Array.from({ length: 300 }, (_, index) => channel(index + 1));
     const transport = createTransport((url) => {
       const action = url.searchParams.get("action");
@@ -208,7 +208,7 @@ async function main() {
         providerId: "r12-observed",
         syncRunId: "run-shape",
       });
-      assert.equal(result.source, "get_ordered_list");
+      assert.equal(result.source, "get_all_channels");
     });
     const shape = events(logs, "LS_STALKER_GET_ALL_SHAPE")[0]?.details;
     assert.equal(shape?.rowCount, 300);
@@ -217,7 +217,7 @@ async function main() {
     assert.equal(shape?.hasCurPageMetadata, true);
     assert.equal(shape?.hasPaginationMetadata, true);
     assert.ok(events(logs, "LS_STALKER_FALLBACK_DECISION").some((log) =>
-      log.details.reason === "AGGREGATE_PAGINATION_METADATA" && log.details.decision === "FALLBACK_ORDERED",
+      log.details.reason === "COMPLETE_TOTAL" && log.details.decision === "USE_AGGREGATE",
     ));
   });
 
