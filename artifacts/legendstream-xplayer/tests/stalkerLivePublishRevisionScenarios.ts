@@ -169,12 +169,16 @@ async function main() {
     assert.deepEqual(h.events.filter((event) => event.startsWith("publish:")), []);
   });
 
-  await scenario("mounted Stalker Live page subscribes to revision and reloads the SQL page", () => {
+  await scenario("mounted Stalker Live page subscribes to revision and reloads the lazy page", () => {
     assert.match(hookSource, /subscribeStalkerLivePublishRevision/);
     assert.match(hookSource, /readStalkerLivePublishRevision/);
     assert.match(hookSource, /observedStalkerLivePublishRevisionRef/);
     assert.match(hookSource, /stalkerLivePublishRevision[\s\S]*reload\(\)/);
-    assert.match(hookSource, /getCachedStalkerLivePage/);
+    assert.match(hookSource, /getStalkerLazyLivePage/);
+    assert.doesNotMatch(hookSource, /getCachedStalkerLivePage/);
+    assert.match(hookSource, /stalkerRequestRef/);
+    assert.match(hookSource, /AbortController/);
+    assert.match(hookSource, /signal: stalkerController\?\.signal/);
   });
 
   await scenario("revision reload hook has no Stalker network, sync, or playback side effect", () => {
