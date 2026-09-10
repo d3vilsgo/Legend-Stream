@@ -17,6 +17,12 @@ export type StalkerIsolatedLoginStatus =
   | "CONNECTED"
   | "ERROR";
 
+export type StalkerIsolatedGenreStatus =
+  | "IDLE"
+  | "GENRES_LOADING"
+  | "ITV_CATEGORIES_READY"
+  | "GENRES_ERROR";
+
 export type StalkerIsolatedAccountInfo = {
   profileSupported: boolean;
   profileName?: string;
@@ -25,20 +31,27 @@ export type StalkerIsolatedAccountInfo = {
   mainInfoClassification: StalkerMainInfoClassification;
 };
 
+export type StalkerIsolatedCategory = {
+  id: string;
+  title: string;
+  order?: number;
+};
+
 export type StalkerIsolatedLoginResult = {
   state: "CONNECTED";
   accountInfo: StalkerIsolatedAccountInfo;
   networkActions: string[];
+  session: StalkerIsolatedSession;
 };
 
-type SessionLike = Pick<StalkerPortalSession, "handshake" | "request">;
+export type StalkerIsolatedSession = Pick<StalkerPortalSession, "handshake" | "request">;
 
 type StalkerIsolatedLoginDependencies = {
   createSession?: (input: {
     portalUrl: string;
     mac: string;
     diagnostics: StalkerPortalDiagnosticsContext;
-  }) => SessionLike;
+  }) => StalkerIsolatedSession;
 };
 
 const UNSUPPORTED_TEXT = /\b(?:unknown|unsupported|not\s+implemented|not\s+available)\b/i;
@@ -81,7 +94,7 @@ function metadataFromPayload(profilePayload: unknown, mainInfoPayload?: unknown)
 }
 
 async function readOptionalMainInfo(
-  session: SessionLike,
+  session: StalkerIsolatedSession,
   signal: AbortSignal | undefined,
   diagnostics: StalkerPortalDiagnosticsContext,
 ) {
@@ -111,6 +124,64 @@ async function readOptionalMainInfo(
       payload: undefined,
     };
   }
+}
+
+function arrayPayload(payload: unknown): unknown[] {
+  if (Array.isArray(payload)) return payload;
+  const row = objectPayload(payload);
+  const js = row?.js;
+  if (Array.isArray(js)) return js;
+  const data = row?.data;
+  if (Array.isArray(data)) return data;
+  return [];
+}
+
+function categoryId(row: Record<string, unknown>, fallbackIndex: number) {
+  return stringField(row, ["id", "genre_id", "category_id", "alias"]) ?? `stalker-category-${fallbackIndex}`;
+}
+
+function categoryTitle(row: Record<string, unknown>) {
+  return stringField(row, ["title", "name", "genre_name", "category_name"]);
+}
+
+function categoryOrder(row: Record<string, unknown>, fallbackIndex: number) {
+  const raw = row.number ?? row.order ?? row.position ?? row.index ?? fallbackIndex;
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && raw.trim() && Number.isFinite(Number(raw))) return Number(raw);
+  return fallbackIndex;
+}
+
+export function normalizeIsolatedStalkerCategories(payload: unknown): StalkerIsolatedCategory[] {
+  const seen = new Set<string>();
+  const categories: StalkerIsolatedCategory[] = [];
+  arrayPayload(payload).forEach((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return;
+    const row = item as Record<string, unknown>;
+    const title = categoryTitle(row);
+    if (!title) return;
+    const id = categoryId(row, index);
+    if (seen.has(id)) return;
+    seen.add(id);
+    categories.push({ id, title, order: categoryOrder(row, index) });
+  });
+  return categories.sort((left, right) => {
+    const orderDelta = (left.order ?? 0) - (right.order ?? 0);
+    return orderDelta || left.title.localeCompare(right.title);
+  });
+}
+
+export async function loadIsolatedStalkerGenres(
+  session: StalkerIsolatedSession,
+  input: { signal?: AbortSignal; diagnostics?: StalkerPortalDiagnosticsContext } = {},
+): Promise<StalkerIsolatedCategory[]> {
+  const diagnostics = input.diagnostics ?? { providerId: "isolated-stalker-genres" };
+  const payload = await session.request(
+    { type: "itv", action: "get_genres" },
+    input.signal,
+    undefined,
+    diagnostics,
+  );
+  return normalizeIsolatedStalkerCategories(payload);
 }
 
 export async function runIsolatedStalkerLogin(
@@ -155,5 +226,6 @@ export async function runIsolatedStalkerLogin(
       ...accountInfo,
     },
     networkActions,
+    session,
   };
 }

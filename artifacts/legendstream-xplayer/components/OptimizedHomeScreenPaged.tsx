@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -64,9 +64,13 @@ import {
 } from "@/lib/providerSwitchUx";
 import { redactSensitiveText } from "@/lib/safeLog";
 import {
+  loadIsolatedStalkerGenres,
   runIsolatedStalkerLogin,
   type StalkerIsolatedAccountInfo,
+  type StalkerIsolatedCategory,
+  type StalkerIsolatedGenreStatus,
   type StalkerIsolatedLoginStatus,
+  type StalkerIsolatedSession,
 } from "@/lib/stalkerIsolatedLogin";
 import {
   buildEpisodeStreamUrl,
@@ -750,8 +754,40 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   const [localError, setLocalError] = useState<string | null>(null);
   const [stalkerStatus, setStalkerStatus] = useState<StalkerIsolatedLoginStatus>("IDLE");
   const [stalkerAccountInfo, setStalkerAccountInfo] = useState<StalkerIsolatedAccountInfo | null>(null);
+  const [stalkerSession, setStalkerSession] = useState<StalkerIsolatedSession | null>(null);
   const [showStalkerSurface, setShowStalkerSurface] = useState(false);
+  const [stalkerGenreStatus, setStalkerGenreStatus] = useState<StalkerIsolatedGenreStatus>("IDLE");
+  const [stalkerCategories, setStalkerCategories] = useState<StalkerIsolatedCategory[]>([]);
+  const [selectedStalkerCategoryId, setSelectedStalkerCategoryId] = useState<string | null>(null);
+  const [stalkerGenreError, setStalkerGenreError] = useState<string | null>(null);
+  const stalkerGenresRequestedRef = useRef(false);
   const credentialsOnly = Boolean(existing?.needsCredentials);
+
+  const loadStalkerGenres = async (force = false) => {
+    if (!stalkerSession || (!force && stalkerGenresRequestedRef.current)) return;
+    stalkerGenresRequestedRef.current = true;
+    setStalkerGenreStatus("GENRES_LOADING");
+    setStalkerGenreError(null);
+    try {
+      const categories = await loadIsolatedStalkerGenres(stalkerSession);
+      setStalkerCategories(categories);
+      setSelectedStalkerCategoryId((current) =>
+        current && categories.some((category) => category.id === current)
+          ? current
+          : categories[0]?.id ?? null,
+      );
+      setStalkerGenreStatus("ITV_CATEGORIES_READY");
+    } catch (caught) {
+      setStalkerGenreError(caught instanceof Error ? caught.message : "Stalker kategorileri yüklenemedi.");
+      setStalkerGenreStatus("GENRES_ERROR");
+    }
+  };
+
+  useEffect(() => {
+    if (type === "stalker" && stalkerStatus === "CONNECTED" && showStalkerSurface) {
+      void loadStalkerGenres();
+    }
+  }, [showStalkerSurface, stalkerStatus, type]);
 
   const submit = async () => {
     const clean = url.trim();
@@ -762,10 +798,17 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
     if (type === "stalker") {
       setStalkerStatus("CONNECTING");
       setStalkerAccountInfo(null);
+      setStalkerSession(null);
       setShowStalkerSurface(false);
+      stalkerGenresRequestedRef.current = false;
+      setStalkerGenreStatus("IDLE");
+      setStalkerCategories([]);
+      setSelectedStalkerCategoryId(null);
+      setStalkerGenreError(null);
       try {
         const result = await runIsolatedStalkerLogin({ portalUrl: clean, mac: mac.trim() });
         setStalkerAccountInfo(result.accountInfo);
+        setStalkerSession(result.session);
         setStalkerStatus("CONNECTED");
       } catch (caught) {
         setLocalError(caught instanceof Error ? caught.message : "Stalker bağlantısı kurulamadı.");
@@ -808,7 +851,40 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
           </View>
         </> : <>
           <Text style={[s.title, { color: colors.foreground }]}>STALKER_CONNECTED</Text>
-          <Text style={{ color: colors.mutedForeground }}>R15-A izole Stalker yüzeyi hazır. Bu aşamada katalog, türler veya kanal listesi yüklenmez.</Text>
+          <Text style={[s.section, { color: colors.foreground }]}>Canlı TV</Text>
+          {stalkerGenreStatus === "GENRES_LOADING" ? <View style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
+            <ActivityIndicator size="small" color={colors.primary} />
+            <Text style={{ color: colors.mutedForeground }}>Stalker kategorileri yükleniyor.</Text>
+          </View> : null}
+          {stalkerGenreStatus === "GENRES_ERROR" ? <View style={[s.accountCard, { borderColor: colors.destructive, backgroundColor: colors.card }]}>
+            <View style={{ flex: 1, gap: 4 }}>
+              <Text style={{ color: colors.destructive, fontWeight: "800" }}>Kategori yüklenemedi</Text>
+              {stalkerGenreError ? <Text style={{ color: colors.mutedForeground }}>{visibleErrorText(stalkerGenreError)}</Text> : null}
+            </View>
+            <FocusButton label="Tekrar dene" icon="refresh-cw" variant="secondary" onPress={() => void loadStalkerGenres(true)} />
+          </View> : null}
+          {stalkerGenreStatus === "ITV_CATEGORIES_READY" ? <>
+            {stalkerCategories.length ? <View style={{ gap: 8 }}>
+              <Text style={{ color: colors.mutedForeground }}>GET_GENRES tamamlandı. Kanal listesi bu aşamada çağrılmaz.</Text>
+              {stalkerCategories.map((category) => {
+                const selected = selectedStalkerCategoryId === category.id;
+                return <Pressable
+                  key={category.id}
+                  accessibilityRole="button"
+                  onPress={() => setSelectedStalkerCategoryId(category.id)}
+                  style={[s.accountCard, { borderColor: selected ? colors.primary : colors.border, backgroundColor: colors.card }]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: colors.foreground, fontWeight: "800" }}>{category.title}</Text>
+                    <Text style={{ color: colors.mutedForeground }}>{category.id}</Text>
+                  </View>
+                  {selected ? <Feather name="check-circle" size={18} color={colors.primary} /> : null}
+                </Pressable>;
+              })}
+            </View> : <View style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
+              <Text style={{ color: colors.mutedForeground }}>Stalker kategorisi sağlanmadı.</Text>
+            </View>}
+          </> : null}
           {onCancel ? <FocusButton label={t("back")} variant="secondary" onPress={onCancel} /> : null}
         </>}
       </ScrollView>

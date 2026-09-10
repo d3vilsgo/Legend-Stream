@@ -88,7 +88,10 @@ async function main() {
     assert.equal(harness.calls.includes("get_genres"), false);
     assert.equal(harness.calls.includes("get_ordered_list"), false);
     assert.equal(harness.calls.includes("get_all_channels"), false);
-    assert.doesNotMatch(isolatedLoginSource, /get_genres|get_ordered_list|get_all_channels|create_link/);
+    const loginFunctionSource = isolatedLoginSource.slice(
+      isolatedLoginSource.indexOf("export async function runIsolatedStalkerLogin"),
+    );
+    assert.doesNotMatch(loginFunctionSource, /get_genres|get_ordered_list|get_all_channels|create_link/);
   });
 
   await scenario("Shared persist is not required for isolated Stalker login completion", () => {
