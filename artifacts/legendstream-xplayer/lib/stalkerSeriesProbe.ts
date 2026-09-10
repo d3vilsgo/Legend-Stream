@@ -399,9 +399,9 @@ function hierarchyClassification(payload: unknown, observation: StalkerSeriesPro
   const hierarchy = extractStalkerSeriesHierarchy(payload);
   if (hierarchy.episodes.length) return "EPISODES_FOUND";
   if (hierarchy.seasons.length) return "SEASONS_FOUND";
+  if (observation.classification === "EMPTY") return "EMPTY";
   const containers = inspectStalkerSeriesNestedContainers(payload);
   if (containers.length || observation.fieldNames.length) return "SERIES_DETAIL_FOUND";
-  if (observation.classification === "EMPTY") return "EMPTY";
   return "EVIDENCE_REQUIRED";
 }
 
