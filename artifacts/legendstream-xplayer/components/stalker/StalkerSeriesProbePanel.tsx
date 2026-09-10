@@ -5,17 +5,16 @@ import { useColors } from "@/hooks/useColors";
 import { readLatestIsolatedStalkerSessionForProbe } from "@/lib/stalkerIsolatedLogin";
 import {
   discoverStalkerSeriesDetails,
-  inspectStalkerSeriesNestedContainers,
   probeStalkerSeriesCategories,
   probeStalkerSeriesCreateLink,
   probeStalkerSeriesPage,
-  seriesProbeRowLabel,
   type StalkerSeriesCreateLinkObservation,
   type StalkerSeriesDetailDiscovery,
-  type StalkerSeriesNestedContainer,
+  type StalkerSeriesEpisode,
   type StalkerSeriesProbeCategory,
   type StalkerSeriesProbeItem,
   type StalkerSeriesProbeObservation,
+  type StalkerSeriesSeason,
 } from "@/lib/stalkerSeriesProbe";
 
 type Stage = "IDLE" | "CATEGORIES" | "PAGE" | "DETAILS" | "EPISODES" | "LINK";
@@ -26,6 +25,7 @@ function Observation({ title, value }: { title: string; value: StalkerSeriesProb
   return <View style={[styles.observation, { borderColor: colors.border, backgroundColor: colors.card }]}>
     <Text style={[styles.strong, { color: colors.foreground }]}>{title}: {value.classification}</Text>
     <Text style={{ color: colors.mutedForeground }}>shape={value.payloadShape} · http={value.httpStatus ?? "unavailable"} · count={value.itemCount}</Text>
+    {value.totalItems !== undefined ? <Text style={{ color: colors.mutedForeground }}>total={value.totalItems} · max/page={value.maxPageItems ?? "?"} · cur_page={value.currentPage ?? "?"}</Text> : null}
     {value.fieldNames.length ? <Text style={{ color: colors.mutedForeground }}>fields={value.fieldNames.join(", ")}</Text> : null}
     {value.samplePrimitives.length ? <Text style={{ color: colors.mutedForeground }}>sample={value.samplePrimitives.join(" · ")}</Text> : null}
     {"resolvedScheme" in value && value.resolvedScheme ? <Text style={{ color: colors.mutedForeground }}>resolved scheme={value.resolvedScheme}</Text> : null}
@@ -33,6 +33,11 @@ function Observation({ title, value }: { title: string; value: StalkerSeriesProb
     {"extraTransportHints" in value ? <Text style={{ color: colors.mutedForeground }}>header/cookie hint={value.extraTransportHints ? "YES" : "NO"}</Text> : null}
     {value.error ? <Text style={{ color: colors.destructive }}>{value.error}</Text> : null}
   </View>;
+}
+
+function safeStageLabel(discovery: StalkerSeriesDetailDiscovery | null) {
+  if (!discovery) return "IDLE";
+  return discovery.classification;
 }
 
 export function StalkerSeriesProbePanel() {
@@ -44,14 +49,11 @@ export function StalkerSeriesProbePanel() {
   const [items, setItems] = useState<StalkerSeriesProbeItem[]>([]);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [selectedSeriesId, setSelectedSeriesId] = useState<string | null>(null);
+  const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
+  const [selectedEpisodeId, setSelectedEpisodeId] = useState<string | null>(null);
   const [categoryObservation, setCategoryObservation] = useState<StalkerSeriesProbeObservation | null>(null);
   const [pageObservation, setPageObservation] = useState<StalkerSeriesProbeObservation | null>(null);
   const [detailDiscovery, setDetailDiscovery] = useState<StalkerSeriesDetailDiscovery | null>(null);
-  const [selectedContainerPath, setSelectedContainerPath] = useState<string | null>(null);
-  const [selectedSeasonIndex, setSelectedSeasonIndex] = useState<number | null>(null);
-  const [episodeContainers, setEpisodeContainers] = useState<StalkerSeriesNestedContainer[]>([]);
-  const [selectedEpisodeContainerPath, setSelectedEpisodeContainerPath] = useState<string | null>(null);
-  const [selectedEpisodeIndex, setSelectedEpisodeIndex] = useState<number | null>(null);
   const [linkObservation, setLinkObservation] = useState<StalkerSeriesCreateLinkObservation | null>(null);
   const categoryStarted = useRef(false);
   const pageStarted = useRef(false);
@@ -73,12 +75,13 @@ export function StalkerSeriesProbePanel() {
   }, [categories]);
   const selectedCategory = selectableCategories.find((item) => item.id === selectedCategoryId) ?? null;
   const selectedSeries = items.find((item) => item.id === selectedSeriesId) ?? null;
-  const selectedContainer = detailDiscovery?.containers.find((item) => item.path === selectedContainerPath) ?? null;
-  const selectedSeason = selectedContainer && selectedSeasonIndex != null ? selectedContainer.rows[selectedSeasonIndex] ?? null : null;
-  const selectedEpisodeContainer = episodeContainers.find((item) => item.path === selectedEpisodeContainerPath) ?? null;
-  const selectedEpisode = selectedEpisodeContainer && selectedEpisodeIndex != null
-    ? selectedEpisodeContainer.rows[selectedEpisodeIndex] ?? null
-    : selectedSeason && typeof selectedSeason.cmd === "string" ? selectedSeason : null;
+  const seasons: StalkerSeriesSeason[] = detailDiscovery?.seasons ?? [];
+  const episodes: StalkerSeriesEpisode[] = detailDiscovery?.episodes ?? [];
+  const selectedSeason = seasons.find((item) => item.id === selectedSeasonId) ?? null;
+  const visibleEpisodes = selectedSeason
+    ? episodes.filter((item) => item.seasonId === selectedSeason.id || selectedSeason.id === "unassigned")
+    : [];
+  const selectedEpisode = visibleEpisodes.find((item) => item.id === selectedEpisodeId) ?? null;
 
   const runCategories = async () => {
     const session = readLatestIsolatedStalkerSessionForProbe();
@@ -112,17 +115,9 @@ export function StalkerSeriesProbePanel() {
     setStage("DETAILS");
     const result = await discoverStalkerSeriesDetails(session, selectedSeries, freshSignal());
     setDetailDiscovery(result);
-    setBusy(false);
-  };
-
-  const selectSeasonRow = (index: number) => {
-    if (!selectedContainer) return;
-    setSelectedSeasonIndex(index);
-    setSelectedEpisodeIndex(null);
-    setSelectedEpisodeContainerPath(null);
-    const row = selectedContainer.rows[index];
-    setEpisodeContainers(row ? inspectStalkerSeriesNestedContainers(row) : []);
+    if (result.seasons.length === 1) setSelectedSeasonId(result.seasons[0]!.id);
     setStage("EPISODES");
+    setBusy(false);
   };
 
   const runCreateLink = async () => {
@@ -131,7 +126,7 @@ export function StalkerSeriesProbePanel() {
     linkStarted.current = true;
     setBusy(true);
     setStage("LINK");
-    const result = await probeStalkerSeriesCreateLink(session, selectedEpisode, freshSignal());
+    const result = await probeStalkerSeriesCreateLink(session, selectedEpisode.row, freshSignal());
     setLinkObservation(result.observation);
     setBusy(false);
   };
@@ -140,16 +135,17 @@ export function StalkerSeriesProbePanel() {
     return <View style={[styles.shell, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <View style={{ flex: 1, gap: 4 }}>
         <Text style={[styles.title, { color: colors.foreground }]}>Tanılama: Stalker Series fiziksel probu</Text>
-        <Text style={{ color: colors.mutedForeground }}>R16-D Diagnostic only · Production Series değildir.</Text>
+        <Text style={{ color: colors.mutedForeground }}>R16-D2 Diagnostic only · Production Series değildir.</Text>
       </View>
       <FocusButton label="Series probunu aç" icon="activity" variant="ghost" onPress={() => setExpanded(true)} />
     </View>;
   }
 
   return <View style={[styles.panel, { borderColor: colors.primary, backgroundColor: colors.card }]}>
-    <Text style={[styles.title, { color: colors.foreground }]}>R16-D · Series Diagnostic only</Text>
-    <Text style={{ color: colors.mutedForeground }}>Stage: {stage} · p=1 only · no aggregate fallback</Text>
-    <FocusButton label={busy ? "Çalışıyor" : "BP1 · Series Categories"} disabled={busy || categoryStarted.current} onPress={() => void runCategories()} />
+    <Text style={[styles.title, { color: colors.foreground }]}>R16-D2 · Series Season / Episode Probe</Text>
+    <Text style={{ color: colors.mutedForeground }}>Stage: {stage} · p=1 only · max 3 detail candidates · no persistence</Text>
+
+    <FocusButton label={busy ? "Çalışıyor" : "BP1 · SERIES CATEGORIES"} disabled={busy || categoryStarted.current} onPress={() => void runCategories()} />
     <Observation title="BP1" value={categoryObservation} />
 
     {categoryObservation?.classification === "SUCCESS" ? <>
@@ -160,7 +156,7 @@ export function StalkerSeriesProbePanel() {
         onPress={() => setSelectedCategoryId(category.id)}
         style={[styles.row, { borderColor: selectedCategoryId === category.id ? colors.primary : colors.border }]}
       ><Text style={{ color: colors.foreground }}>{category.title}</Text></Pressable>)}</View>
-      <FocusButton label="BP2 · Selected category p=1" disabled={busy || !selectedCategory || pageStarted.current} onPress={() => void runPage()} />
+      <FocusButton label="BP2 · SERIES LIST p=1" disabled={busy || !selectedCategory || pageStarted.current} onPress={() => void runPage()} />
     </> : null}
     <Observation title="BP2" value={pageObservation} />
 
@@ -172,51 +168,49 @@ export function StalkerSeriesProbePanel() {
         onPress={() => setSelectedSeriesId(item.id)}
         style={[styles.row, { borderColor: selectedSeriesId === item.id ? colors.primary : colors.border }]}
       ><Text style={{ color: colors.foreground }}>{item.title}</Text></Pressable>)}</View>
-      <FocusButton label="BP3 · Series info / season discovery" disabled={busy || !selectedSeries || detailStarted.current} onPress={() => void runDetails()} />
+      {selectedSeries ? <Text style={{ color: colors.mutedForeground }}>selected={selectedSeries.title} · raw id={selectedSeries.id}</Text> : null}
+      <FocusButton label="BP3 · DETAIL / SEASON DIALECT" disabled={busy || !selectedSeries || detailStarted.current} onPress={() => void runDetails()} />
     </> : null}
 
     {detailDiscovery ? <View style={[styles.observation, { borderColor: colors.border }]}>
-      <Text style={[styles.strong, { color: colors.foreground }]}>BP3: {detailDiscovery.classification}</Text>
-      <Text style={{ color: colors.mutedForeground }}>source={detailDiscovery.source} · candidates={detailDiscovery.candidateCount}</Text>
-      {detailDiscovery.classification === "EVIDENCE_REQUIRED" ? <Text style={{ color: colors.destructive }}>Ayrı Series-info action/param için source/provider evidence yok; tahmin yapılmadı.</Text> : null}
+      <Text style={[styles.strong, { color: colors.foreground }]}>BP3: {safeStageLabel(detailDiscovery)}</Text>
+      <Text style={{ color: colors.mutedForeground }}>source={detailDiscovery.source} · candidates={detailDiscovery.candidateCount} · used={detailDiscovery.candidateNumberUsed ?? "none"}</Text>
+      {detailDiscovery.observations.map((item) => <Text key={item.candidateNumber} style={{ color: colors.mutedForeground }}>
+        candidate {item.candidateNumber}: {item.type}/{item.action} · keys={item.paramKeys.join(",")} · {item.hierarchyClassification}
+      </Text>)}
     </View> : null}
 
-    {detailDiscovery?.classification === "SUCCESS" ? <>
-      <Text style={[styles.strong, { color: colors.foreground }]}>Nested container seç</Text>
-      <View style={styles.list}>{detailDiscovery.containers.map((container) => <Pressable
-        key={container.path}
-        disabled={selectedSeasonIndex != null}
-        onPress={() => setSelectedContainerPath(container.path)}
-        style={[styles.row, { borderColor: selectedContainerPath === container.path ? colors.primary : colors.border }]}
-      ><Text style={{ color: colors.foreground }}>{container.path} ({container.rows.length})</Text></Pressable>)}</View>
-      {selectedContainer ? <View style={styles.list}>{selectedContainer.rows.map((row, index) => <Pressable
-        key={`${selectedContainer.path}-${index}`}
-        disabled={selectedSeasonIndex != null}
-        onPress={() => selectSeasonRow(index)}
-        style={[styles.row, { borderColor: selectedSeasonIndex === index ? colors.primary : colors.border }]}
-      ><Text style={{ color: colors.foreground }}>{seriesProbeRowLabel(row)}</Text></Pressable>)}</View> : null}
+    {detailDiscovery ? <View style={[styles.observation, { borderColor: colors.border }]}>
+      <Text style={[styles.strong, { color: colors.foreground }]}>BP4 EPISODES: {episodes.length ? "PASS" : detailDiscovery.classification}</Text>
+      <Text style={{ color: colors.mutedForeground }}>seasons={seasons.length} · episodes={episodes.length}</Text>
+    </View> : null}
+
+    {seasons.length ? <>
+      <Text style={[styles.strong, { color: colors.foreground }]}>Bir season seç</Text>
+      <View style={styles.list}>{seasons.map((season) => <Pressable
+        key={season.id}
+        disabled={selectedSeasonId !== null && selectedSeasonId !== season.id}
+        onPress={() => { setSelectedSeasonId(season.id); setSelectedEpisodeId(null); }}
+        style={[styles.row, { borderColor: selectedSeasonId === season.id ? colors.primary : colors.border }]}
+      ><Text style={{ color: colors.foreground }}>{season.label} · id={season.id}</Text></Pressable>)}</View>
     </> : null}
 
     {selectedSeason ? <>
-      <Text style={[styles.strong, { color: colors.foreground }]}>Selected season/row fields: {Object.keys(selectedSeason).sort().join(", ")}</Text>
-      {episodeContainers.length ? <>
-        <Text style={{ color: colors.mutedForeground }}>Episode container seç</Text>
-        <View style={styles.list}>{episodeContainers.map((container) => <Pressable
-          key={container.path}
-          disabled={selectedEpisodeIndex != null}
-          onPress={() => setSelectedEpisodeContainerPath(container.path)}
-          style={[styles.row, { borderColor: selectedEpisodeContainerPath === container.path ? colors.primary : colors.border }]}
-        ><Text style={{ color: colors.foreground }}>{container.path} ({container.rows.length})</Text></Pressable>)}</View>
-        {selectedEpisodeContainer ? <View style={styles.list}>{selectedEpisodeContainer.rows.map((row, index) => <Pressable
-          key={`${selectedEpisodeContainer.path}-${index}`}
-          disabled={selectedEpisodeIndex != null}
-          onPress={() => setSelectedEpisodeIndex(index)}
-          style={[styles.row, { borderColor: selectedEpisodeIndex === index ? colors.primary : colors.border }]}
-        ><Text style={{ color: colors.foreground }}>{seriesProbeRowLabel(row)}</Text></Pressable>)}</View> : null}
-      </> : <Text style={{ color: colors.mutedForeground }}>Nested episode container yok. Seçili satırda cmd varsa doğrudan episode candidate olarak kullanılabilir.</Text>}
-      <FocusButton label="BP4 · Episode create_link" disabled={busy || !selectedEpisode || typeof selectedEpisode.cmd !== "string" || linkStarted.current} onPress={() => void runCreateLink()} />
+      <Text style={{ color: colors.mutedForeground }}>selected season={selectedSeason.label} · id={selectedSeason.id}</Text>
+      <Text style={[styles.strong, { color: colors.foreground }]}>Bir episode seç</Text>
+      <View style={styles.list}>{visibleEpisodes.map((episode) => <Pressable
+        key={episode.id}
+        disabled={selectedEpisodeId !== null && selectedEpisodeId !== episode.id}
+        onPress={() => setSelectedEpisodeId(episode.id)}
+        style={[styles.row, { borderColor: selectedEpisodeId === episode.id ? colors.primary : colors.border }]}
+      ><Text style={{ color: colors.foreground }}>{episode.label}</Text></Pressable>)}</View>
     </> : null}
-    <Observation title="BP4" value={linkObservation} />
+
+    {selectedEpisode ? <>
+      <Text style={{ color: colors.mutedForeground }}>selected episode={selectedEpisode.label}</Text>
+      <FocusButton label="BP5 · CREATE_LINK" disabled={busy || linkStarted.current || typeof selectedEpisode.row.cmd !== "string"} onPress={() => void runCreateLink()} />
+    </> : null}
+    <Observation title="BP5" value={linkObservation} />
   </View>;
 }
 
