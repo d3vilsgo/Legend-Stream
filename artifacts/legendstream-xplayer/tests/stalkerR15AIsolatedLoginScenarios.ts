@@ -11,6 +11,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
 const screenSource = source("components/OptimizedHomeScreenPaged.tsx");
 const isolatedLoginSource = source("lib/stalkerIsolatedLogin.ts");
+const productSurfaceSource = source("components/product/ProductLiveSurface.tsx");
 
 let passed = 0;
 async function scenario(name: string, run: () => void | Promise<void>) {
@@ -97,7 +98,11 @@ async function main() {
   await scenario("Shared persist is not required for isolated Stalker login completion", () => {
     assert.doesNotMatch(isolatedLoginSource, /\bpersist\(/);
     assert.doesNotMatch(isolatedLoginSource, /saveProviderSecrets|saveCredentials|AsyncStorage|SecureStore/);
-    assert.match(screenSource, /Stalker Live TV/);
+    assert.match(screenSource, /ProductLiveSurface/);
+    assert.match(screenSource, /setStalkerScreen\("STALKER_HOME_SCREEN"\)/);
+    assert.match(productSurfaceSource, /LEGEND/);
+    assert.match(productSurfaceSource, /Canlı TV/);
+    assert.doesNotMatch(productSurfaceSource, /usePlayer|useCatalogSync|connectProvider/);
   });
 
   await scenario("Handshake failure exits CONNECTING through controlled error state", async () => {

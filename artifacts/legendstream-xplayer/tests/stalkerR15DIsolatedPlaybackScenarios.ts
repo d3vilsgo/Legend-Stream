@@ -14,6 +14,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
 const screenSource = source("components/OptimizedHomeScreenPaged.tsx");
 const isolatedLoginSource = source("lib/stalkerIsolatedLogin.ts");
+const productSurfaceSource = source("components/product/ProductLiveSurface.tsx");
 
 let passed = 0;
 async function scenario(name: string, run: () => void | Promise<void>) {
@@ -96,25 +97,28 @@ async function main() {
   });
 
   await scenario("Selecting category transitions to channels screen", () => {
-    assert.match(screenSource, /setSelectedStalkerCategoryId\(key\)/);
-    assert.match(screenSource, /setStalkerScreen\("STALKER_CHANNELS_SCREEN"\)/);
-    assert.match(screenSource, /loadStalkerChannelsForCategory\(category\)/);
+    const loadBlock = screenSource.slice(
+      screenSource.indexOf("const loadStalkerChannelsForCategory"),
+      screenSource.indexOf("const openStalkerChannel"),
+    );
+    assert.match(loadBlock, /setSelectedStalkerCategoryId\(key\)/);
+    assert.match(loadBlock, /setStalkerScreen\("STALKER_CHANNELS_SCREEN"\)/);
+    assert.match(screenSource, /onSelectCategory=\{\(id\) => \{[\s\S]*loadStalkerChannelsForCategory\(category\)/);
   });
 
   await scenario("Genres are not stacked with channel list in the same UX state", () => {
-    assert.match(screenSource, /stalkerScreen === "STALKER_GENRES_SCREEN" && stalkerGenreStatus === "ITV_CATEGORIES_READY"/);
-    assert.match(screenSource, /stalkerScreen === "STALKER_CHANNELS_SCREEN" && selectedStalkerCategory/);
-    assert.doesNotMatch(screenSource, /GET_ORDERED_LIST tamamlandı|GET_GENRES tamamlandı/);
+    assert.match(productSurfaceSource, /screen === "categories"/);
+    assert.match(productSurfaceSource, /screen === "channels"/);
+    assert.doesNotMatch(productSurfaceSource, /GET_ORDERED_LIST completed|GET_GENRES completed|GET_ORDERED_LIST tamamlandı|GET_GENRES tamamlandı/);
+    assert.match(screenSource, /stalkerScreen === "STALKER_CHANNELS_SCREEN"/);
   });
 
   await scenario("Back from channels returns to genres without re-login", () => {
     const start = screenSource.indexOf("const backToStalkerGenres");
-    const backSource = screenSource.slice(
-      start,
-      screenSource.indexOf("useEffect(() =>", start),
-    );
+    const backSource = screenSource.slice(start, screenSource.indexOf("const retrySelectedStalkerPlayback", start));
     assert.match(backSource, /setStalkerScreen\("STALKER_GENRES_SCREEN"\)/);
     assert.doesNotMatch(backSource, /runIsolatedStalkerLogin|setStalkerSession\(null\)|setStalkerStatus\("CONNECTING"\)/);
+    assert.match(screenSource, /onBackToCategories=\{backToStalkerGenres\}/);
   });
 
   await scenario("Channel tap triggers create_link exactly once", async () => {
@@ -170,13 +174,13 @@ async function main() {
     assert.doesNotMatch(openSource, /setStalkerChannels\(\[\]\)|setStalkerCategories\(\[\]\)|setStalkerStatus\("ERROR"\)/);
   });
 
-  await scenario("Playback failure does not invalidate connected genres or channels", () => {
-    const playbackBlock = screenSource.slice(
-      screenSource.indexOf("stalkerPlaybackStatus === \"PLAYBACK_ERROR\""),
-      screenSource.indexOf("stalkerChannelStatus === \"ITV_CHANNELS_READY\""),
+  await scenario("Playback failure is presented locally without invalidating session content", () => {
+    assert.match(productSurfaceSource, /playbackError[\s\S]*LocalError[\s\S]*Yayın başlatılamadı/);
+    const setupBlock = screenSource.slice(
+      screenSource.indexOf("const openStalkerChannel"),
+      screenSource.indexOf("const submit"),
     );
-    assert.match(playbackBlock, /Oynatma başlatılamadı/);
-    assert.doesNotMatch(playbackBlock, /setStalkerStatus|setStalkerCategories|setStalkerChannels/);
+    assert.doesNotMatch(setupBlock, /setStalkerStatus\("ERROR"\)|setStalkerCategories\(\[\]\)/);
   });
 
   await scenario("Successful create_link hands normalized URL to player", async () => {
@@ -187,9 +191,14 @@ async function main() {
     assert.match(screenSource, /<NativeVideoPlayer[\s\S]*source=\{stalkerPlayable\.url\}/);
   });
 
-  await scenario("Back from player returns to channel list", () => {
+  await scenario("Back from player returns to the same channel surface", () => {
     assert.match(screenSource, /onFullscreenExit=\{\(\) => setStalkerScreen\("STALKER_CHANNELS_SCREEN"\)\}/);
-    assert.match(screenSource, /label="Kanallara dön"[\s\S]*setStalkerScreen\("STALKER_CHANNELS_SCREEN"\)/);
+    const playerBlock = screenSource.slice(
+      screenSource.indexOf('stalkerScreen === "STALKER_PLAYER_SCREEN"'),
+      screenSource.indexOf("const productScreen"),
+    );
+    assert.doesNotMatch(playerBlock, /loadStalkerGenres|loadStalkerChannelsForCategory|runIsolatedStalkerLogin/);
+    assert.doesNotMatch(playerBlock, /setStalkerChannels\(\[\]\)|setStalkerCategories\(\[\]\)/);
   });
 
   await scenario("get_all_channels remains unreachable from the isolated R15-D path", () => {
@@ -203,6 +212,7 @@ async function main() {
       screenSource.indexOf("type HistorySectionRow"),
     );
     assert.doesNotMatch(setupBlock, /replaceProviderCatalogAtomically|rememberStalkerLiveCategories|\bpersist\(/);
+    assert.doesNotMatch(productSurfaceSource, /usePlayer|useCatalogSync|useCatalogPage|catalogPageRepository/);
   });
 
   await scenario("Xtream routing remains unchanged", () => {

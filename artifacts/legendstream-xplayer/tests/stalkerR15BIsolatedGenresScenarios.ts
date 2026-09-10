@@ -13,6 +13,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
 const screenSource = source("components/OptimizedHomeScreenPaged.tsx");
 const isolatedLoginSource = source("lib/stalkerIsolatedLogin.ts");
+const productSurfaceSource = source("components/product/ProductLiveSurface.tsx");
 
 let passed = 0;
 async function scenario(name: string, run: () => void | Promise<void>) {
@@ -69,9 +70,15 @@ async function main() {
       screenSource.indexOf("function ProviderSetup"),
       screenSource.indexOf("type HistorySectionRow"),
     );
-    assert.match(setupBlock, /showStalkerSurface[\s\S]*void loadStalkerGenres\(\)/);
+    const openLiveBlock = setupBlock.slice(
+      setupBlock.indexOf("const openStalkerLiveSurface"),
+      setupBlock.indexOf("const loadStalkerChannelsForCategory"),
+    );
+    assert.match(openLiveBlock, /setStalkerScreen\("STALKER_GENRES_SCREEN"\)/);
+    assert.match(openLiveBlock, /stalkerGenreStatus === "IDLE"/);
+    assert.match(openLiveBlock, /void loadStalkerGenres\(\)/);
     assert.match(setupBlock, /stalkerGenresRequestedRef\.current/);
-    assert.match(setupBlock, /stalkerScreen === "STALKER_GENRES_SCREEN"/);
+    assert.match(setupBlock, /onOpenLive=\{openStalkerLiveSurface\}/);
   });
 
   await scenario("get_genres uses the Stalker ITV request contract", async () => {
@@ -96,8 +103,9 @@ async function main() {
       { id: "sports", title: "Sports", order: 1 },
       { id: "dup", title: "Duplicate", order: 3 },
     ]);
-    assert.match(screenSource, /stalkerCategories\.map/);
-    assert.match(screenSource, /category\.title/);
+    assert.match(screenSource, /toProductCategoryRows\(stalkerCategories\)/);
+    assert.match(productSurfaceSource, /categories\.map/);
+    assert.match(productSurfaceSource, /category\.title/);
   });
 
   await scenario("get_genres failure leaves connected authentication state intact", async () => {
@@ -114,8 +122,14 @@ async function main() {
   });
 
   await scenario("Category failure remains retryable without rerunning login", () => {
-    assert.match(screenSource, /label="Tekrar dene"[\s\S]*loadStalkerGenres\(true\)/);
-    assert.doesNotMatch(screenSource, /Tekrar dene[\s\S]{0,200}runIsolatedStalkerLogin/);
+    const setupBlock = screenSource.slice(
+      screenSource.indexOf("function ProviderSetup"),
+      screenSource.indexOf("type HistorySectionRow"),
+    );
+    assert.match(setupBlock, /onRetryCategories=\{\(\) => void loadStalkerGenres\(true\)\}/);
+    const retryBlock = setupBlock.slice(setupBlock.indexOf("onRetryCategories="), setupBlock.indexOf("onRetryChannels="));
+    assert.doesNotMatch(retryBlock, /runIsolatedStalkerLogin/);
+    assert.match(productSurfaceSource, /categoriesError[\s\S]*LocalError[\s\S]*onRetry=\{onRetryCategories\}/);
   });
 
   await scenario("Retry calls category loading only", async () => {
@@ -131,16 +145,16 @@ async function main() {
   await scenario("Ordinary rerender is guarded from duplicate get_genres requests", () => {
     assert.match(screenSource, /if \(!stalkerSession \|\| \(!force && stalkerGenresRequestedRef\.current\)\) return;/);
     assert.match(screenSource, /stalkerGenresRequestedRef\.current = true;/);
+    assert.doesNotMatch(screenSource, /useEffect\([\s\S]{0,240}loadStalkerGenres/);
   });
 
   await scenario("R15-B surface entry does not automatically call get_ordered_list", () => {
     const setupBlock = screenSource.slice(
-      screenSource.indexOf("function ProviderSetup"),
-      screenSource.indexOf("type HistorySectionRow"),
+      screenSource.indexOf("const openStalkerLiveSurface"),
+      screenSource.indexOf("const loadStalkerChannelsForCategory"),
     );
     assert.match(setupBlock, /void loadStalkerGenres\(\)/);
-    assert.doesNotMatch(setupBlock, /useEffect\([\s\S]{0,220}loadStalkerChannelsForCategory/);
-    assert.doesNotMatch(setupBlock, /get_all_channels/);
+    assert.doesNotMatch(setupBlock, /loadIsolatedStalkerCategoryChannels|get_ordered_list|get_all_channels|create_link/);
   });
 
   await scenario("R15-B login and genre helpers never call aggregate channels or playback links", () => {
@@ -158,6 +172,7 @@ async function main() {
       screenSource.indexOf("type HistorySectionRow"),
     );
     assert.doesNotMatch(setupBlock, /\bpersist\(|saveProviderSecrets|replaceProviderCatalogAtomically|rememberStalkerLiveCategories/);
+    assert.doesNotMatch(productSurfaceSource, /usePlayer|useCatalogSync|useCatalogPage|catalogPageRepository/);
   });
 
   await scenario("Xtream behavior remains on shared submit lifecycle", () => {

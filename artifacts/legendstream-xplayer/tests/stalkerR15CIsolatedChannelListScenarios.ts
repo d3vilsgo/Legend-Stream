@@ -14,6 +14,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
 const screenSource = source("components/OptimizedHomeScreenPaged.tsx");
 const isolatedLoginSource = source("lib/stalkerIsolatedLogin.ts");
+const productSurfaceSource = source("components/product/ProductLiveSurface.tsx");
 
 let passed = 0;
 async function scenario(name: string, run: () => void | Promise<void>) {
@@ -110,10 +111,12 @@ async function main() {
     ]);
   });
 
-  await scenario("Channels become visible in the isolated Stalker surface", () => {
-    assert.match(screenSource, /stalkerChannels\.map/);
-    assert.match(screenSource, /channel\.title/);
+  await scenario("Channels become visible in the isolated Stalker product surface", () => {
+    assert.match(screenSource, /toProductChannelRows\(stalkerChannels\)/);
     assert.match(screenSource, /stalkerScreen === "STALKER_CHANNELS_SCREEN"/);
+    assert.match(productSurfaceSource, /channels\.map/);
+    assert.match(productSurfaceSource, /channel\.title/);
+    assert.match(productSurfaceSource, /channel\.logoUrl/);
   });
 
   await scenario("ordered-list failure does not invalidate CONNECTED", async () => {
@@ -133,24 +136,43 @@ async function main() {
   });
 
   await scenario("ordered-list failure does not remove categories", () => {
-    assert.doesNotMatch(screenSource, /setStalkerCategories\(\[\]\)[\s\S]{0,240}CHANNELS_ERROR/);
+    const loadBlock = screenSource.slice(
+      screenSource.indexOf("const loadStalkerChannelsForCategory"),
+      screenSource.indexOf("const openStalkerChannel"),
+    );
+    assert.match(loadBlock, /setStalkerChannelStatus\("CHANNELS_ERROR"\)/);
+    assert.doesNotMatch(loadBlock, /setStalkerCategories\(\[\]\)|setStalkerStatus\("ERROR"\)/);
     assert.match(screenSource, /selectedStalkerCategory/);
   });
 
   await scenario("Retry calls only channel-list logic", () => {
-    assert.match(screenSource, /label="Tekrar dene"[\s\S]*loadStalkerChannelsForCategory\(selectedStalkerCategory, true\)/);
-    assert.doesNotMatch(screenSource, /loadStalkerChannelsForCategory\(selectedStalkerCategory, true\)[\s\S]{0,240}runIsolatedStalkerLogin/);
-    assert.doesNotMatch(screenSource, /loadStalkerChannelsForCategory\(selectedStalkerCategory, true\)[\s\S]{0,240}loadStalkerGenres/);
+    const setupBlock = screenSource.slice(
+      screenSource.indexOf("function ProviderSetup"),
+      screenSource.indexOf("type HistorySectionRow"),
+    );
+    assert.match(setupBlock, /onRetryChannels=\{\(\) => \{[\s\S]*loadStalkerChannelsForCategory\(selectedStalkerCategory, true\)/);
+    const retryBlock = setupBlock.slice(setupBlock.indexOf("onRetryChannels="), setupBlock.indexOf("onRetryPlayback="));
+    assert.doesNotMatch(retryBlock, /runIsolatedStalkerLogin|loadStalkerGenres/);
+    assert.match(productSurfaceSource, /channelsError[\s\S]*LocalError[\s\S]*onRetry=\{onRetryChannels\}/);
   });
 
   await scenario("Ordinary rerender does not duplicate ordered-list requests", () => {
     assert.doesNotMatch(screenSource, /useEffect\([\s\S]{0,220}loadStalkerChannelsForCategory/);
-    assert.match(screenSource, /if \(!force && currentRequest\.key === key\) return;/);
+    const loadBlock = screenSource.slice(
+      screenSource.indexOf("const loadStalkerChannelsForCategory"),
+      screenSource.indexOf("const openStalkerChannel"),
+    );
+    assert.match(loadBlock, /if \(!force && currentRequest\.key === key\) \{[\s\S]{0,180}return;/);
   });
 
-  await scenario("Same-category in-flight dedup works", () => {
-    assert.match(screenSource, /stalkerChannelRequestRef\.current = \{ key, sequence \};/);
-    assert.match(screenSource, /if \(!force && currentRequest\.key === key\) return;/);
+  await scenario("Same-category in-flight or cached request dedup works", () => {
+    const loadBlock = screenSource.slice(
+      screenSource.indexOf("const loadStalkerChannelsForCategory"),
+      screenSource.indexOf("const openStalkerChannel"),
+    );
+    assert.match(loadBlock, /stalkerChannelRequestRef\.current = \{ key, sequence \};/);
+    assert.match(loadBlock, /if \(!force && currentRequest\.key === key\) \{[\s\S]{0,180}return;/);
+    assert.match(loadBlock, /setStalkerScreen\("STALKER_CHANNELS_SCREEN"\)/);
   });
 
   await scenario("Stale category response cannot overwrite the currently selected category", () => {
@@ -180,12 +202,14 @@ async function main() {
   });
 
   await scenario("Channel rows initiate playback only from explicit channel press", () => {
-    const surfaceBlock = screenSource.slice(
-      screenSource.indexOf("Stalker Live TV"),
-      screenSource.indexOf("type HistorySectionRow"),
+    assert.match(productSurfaceSource, /onPress=\{\(\) => onSelectChannel\(channel\.id\)\}/);
+    const wiringBlock = screenSource.slice(
+      screenSource.indexOf("onSelectChannel="),
+      screenSource.indexOf("/>;", screenSource.indexOf("onSelectChannel=")),
     );
-    assert.match(surfaceBlock, /onPress=\{\(\) => void openStalkerChannel\(channel\)\}/);
-    assert.doesNotMatch(surfaceBlock, /get_all_channels|replaceProviderCatalogAtomically|rememberStalkerLiveCategories/);
+    assert.match(wiringBlock, /stalkerChannels\.find/);
+    assert.match(wiringBlock, /openStalkerChannel\(channel\)/);
+    assert.doesNotMatch(productSurfaceSource, /get_all_channels|replaceProviderCatalogAtomically|rememberStalkerLiveCategories/);
   });
 
   await scenario("get_all_channels never appears in the R15-C isolated runtime path", () => {
@@ -199,6 +223,7 @@ async function main() {
       screenSource.indexOf("type HistorySectionRow"),
     );
     assert.doesNotMatch(setupBlock, /replaceProviderCatalogAtomically|rememberStalkerLiveCategories|\bpersist\(/);
+    assert.doesNotMatch(productSurfaceSource, /usePlayer|useCatalogSync|useCatalogPage|catalogPageRepository/);
   });
 
   await scenario("Xtream routing remains unchanged", () => {
