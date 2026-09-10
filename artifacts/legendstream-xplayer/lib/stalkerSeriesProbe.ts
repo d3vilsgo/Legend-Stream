@@ -400,7 +400,7 @@ export async function probeStalkerSeriesCreateLink(
   session: StalkerIsolatedSession,
   episode: Record<string, unknown>,
   signal?: AbortSignal,
-) {
+): Promise<{ observation: StalkerSeriesCreateLinkObservation }> {
   const cmd = episodeCommand(episode);
   if (!cmd) {
     return {
