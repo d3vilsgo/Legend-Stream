@@ -29,6 +29,12 @@ export type StalkerIsolatedChannelStatus =
   | "ITV_CHANNELS_READY"
   | "CHANNELS_ERROR";
 
+export type StalkerIsolatedPlaybackStatus =
+  | "PLAYBACK_IDLE"
+  | "PLAYBACK_LOADING"
+  | "PLAYBACK_READY"
+  | "PLAYBACK_ERROR";
+
 export type StalkerIsolatedAccountInfo = {
   profileSupported: boolean;
   profileName?: string;
@@ -46,6 +52,7 @@ export type StalkerIsolatedCategory = {
 export type StalkerIsolatedChannel = {
   id: string;
   title: string;
+  cmd: string;
   logoUrl?: string;
   number?: number;
 };
@@ -191,6 +198,10 @@ function channelTitle(row: Record<string, unknown>) {
   return stringField(row, ["name", "title"]);
 }
 
+function channelCommand(row: Record<string, unknown>) {
+  return stringField(row, ["cmd", "url"]);
+}
+
 function channelNumber(row: Record<string, unknown>) {
   const raw = row.number ?? row.channel_number ?? row.num;
   if (typeof raw === "number" && Number.isFinite(raw)) return raw;
@@ -207,11 +218,13 @@ export function normalizeIsolatedStalkerChannels(payload: unknown): StalkerIsola
     const id = channelId(row);
     if (!id || seen.has(id)) return;
     const title = channelTitle(row);
-    if (!title) return;
+    const cmd = channelCommand(row);
+    if (!title || !cmd) return;
     seen.add(id);
     channels.push({
       id,
       title,
+      cmd,
       logoUrl: stringField(row, ["logo", "logo_url", "stream_icon"]),
       number: channelNumber(row),
     });
@@ -254,6 +267,36 @@ export async function loadIsolatedStalkerCategoryChannels(
     diagnostics,
   );
   return normalizeIsolatedStalkerChannels(payload);
+}
+
+function playableUrl(payload: unknown) {
+  if (typeof payload === "string") return payload.replace(/^ffmpeg\s+/i, "").trim();
+  const row = objectPayload(payload);
+  return row ? (stringField(row, ["cmd", "url", "link"]) ?? "").replace(/^ffmpeg\s+/i, "").trim() : "";
+}
+
+export async function resolveIsolatedStalkerChannelLink(
+  session: StalkerIsolatedSession,
+  channel: StalkerIsolatedChannel,
+  input: { signal?: AbortSignal; diagnostics?: StalkerPortalDiagnosticsContext } = {},
+): Promise<string> {
+  const cmd = channel.cmd.trim();
+  if (!cmd) throw new StalkerPortalError("INVALID_RESPONSE", "Stalker channel has no playback command.");
+  const diagnostics = input.diagnostics ?? { providerId: "isolated-stalker-playback" };
+  const source = playableUrl(await session.request(
+    { type: "itv", action: "create_link", cmd },
+    input.signal,
+    undefined,
+    diagnostics,
+  ));
+  if (!source) throw new StalkerPortalError("INVALID_RESPONSE", "Stalker portal did not return a playable link.");
+  try {
+    const url = new URL(source);
+    if (!["http:", "https:", "rtsp:", "rtmp:"].includes(url.protocol)) throw new Error("protocol");
+  } catch {
+    throw new StalkerPortalError("INVALID_RESPONSE", "Stalker portal did not return a playable link.");
+  }
+  return source;
 }
 
 export async function runIsolatedStalkerLogin(

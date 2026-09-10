@@ -66,6 +66,7 @@ import { redactSensitiveText } from "@/lib/safeLog";
 import {
   loadIsolatedStalkerCategoryChannels,
   loadIsolatedStalkerGenres,
+  resolveIsolatedStalkerChannelLink,
   runIsolatedStalkerLogin,
   type StalkerIsolatedAccountInfo,
   type StalkerIsolatedCategory,
@@ -73,6 +74,7 @@ import {
   type StalkerIsolatedChannelStatus,
   type StalkerIsolatedGenreStatus,
   type StalkerIsolatedLoginStatus,
+  type StalkerIsolatedPlaybackStatus,
   type StalkerIsolatedSession,
 } from "@/lib/stalkerIsolatedLogin";
 import {
@@ -90,6 +92,7 @@ import { yieldToUi } from "@/lib/cooperative";
 
 type ViewName = HomeContentView | "player";
 type ContentView = Exclude<ViewName, "player">;
+type StalkerIsolatedScreen = "STALKER_GENRES_SCREEN" | "STALKER_CHANNELS_SCREEN" | "STALKER_PLAYER_SCREEN";
 type Playable = {
   title: string;
   url: string;
@@ -759,6 +762,7 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   const [stalkerAccountInfo, setStalkerAccountInfo] = useState<StalkerIsolatedAccountInfo | null>(null);
   const [stalkerSession, setStalkerSession] = useState<StalkerIsolatedSession | null>(null);
   const [showStalkerSurface, setShowStalkerSurface] = useState(false);
+  const [stalkerScreen, setStalkerScreen] = useState<StalkerIsolatedScreen>("STALKER_GENRES_SCREEN");
   const [stalkerGenreStatus, setStalkerGenreStatus] = useState<StalkerIsolatedGenreStatus>("IDLE");
   const [stalkerCategories, setStalkerCategories] = useState<StalkerIsolatedCategory[]>([]);
   const [selectedStalkerCategoryId, setSelectedStalkerCategoryId] = useState<string | null>(null);
@@ -767,8 +771,12 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   const [stalkerChannels, setStalkerChannels] = useState<StalkerIsolatedChannel[]>([]);
   const [selectedStalkerChannelId, setSelectedStalkerChannelId] = useState<string | null>(null);
   const [stalkerChannelError, setStalkerChannelError] = useState<string | null>(null);
+  const [stalkerPlaybackStatus, setStalkerPlaybackStatus] = useState<StalkerIsolatedPlaybackStatus>("PLAYBACK_IDLE");
+  const [stalkerPlaybackError, setStalkerPlaybackError] = useState<string | null>(null);
+  const [stalkerPlayable, setStalkerPlayable] = useState<Playable | null>(null);
   const stalkerGenresRequestedRef = useRef(false);
   const stalkerChannelRequestRef = useRef<{ key: string | null; sequence: number }>({ key: null, sequence: 0 });
+  const stalkerPlaybackRequestRef = useRef<{ key: string | null; sequence: number }>({ key: null, sequence: 0 });
   const credentialsOnly = Boolean(existing?.needsCredentials);
   const selectedStalkerCategory = useMemo(
     () => stalkerCategories.find((category) => category.id === selectedStalkerCategoryId) ?? null,
@@ -792,6 +800,10 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
       setStalkerChannels([]);
       setSelectedStalkerChannelId(null);
       setStalkerChannelError(null);
+      setStalkerPlaybackStatus("PLAYBACK_IDLE");
+      setStalkerPlaybackError(null);
+      setStalkerPlayable(null);
+      setStalkerScreen("STALKER_GENRES_SCREEN");
       stalkerChannelRequestRef.current = { key: null, sequence: stalkerChannelRequestRef.current.sequence };
       setStalkerGenreStatus("ITV_CATEGORIES_READY");
     } catch (caught) {
@@ -808,10 +820,14 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
     const sequence = currentRequest.sequence + 1;
     stalkerChannelRequestRef.current = { key, sequence };
     setSelectedStalkerCategoryId(key);
+    setStalkerScreen("STALKER_CHANNELS_SCREEN");
     setStalkerChannelStatus("CHANNELS_LOADING");
     setStalkerChannelError(null);
     setStalkerChannels([]);
     setSelectedStalkerChannelId(null);
+    setStalkerPlaybackStatus("PLAYBACK_IDLE");
+    setStalkerPlaybackError(null);
+    setStalkerPlayable(null);
     try {
       const channels = await loadIsolatedStalkerCategoryChannels(stalkerSession, category);
       if (stalkerChannelRequestRef.current.sequence !== sequence || stalkerChannelRequestRef.current.key !== key) return;
@@ -822,6 +838,48 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
       setStalkerChannelError(caught instanceof Error ? caught.message : "Stalker kanal listesi yüklenemedi.");
       setStalkerChannelStatus("CHANNELS_ERROR");
     }
+  };
+
+  const openStalkerChannel = async (channel: StalkerIsolatedChannel, force = false) => {
+    if (!stalkerSession || !selectedStalkerCategory) return;
+    const key = channel.id;
+    const currentRequest = stalkerPlaybackRequestRef.current;
+    if (!force && currentRequest.key === key && stalkerPlaybackStatus === "PLAYBACK_LOADING") return;
+    const sequence = currentRequest.sequence + 1;
+    stalkerPlaybackRequestRef.current = { key, sequence };
+    setSelectedStalkerChannelId(key);
+    setStalkerPlaybackStatus("PLAYBACK_LOADING");
+    setStalkerPlaybackError(null);
+    try {
+      const source = await resolveIsolatedStalkerChannelLink(stalkerSession, channel);
+      if (stalkerPlaybackRequestRef.current.sequence !== sequence || stalkerPlaybackRequestRef.current.key !== key) return;
+      setStalkerPlayable({
+        title: channel.title,
+        subtitle: selectedStalkerCategory.title,
+        url: source,
+        kind: "live",
+        returnTo: "live",
+      });
+      setStalkerPlaybackStatus("PLAYBACK_READY");
+      setStalkerScreen("STALKER_PLAYER_SCREEN");
+    } catch (caught) {
+      if (stalkerPlaybackRequestRef.current.sequence !== sequence || stalkerPlaybackRequestRef.current.key !== key) return;
+      setStalkerPlaybackError(caught instanceof Error ? caught.message : "Stalker oynatma bağlantısı alınamadı.");
+      setStalkerPlaybackStatus("PLAYBACK_ERROR");
+    }
+  };
+
+  const backToStalkerGenres = () => {
+    stalkerChannelRequestRef.current = { key: null, sequence: stalkerChannelRequestRef.current.sequence + 1 };
+    stalkerPlaybackRequestRef.current = { key: null, sequence: stalkerPlaybackRequestRef.current.sequence + 1 };
+    setStalkerScreen("STALKER_GENRES_SCREEN");
+    setStalkerChannelStatus("CHANNELS_IDLE");
+    setStalkerChannels([]);
+    setSelectedStalkerChannelId(null);
+    setStalkerChannelError(null);
+    setStalkerPlaybackStatus("PLAYBACK_IDLE");
+    setStalkerPlaybackError(null);
+    setStalkerPlayable(null);
   };
 
   useEffect(() => {
@@ -841,8 +899,10 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
       setStalkerAccountInfo(null);
       setStalkerSession(null);
       setShowStalkerSurface(false);
+      setStalkerScreen("STALKER_GENRES_SCREEN");
       stalkerGenresRequestedRef.current = false;
       stalkerChannelRequestRef.current = { key: null, sequence: stalkerChannelRequestRef.current.sequence + 1 };
+      stalkerPlaybackRequestRef.current = { key: null, sequence: stalkerPlaybackRequestRef.current.sequence + 1 };
       setStalkerGenreStatus("IDLE");
       setStalkerCategories([]);
       setSelectedStalkerCategoryId(null);
@@ -851,6 +911,9 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
       setStalkerChannels([]);
       setSelectedStalkerChannelId(null);
       setStalkerChannelError(null);
+      setStalkerPlaybackStatus("PLAYBACK_IDLE");
+      setStalkerPlaybackError(null);
+      setStalkerPlayable(null);
       try {
         const result = await runIsolatedStalkerLogin({ portalUrl: clean, mac: mac.trim() });
         setStalkerAccountInfo(result.accountInfo);
@@ -896,22 +959,33 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
             {onCancel ? <FocusButton label={t("cancel")} variant="ghost" onPress={onCancel} /> : null}
           </View>
         </> : <>
-          <Text style={[s.title, { color: colors.foreground }]}>STALKER_CONNECTED</Text>
+          {stalkerScreen === "STALKER_PLAYER_SCREEN" && stalkerPlayable ? <View style={{ flex: 1, minHeight: 520 }}>
+            <NativeVideoPlayer
+              source={stalkerPlayable.url}
+              title={stalkerPlayable.title}
+              subtitle={stalkerPlayable.subtitle}
+              mediaKind="live"
+              autoFullscreen
+              onFullscreenExit={() => setStalkerScreen("STALKER_CHANNELS_SCREEN")}
+            />
+            <FocusButton label="Kanallara dön" icon="arrow-left" variant="secondary" onPress={() => setStalkerScreen("STALKER_CHANNELS_SCREEN")} />
+          </View> : null}
+          {stalkerScreen !== "STALKER_PLAYER_SCREEN" ? <>
+          <Text style={[s.title, { color: colors.foreground }]}>Stalker Live TV</Text>
           <Text style={[s.section, { color: colors.foreground }]}>Canlı TV</Text>
-          {stalkerGenreStatus === "GENRES_LOADING" ? <View style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
+          {stalkerScreen === "STALKER_GENRES_SCREEN" && stalkerGenreStatus === "GENRES_LOADING" ? <View style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
             <ActivityIndicator size="small" color={colors.primary} />
             <Text style={{ color: colors.mutedForeground }}>Stalker kategorileri yükleniyor.</Text>
           </View> : null}
-          {stalkerGenreStatus === "GENRES_ERROR" ? <View style={[s.accountCard, { borderColor: colors.destructive, backgroundColor: colors.card }]}>
+          {stalkerScreen === "STALKER_GENRES_SCREEN" && stalkerGenreStatus === "GENRES_ERROR" ? <View style={[s.accountCard, { borderColor: colors.destructive, backgroundColor: colors.card }]}>
             <View style={{ flex: 1, gap: 4 }}>
               <Text style={{ color: colors.destructive, fontWeight: "800" }}>Kategori yüklenemedi</Text>
               {stalkerGenreError ? <Text style={{ color: colors.mutedForeground }}>{visibleErrorText(stalkerGenreError)}</Text> : null}
             </View>
             <FocusButton label="Tekrar dene" icon="refresh-cw" variant="secondary" onPress={() => void loadStalkerGenres(true)} />
           </View> : null}
-          {stalkerGenreStatus === "ITV_CATEGORIES_READY" ? <>
+          {stalkerScreen === "STALKER_GENRES_SCREEN" && stalkerGenreStatus === "ITV_CATEGORIES_READY" ? <>
             {stalkerCategories.length ? <View style={{ gap: 8 }}>
-              <Text style={{ color: colors.mutedForeground }}>GET_GENRES tamamlandı. Kanal listesi bu aşamada çağrılmaz.</Text>
               {stalkerCategories.map((category) => {
                 const selected = selectedStalkerCategoryId === category.id;
                 return <Pressable
@@ -922,7 +996,6 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
                 >
                   <View style={{ flex: 1 }}>
                     <Text style={{ color: colors.foreground, fontWeight: "800" }}>{category.title}</Text>
-                    <Text style={{ color: colors.mutedForeground }}>{category.id}</Text>
                   </View>
                   {selected ? <Feather name="check-circle" size={18} color={colors.primary} /> : null}
                 </Pressable>;
@@ -930,8 +1003,12 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
             </View> : <View style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
               <Text style={{ color: colors.mutedForeground }}>Stalker kategorisi sağlanmadı.</Text>
             </View>}
-            {selectedStalkerCategory ? <View style={{ marginTop: 18, gap: 8 }}>
-              <Text style={[s.section, { color: colors.foreground }]}>Seçili kategori: {selectedStalkerCategory.title}</Text>
+          </> : null}
+          {stalkerScreen === "STALKER_CHANNELS_SCREEN" && selectedStalkerCategory ? <View style={{ gap: 8 }}>
+              <View style={s.row}>
+                <FocusButton label={t("back")} icon="arrow-left" variant="secondary" onPress={backToStalkerGenres} />
+              </View>
+              <Text style={[s.section, { color: colors.foreground }]}>{selectedStalkerCategory.title}</Text>
               {stalkerChannelStatus === "CHANNELS_LOADING" ? <View style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
                 <ActivityIndicator size="small" color={colors.primary} />
                 <Text style={{ color: colors.mutedForeground }}>Kanal listesi yükleniyor.</Text>
@@ -943,20 +1020,38 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
                 </View>
                 <FocusButton label="Tekrar dene" icon="refresh-cw" variant="secondary" onPress={() => void loadStalkerChannelsForCategory(selectedStalkerCategory, true)} />
               </View> : null}
+              {stalkerPlaybackStatus === "PLAYBACK_LOADING" ? <View style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={{ color: colors.mutedForeground }}>Oynatma bağlantısı hazırlanıyor.</Text>
+              </View> : null}
+              {stalkerPlaybackStatus === "PLAYBACK_ERROR" ? <View style={[s.accountCard, { borderColor: colors.destructive, backgroundColor: colors.card }]}>
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text style={{ color: colors.destructive, fontWeight: "800" }}>Oynatma başlatılamadı</Text>
+                  {stalkerPlaybackError ? <Text style={{ color: colors.mutedForeground }}>{visibleErrorText(stalkerPlaybackError)}</Text> : null}
+                </View>
+                {selectedStalkerChannelId ? <FocusButton
+                  label="Tekrar dene"
+                  icon="refresh-cw"
+                  variant="secondary"
+                  onPress={() => {
+                    const channel = stalkerChannels.find((item) => item.id === selectedStalkerChannelId);
+                    if (channel) void openStalkerChannel(channel, true);
+                  }}
+                /> : null}
+              </View> : null}
               {stalkerChannelStatus === "ITV_CHANNELS_READY" ? (
                 stalkerChannels.length ? <View style={{ gap: 8 }}>
-                  <Text style={{ color: colors.mutedForeground }}>GET_ORDERED_LIST tamamlandı. Oynatma bu aşamada çağrılmaz.</Text>
                   {stalkerChannels.map((channel) => {
                     const selected = selectedStalkerChannelId === channel.id;
                     return <Pressable
                       key={channel.id}
                       accessibilityRole="button"
-                      onPress={() => setSelectedStalkerChannelId(channel.id)}
+                      onPress={() => void openStalkerChannel(channel)}
                       style={[s.accountCard, { borderColor: selected ? colors.primary : colors.border, backgroundColor: colors.card }]}
                     >
                       <View style={{ flex: 1 }}>
                         <Text style={{ color: colors.foreground, fontWeight: "800" }}>{channel.title}</Text>
-                        <Text style={{ color: colors.mutedForeground }}>{channel.number != null ? `${channel.number} · ` : ""}{channel.id}</Text>
+                        {channel.number != null ? <Text style={{ color: colors.mutedForeground }}>Kanal no: {channel.number}</Text> : null}
                       </View>
                       {selected ? <Feather name="check-circle" size={18} color={colors.primary} /> : null}
                     </Pressable>;
@@ -965,9 +1060,9 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
                   <Text style={{ color: colors.mutedForeground }}>Bu kategori için kanal sağlanmadı.</Text>
                 </View>
               ) : null}
-            </View> : null}
-          </> : null}
+          </View> : null}
           {onCancel ? <FocusButton label={t("back")} variant="secondary" onPress={onCancel} /> : null}
+          </> : null}
         </>}
       </ScrollView>
     </KeyboardAvoidingView>;

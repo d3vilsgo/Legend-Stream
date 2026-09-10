@@ -97,7 +97,7 @@ async function main() {
   await scenario("Shared persist is not required for isolated Stalker login completion", () => {
     assert.doesNotMatch(isolatedLoginSource, /\bpersist\(/);
     assert.doesNotMatch(isolatedLoginSource, /saveProviderSecrets|saveCredentials|AsyncStorage|SecureStore/);
-    assert.match(screenSource, /STALKER_CONNECTED/);
+    assert.match(screenSource, /Stalker Live TV/);
   });
 
   await scenario("Handshake failure exits CONNECTING through controlled error state", async () => {

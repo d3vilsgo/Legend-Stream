@@ -54,7 +54,7 @@ function sessionHarness(options: {
           if (options.failChannels) throw new Error("ordered list unavailable");
           return options.channels ?? [
             { id: "101", name: "Sport One", number: 1, logo: "https://img.example/1.png", cmd: "ffmpeg secret" },
-            { id: "102", title: "Sport Two", number: "2" },
+            { id: "102", title: "Sport Two", number: "2", cmd: "ffmpeg secret-two" },
           ];
         }
         throw new Error(`unexpected action ${String(params.action)}`);
@@ -96,24 +96,24 @@ async function main() {
   await scenario("Successful response normalizes visible channel rows", async () => {
     const harness = sessionHarness({
       channels: [
-        { id: "dup", name: "Duplicate", number: 3 },
-        { ch_id: "101", name: "Sport One", number: 1, logo_url: "https://img.example/1.png" },
-        { id: "dup", name: "Duplicate Copy", number: 4 },
+        { id: "dup", name: "Duplicate", number: 3, cmd: "ffmpeg http://stream.example/dup.ts" },
+        { ch_id: "101", name: "Sport One", number: 1, logo_url: "https://img.example/1.png", cmd: "ffmpeg http://stream.example/101.ts" },
+        { id: "dup", name: "Duplicate Copy", number: 4, cmd: "ffmpeg http://stream.example/dup-copy.ts" },
         { id: "empty", name: "" },
         null,
       ],
     });
     const channels = await loadIsolatedStalkerCategoryChannels(harness.session, { id: "sports", title: "Sports" });
     assert.deepEqual(channels, [
-      { id: "101", title: "Sport One", logoUrl: "https://img.example/1.png", number: 1 },
-      { id: "dup", title: "Duplicate", logoUrl: undefined, number: 3 },
+      { id: "101", title: "Sport One", cmd: "ffmpeg http://stream.example/101.ts", logoUrl: "https://img.example/1.png", number: 1 },
+      { id: "dup", title: "Duplicate", cmd: "ffmpeg http://stream.example/dup.ts", logoUrl: undefined, number: 3 },
     ]);
   });
 
   await scenario("Channels become visible in the isolated Stalker surface", () => {
     assert.match(screenSource, /stalkerChannels\.map/);
     assert.match(screenSource, /channel\.title/);
-    assert.match(screenSource, /GET_ORDERED_LIST tamamlandı/);
+    assert.match(screenSource, /stalkerScreen === "STALKER_CHANNELS_SCREEN"/);
   });
 
   await scenario("ordered-list failure does not invalidate CONNECTED", async () => {
@@ -158,17 +158,34 @@ async function main() {
     assert.match(screenSource, /stalkerChannelRequestRef\.current\.key !== key/);
   });
 
-  await scenario("Channel selection does not call create_link", () => {
+  await scenario("R15-C category loading does not call create_link before channel selection", () => {
     const surfaceBlock = screenSource.slice(
-      screenSource.indexOf("STALKER_CONNECTED"),
-      screenSource.indexOf("type HistorySectionRow"),
+      screenSource.indexOf("const loadStalkerChannelsForCategory"),
+      screenSource.indexOf("const openStalkerChannel"),
     );
-    assert.match(surfaceBlock, /setSelectedStalkerChannelId\(channel\.id\)/);
-    assert.doesNotMatch(surfaceBlock, /create_link|NativeVideoPlayer|setPlayer|openPlayer/);
+    assert.match(surfaceBlock, /loadIsolatedStalkerCategoryChannels/);
+    assert.doesNotMatch(surfaceBlock, /create_link|resolveIsolatedStalkerChannelLink|NativeVideoPlayer|setPlayer|openPlayer/);
   });
 
-  await scenario("create_link never appears in the R15-C isolated runtime path", () => {
-    assert.doesNotMatch(isolatedLoginSource, /create_link/);
+  await scenario("create_link is isolated to the channel playback helper", () => {
+    const channelLoadSource = isolatedLoginSource.slice(
+      isolatedLoginSource.indexOf("export async function loadIsolatedStalkerCategoryChannels"),
+      isolatedLoginSource.indexOf("export async function resolveIsolatedStalkerChannelLink"),
+    );
+    assert.doesNotMatch(channelLoadSource, /create_link/);
+    const playbackSource = isolatedLoginSource.slice(
+      isolatedLoginSource.indexOf("export async function resolveIsolatedStalkerChannelLink"),
+    );
+    assert.match(playbackSource, /\{ type: "itv", action: "create_link", cmd \}/);
+  });
+
+  await scenario("Channel rows initiate playback only from explicit channel press", () => {
+    const surfaceBlock = screenSource.slice(
+      screenSource.indexOf("Stalker Live TV"),
+      screenSource.indexOf("type HistorySectionRow"),
+    );
+    assert.match(surfaceBlock, /onPress=\{\(\) => void openStalkerChannel\(channel\)\}/);
+    assert.doesNotMatch(surfaceBlock, /get_all_channels|replaceProviderCatalogAtomically|rememberStalkerLiveCategories/);
   });
 
   await scenario("get_all_channels never appears in the R15-C isolated runtime path", () => {
@@ -226,7 +243,7 @@ async function main() {
     assert.deepEqual(normalizeIsolatedStalkerChannels({ js: [] }), []);
   });
 
-  console.log(`stalker R15-C isolated channel-list scenarios passed: ${passed}/22`);
+  console.log(`stalker R15-C isolated channel-list scenarios passed: ${passed}/23`);
 }
 
 main().catch((error) => {

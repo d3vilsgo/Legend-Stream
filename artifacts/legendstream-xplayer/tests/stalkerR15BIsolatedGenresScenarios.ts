@@ -71,7 +71,7 @@ async function main() {
     );
     assert.match(setupBlock, /showStalkerSurface[\s\S]*void loadStalkerGenres\(\)/);
     assert.match(setupBlock, /stalkerGenresRequestedRef\.current/);
-    assert.match(setupBlock, /GET_GENRES tamamlandı/);
+    assert.match(setupBlock, /stalkerScreen === "STALKER_GENRES_SCREEN"/);
   });
 
   await scenario("get_genres uses the Stalker ITV request contract", async () => {
@@ -140,7 +140,7 @@ async function main() {
     );
     assert.match(setupBlock, /void loadStalkerGenres\(\)/);
     assert.doesNotMatch(setupBlock, /useEffect\([\s\S]{0,220}loadStalkerChannelsForCategory/);
-    assert.doesNotMatch(setupBlock, /get_all_channels|create_link/);
+    assert.doesNotMatch(setupBlock, /get_all_channels/);
   });
 
   await scenario("R15-B login and genre helpers never call aggregate channels or playback links", () => {
