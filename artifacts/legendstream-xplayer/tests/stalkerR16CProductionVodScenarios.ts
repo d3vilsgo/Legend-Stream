@@ -175,11 +175,14 @@ async function main() {
     assert.equal(vodSource.includes(forbidden), false, `production Stalker VOD must not contain ${forbidden}`);
     assert.equal(surfaceSource.includes(forbidden), false, `production Stalker VOD surface must not contain ${forbidden}`);
   }
-  assert.doesNotMatch(vodSource, /\bgenre\s*:/);
+  assert.doesNotMatch(vodSource, /(?:[?&]|["'`])genre(?:_id)?=/);
+  assert.doesNotMatch(vodSource, /\.set\(\s*["']genre(?:_id)?["']/);
   assert.doesNotMatch(vodSource, /for\s*\([^)]*page|while\s*\(|Promise\.all/);
   assert.doesNotMatch(surfaceSource, /StalkerVodProbe|Diagnostic only|Üretim VOD değildir/);
   assert.doesNotMatch(surfaceSource, /\.cmd\}/);
-  assert.doesNotMatch(surfaceSource, /playableUrl\}/);
+  assert.match(surfaceSource, /source=\{playableUrl\}/);
+  assert.doesNotMatch(surfaceSource, /<Text[^>]*>[\s\S]{0,200}\{playableUrl\}[\s\S]{0,200}<\/Text>/);
+  assert.doesNotMatch(surfaceSource, /console\.(?:log|debug|info|warn|error)\s*\([^)]*\bplayableUrl\b/);
   assert.match(surfaceSource, /redactSensitiveText/);
 
   assert.match(isolatedSource, /\{ type: "itv", action: "get_genres" \}/);
