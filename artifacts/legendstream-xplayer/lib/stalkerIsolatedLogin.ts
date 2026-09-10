@@ -66,6 +66,12 @@ export type StalkerIsolatedLoginResult = {
 
 export type StalkerIsolatedSession = Pick<StalkerPortalSession, "handshake" | "request">;
 
+let latestIsolatedStalkerSessionForProbe: StalkerIsolatedSession | null = null;
+
+export function readLatestIsolatedStalkerSessionForProbe() {
+  return latestIsolatedStalkerSessionForProbe;
+}
+
 type StalkerIsolatedLoginDependencies = {
   createSession?: (input: {
     portalUrl: string;
@@ -303,6 +309,7 @@ export async function runIsolatedStalkerLogin(
   input: { portalUrl: string; mac: string; signal?: AbortSignal },
   dependencies: StalkerIsolatedLoginDependencies = {},
 ): Promise<StalkerIsolatedLoginResult> {
+  latestIsolatedStalkerSessionForProbe = null;
   const portalUrl = input.portalUrl.trim();
   const mac = input.mac.trim();
   if (!portalUrl || !mac) {
@@ -332,6 +339,7 @@ export async function runIsolatedStalkerLogin(
   networkActions.push("get_main_info");
   const mainInfo = await readOptionalMainInfo(session, input.signal, diagnostics);
   const accountInfo = metadataFromPayload(profile.payload, mainInfo.payload);
+  latestIsolatedStalkerSessionForProbe = session;
 
   return {
     state: "CONNECTED",

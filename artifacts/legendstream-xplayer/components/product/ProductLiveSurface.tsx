@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FocusButton } from "@/components/FocusButton";
+import { StalkerVodProbePanel } from "@/components/stalker/StalkerVodProbePanel";
 import { useColors } from "@/hooks/useColors";
 import type { ProductCategoryRow, ProductChannelRow } from "@/lib/stalkerProductPresentation";
 
@@ -96,6 +97,7 @@ export function ProductLiveSurface({
           </View>
           <Feather name="chevron-right" size={24} color={colors.mutedForeground} />
         </Pressable>
+        <StalkerVodProbePanel />
       </> : null}
 
       {screen === "categories" ? <>
