@@ -245,14 +245,14 @@ export function StalkerVodSurface({ onBack }: { onBack: () => void }) {
             label="Önceki"
             icon="chevron-left"
             variant="secondary"
-            disabled={currentPage <= 1 || listStatus === "VOD_LIST_LOADING"}
+            disabled={currentPage <= 1}
             onPress={() => void loadPage(selectedCategory, currentPage - 1)}
           />
           <FocusButton
             label="Sonraki"
             icon="chevron-right"
             variant="secondary"
-            disabled={!hasNextPage || listStatus === "VOD_LIST_LOADING"}
+            disabled={!hasNextPage}
             onPress={() => void loadPage(selectedCategory, currentPage + 1)}
           />
         </View>
