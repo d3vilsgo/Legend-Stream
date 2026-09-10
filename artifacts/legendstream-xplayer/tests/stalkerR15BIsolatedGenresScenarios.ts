@@ -133,17 +133,22 @@ async function main() {
     assert.match(screenSource, /stalkerGenresRequestedRef\.current = true;/);
   });
 
-  await scenario("Selecting a category does not call get_ordered_list", () => {
+  await scenario("R15-B surface entry does not automatically call get_ordered_list", () => {
     const setupBlock = screenSource.slice(
-      screenSource.indexOf("STALKER_CONNECTED"),
+      screenSource.indexOf("function ProviderSetup"),
       screenSource.indexOf("type HistorySectionRow"),
     );
-    assert.match(setupBlock, /setSelectedStalkerCategoryId\(category\.id\)/);
-    assert.doesNotMatch(setupBlock, /get_ordered_list|get_all_channels|create_link/);
+    assert.match(setupBlock, /void loadStalkerGenres\(\)/);
+    assert.doesNotMatch(setupBlock, /useEffect\([\s\S]{0,220}loadStalkerChannelsForCategory/);
+    assert.doesNotMatch(setupBlock, /get_all_channels|create_link/);
   });
 
-  await scenario("R15-B path never calls ordered-list aggregate channels or playback links", () => {
-    assert.doesNotMatch(isolatedLoginSource, /get_ordered_list|get_all_channels|create_link/);
+  await scenario("R15-B login and genre helpers never call aggregate channels or playback links", () => {
+    const loginAndGenreSource = isolatedLoginSource.slice(
+      isolatedLoginSource.indexOf("export async function loadIsolatedStalkerGenres"),
+      isolatedLoginSource.indexOf("export async function loadIsolatedStalkerCategoryChannels"),
+    );
+    assert.doesNotMatch(loginAndGenreSource, /get_ordered_list|get_all_channels|create_link/);
   });
 
   await scenario("Shared persist and SQL catalog persistence are not required", () => {

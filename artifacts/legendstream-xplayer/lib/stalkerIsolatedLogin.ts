@@ -23,6 +23,12 @@ export type StalkerIsolatedGenreStatus =
   | "ITV_CATEGORIES_READY"
   | "GENRES_ERROR";
 
+export type StalkerIsolatedChannelStatus =
+  | "CHANNELS_IDLE"
+  | "CHANNELS_LOADING"
+  | "ITV_CHANNELS_READY"
+  | "CHANNELS_ERROR";
+
 export type StalkerIsolatedAccountInfo = {
   profileSupported: boolean;
   profileName?: string;
@@ -35,6 +41,13 @@ export type StalkerIsolatedCategory = {
   id: string;
   title: string;
   order?: number;
+};
+
+export type StalkerIsolatedChannel = {
+  id: string;
+  title: string;
+  logoUrl?: string;
+  number?: number;
 };
 
 export type StalkerIsolatedLoginResult = {
@@ -170,6 +183,45 @@ export function normalizeIsolatedStalkerCategories(payload: unknown): StalkerIso
   });
 }
 
+function channelId(row: Record<string, unknown>) {
+  return stringField(row, ["id", "ch_id", "stream_id", "channel_id"]);
+}
+
+function channelTitle(row: Record<string, unknown>) {
+  return stringField(row, ["name", "title"]);
+}
+
+function channelNumber(row: Record<string, unknown>) {
+  const raw = row.number ?? row.channel_number ?? row.num;
+  if (typeof raw === "number" && Number.isFinite(raw)) return raw;
+  if (typeof raw === "string" && raw.trim() && Number.isFinite(Number(raw))) return Number(raw);
+  return undefined;
+}
+
+export function normalizeIsolatedStalkerChannels(payload: unknown): StalkerIsolatedChannel[] {
+  const seen = new Set<string>();
+  const channels: StalkerIsolatedChannel[] = [];
+  arrayPayload(payload).forEach((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return;
+    const row = item as Record<string, unknown>;
+    const id = channelId(row);
+    if (!id || seen.has(id)) return;
+    const title = channelTitle(row);
+    if (!title) return;
+    seen.add(id);
+    channels.push({
+      id,
+      title,
+      logoUrl: stringField(row, ["logo", "logo_url", "stream_icon"]),
+      number: channelNumber(row),
+    });
+  });
+  return channels.sort((left, right) => {
+    const numberDelta = (left.number ?? Number.MAX_SAFE_INTEGER) - (right.number ?? Number.MAX_SAFE_INTEGER);
+    return numberDelta || left.title.localeCompare(right.title);
+  });
+}
+
 export async function loadIsolatedStalkerGenres(
   session: StalkerIsolatedSession,
   input: { signal?: AbortSignal; diagnostics?: StalkerPortalDiagnosticsContext } = {},
@@ -182,6 +234,26 @@ export async function loadIsolatedStalkerGenres(
     diagnostics,
   );
   return normalizeIsolatedStalkerCategories(payload);
+}
+
+export async function loadIsolatedStalkerCategoryChannels(
+  session: StalkerIsolatedSession,
+  category: StalkerIsolatedCategory,
+  input: { signal?: AbortSignal; diagnostics?: StalkerPortalDiagnosticsContext; page?: number } = {},
+): Promise<StalkerIsolatedChannel[]> {
+  const genre = category.id.trim();
+  if (!genre || genre === "*") {
+    throw new StalkerPortalError("INVALID_RESPONSE", "This Stalker category cannot be fetched with get_ordered_list.");
+  }
+  const diagnostics = input.diagnostics ?? { providerId: "isolated-stalker-channels" };
+  const page = input.page ?? 1;
+  const payload = await session.request(
+    { type: "itv", action: "get_ordered_list", genre, p: page },
+    input.signal,
+    undefined,
+    diagnostics,
+  );
+  return normalizeIsolatedStalkerChannels(payload);
 }
 
 export async function runIsolatedStalkerLogin(

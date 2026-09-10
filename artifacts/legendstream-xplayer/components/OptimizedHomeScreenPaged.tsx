@@ -64,10 +64,13 @@ import {
 } from "@/lib/providerSwitchUx";
 import { redactSensitiveText } from "@/lib/safeLog";
 import {
+  loadIsolatedStalkerCategoryChannels,
   loadIsolatedStalkerGenres,
   runIsolatedStalkerLogin,
   type StalkerIsolatedAccountInfo,
   type StalkerIsolatedCategory,
+  type StalkerIsolatedChannel,
+  type StalkerIsolatedChannelStatus,
   type StalkerIsolatedGenreStatus,
   type StalkerIsolatedLoginStatus,
   type StalkerIsolatedSession,
@@ -760,8 +763,17 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   const [stalkerCategories, setStalkerCategories] = useState<StalkerIsolatedCategory[]>([]);
   const [selectedStalkerCategoryId, setSelectedStalkerCategoryId] = useState<string | null>(null);
   const [stalkerGenreError, setStalkerGenreError] = useState<string | null>(null);
+  const [stalkerChannelStatus, setStalkerChannelStatus] = useState<StalkerIsolatedChannelStatus>("CHANNELS_IDLE");
+  const [stalkerChannels, setStalkerChannels] = useState<StalkerIsolatedChannel[]>([]);
+  const [selectedStalkerChannelId, setSelectedStalkerChannelId] = useState<string | null>(null);
+  const [stalkerChannelError, setStalkerChannelError] = useState<string | null>(null);
   const stalkerGenresRequestedRef = useRef(false);
+  const stalkerChannelRequestRef = useRef<{ key: string | null; sequence: number }>({ key: null, sequence: 0 });
   const credentialsOnly = Boolean(existing?.needsCredentials);
+  const selectedStalkerCategory = useMemo(
+    () => stalkerCategories.find((category) => category.id === selectedStalkerCategoryId) ?? null,
+    [selectedStalkerCategoryId, stalkerCategories],
+  );
 
   const loadStalkerGenres = async (force = false) => {
     if (!stalkerSession || (!force && stalkerGenresRequestedRef.current)) return;
@@ -776,10 +788,39 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
           ? current
           : categories[0]?.id ?? null,
       );
+      setStalkerChannelStatus("CHANNELS_IDLE");
+      setStalkerChannels([]);
+      setSelectedStalkerChannelId(null);
+      setStalkerChannelError(null);
+      stalkerChannelRequestRef.current = { key: null, sequence: stalkerChannelRequestRef.current.sequence };
       setStalkerGenreStatus("ITV_CATEGORIES_READY");
     } catch (caught) {
       setStalkerGenreError(caught instanceof Error ? caught.message : "Stalker kategorileri yüklenemedi.");
       setStalkerGenreStatus("GENRES_ERROR");
+    }
+  };
+
+  const loadStalkerChannelsForCategory = async (category: StalkerIsolatedCategory, force = false) => {
+    if (!stalkerSession) return;
+    const key = category.id;
+    const currentRequest = stalkerChannelRequestRef.current;
+    if (!force && currentRequest.key === key) return;
+    const sequence = currentRequest.sequence + 1;
+    stalkerChannelRequestRef.current = { key, sequence };
+    setSelectedStalkerCategoryId(key);
+    setStalkerChannelStatus("CHANNELS_LOADING");
+    setStalkerChannelError(null);
+    setStalkerChannels([]);
+    setSelectedStalkerChannelId(null);
+    try {
+      const channels = await loadIsolatedStalkerCategoryChannels(stalkerSession, category);
+      if (stalkerChannelRequestRef.current.sequence !== sequence || stalkerChannelRequestRef.current.key !== key) return;
+      setStalkerChannels(channels);
+      setStalkerChannelStatus("ITV_CHANNELS_READY");
+    } catch (caught) {
+      if (stalkerChannelRequestRef.current.sequence !== sequence || stalkerChannelRequestRef.current.key !== key) return;
+      setStalkerChannelError(caught instanceof Error ? caught.message : "Stalker kanal listesi yüklenemedi.");
+      setStalkerChannelStatus("CHANNELS_ERROR");
     }
   };
 
@@ -801,10 +842,15 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
       setStalkerSession(null);
       setShowStalkerSurface(false);
       stalkerGenresRequestedRef.current = false;
+      stalkerChannelRequestRef.current = { key: null, sequence: stalkerChannelRequestRef.current.sequence + 1 };
       setStalkerGenreStatus("IDLE");
       setStalkerCategories([]);
       setSelectedStalkerCategoryId(null);
       setStalkerGenreError(null);
+      setStalkerChannelStatus("CHANNELS_IDLE");
+      setStalkerChannels([]);
+      setSelectedStalkerChannelId(null);
+      setStalkerChannelError(null);
       try {
         const result = await runIsolatedStalkerLogin({ portalUrl: clean, mac: mac.trim() });
         setStalkerAccountInfo(result.accountInfo);
@@ -871,7 +917,7 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
                 return <Pressable
                   key={category.id}
                   accessibilityRole="button"
-                  onPress={() => setSelectedStalkerCategoryId(category.id)}
+                  onPress={() => void loadStalkerChannelsForCategory(category)}
                   style={[s.accountCard, { borderColor: selected ? colors.primary : colors.border, backgroundColor: colors.card }]}
                 >
                   <View style={{ flex: 1 }}>
@@ -884,6 +930,42 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
             </View> : <View style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
               <Text style={{ color: colors.mutedForeground }}>Stalker kategorisi sağlanmadı.</Text>
             </View>}
+            {selectedStalkerCategory ? <View style={{ marginTop: 18, gap: 8 }}>
+              <Text style={[s.section, { color: colors.foreground }]}>Seçili kategori: {selectedStalkerCategory.title}</Text>
+              {stalkerChannelStatus === "CHANNELS_LOADING" ? <View style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={{ color: colors.mutedForeground }}>Kanal listesi yükleniyor.</Text>
+              </View> : null}
+              {stalkerChannelStatus === "CHANNELS_ERROR" ? <View style={[s.accountCard, { borderColor: colors.destructive, backgroundColor: colors.card }]}>
+                <View style={{ flex: 1, gap: 4 }}>
+                  <Text style={{ color: colors.destructive, fontWeight: "800" }}>Kanal listesi yüklenemedi</Text>
+                  {stalkerChannelError ? <Text style={{ color: colors.mutedForeground }}>{visibleErrorText(stalkerChannelError)}</Text> : null}
+                </View>
+                <FocusButton label="Tekrar dene" icon="refresh-cw" variant="secondary" onPress={() => void loadStalkerChannelsForCategory(selectedStalkerCategory, true)} />
+              </View> : null}
+              {stalkerChannelStatus === "ITV_CHANNELS_READY" ? (
+                stalkerChannels.length ? <View style={{ gap: 8 }}>
+                  <Text style={{ color: colors.mutedForeground }}>GET_ORDERED_LIST tamamlandı. Oynatma bu aşamada çağrılmaz.</Text>
+                  {stalkerChannels.map((channel) => {
+                    const selected = selectedStalkerChannelId === channel.id;
+                    return <Pressable
+                      key={channel.id}
+                      accessibilityRole="button"
+                      onPress={() => setSelectedStalkerChannelId(channel.id)}
+                      style={[s.accountCard, { borderColor: selected ? colors.primary : colors.border, backgroundColor: colors.card }]}
+                    >
+                      <View style={{ flex: 1 }}>
+                        <Text style={{ color: colors.foreground, fontWeight: "800" }}>{channel.title}</Text>
+                        <Text style={{ color: colors.mutedForeground }}>{channel.number != null ? `${channel.number} · ` : ""}{channel.id}</Text>
+                      </View>
+                      {selected ? <Feather name="check-circle" size={18} color={colors.primary} /> : null}
+                    </Pressable>;
+                  })}
+                </View> : <View style={[s.accountCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
+                  <Text style={{ color: colors.mutedForeground }}>Bu kategori için kanal sağlanmadı.</Text>
+                </View>
+              ) : null}
+            </View> : null}
           </> : null}
           {onCancel ? <FocusButton label={t("back")} variant="secondary" onPress={onCancel} /> : null}
         </>}
