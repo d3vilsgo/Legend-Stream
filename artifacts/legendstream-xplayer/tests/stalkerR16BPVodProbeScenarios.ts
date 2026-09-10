@@ -119,11 +119,13 @@ async function main() {
     assert.doesNotMatch(isolatedSource, /get_all_channels/);
   });
 
-  await scenario("Probe remains explicitly diagnostic and not product VOD navigation", () => {
+  await scenario("Probe remains diagnostic but is retired from normal product UI", () => {
     assert.match(panelSource, /Diagnostic only/);
     assert.match(panelSource, /Üretim VOD değildir/);
     const productSource = source("components/product/ProductLiveSurface.tsx");
-    assert.doesNotMatch(productSource, /label="Filmler"|label="Diziler"/);
+    assert.doesNotMatch(productSource, /StalkerVodProbePanel/);
+    assert.match(productSource, /label="Filmler"/);
+    assert.match(productSource, /StalkerVodSurface/);
   });
 
   await scenario("R15 and R16-A regressions remain wired", () => {

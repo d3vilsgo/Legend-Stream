@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import React from "react";
+import React, { useState } from "react";
 import {
   ActivityIndicator,
   Image,
@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FocusButton } from "@/components/FocusButton";
-import { StalkerVodProbePanel } from "@/components/stalker/StalkerVodProbePanel";
+import { StalkerVodSurface } from "@/components/stalker/StalkerVodSurface";
 import { useColors } from "@/hooks/useColors";
 import type { ProductCategoryRow, ProductChannelRow } from "@/lib/stalkerProductPresentation";
 
@@ -62,6 +62,12 @@ export function ProductLiveSurface({
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const top = Math.max(insets.top, Platform.OS === "web" ? 20 : 0);
+  const [section, setSection] = useState<"live" | "movies">("live");
+
+  const openLive = () => {
+    setSection("live");
+    onOpenLive();
+  };
 
   return <View style={[styles.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
     <View style={[styles.header, { borderColor: colors.border }]}> 
@@ -72,20 +78,28 @@ export function ProductLiveSurface({
         <FocusButton
           label="Canlı TV"
           icon="radio"
-          variant={screen === "home" ? "ghost" : "secondary"}
-          onPress={onOpenLive}
+          variant={section === "live" && screen !== "home" ? "secondary" : "ghost"}
+          onPress={openLive}
+        />
+        <FocusButton
+          label="Filmler"
+          icon="film"
+          variant={section === "movies" ? "secondary" : "ghost"}
+          onPress={() => setSection("movies")}
         />
       </ScrollView>
     </View>
 
     <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      {screen === "home" ? <>
+      {section === "movies" ? <StalkerVodSurface onBack={() => setSection("live")} /> : null}
+
+      {section === "live" && screen === "home" ? <>
         <Text style={[styles.title, { color: colors.foreground }]}>LegendStream XPlayer</Text>
         <Text style={[styles.lead, { color: colors.mutedForeground }]}>İçeriklerinize aynı LegendStream deneyimi üzerinden erişin.</Text>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Canlı TV"
-          onPress={onOpenLive}
+          onPress={openLive}
           style={[styles.featureCard, { borderColor: colors.border, backgroundColor: colors.card }]}
         >
           <View style={[styles.featureIcon, { backgroundColor: colors.secondary }]}>
@@ -97,10 +111,24 @@ export function ProductLiveSurface({
           </View>
           <Feather name="chevron-right" size={24} color={colors.mutedForeground} />
         </Pressable>
-        <StalkerVodProbePanel />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Filmler"
+          onPress={() => setSection("movies")}
+          style={[styles.featureCard, { borderColor: colors.border, backgroundColor: colors.card }]}
+        >
+          <View style={[styles.featureIcon, { backgroundColor: colors.secondary }]}>
+            <Feather name="film" size={28} color={colors.primary} />
+          </View>
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text style={[styles.section, { color: colors.foreground }]}>Filmler</Text>
+            <Text style={{ color: colors.mutedForeground }}>Film kategorilerine ve sayfalı VOD kataloğuna göz atın.</Text>
+          </View>
+          <Feather name="chevron-right" size={24} color={colors.mutedForeground} />
+        </Pressable>
       </> : null}
 
-      {screen === "categories" ? <>
+      {section === "live" && screen === "categories" ? <>
         <View style={styles.screenTitleRow}>
           <FocusButton label="Geri" icon="arrow-left" variant="ghost" onPress={onBackToHome} />
           <View style={{ flex: 1 }}>
@@ -127,7 +155,7 @@ export function ProductLiveSurface({
         </View> : null}
       </> : null}
 
-      {screen === "channels" ? <>
+      {section === "live" && screen === "channels" ? <>
         <View style={styles.screenTitleRow}>
           <FocusButton label="Geri" icon="arrow-left" variant="ghost" onPress={onBackToCategories} />
           <View style={{ flex: 1 }}>
