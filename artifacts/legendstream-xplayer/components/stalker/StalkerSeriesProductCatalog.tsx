@@ -110,20 +110,8 @@ export function StalkerSeriesProductCatalog({
         </Pressable>) : <Empty text="Bu kategoride dizi bulunamadı." />}
       </View>
       <View style={styles.pager}>
-        <FocusButton
-          label="Önceki"
-          icon="chevron-left"
-          variant="secondary"
-          disabled={currentPage <= 1}
-          onPress={onPreviousPage}
-        />
-        <FocusButton
-          label="Sonraki"
-          icon="chevron-right"
-          variant="secondary"
-          disabled={!hasNextPage}
-          onPress={onNextPage}
-        />
+        <FocusButton label="Önceki" icon="chevron-left" variant="secondary" disabled={currentPage <= 1} onPress={onPreviousPage} />
+        <FocusButton label="Sonraki" icon="chevron-right" variant="secondary" disabled={!hasNextPage} onPress={onNextPage} />
       </View>
     </> : null}
 
@@ -132,14 +120,17 @@ export function StalkerSeriesProductCatalog({
         <Poster item={detail} large />
         <View style={styles.heroText}>
           <Text style={[styles.detailTitle, { color: colors.foreground }]}>{detail.title}</Text>
-          <Text style={{ color: colors.mutedForeground }}>
-            {[detail.year, detail.genre, detail.rating].filter(Boolean).join(" · ")}
-          </Text>
+          <Text style={{ color: colors.mutedForeground }}>{[detail.year, detail.genre, detail.rating].filter(Boolean).join(" · ")}</Text>
           {detail.director ? <Text style={{ color: colors.mutedForeground }}>Yönetmen: {detail.director}</Text> : null}
           {detail.actors ? <Text style={{ color: colors.mutedForeground }}>Oyuncular: {detail.actors}</Text> : null}
           {detail.description ? <Text style={{ color: colors.foreground, lineHeight: 20 }}>{detail.description}</Text> : null}
         </View>
       </View>
+
+      {detail.hierarchyTruncated ? <View style={[styles.stateCard, { borderColor: colors.destructive, backgroundColor: colors.card }]}>
+        <Text style={{ color: colors.destructive, fontWeight: "800" }}>Bölüm hiyerarşisi eksik</Text>
+        <Text style={{ color: colors.mutedForeground }}>Sağlayıcı yanıtı güvenlik sınırını aştı; yalnız güvenli biçimde materialize edilen bölümler gösteriliyor.</Text>
+      </View> : null}
 
       <Text style={[styles.section, { color: colors.foreground }]}>Sezonlar</Text>
       {detail.seasons.length ? detail.seasons.map((season) => {

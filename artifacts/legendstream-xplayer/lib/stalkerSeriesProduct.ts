@@ -38,6 +38,7 @@ export type StalkerSeriesProductDetail = {
   director?: string;
   actors?: string;
   seasons: StalkerSeriesProductSeason[];
+  hierarchyTruncated: boolean;
 };
 export type StalkerSeriesProductPage = {
   items: StalkerSeriesProductItem[];
@@ -81,8 +82,10 @@ export type StalkerSeriesPlaybackTicket = {
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_ROWS = 30;
 const MAX_PAGE = 10_000;
-const MAX_EPISODES_PER_SEASON = 30;
-const MAX_TOTAL_EPISODES = 120;
+// Production hierarchy bounds are corruption guards, not pagination/materialization caps.
+// Real providers can legitimately expose hundreds of embedded episode ids in one detail response.
+const MAX_EPISODES_PER_SEASON = 10_000;
+const MAX_TOTAL_EPISODES = 50_000;
 const SEASON_KEYS = ["season_id", "season", "season_number", "season_num"] as const;
 
 type Params = Record<string, string | number | boolean | undefined>;
@@ -131,8 +134,9 @@ function displayText(value: unknown): string {
 }
 
 function exactScalarIdentifier(value: unknown): string | null {
-  const valueText = rawText(value);
-  return valueText ?? null;
+  if (typeof value === "string") return value.trim().length ? value : null;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
 }
 
 function numberField(row: Record<string, unknown> | null, key: string) {
@@ -349,17 +353,24 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
       const rowObjects = rows.map(objectValue).filter((row): row is Record<string, unknown> => Boolean(row));
       const seasons: StalkerSeriesProductSeason[] = [];
       let totalEpisodes = 0;
+      let hierarchyTruncated = false;
       playbackRefs.clear();
 
       for (const row of rowObjects) {
+        if (totalEpisodes >= MAX_TOTAL_EPISODES) {
+          hierarchyTruncated = true;
+          break;
+        }
         const id = seasonIdentity(row);
         if (!id) continue;
         const cmd = typeof row.cmd === "string" && row.cmd.trim().length ? row.cmd : null;
         const embedded = Array.isArray(row.series) ? row.series : [];
         const seenEpisodes = new Set<string>();
         const episodes: StalkerSeriesProductEpisode[] = [];
-        for (const rawEpisodeId of embedded.slice(0, MAX_EPISODES_PER_SEASON)) {
-          if (totalEpisodes >= MAX_TOTAL_EPISODES) break;
+        const remainingTotal = MAX_TOTAL_EPISODES - totalEpisodes;
+        const materializeLimit = Math.min(embedded.length, MAX_EPISODES_PER_SEASON, remainingTotal);
+        if (embedded.length > materializeLimit) hierarchyTruncated = true;
+        for (const rawEpisodeId of embedded.slice(0, materializeLimit)) {
           const episodeId = exactScalarIdentifier(rawEpisodeId);
           if (!episodeId || seenEpisodes.has(episodeId)) continue;
           seenEpisodes.add(episodeId);
@@ -380,6 +391,7 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
         title: item.title,
         ...mergeMetadata(item, rowObjects),
         seasons,
+        hierarchyTruncated,
       };
     },
 
