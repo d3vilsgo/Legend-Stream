@@ -64,14 +64,33 @@ export function ProductLiveSurface({
   const insets = useSafeAreaInsets();
   const top = Math.max(insets.top, Platform.OS === "web" ? 20 : 0);
   const [section, setSection] = useState<"live" | "movies" | "series">("live");
+  const [vodPlayerActive, setVodPlayerActive] = useState(false);
 
   const openLive = () => {
+    setVodPlayerActive(false);
     setSection("live");
     onOpenLive();
   };
 
-  return <View style={[styles.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
-    <View style={[styles.header, { borderColor: colors.border }]}> 
+  const openMovies = () => {
+    setVodPlayerActive(false);
+    setSection("movies");
+  };
+
+  const openSeries = () => {
+    setVodPlayerActive(false);
+    setSection("series");
+  };
+
+  return <View style={[
+    styles.screen,
+    {
+      backgroundColor: colors.background,
+      paddingTop: vodPlayerActive ? 0 : top,
+      paddingBottom: vodPlayerActive ? 0 : Math.max(insets.bottom, 10),
+    },
+  ]}>
+    {!vodPlayerActive ? <View style={[styles.header, { borderColor: colors.border }]}> 
       <View style={styles.headerTop}>
         <Text style={[styles.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text>
       </View>
@@ -86,21 +105,26 @@ export function ProductLiveSurface({
           label="Filmler"
           icon="film"
           variant={section === "movies" ? "secondary" : "ghost"}
-          onPress={() => setSection("movies")}
+          onPress={openMovies}
         />
         <FocusButton
           label="Diziler"
           icon="tv"
           variant={section === "series" ? "secondary" : "ghost"}
-          onPress={() => setSection("series")}
+          onPress={openSeries}
         />
       </ScrollView>
-    </View>
+    </View> : null}
 
-    {section === "series" ? <StalkerSeriesProductSurface /> : <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
-      {section === "movies" ? <StalkerVodSurface onBack={() => setSection("live")} /> : null}
-
-      {section === "live" && screen === "home" ? <>
+    {section === "movies" ? <StalkerVodSurface
+      onBack={openLive}
+      onPlayerActiveChange={setVodPlayerActive}
+    /> : section === "series" ? <StalkerSeriesProductSurface /> : <ScrollView
+      style={{ flex: 1 }}
+      contentContainerStyle={styles.content}
+      showsVerticalScrollIndicator={false}
+    >
+      {screen === "home" ? <>
         <Text style={[styles.title, { color: colors.foreground }]}>LegendStream XPlayer</Text>
         <Text style={[styles.lead, { color: colors.mutedForeground }]}>İçeriklerinize aynı LegendStream deneyimi üzerinden erişin.</Text>
         <Pressable
@@ -121,7 +145,7 @@ export function ProductLiveSurface({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Filmler"
-          onPress={() => setSection("movies")}
+          onPress={openMovies}
           style={[styles.featureCard, { borderColor: colors.border, backgroundColor: colors.card }]}
         >
           <View style={[styles.featureIcon, { backgroundColor: colors.secondary }]}>
@@ -136,7 +160,7 @@ export function ProductLiveSurface({
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Diziler"
-          onPress={() => setSection("series")}
+          onPress={openSeries}
           style={[styles.featureCard, { borderColor: colors.border, backgroundColor: colors.card }]}
         >
           <View style={[styles.featureIcon, { backgroundColor: colors.secondary }]}>
@@ -150,7 +174,7 @@ export function ProductLiveSurface({
         </Pressable>
       </> : null}
 
-      {section === "live" && screen === "categories" ? <>
+      {screen === "categories" ? <>
         <View style={styles.screenTitleRow}>
           <FocusButton label="Geri" icon="arrow-left" variant="ghost" onPress={onBackToHome} />
           <View style={{ flex: 1 }}>
@@ -177,7 +201,7 @@ export function ProductLiveSurface({
         </View> : null}
       </> : null}
 
-      {section === "live" && screen === "channels" ? <>
+      {screen === "channels" ? <>
         <View style={styles.screenTitleRow}>
           <FocusButton label="Geri" icon="arrow-left" variant="ghost" onPress={onBackToCategories} />
           <View style={{ flex: 1 }}>
@@ -217,7 +241,7 @@ export function ProductLiveSurface({
 
 function LocalLoading({ text }: { text: string }) {
   const colors = useColors();
-  return <View style={[styles.stateCard, { borderColor: colors.border, backgroundColor: colors.card }]}>
+  return <View style={[styles.stateCard, { borderColor: colors.border, backgroundColor: colors.card }]}> 
     <ActivityIndicator size="small" color={colors.primary} />
     <Text style={{ color: colors.mutedForeground }}>{text}</Text>
   </View>;
