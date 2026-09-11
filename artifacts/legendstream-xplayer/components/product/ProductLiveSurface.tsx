@@ -12,7 +12,7 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FocusButton } from "@/components/FocusButton";
-import { StalkerSeriesProbePanel } from "@/components/stalker/StalkerSeriesProbePanel";
+import { StalkerSeriesProductSurface } from "@/components/stalker/StalkerSeriesProductSurface";
 import { StalkerVodSurface } from "@/components/stalker/StalkerVodSurface";
 import { useColors } from "@/hooks/useColors";
 import type { ProductCategoryRow, ProductChannelRow } from "@/lib/stalkerProductPresentation";
@@ -63,7 +63,7 @@ export function ProductLiveSurface({
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const top = Math.max(insets.top, Platform.OS === "web" ? 20 : 0);
-  const [section, setSection] = useState<"live" | "movies">("live");
+  const [section, setSection] = useState<"live" | "movies" | "series">("live");
 
   const openLive = () => {
     setSection("live");
@@ -88,10 +88,16 @@ export function ProductLiveSurface({
           variant={section === "movies" ? "secondary" : "ghost"}
           onPress={() => setSection("movies")}
         />
+        <FocusButton
+          label="Diziler"
+          icon="tv"
+          variant={section === "series" ? "secondary" : "ghost"}
+          onPress={() => setSection("series")}
+        />
       </ScrollView>
     </View>
 
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
+    {section === "series" ? <StalkerSeriesProductSurface /> : <ScrollView style={{ flex: 1 }} contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
       {section === "movies" ? <StalkerVodSurface onBack={() => setSection("live")} /> : null}
 
       {section === "live" && screen === "home" ? <>
@@ -127,7 +133,21 @@ export function ProductLiveSurface({
           </View>
           <Feather name="chevron-right" size={24} color={colors.mutedForeground} />
         </Pressable>
-        <StalkerSeriesProbePanel />
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Diziler"
+          onPress={() => setSection("series")}
+          style={[styles.featureCard, { borderColor: colors.border, backgroundColor: colors.card }]}
+        >
+          <View style={[styles.featureIcon, { backgroundColor: colors.secondary }]}>
+            <Feather name="tv" size={28} color={colors.primary} />
+          </View>
+          <View style={{ flex: 1, gap: 4 }}>
+            <Text style={[styles.section, { color: colors.foreground }]}>Diziler</Text>
+            <Text style={{ color: colors.mutedForeground }}>Kategori, sezon ve bölümlere göz atın.</Text>
+          </View>
+          <Feather name="chevron-right" size={24} color={colors.mutedForeground} />
+        </Pressable>
       </> : null}
 
       {section === "live" && screen === "categories" ? <>
@@ -191,7 +211,7 @@ export function ProductLiveSurface({
           }) : <EmptyState text="Bu kategoride kanal bulunamadı." />}
         </View> : null}
       </> : null}
-    </ScrollView>
+    </ScrollView>}
   </View>;
 }
 
