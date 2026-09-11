@@ -69,7 +69,6 @@
     "expo-location": "~19.0.8",
     "expo-router": "~6.0.17",
     "expo-screen-orientation": "~9.0.9",
-    "expo-sharing": "~14.0.8",
     "expo-splash-screen": "~31.0.12",
     "expo-sqlite": "~16.0.10",
     "expo-status-bar": "~3.0.9",
