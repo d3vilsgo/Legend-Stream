@@ -7,6 +7,7 @@ function harness(handler: (params: Params) => unknown | Promise<unknown>) {
   return {
     calls,
     session: {
+      async handshake() { return { authenticated: true as const }; },
       async request(params: Params) {
         calls.push({ ...params });
         return handler(params);
