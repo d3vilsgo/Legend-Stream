@@ -1,6 +1,6 @@
 import { redactSensitiveText, safeLog } from "./safeLog";
 import type { StalkerIsolatedSession } from "./stalkerIsolatedLogin";
-import { observeStalkerSeriesPayload, type StalkerSeriesProbeItem, type StalkerSeriesProbeObservation } from "./stalkerSeriesProbe";
+import { observeStalkerSeriesPayload, probeStalkerSeriesCreateLink, type StalkerSeriesCreateLinkObservation, type StalkerSeriesProbeItem, type StalkerSeriesProbeObservation } from "./stalkerSeriesProbe";
 
 export type StalkerSeriesSensitiveFieldShape = {
   key: string;
@@ -56,11 +56,21 @@ export type StalkerSeriesEmbeddedHierarchy = {
   totalEmbeddedEpisodes: number;
 };
 
+export type StalkerSeriesPlaybackRef = {
+  seasonId: string;
+  label: string;
+  hasCmd: boolean;
+  cmdType: string;
+  cmdLength: number;
+  probe: (episodeId: string, signal?: AbortSignal) => Promise<StalkerSeriesCreateLinkObservation>;
+};
+
 export type StalkerSeriesPhysicalShapeProbe = {
   observation: StalkerSeriesProbeObservation;
   rootShape: StalkerSeriesRootShape;
   rowShapes: StalkerSeriesRowShape[];
   hierarchy: StalkerSeriesEmbeddedHierarchy;
+  playbackRefs: StalkerSeriesPlaybackRef[];
 };
 
 const D4_TIMEOUT_MS = 12_000;
@@ -295,6 +305,50 @@ export async function probeStalkerSeriesPhysicalRowShape(
     };
     const rootShape = inspectStalkerSeriesRootShape(payload);
     const hierarchy = extractStalkerSeriesEmbeddedHierarchy(payload);
+    const playbackRefs: StalkerSeriesPlaybackRef[] = [];
+    const seasonRows = rowsFromEnvelope(payload)
+      .slice(0, D5_MAX_SEASON_ROWS)
+      .map(asObject)
+      .filter((row): row is Record<string, unknown> => Boolean(row));
+    for (const season of hierarchy.seasons) {
+      const row = seasonRows.find((candidate) => seasonIdentity(candidate) === season.id);
+      const rawCmd = row?.cmd;
+      const hasCmd = typeof rawCmd === "string" && rawCmd.trim().length > 0;
+      if (!row || !hasCmd) {
+        playbackRefs.push({
+          seasonId: season.id,
+          label: season.label,
+          hasCmd: false,
+          cmdType: typeof rawCmd,
+          cmdLength: typeof rawCmd === "string" ? rawCmd.length : 0,
+          probe: async () => ({
+            classification: "EVIDENCE_REQUIRED",
+            httpStatus: null,
+            payloadShape: "none",
+            itemCount: 0,
+            fieldNames: [],
+            samplePrimitives: [],
+            wrapperPrefix: false,
+            returnedFieldNames: [],
+            extraTransportHints: false,
+          }),
+        });
+        continue;
+      }
+      playbackRefs.push({
+        seasonId: season.id,
+        label: season.label,
+        hasCmd: true,
+        cmdType: "string",
+        cmdLength: rawCmd.length,
+        probe: (episodeId, probeSignal) => probeStalkerSeriesCreateLink(
+          session,
+          { id: season.id, label: season.label, rows: [{ cmd: rawCmd }] },
+          { id: episodeId, label: "Episode " + episodeId, seasonId: season.id, row: {} },
+          probeSignal,
+        ),
+      });
+    }
     safeLog.info("SERIES_D4_SHAPE_RESPONSE", {
       classification: observation.classification,
       item_count: observation.itemCount,
@@ -309,7 +363,7 @@ export async function probeStalkerSeriesPhysicalRowShape(
       season_count: hierarchy.totalSeasons,
       embedded_episode_count: hierarchy.totalEmbeddedEpisodes,
     });
-    return { observation, rootShape, rowShapes, hierarchy };
+    return { observation, rootShape, rowShapes, hierarchy, playbackRefs };
   } catch (caught) {
     const message = redactSensitiveText(caught instanceof Error ? caught.message : String(caught));
     return {
@@ -325,6 +379,7 @@ export async function probeStalkerSeriesPhysicalRowShape(
       rootShape: { fieldNames: [], dataFieldType: "absent", rowsCount: 0, objectFields: [] },
       rowShapes: [],
       hierarchy: { classification: "EMPTY", seasons: [], totalSeasons: 0, totalEmbeddedEpisodes: 0 },
+      playbackRefs: [],
     };
   } finally {
     linked.cleanup();
