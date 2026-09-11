@@ -34,6 +34,10 @@ export function StalkerSeriesProductSurface() {
   const [detail, setDetail] = useState<StalkerSeriesProductDetail | null>(null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalItems, setTotalItems] = useState<number | undefined>(undefined);
+  const [maxPageItems, setMaxPageItems] = useState<number | undefined>(undefined);
+  const [hasNextPage, setHasNextPage] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [playbackLoading, setPlaybackLoading] = useState(false);
@@ -53,6 +57,13 @@ export function StalkerSeriesProductSurface() {
   const currentRequest = (sequence: number) =>
     requestSequence.current === sequence && Boolean(session && isCurrentStalkerProductSession(session));
 
+  const resetPaging = () => {
+    setCurrentPage(1);
+    setTotalItems(undefined);
+    setMaxPageItems(undefined);
+    setHasNextPage(false);
+  };
+
   const loadCategories = async () => {
     if (!controller || !session) {
       setError("Stalker oturumu kullanılamıyor.");
@@ -71,6 +82,7 @@ export function StalkerSeriesProductSurface() {
       setDetail(null);
       setSelectedCategoryId(null);
       setSelectedSeasonId(null);
+      resetPaging();
       setScreen("categories");
     } catch (caught) {
       if (!currentRequest(request.sequence)) return;
@@ -80,7 +92,7 @@ export function StalkerSeriesProductSurface() {
     }
   };
 
-  const loadPage = async (category: StalkerSeriesProductCategory) => {
+  const loadPage = async (category: StalkerSeriesProductCategory, page: number) => {
     if (!controller || !session) return;
     const request = beginRequest();
     ownership.invalidate();
@@ -89,13 +101,16 @@ export function StalkerSeriesProductSurface() {
     setLoading(true);
     setError(null);
     setPlaybackError(null);
-    setItems([]);
     setDetail(null);
     setSelectedSeasonId(null);
     try {
-      const page = await controller.loadPage(category, request.abort.signal);
+      const result = await controller.loadPage(category, page, request.abort.signal);
       if (!currentRequest(request.sequence)) return;
-      setItems(page.items);
+      setItems(result.items);
+      setCurrentPage(result.currentPage);
+      setTotalItems(result.totalItems);
+      setMaxPageItems(result.maxPageItems);
+      setHasNextPage(result.hasNextPage);
     } catch (caught) {
       if (!currentRequest(request.sequence)) return;
       setError(visibleError(caught, "Diziler yüklenemedi."));
@@ -179,13 +194,17 @@ export function StalkerSeriesProductSurface() {
     detail={detail}
     selectedCategoryTitle={selectedCategory?.title}
     selectedSeasonId={selectedSeasonId}
+    currentPage={currentPage}
+    totalItems={totalItems}
+    maxPageItems={maxPageItems}
+    hasNextPage={hasNextPage}
     loading={loading}
     error={error}
     playbackLoading={playbackLoading}
     playbackError={playbackError}
     onRetry={() => {
       if (screen === "categories") void loadCategories();
-      else if (screen === "list" && selectedCategory) void loadPage(selectedCategory);
+      else if (screen === "list" && selectedCategory) void loadPage(selectedCategory, currentPage);
       else if (screen === "detail" && detail) {
         const item = items.find((candidate) => candidate.id === detail.seriesId) ?? { id: detail.seriesId, title: detail.title };
         void loadDetail(item);
@@ -205,12 +224,17 @@ export function StalkerSeriesProductSurface() {
       } else {
         setItems([]);
         setSelectedCategoryId(null);
+        resetPaging();
         setScreen("categories");
       }
     }}
     onSelectCategory={(id) => {
       const category = categories.find((item) => item.id === id);
-      if (category) void loadPage(category);
+      if (category) {
+        setItems([]);
+        resetPaging();
+        void loadPage(category, 1);
+      }
     }}
     onSelectSeries={(id) => {
       const item = items.find((candidate) => candidate.id === id);
@@ -218,5 +242,11 @@ export function StalkerSeriesProductSurface() {
     }}
     onSelectSeason={setSelectedSeasonId}
     onSelectEpisode={(seasonId, episodeId) => void playEpisode(seasonId, episodeId)}
+    onPreviousPage={() => {
+      if (selectedCategory && currentPage > 1) void loadPage(selectedCategory, currentPage - 1);
+    }}
+    onNextPage={() => {
+      if (selectedCategory && hasNextPage) void loadPage(selectedCategory, currentPage + 1);
+    }}
   />;
 }

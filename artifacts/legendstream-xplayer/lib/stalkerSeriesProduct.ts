@@ -3,7 +3,18 @@ import type { StalkerIsolatedSession } from "./stalkerIsolatedLogin";
 import { redactSensitiveText } from "./safeLog";
 
 export type StalkerSeriesProductCategory = { id: string; title: string };
-export type StalkerSeriesProductItem = { id: string; title: string };
+export type StalkerSeriesProductItem = {
+  id: string;
+  title: string;
+  categoryId?: string;
+  posterUrl?: string;
+  description?: string;
+  year?: string;
+  genre?: string;
+  rating?: string;
+  director?: string;
+  actors?: string;
+};
 export type StalkerSeriesProductEpisode = {
   key: string;
   id: string;
@@ -19,11 +30,22 @@ export type StalkerSeriesProductSeason = {
 export type StalkerSeriesProductDetail = {
   seriesId: string;
   title: string;
+  posterUrl?: string;
+  description?: string;
+  year?: string;
+  genre?: string;
+  rating?: string;
+  director?: string;
+  actors?: string;
   seasons: StalkerSeriesProductSeason[];
 };
 export type StalkerSeriesProductPage = {
   items: StalkerSeriesProductItem[];
-  page: 1;
+  page: number;
+  currentPage: number;
+  totalItems?: number;
+  maxPageItems?: number;
+  hasNextPage: boolean;
 };
 
 export type StalkerSeriesPlayerHandoff = {
@@ -58,6 +80,7 @@ export type StalkerSeriesPlaybackTicket = {
 
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_ROWS = 30;
+const MAX_PAGE = 10_000;
 const MAX_EPISODES_PER_SEASON = 30;
 const MAX_TOTAL_EPISODES = 120;
 const SEASON_KEYS = ["season_id", "season", "season_number", "season_num"] as const;
@@ -76,27 +99,75 @@ function objectValue(value: unknown): Record<string, unknown> | null {
     : null;
 }
 
+function envelopeObject(payload: unknown): Record<string, unknown> | null {
+  const root = objectValue(payload);
+  if (!root) return null;
+  const js = objectValue(root.js);
+  if (js) return js;
+  const data = objectValue(root.data);
+  if (data && (Array.isArray(data.data) || data.total_items != null || data.max_page_items != null)) return data;
+  return root;
+}
+
 function rowsFromEnvelope(payload: unknown): unknown[] {
   if (Array.isArray(payload)) return payload;
-  const root = objectValue(payload);
-  if (Array.isArray(root?.data)) return root.data;
-  if (Array.isArray(root?.js)) return root.js;
-  const nested = objectValue(root?.data);
-  if (Array.isArray(nested?.data)) return nested.data;
-  if (Array.isArray(nested?.items)) return nested.items;
+  const envelope = envelopeObject(payload);
+  if (!envelope) return [];
+  if (Array.isArray(envelope.data)) return envelope.data;
+  if (Array.isArray(envelope.items)) return envelope.items;
+  if (Array.isArray(envelope.js)) return envelope.js;
   return [];
 }
 
-function displayText(value: unknown): string {
-  if (typeof value === "string" && value.trim()) return redactSensitiveText(value.trim()).slice(0, 120);
+function rawText(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim()) return value.trim();
   if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return "";
+  return undefined;
+}
+
+function displayText(value: unknown): string {
+  const valueText = rawText(value);
+  return valueText ? redactSensitiveText(valueText).slice(0, 500) : "";
 }
 
 function exactScalarIdentifier(value: unknown): string | null {
-  if (typeof value === "string") return value.trim().length ? value : null;
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return null;
+  const valueText = rawText(value);
+  return valueText ?? null;
+}
+
+function numberField(row: Record<string, unknown> | null, key: string) {
+  if (!row) return undefined;
+  const value = row[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
+  return undefined;
+}
+
+function metadataFromRow(row: Record<string, unknown>) {
+  return {
+    posterUrl: rawText(row.screenshot_uri),
+    description: displayText(row.description) || undefined,
+    year: displayText(row.year) || undefined,
+    genre: displayText(row.genre) || undefined,
+    rating: displayText(row.rating) || undefined,
+    director: displayText(row.director) || undefined,
+    actors: displayText(row.actors) || undefined,
+  };
+}
+
+function mergeMetadata(base: StalkerSeriesProductItem, rows: readonly Record<string, unknown>[]) {
+  const candidates = rows.map(metadataFromRow);
+  const first = <K extends keyof ReturnType<typeof metadataFromRow>>(key: K) =>
+    base[key] || candidates.find((item) => item[key])?.[key];
+  return {
+    posterUrl: first("posterUrl"),
+    description: first("description"),
+    year: first("year"),
+    genre: first("genre"),
+    rating: first("rating"),
+    director: first("director"),
+    actors: first("actors"),
+  };
 }
 
 function seasonIdentity(row: Record<string, unknown>): string | null {
@@ -141,9 +212,11 @@ function playableUrlFromCreateLink(payload: unknown) {
   const candidates: string[] = [];
   if (typeof payload === "string") candidates.push(payload);
   const root = objectValue(payload);
-  if (root) {
+  const js = objectValue(root?.js);
+  for (const object of [root, js]) {
+    if (!object) continue;
     for (const key of ["cmd", "url", "link"] as const) {
-      const value = root[key];
+      const value = object[key];
       if (typeof value === "string") candidates.push(value);
     }
   }
@@ -214,13 +287,22 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
       return categories;
     },
 
-    async loadPage(category: StalkerSeriesProductCategory, signal?: AbortSignal): Promise<StalkerSeriesProductPage> {
+    async loadPage(
+      category: StalkerSeriesProductCategory,
+      page = 1,
+      signal?: AbortSignal,
+    ): Promise<StalkerSeriesProductPage> {
+      const requestedPage = Math.trunc(page);
+      if (requestedPage < 1 || requestedPage > MAX_PAGE) {
+        throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Series page is outside the bounded range.");
+      }
       const payload = await boundedRequest(session, {
         type: "series",
         action: "get_ordered_list",
         category: category.id,
-        p: 1,
+        p: requestedPage,
       }, signal);
+      const envelope = envelopeObject(payload);
       const seen = new Set<string>();
       const items: StalkerSeriesProductItem[] = [];
       for (const raw of rowsFromEnvelope(payload).slice(0, MAX_ROWS)) {
@@ -229,9 +311,31 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
         const id = exactScalarIdentifier(row.id ?? row.series_id);
         if (!id || seen.has(id)) continue;
         seen.add(id);
-        items.push({ id, title: displayText(row.name) || displayText(row.title) || redactSensitiveText(id).slice(0, 80) });
+        const metadata = metadataFromRow(row);
+        items.push({
+          id,
+          title: displayText(row.name) || displayText(row.title) || redactSensitiveText(id).slice(0, 80),
+          categoryId: rawText(row.category_id),
+          ...metadata,
+        });
       }
-      return { items, page: 1 };
+      const totalItems = numberField(envelope, "total_items");
+      const maxPageItems = numberField(envelope, "max_page_items");
+      const providerPage = numberField(envelope, "cur_page");
+      const currentPage = providerPage != null && providerPage >= 1 ? Math.trunc(providerPage) : requestedPage;
+      const hasNextPage = totalItems != null && maxPageItems != null && maxPageItems > 0
+        ? currentPage * maxPageItems < totalItems
+        : maxPageItems != null && maxPageItems > 0
+          ? items.length >= maxPageItems
+          : false;
+      return {
+        items,
+        page: currentPage,
+        currentPage,
+        totalItems,
+        maxPageItems,
+        hasNextPage: hasNextPage && currentPage < MAX_PAGE,
+      };
     },
 
     async loadDetail(item: StalkerSeriesProductItem, signal?: AbortSignal): Promise<StalkerSeriesProductDetail> {
@@ -242,13 +346,12 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
         p: 1,
       }, signal);
       const rows = rowsFromEnvelope(payload).slice(0, MAX_ROWS);
+      const rowObjects = rows.map(objectValue).filter((row): row is Record<string, unknown> => Boolean(row));
       const seasons: StalkerSeriesProductSeason[] = [];
       let totalEpisodes = 0;
       playbackRefs.clear();
 
-      for (const raw of rows) {
-        const row = objectValue(raw);
-        if (!row) continue;
+      for (const row of rowObjects) {
         const id = seasonIdentity(row);
         if (!id) continue;
         const cmd = typeof row.cmd === "string" && row.cmd.trim().length ? row.cmd : null;
@@ -272,7 +375,12 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
         seasons.push({ id, label: seasonLabel(row, id), episodeCount: episodes.length, episodes });
       }
 
-      return { seriesId: item.id, title: item.title, seasons };
+      return {
+        seriesId: item.id,
+        title: item.title,
+        ...mergeMetadata(item, rowObjects),
+        seasons,
+      };
     },
 
     async resolveEpisode(
@@ -302,6 +410,7 @@ export type StalkerSeriesProductController = ReturnType<typeof createStalkerSeri
 
 export const STALKER_SERIES_PRODUCT_LIMITS = {
   page: 1,
+  maxPage: MAX_PAGE,
   maxRows: MAX_ROWS,
   maxEpisodesPerSeason: MAX_EPISODES_PER_SEASON,
   maxTotalEpisodes: MAX_TOTAL_EPISODES,
