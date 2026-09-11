@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { discoverStalkerSeriesDetails, discoverStalkerSeriesEpisodes, extractStalkerSeriesHierarchy, observeStalkerSeriesPayload, probeStalkerSeriesCategories, probeStalkerSeriesCreateLink, probeStalkerSeriesPage, STALKER_SERIES_PROBE_LIMITS, type StalkerSeriesProbeItem, type StalkerSeriesSeason } from "../lib/stalkerSeriesProbe";
+import { inspectStalkerSeriesRootShape, inspectStalkerSeriesRowShape, probeStalkerSeriesPhysicalRowShape, STALKER_SERIES_D4_SHAPE_LIMITS } from "../lib/stalkerSeriesShapeProbe";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
@@ -114,6 +115,94 @@ async function main() {
   assert.equal(redacted.samplePrimitives.some((item) => item.startsWith("url=")), false);
   assert.equal(redacted.samplePrimitives.some((item) => item.startsWith("cmd=")), false);
 
+  // R16-D4: one successful Series detail request is the evidence target; no parser success is required.
+  const d4RawId = "9883:9883";
+  const d4Payload = {
+    total_items: 3,
+    max_page_items: 14,
+    cur_page: 0,
+    meta: { source: "series", marker: 7 },
+    data: [
+      {
+        id: "season-a",
+        title: "Season A",
+        year: 2022,
+        active: true,
+        nullable: null,
+        cmd: "very-sensitive-cmd",
+        stream_link: "https://secret.example/stream",
+        token: "secret-token",
+        cookie: "secret-cookie",
+        mac: "AA:BB:CC:DD:EE:FF",
+        password: "secret-password",
+        login: "secret-login",
+        episodes_blob: [{ episode_key: 1, cmd: "nested-secret" }],
+        detail: { alpha: 1, beta: "two", token: "nested-secret" },
+      },
+      { id: "season-b", name: "Season B", custom_number: 2, url: "https://secret.example/b", list: [1, 2, 3] },
+      { id: "season-c", name: "Season C", custom_number: 3, user_token: "secret-user-token", flags: { ready: true } },
+      { id: "season-d", name: "must-not-be-inspected", cmd: "fourth-secret" },
+    ],
+  };
+  const d4Harness = harness((params) => {
+    assert.deepEqual(params, { type: "series", action: "get_ordered_list", movie_id: d4RawId, p: 1 });
+    return d4Payload;
+  });
+  const d4 = await probeStalkerSeriesPhysicalRowShape(d4Harness.session, { id: d4RawId, title: "Physical Series", raw: { id: d4RawId } });
+  assert.deepEqual(d4Harness.calls, [{ type: "series", action: "get_ordered_list", movie_id: d4RawId, p: 1 }]);
+  assert.equal(d4Harness.calls[0]?.movie_id, d4RawId, "raw Series id must be forwarded byte-for-byte");
+  assert.equal(d4.observation.classification, "SUCCESS");
+  assert.equal(d4.observation.itemCount, 4);
+  assert.equal(d4.rowShapes.length, 3, "D4 must inspect at most three rows");
+  assert.deepEqual(d4.rootShape.fieldNames, ["cur_page", "data", "max_page_items", "meta", "total_items"]);
+  assert.equal(d4.rootShape.dataFieldType, "array");
+  assert.equal(d4.rootShape.rowsCount, 4);
+  assert.equal(d4.rootShape.totalItems, 3);
+  assert.equal(d4.rootShape.maxPageItems, 14);
+  assert.equal(d4.rootShape.currentPage, 0);
+  assert.deepEqual(d4.rootShape.objectFields, [{ key: "meta", fieldNames: ["marker", "source"] }]);
+
+  const row1 = d4.rowShapes[0]!;
+  assert.equal(row1.index, 1);
+  assert.deepEqual(row1.fieldNames, ["active", "cmd", "detail", "episodes_blob", "id", "login", "mac", "nullable", "password", "stream_link", "title", "token", "year"]);
+  assert.equal(row1.primitiveTypes.title, "string");
+  assert.equal(row1.primitiveTypes.year, "number");
+  assert.equal(row1.primitiveTypes.active, "boolean");
+  assert.equal(row1.primitiveTypes.nullable, "null");
+  assert.ok(row1.safePrimitives.includes("title=Season A"));
+  assert.ok(row1.safePrimitives.includes("year=2022"));
+  assert.deepEqual(row1.objectFields, [{ key: "detail", fieldNames: ["alpha", "beta", "token"] }]);
+  assert.deepEqual(row1.arrayFields, [{ key: "episodes_blob", length: 1, firstItemType: "object", firstItemFieldNames: ["cmd", "episode_key"] }]);
+  const sensitiveByKey = Object.fromEntries(row1.sensitiveFields.map((field) => [field.key, field]));
+  assert.deepEqual(sensitiveByKey.cmd, { key: "cmd", type: "string", length: "very-sensitive-cmd".length });
+  assert.deepEqual(sensitiveByKey.stream_link, { key: "stream_link", type: "string", length: "https://secret.example/stream".length });
+  assert.equal(row1.safePrimitives.join(" ").includes("very-sensitive-cmd"), false);
+  assert.equal(row1.safePrimitives.join(" ").includes("secret.example"), false);
+  assert.equal(JSON.stringify(d4.rowShapes).includes("secret-token"), false);
+  assert.equal(JSON.stringify(d4.rowShapes).includes("secret-cookie"), false);
+  assert.equal(JSON.stringify(d4.rowShapes).includes("AA:BB:CC:DD:EE:FF"), false);
+  assert.equal(JSON.stringify(d4.rowShapes).includes("secret-password"), false);
+  assert.equal(JSON.stringify(d4.rowShapes).includes("secret-login"), false);
+  assert.equal(JSON.stringify(d4.rowShapes).includes("nested-secret"), false);
+  assert.equal(JSON.stringify(d4.rowShapes).includes("must-not-be-inspected"), false);
+
+  const directRowShape = inspectStalkerSeriesRowShape({ safe_name: "Visible", authorization: "Bearer secret", link_code: "secret-link", array_safe: [{ z: 1, a: 2 }] }, 1);
+  assert.ok(directRowShape.safePrimitives.includes("safe_name=Visible"));
+  assert.deepEqual(directRowShape.sensitiveFields.map((field) => field.key), ["authorization", "link_code"]);
+  assert.deepEqual(directRowShape.arrayFields, [{ key: "array_safe", length: 1, firstItemType: "object", firstItemFieldNames: ["a", "z"] }]);
+  const rootOnly = inspectStalkerSeriesRootShape({ js: [{ arbitrary: 1 }], total: "1", data_meta: { x: 1 } });
+  assert.equal(rootOnly.rowsCount, 1);
+
+  const abortedController = new AbortController();
+  abortedController.abort();
+  const abortHarness = harness((_params, signal) => {
+    if (signal?.aborted) throw new Error("aborted");
+    return d4Payload;
+  });
+  const abortedD4 = await probeStalkerSeriesPhysicalRowShape(abortHarness.session, { id: d4RawId, title: "Abort", raw: {} }, abortedController.signal);
+  assert.equal(abortHarness.calls.length, 1);
+  assert.equal(abortedD4.observation.classification, "ERROR");
+
   assert.equal(STALKER_SERIES_PROBE_LIMITS.maxEvidenceCandidates, 3);
   assert.equal(STALKER_SERIES_PROBE_LIMITS.maxEpisodeListCandidates, 2);
   assert.equal(STALKER_SERIES_PROBE_LIMITS.maxPlaybackCandidates, 2);
@@ -121,8 +210,15 @@ async function main() {
   assert.equal(STALKER_SERIES_PROBE_LIMITS.maxSeasonSelections, 1);
   assert.equal(STALKER_SERIES_PROBE_LIMITS.maxEpisodeSelections, 1);
   assert.equal(STALKER_SERIES_PROBE_LIMITS.timeoutMs, 12_000);
+  assert.equal(STALKER_SERIES_D4_SHAPE_LIMITS.page, 1);
+  assert.equal(STALKER_SERIES_D4_SHAPE_LIMITS.maxRowsInspected, 3);
+  assert.equal(STALKER_SERIES_D4_SHAPE_LIMITS.maxDetailRequests, 1);
+  assert.equal(STALKER_SERIES_D4_SHAPE_LIMITS.timeoutMs, 12_000);
 
-  const probeSource = source("lib/stalkerSeriesProbe.ts"), panelSource = source("components/stalker/StalkerSeriesProbePanel.tsx"), productSource = source("components/product/ProductLiveSurface.tsx");
+  const probeSource = source("lib/stalkerSeriesProbe.ts");
+  const d4Source = source("lib/stalkerSeriesShapeProbe.ts");
+  const panelSource = source("components/stalker/StalkerSeriesProbePanel.tsx");
+  const productSource = source("components/product/ProductLiveSurface.tsx");
   for (const forbidden of ["get_all_channels", "get_all_movies", "get_all_series", "Promise.all", "while ("]) assert.equal(probeSource.includes(forbidden), false, `Series probe must not contain ${forbidden}`);
   assert.doesNotMatch(probeSource, /\.split\(\s*["']:["']\s*\)/);
   assert.match(probeSource, /movie_id: item\.id/);
@@ -135,17 +231,28 @@ async function main() {
   assert.match(probeSource, /linkedSignal/);
   assert.match(probeSource, /SERIES_PROBE_REQUEST/);
   assert.match(probeSource, /SERIES_PROBE_RESPONSE/);
-  assert.match(panelSource, /R16-D3 Diagnostic only/);
+
+  assert.match(d4Source, /type: "series", action: "get_ordered_list", movie_id: item\.id, p: 1/);
+  assert.doesNotMatch(d4Source, /type: "vod"/);
+  assert.doesNotMatch(d4Source, /create_link/);
+  assert.doesNotMatch(d4Source, /get_all|get_series_info|get_episodes/);
+  assert.doesNotMatch(d4Source, /atob|btoa|Buffer\.from\([^\n]*base64/i);
+  assert.doesNotMatch(d4Source, /new URL|streamUrl\s*=|\/series\/\$\{|\/episode\/\$\{/);
+  assert.match(d4Source, /cmd\|url\|uri\|token\|auth\|authorization\|cookie\|mac\|password\|secret\|credential\|user\|login\|stream\|link/);
+  assert.match(d4Source, /slice\(0, D4_MAX_ROWS\)/);
+  assert.match(d4Source, /D4_TIMEOUT_MS = 12_000/);
+
+  assert.match(panelSource, /R16-D4 Diagnostic only/);
+  assert.match(panelSource, /R16-D4 · SERIES DETAIL ROW SHAPE/);
   assert.match(panelSource, /BP1 · SERIES CATEGORIES/);
   assert.match(panelSource, /BP2 · SERIES LIST p=1/);
-  assert.match(panelSource, /BP3 · SEASONS/);
-  assert.match(panelSource, /BP4 · EPISODES/);
-  assert.match(panelSource, /BP5 · PLAYBACK DIALECT/);
-  assert.match(panelSource, /season fields=/);
-  assert.doesNotMatch(panelSource, /NativeVideoPlayer/);
+  assert.match(panelSource, /BP3 · R16-D4 SERIES DETAIL ROW SHAPE/);
+  assert.match(panelSource, /no VOD fallback · no create_link/);
+  assert.match(panelSource, /sensitive fields=/);
+  assert.doesNotMatch(panelSource, /BP4 · EPISODES|BP5 · PLAYBACK DIALECT|NativeVideoPlayer/);
   assert.doesNotMatch(productSource, /section === "series"|setSection\("series"\)|label="Diziler"/);
   assert.match(productSource, /StalkerSeriesProbePanel/);
   assert.match(source("package.json"), /stalkerR16DSeriesProbeScenarios/);
-  console.log("stalker R16-D/R16-D2/R16-D3 bounded Series probe scenarios passed");
+  console.log("stalker R16-D/R16-D2/R16-D3/R16-D4 bounded Series probe scenarios passed");
 }
 main().catch((error) => { console.error(error); process.exit(1); });
