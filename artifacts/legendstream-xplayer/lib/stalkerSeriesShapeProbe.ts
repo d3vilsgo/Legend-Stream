@@ -40,15 +40,36 @@ export type StalkerSeriesRootShape = {
   objectFields: StalkerSeriesObjectFieldShape[];
 };
 
+export type StalkerSeriesEmbeddedHierarchyClassification = "EMBEDDED_HIERARCHY_FOUND" | "SEASONS_ONLY" | "EMPTY" | "UNSUPPORTED";
+
+export type StalkerSeriesEmbeddedHierarchySeason = {
+  id: string;
+  label: string;
+  episodeIds: string[];
+  episodeCount: number;
+};
+
+export type StalkerSeriesEmbeddedHierarchy = {
+  classification: StalkerSeriesEmbeddedHierarchyClassification;
+  seasons: StalkerSeriesEmbeddedHierarchySeason[];
+  totalSeasons: number;
+  totalEmbeddedEpisodes: number;
+};
+
 export type StalkerSeriesPhysicalShapeProbe = {
   observation: StalkerSeriesProbeObservation;
   rootShape: StalkerSeriesRootShape;
   rowShapes: StalkerSeriesRowShape[];
+  hierarchy: StalkerSeriesEmbeddedHierarchy;
 };
 
 const D4_TIMEOUT_MS = 12_000;
 const D4_MAX_ROWS = 3;
+const D5_MAX_SEASON_ROWS = 30;
+const D5_MAX_EPISODE_IDS_PER_SEASON = 30;
+const D5_MAX_TOTAL_EPISODE_IDS = 120;
 const sensitiveFieldName = /(?:cmd|url|uri|token|auth|authorization|cookie|mac|password|secret|credential|user|login|stream|link)/i;
+const seasonIdentityKeys = ["season_id", "season", "season_number", "season_num"] as const;
 
 type Params = Record<string, string | number | boolean | undefined>;
 
@@ -78,6 +99,75 @@ function rowsFromEnvelope(payload: unknown): unknown[] {
 function finiteNumber(value: unknown) {
   const parsed = typeof value === "number" ? value : typeof value === "string" && value.trim() ? Number(value) : Number.NaN;
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function safeIdentifier(value: unknown): string | null {
+  if (typeof value === "string") return value.trim() ? value : null;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return null;
+}
+
+function seasonIdentity(row: Record<string, unknown>): string | null {
+  for (const key of seasonIdentityKeys) {
+    const value = safeIdentifier(row[key]);
+    if (value) return value;
+  }
+  const label = typeof row.name === "string" ? row.name : typeof row.title === "string" ? row.title : "";
+  const match = /^season\s+([^\s]+)$/i.exec(label.trim());
+  return match?.[1] ? match[1] : null;
+}
+
+function seasonLabel(row: Record<string, unknown>, id: string) {
+  const candidate = typeof row.name === "string" && row.name.trim()
+    ? row.name
+    : typeof row.title === "string" && row.title.trim()
+      ? row.title
+      : `Season ${id}`;
+  return redactSensitiveText(candidate).slice(0, 80);
+}
+
+export function extractStalkerSeriesEmbeddedHierarchy(payload: unknown): StalkerSeriesEmbeddedHierarchy {
+  const rows = rowsFromEnvelope(payload).slice(0, D5_MAX_SEASON_ROWS);
+  if (!rows.length) return { classification: "EMPTY", seasons: [], totalSeasons: 0, totalEmbeddedEpisodes: 0 };
+
+  const seasons = new Map<string, { id: string; label: string; episodeIds: string[]; seen: Set<string> }>();
+  let totalEmbeddedEpisodes = 0;
+
+  for (const raw of rows) {
+    const row = asObject(raw);
+    if (!row) continue;
+    const id = seasonIdentity(row);
+    if (!id) continue;
+    let season = seasons.get(id);
+    if (!season) {
+      season = { id, label: seasonLabel(row, id), episodeIds: [], seen: new Set<string>() };
+      seasons.set(id, season);
+    }
+
+    if (!Array.isArray(row.series)) continue;
+    for (const rawEpisodeId of row.series.slice(0, D5_MAX_EPISODE_IDS_PER_SEASON)) {
+      if (totalEmbeddedEpisodes >= D5_MAX_TOTAL_EPISODE_IDS) break;
+      const episodeId = safeIdentifier(rawEpisodeId);
+      if (!episodeId || season.seen.has(episodeId)) continue;
+      season.seen.add(episodeId);
+      season.episodeIds.push(episodeId);
+      totalEmbeddedEpisodes += 1;
+    }
+  }
+
+  const safeSeasons = [...seasons.values()].map(({ id, label, episodeIds }) => ({
+    id,
+    label,
+    episodeIds,
+    episodeCount: episodeIds.length,
+  }));
+  if (!safeSeasons.length) return { classification: "UNSUPPORTED", seasons: [], totalSeasons: 0, totalEmbeddedEpisodes: 0 };
+  return {
+    classification: totalEmbeddedEpisodes > 0 ? "EMBEDDED_HIERARCHY_FOUND" : "SEASONS_ONLY",
+    seasons: safeSeasons,
+    totalSeasons: safeSeasons.length,
+    totalEmbeddedEpisodes,
+  };
 }
 
 function inspectSensitiveField(key: string, value: unknown): StalkerSeriesSensitiveFieldShape {
@@ -204,6 +294,7 @@ export async function probeStalkerSeriesPhysicalRowShape(
           : "EMPTY",
     };
     const rootShape = inspectStalkerSeriesRootShape(payload);
+    const hierarchy = extractStalkerSeriesEmbeddedHierarchy(payload);
     safeLog.info("SERIES_D4_SHAPE_RESPONSE", {
       classification: observation.classification,
       item_count: observation.itemCount,
@@ -213,7 +304,12 @@ export async function probeStalkerSeriesPhysicalRowShape(
       inspected_rows: rowShapes.length,
       root_fields: rootShape.fieldNames,
     });
-    return { observation, rootShape, rowShapes };
+    safeLog.info("SERIES_D5_EMBEDDED_HIERARCHY", {
+      classification: hierarchy.classification,
+      season_count: hierarchy.totalSeasons,
+      embedded_episode_count: hierarchy.totalEmbeddedEpisodes,
+    });
+    return { observation, rootShape, rowShapes, hierarchy };
   } catch (caught) {
     const message = redactSensitiveText(caught instanceof Error ? caught.message : String(caught));
     return {
@@ -228,6 +324,7 @@ export async function probeStalkerSeriesPhysicalRowShape(
       },
       rootShape: { fieldNames: [], dataFieldType: "absent", rowsCount: 0, objectFields: [] },
       rowShapes: [],
+      hierarchy: { classification: "EMPTY", seasons: [], totalSeasons: 0, totalEmbeddedEpisodes: 0 },
     };
   } finally {
     linked.cleanup();
@@ -239,4 +336,11 @@ export const STALKER_SERIES_D4_SHAPE_LIMITS = {
   maxRowsInspected: D4_MAX_ROWS,
   maxDetailRequests: 1,
   timeoutMs: D4_TIMEOUT_MS,
+} as const;
+
+export const STALKER_SERIES_D5_HIERARCHY_LIMITS = {
+  maxSeasonRows: D5_MAX_SEASON_ROWS,
+  maxEpisodeIdsPerSeason: D5_MAX_EPISODE_IDS_PER_SEASON,
+  maxTotalEpisodeIds: D5_MAX_TOTAL_EPISODE_IDS,
+  additionalRequests: 0,
 } as const;

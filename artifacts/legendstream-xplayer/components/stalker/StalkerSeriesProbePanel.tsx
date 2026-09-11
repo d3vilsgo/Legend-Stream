@@ -131,6 +131,17 @@ export function StalkerSeriesProbePanel() {
     </View> : null}
 
     {shapeProbe?.rowShapes.map((row) => <RowShape key={row.index} value={row} />)}
+
+    {d4Pass && shapeProbe ? <View style={[styles.observation, { borderColor: colors.border, backgroundColor: colors.card }]}>
+      <Text style={[styles.strong, { color: colors.foreground }]}>BP4 · EMBEDDED SERIES HIERARCHY</Text>
+      <Text style={{ color: colors.mutedForeground }}>classification={shapeProbe.hierarchy.classification}</Text>
+      <Text style={{ color: colors.mutedForeground }}>seasons={shapeProbe.hierarchy.totalSeasons} · embedded episodes={shapeProbe.hierarchy.totalEmbeddedEpisodes} · additional requests=0</Text>
+      {shapeProbe.hierarchy.seasons.map((season) => <View key={season.id} style={styles.hierarchySeason}>
+        <Text style={[styles.strong, { color: colors.foreground }]}>{season.label}</Text>
+        <Text style={{ color: colors.mutedForeground }}>season_id={season.id} · episodes={season.episodeCount}</Text>
+        <Text style={{ color: colors.mutedForeground }}>ids=[{season.episodeIds.join(",")}]</Text>
+      </View>)}
+    </View> : null}
   </View>;
 }
 
@@ -142,4 +153,5 @@ const styles = StyleSheet.create({
   list: { gap: 6 },
   row: { borderWidth: 1, borderRadius: 10, padding: 10 },
   observation: { borderWidth: 1, borderRadius: 10, padding: 10, gap: 3 },
+  hierarchySeason: { gap: 2, paddingTop: 6 },
 });
