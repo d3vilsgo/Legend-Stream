@@ -341,12 +341,12 @@ export async function probeStalkerSeriesPhysicalRowShape(
         hasCmd: true,
         cmdType: "string",
         cmdLength: rawCmd.length,
-        probe: (episodeId, probeSignal) => probeStalkerSeriesCreateLink(
+        probe: async (episodeId, probeSignal) => (await probeStalkerSeriesCreateLink(
           session,
           { id: season.id, label: season.label, rows: [{ cmd: rawCmd }] },
           { id: episodeId, label: "Episode " + episodeId, seasonId: season.id, row: {} },
           probeSignal,
-        ),
+        )).observation,
       });
     }
     safeLog.info("SERIES_D4_SHAPE_RESPONSE", {
