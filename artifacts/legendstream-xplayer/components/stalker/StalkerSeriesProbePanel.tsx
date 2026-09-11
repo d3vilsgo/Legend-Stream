@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { FocusButton } from "@/components/FocusButton";
+import { StalkerSeriesPaginationProbePanel } from "@/components/stalker/StalkerSeriesPaginationProbePanel";
 import { useColors } from "@/hooks/useColors";
 import { readLatestIsolatedStalkerSessionForProbe } from "@/lib/stalkerIsolatedLogin";
 import { probeStalkerSeriesCategories, probeStalkerSeriesPage, type StalkerSeriesCreateLinkObservation, type StalkerSeriesProbeCategory, type StalkerSeriesProbeItem, type StalkerSeriesProbeObservation } from "@/lib/stalkerSeriesProbe";
@@ -119,6 +120,8 @@ export function StalkerSeriesProbePanel() {
   return <View style={[styles.panel, { borderColor: colors.primary, backgroundColor: colors.card }]}>
     <Text style={[styles.title, { color: colors.foreground }]}>R16-D4 · SERIES DETAIL ROW SHAPE</Text>
     <Text style={{ color: colors.mutedForeground }}>Shape extraction only · no VOD fallback · no create_link · p=1</Text>
+
+    <StalkerSeriesPaginationProbePanel />
 
     <FocusButton label={busy ? "Çalışıyor" : "BP1 · SERIES CATEGORIES"} disabled={busy || categoryStarted.current} onPress={() => void runCategories()} />
     <Observation title="BP1" value={categoryObservation} />
