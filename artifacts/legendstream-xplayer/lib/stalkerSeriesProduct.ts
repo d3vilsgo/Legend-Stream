@@ -1,6 +1,7 @@
 import { StalkerPortalError } from "./stalkerPortal";
 import type { StalkerIsolatedSession } from "./stalkerIsolatedLogin";
 import { redactSensitiveText } from "./safeLog";
+import { yieldToUi } from "./cooperative";
 
 export type StalkerSeriesProductCategory = { id: string; title: string };
 export type StalkerSeriesProductItem = {
@@ -180,12 +181,66 @@ function seasonIdentity(row: Record<string, unknown>): string | null {
     if (id) return id;
   }
   const label = displayText(row.name) || displayText(row.title);
-  const match = /^season\s+([^\s]+)$/i.exec(label);
+  const match = /^(?:season|sezon)\s+([^\s]+)$/i.exec(label);
   return match?.[1] ?? null;
 }
 
 function seasonLabel(row: Record<string, unknown>, id: string) {
-  return displayText(row.name) || displayText(row.title) || `Season ${redactSensitiveText(id).slice(0, 40)}`;
+  const providerLabel = displayText(row.name) || displayText(row.title);
+  const numeric = /^\d+$/.test(id) ? Number(id) : undefined;
+  if (numeric != null && Number.isFinite(numeric)) return numeric === 0 ? "Özel Bölümler" : `Sezon ${numeric}`;
+  const match = /^(?:season|sezon)\s+(\d+)$/i.exec(providerLabel);
+  if (match) return Number(match[1]) === 0 ? "Özel Bölümler" : `Sezon ${Number(match[1])}`;
+  return providerLabel || `Sezon ${redactSensitiveText(id).slice(0, 40)}`;
+}
+
+function seasonOrdinal(season: StalkerSeriesProductSeason) {
+  const id = season.id.trim();
+  if (/^\d+$/.test(id)) return Number(id);
+  const match = /(?:season|sezon)\s*(\d+)/i.exec(season.label);
+  return match ? Number(match[1]) : null;
+}
+
+export function sortStalkerSeriesSeasons(seasons: readonly StalkerSeriesProductSeason[]) {
+  return [...seasons].sort((a, b) => {
+    const aNumber = seasonOrdinal(a);
+    const bNumber = seasonOrdinal(b);
+    const aNumeric = aNumber != null && aNumber > 0;
+    const bNumeric = bNumber != null && bNumber > 0;
+    if (aNumeric && bNumeric) return aNumber - bNumber;
+    if (aNumeric) return -1;
+    if (bNumeric) return 1;
+    const aZero = aNumber === 0;
+    const bZero = bNumber === 0;
+    if (aZero !== bZero) return aZero ? -1 : 1;
+    return a.label.localeCompare(b.label, "tr", { numeric: true, sensitivity: "base" });
+  });
+}
+
+export function firstStalkerSeriesSeasonId(seasons: readonly StalkerSeriesProductSeason[]) {
+  const firstNumeric = seasons.find((season) => {
+    const ordinal = seasonOrdinal(season);
+    return ordinal != null && ordinal > 0;
+  });
+  return firstNumeric?.id ?? seasons[0]?.id ?? null;
+}
+
+export function mergeStalkerSeriesItems(
+  existing: readonly StalkerSeriesProductItem[],
+  incoming: readonly StalkerSeriesProductItem[],
+) {
+  const seen = new Set(existing.map((item) => item.id));
+  const merged = [...existing];
+  for (const item of incoming) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    merged.push(item);
+  }
+  return merged;
+}
+
+function normalizedSearchText(value: string) {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("tr-TR").trim();
 }
 
 function linkedTimeoutSignal(external?: AbortSignal) {
@@ -279,7 +334,7 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
       const payload = await boundedRequest(session, { type: "series", action: "get_categories" }, signal);
       const seen = new Set<string>();
       const categories: StalkerSeriesProductCategory[] = [];
-      for (const raw of rowsFromEnvelope(payload).slice(0, MAX_ROWS)) {
+      for (const raw of rowsFromEnvelope(payload)) {
         const row = objectValue(raw);
         if (!row) continue;
         const id = exactScalarIdentifier(row.id ?? row.category_id ?? row.genre_id);
@@ -390,7 +445,7 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
         seriesId: item.id,
         title: item.title,
         ...mergeMetadata(item, rowObjects),
-        seasons,
+        seasons: sortStalkerSeriesSeasons(seasons),
         hierarchyTruncated,
       };
     },
@@ -419,6 +474,44 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
 }
 
 export type StalkerSeriesProductController = ReturnType<typeof createStalkerSeriesProductController>;
+
+export function findStalkerSeriesGlobalCategory(categories: readonly StalkerSeriesProductCategory[]) {
+  return categories.find((category) => {
+    const title = normalizedSearchText(category.title);
+    return category.id.trim() === "*" || title === "all" || title === "tumu" || title === "tum";
+  }) ?? null;
+}
+
+export async function searchStalkerSeriesCatalog(
+  controller: StalkerSeriesProductController,
+  categories: readonly StalkerSeriesProductCategory[],
+  query: string,
+  signal?: AbortSignal,
+) {
+  const needle = normalizedSearchText(query);
+  if (!needle) return [];
+  const globalCategory = findStalkerSeriesGlobalCategory(categories);
+  if (!globalCategory) throw new Error("Global Series search requires the provider All category.");
+
+  const results: StalkerSeriesProductItem[] = [];
+  const seen = new Set<string>();
+  let page = 1;
+  while (page <= MAX_PAGE) {
+    if (signal?.aborted) throw new Error("Series search aborted.");
+    const result = await controller.loadPage(globalCategory, page, signal);
+    for (const item of result.items) {
+      if (seen.has(item.id)) continue;
+      seen.add(item.id);
+      if (normalizedSearchText(item.title).includes(needle)) results.push(item);
+    }
+    if (!result.hasNextPage) break;
+    const nextPage = Math.max(page + 1, result.currentPage + 1);
+    if (nextPage <= page) break;
+    page = nextPage;
+    await yieldToUi();
+  }
+  return results;
+}
 
 export const STALKER_SERIES_PRODUCT_LIMITS = {
   page: 1,
