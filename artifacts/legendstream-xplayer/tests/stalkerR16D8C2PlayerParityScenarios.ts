@@ -9,6 +9,7 @@ const nativePlayer = source("components/NativeVideoPlayer.tsx");
 const compatibilityPlayer = source("components/CompatibilityVideoPlayerV2.tsx");
 const vlcSurface = source("components/player/VlcPlaybackSurface.tsx");
 const playerChrome = source("components/player/PlayerChrome.tsx");
+const playerChromeV2 = source("components/player/PlayerChromeV2.tsx");
 const home = source("components/OptimizedHomeScreenPaged.tsx");
 const vod = source("components/stalker/StalkerVodSurface.tsx");
 const series = source("components/stalker/StalkerSeriesProductSurface.tsx");
@@ -51,13 +52,21 @@ assert.match(compatibilityPlayer, /snapshot\.kind !== "movie" && snapshot\.kind 
 assert.match(compatibilityPlayer, /saveProgress\(/);
 assert.match(compatibilityPlayer, /snapshot\.kind === "movie" \|\| snapshot\.kind === "episode"/);
 
-// N: audio/subtitle track selectors remain wired through the same shell.
-assert.match(compatibilityPlayer, /audioTracks=\{audioTracks\}/);
-assert.match(compatibilityPlayer, /textTracks=\{textTracks\}/);
-assert.match(compatibilityPlayer, /onSelectSubtitle/);
-assert.match(compatibilityPlayer, /onSelectAudio/);
-assert.match(playerChrome, /audioTracks/);
-assert.match(playerChrome, /textTracks/);
+// N: audio/subtitle track selectors remain wired end-to-end through the delegated chrome contract.
+assert.match(compatibilityPlayer, /audioTracks\s*=\s*\{\s*audioTracks\s*\}/);
+assert.match(compatibilityPlayer, /textTracks\s*=\s*\{\s*textTracks\s*\}/);
+assert.match(compatibilityPlayer, /onSelectSubtitle\s*=\s*\{[^}]+\}/);
+assert.match(compatibilityPlayer, /onSelectAudio\s*=\s*\{[^}]+\}/);
+assert.match(playerChrome, /React\.ComponentProps\s*<\s*typeof\s+PlayerChromeV2\s*>/);
+assert.match(playerChrome, /<PlayerChromeV2[\s\S]*?\{\.\.\.chrome\}/);
+assert.match(playerChromeV2, /audioTracks\s*:\s*PlayerTrack\[\]/);
+assert.match(playerChromeV2, /textTracks\s*:\s*PlayerTrack\[\]/);
+assert.match(playerChromeV2, /onSelectSubtitle\s*:\s*\(id:\s*number\)\s*=>\s*void/);
+assert.match(playerChromeV2, /onSelectAudio\s*:\s*\(id:\s*number\)\s*=>\s*void/);
+assert.match(playerChromeV2, /props\.audioTracks/);
+assert.match(playerChromeV2, /props\.textTracks/);
+assert.match(playerChromeV2, /props\.onSelectSubtitle\s*\(/);
+assert.match(playerChromeV2, /props\.onSelectAudio\s*\(/);
 
 // O + shell parity: shared orientation, chrome timing, background tap, error and exit lifecycle.
 assert.match(compatibilityPlayer, /usePlayerOrientation\(autoFullscreen\)/);
