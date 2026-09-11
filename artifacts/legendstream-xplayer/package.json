@@ -96,7 +96,7 @@
     "expo-clipboard": "~8.0.8",
     "expo-crypto": "~15.0.9",
     "expo-document-picker": "~14.0.8",
-    "expo-secure-store": "~15.0.9",
+    "expo-secure-store": "~15.0.8",
     "expo-sharing": "~14.0.8",
     "react-native-vlc-media-player": "1.0.98"
   }
