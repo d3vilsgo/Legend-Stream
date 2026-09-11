@@ -164,7 +164,7 @@ async function main() {
 
   const row1 = d4.rowShapes[0]!;
   assert.equal(row1.index, 1);
-  assert.deepEqual(row1.fieldNames, ["active", "cmd", "detail", "episodes_blob", "id", "login", "mac", "nullable", "password", "stream_link", "title", "token", "year"]);
+  assert.deepEqual(row1.fieldNames, ["active", "cmd", "cookie", "detail", "episodes_blob", "id", "login", "mac", "nullable", "password", "stream_link", "title", "token", "year"]);
   assert.equal(row1.primitiveTypes.title, "string");
   assert.equal(row1.primitiveTypes.year, "number");
   assert.equal(row1.primitiveTypes.active, "boolean");
