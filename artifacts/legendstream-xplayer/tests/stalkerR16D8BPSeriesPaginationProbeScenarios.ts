@@ -18,11 +18,12 @@ const fakeSecrets = [
   "FAKE_MAC_SECRET",
   "https://secret.invalid/private.jpg?token=FAKE_URL_SECRET",
   "Bearer FAKE_AUTH_SECRET",
+  "https://secret.invalid/poster.jpg?token=FAKE_POSTER_SECRET",
 ];
 
 const pageRows = [
   [
-    { id: "series:001", name: "Alpha", description: "A", year: "2024", cover_image: "https://cdn.invalid/a.jpg", cmd: fakeSecrets[0], token: fakeSecrets[1], cookie: fakeSecrets[2], mac: fakeSecrets[3], url: fakeSecrets[4], authorization: fakeSecrets[5] },
+    { id: "series:001", name: "Alpha", description: "A", year: "2024", cover_image: "https://cdn.invalid/a.jpg", poster_uri: fakeSecrets[6], cmd: fakeSecrets[0], token: fakeSecrets[1], cookie: fakeSecrets[2], mac: fakeSecrets[3], url: fakeSecrets[4], authorization: fakeSecrets[5] },
     { id: "series:002", name: "Beta", description: "", year: "2023", cover_image: "/images/b.jpg" },
     { id: "series:003", name: "Gamma", description: "C", rating: 8.2, cover_image: "" },
   ],
@@ -99,10 +100,17 @@ async function main() {
   assert.deepEqual(description.primitiveTypes, ["string"]);
   const cmd = inventory.fieldInventory.find((field) => field.field === "cmd")!;
   assert.equal(cmd.sensitive, true);
+  assert.equal(cmd.nonEmptyCount, 0);
+  assert.deepEqual(cmd.primitiveTypes, []);
+  const posterUri = inventory.fieldInventory.find((field) => field.field === "poster_uri")!;
+  assert.equal(posterUri.sensitive, true);
+  assert.equal(posterUri.nonEmptyCount, 0);
+  assert.deepEqual(posterUri.primitiveTypes, []);
   const cover = inventory.imageCandidates.find((field) => field.field === "cover_image")!;
   assert.equal(cover.presentCount, 3);
   assert.equal(cover.nonEmptyCount, 2);
   assert.equal(cover.valueShape, "mixed");
+  assert.equal(inventory.imageCandidates.some((field) => field.field === "poster_uri"), false);
   assert.equal(inventory.imageCandidates.some((field) => field.field === "screenshot_uri"), false);
 
   assert.equal(evidence.metadata.description.observed, true);

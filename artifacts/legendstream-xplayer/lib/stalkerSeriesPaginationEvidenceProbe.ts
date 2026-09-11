@@ -150,9 +150,14 @@ export function buildSeriesFieldInventory(rows: readonly Record<string, unknown>
   const fields = new Map<string, { present: number; nonEmpty: number; types: Set<string>; sensitive: boolean; imageShapes: Set<Exclude<ValueShape, "mixed">> }>();
   for (const row of inspected) {
     for (const field of Object.keys(row).sort()) {
-      const value = row[field];
-      const entry = fields.get(field) ?? { present: 0, nonEmpty: 0, types: new Set<string>(), sensitive: SENSITIVE_FIELD.test(field), imageShapes: new Set<Exclude<ValueShape, "mixed">>() };
+      const sensitive = SENSITIVE_FIELD.test(field);
+      const entry = fields.get(field) ?? { present: 0, nonEmpty: 0, types: new Set<string>(), sensitive, imageShapes: new Set<Exclude<ValueShape, "mixed">>() };
       entry.present += 1;
+      if (entry.sensitive) {
+        fields.set(field, entry);
+        continue;
+      }
+      const value = row[field];
       if (isNonEmpty(value)) entry.nonEmpty += 1;
       entry.types.add(valueType(value));
       if (IMAGE_FIELD.test(field)) entry.imageShapes.add(classifyImageValue(value));
@@ -167,7 +172,7 @@ export function buildSeriesFieldInventory(rows: readonly Record<string, unknown>
     sensitive: value.sensitive,
   }));
   const imageCandidates: StalkerSeriesImageCandidate[] = [...fields.entries()]
-    .filter(([field]) => IMAGE_FIELD.test(field))
+    .filter(([field, value]) => IMAGE_FIELD.test(field) && !value.sensitive)
     .map(([field, value]) => ({
       field,
       presentCount: value.present,
