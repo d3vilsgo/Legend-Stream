@@ -1,5 +1,6 @@
 import { StalkerPortalError } from "./stalkerPortal";
 import type { StalkerIsolatedSession } from "./stalkerIsolatedLogin";
+import { yieldToUi } from "./cooperative";
 
 export type StalkerVodCategory = {
   id: string;
@@ -57,6 +58,10 @@ function numberField(row: Record<string, unknown> | null, key: string) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string" && value.trim() && Number.isFinite(Number(value))) return Number(value);
   return undefined;
+}
+
+function normalizedSearchText(value: string) {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("tr-TR").trim();
 }
 
 export function normalizeStalkerVodCategories(payload: unknown): StalkerVodCategory[] {
@@ -119,6 +124,24 @@ export function normalizeStalkerVodPage(payload: unknown, requestedPage: number)
   };
 }
 
+export function mergeStalkerVodItems(existing: readonly StalkerVodItem[], incoming: readonly StalkerVodItem[]) {
+  const seen = new Set(existing.map((item) => item.portalId));
+  const merged = [...existing];
+  for (const item of incoming) {
+    if (seen.has(item.portalId)) continue;
+    seen.add(item.portalId);
+    merged.push(item);
+  }
+  return merged;
+}
+
+export function findStalkerVodGlobalCategory(categories: readonly StalkerVodCategory[]) {
+  return categories.find((category) => {
+    const title = normalizedSearchText(category.title);
+    return category.id.trim() === "*" || title === "all" || title === "tumu" || title === "tum";
+  }) ?? null;
+}
+
 export async function loadStalkerVodCategories(
   session: StalkerIsolatedSession,
   input: { signal?: AbortSignal } = {},
@@ -151,6 +174,37 @@ export async function loadStalkerVodPage(
     { providerId: "stalker-vod-page" },
   );
   return normalizeStalkerVodPage(payload, requestedPage);
+}
+
+export async function searchStalkerVodCatalog(
+  session: StalkerIsolatedSession,
+  categories: readonly StalkerVodCategory[],
+  query: string,
+  input: { signal?: AbortSignal } = {},
+) {
+  const needle = normalizedSearchText(query);
+  if (!needle) return [];
+  const globalCategory = findStalkerVodGlobalCategory(categories);
+  if (!globalCategory) throw new Error("Global VOD search requires the provider All category.");
+
+  const results: StalkerVodItem[] = [];
+  const seen = new Set<string>();
+  let page = 1;
+  while (page <= STALKER_VOD_MAX_PAGE) {
+    if (input.signal?.aborted) throw new Error("VOD search aborted.");
+    const result = await loadStalkerVodPage(session, globalCategory, page, input);
+    for (const item of result.items) {
+      if (seen.has(item.portalId)) continue;
+      seen.add(item.portalId);
+      if (normalizedSearchText(item.title).includes(needle)) results.push(item);
+    }
+    if (!result.hasNextPage) break;
+    const nextPage = Math.max(page + 1, result.currentPage + 1);
+    if (nextPage <= page) break;
+    page = nextPage;
+    await yieldToUi();
+  }
+  return results;
 }
 
 export function normalizeStalkerVodResolvedUrl(payload: unknown) {
