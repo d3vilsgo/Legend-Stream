@@ -205,7 +205,7 @@ async function main() {
 
   assert.equal(STALKER_SERIES_PROBE_LIMITS.maxEvidenceCandidates, 3);
   assert.equal(STALKER_SERIES_PROBE_LIMITS.maxEpisodeListCandidates, 2);
-  assert.equal(STALKER_SERIES_PROBE_LIMITS.maxPlaybackCandidates, 2);
+  assert.equal(STALKER_SERIES_PROBE_LIMITS.maxPlaybackCandidates, 1);
   assert.equal(STALKER_SERIES_PROBE_LIMITS.page, 1);
   assert.equal(STALKER_SERIES_PROBE_LIMITS.maxSeasonSelections, 1);
   assert.equal(STALKER_SERIES_PROBE_LIMITS.maxEpisodeSelections, 1);
@@ -249,7 +249,8 @@ async function main() {
   assert.match(panelSource, /BP3 · R16-D4 SERIES DETAIL ROW SHAPE/);
   assert.match(panelSource, /no VOD fallback · no create_link/);
   assert.match(panelSource, /sensitive fields=/);
-  assert.doesNotMatch(panelSource, /BP4 · EPISODES|BP5 · PLAYBACK DIALECT|NativeVideoPlayer/);
+  assert.match(panelSource, /BP5 · SERIES EPISODE CREATE_LINK PROBE/);
+  assert.doesNotMatch(panelSource, /BP5 · PLAYBACK DIALECT|NativeVideoPlayer/);
   assert.doesNotMatch(productSource, /section === "series"|setSection\("series"\)|label="Diziler"/);
   assert.match(productSource, /StalkerSeriesProbePanel/);
   assert.match(source("package.json"), /stalkerR16DSeriesProbeScenarios/);
