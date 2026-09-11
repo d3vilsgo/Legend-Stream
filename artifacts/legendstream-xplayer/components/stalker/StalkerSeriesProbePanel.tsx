@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { FocusButton } from "@/components/FocusButton";
 import { useColors } from "@/hooks/useColors";
 import { readLatestIsolatedStalkerSessionForProbe } from "@/lib/stalkerIsolatedLogin";
-import { probeStalkerSeriesCategories, probeStalkerSeriesPage, type StalkerSeriesProbeCategory, type StalkerSeriesProbeItem, type StalkerSeriesProbeObservation } from "@/lib/stalkerSeriesProbe";
+import { probeStalkerSeriesCategories, probeStalkerSeriesPage, type StalkerSeriesCreateLinkObservation, type StalkerSeriesProbeCategory, type StalkerSeriesProbeItem, type StalkerSeriesProbeObservation } from "@/lib/stalkerSeriesProbe";
 import { probeStalkerSeriesPhysicalRowShape, type StalkerSeriesPhysicalShapeProbe, type StalkerSeriesRowShape } from "@/lib/stalkerSeriesShapeProbe";
 
 function Observation({ title, value }: { title: string; value: StalkerSeriesProbeObservation | null }) {
@@ -41,9 +41,13 @@ export function StalkerSeriesProbePanel() {
   const [categoryObservation, setCategoryObservation] = useState<StalkerSeriesProbeObservation | null>(null);
   const [pageObservation, setPageObservation] = useState<StalkerSeriesProbeObservation | null>(null);
   const [shapeProbe, setShapeProbe] = useState<StalkerSeriesPhysicalShapeProbe | null>(null);
+  const [seasonId, setSeasonId] = useState<string | null>(null);
+  const [episodeId, setEpisodeId] = useState<string | null>(null);
+  const [createLinkObservation, setCreateLinkObservation] = useState<StalkerSeriesCreateLinkObservation | null>(null);
   const categoryStarted = useRef(false);
   const pageStarted = useRef(false);
   const shapeStarted = useRef(false);
+  const createLinkStarted = useRef(false);
   const active = useRef<AbortController | null>(null);
 
   useEffect(() => () => active.current?.abort(), []);
@@ -88,6 +92,17 @@ export function StalkerSeriesProbePanel() {
     shapeStarted.current = true;
     setBusy(true);
     setShapeProbe(await probeStalkerSeriesPhysicalRowShape(session, series, freshSignal()));
+    setBusy(false);
+  };
+  const selectedSeason = shapeProbe?.hierarchy.seasons.find((candidate) => candidate.id === seasonId) ?? null;
+  const selectedPlaybackRef = shapeProbe?.playbackRefs.find((candidate) => candidate.seasonId === seasonId) ?? null;
+  const selectedEpisode = selectedSeason?.episodeIds.find((candidate) => candidate === episodeId) ?? null;
+
+  const runCreateLinkProbe = async () => {
+    if (!selectedPlaybackRef || !selectedEpisode || createLinkStarted.current) return;
+    createLinkStarted.current = true;
+    setBusy(true);
+    setCreateLinkObservation(await selectedPlaybackRef.probe(selectedEpisode, freshSignal()));
     setBusy(false);
   };
 
@@ -141,6 +156,33 @@ export function StalkerSeriesProbePanel() {
         <Text style={{ color: colors.mutedForeground }}>season_id={season.id} · episodes={season.episodeCount}</Text>
         <Text style={{ color: colors.mutedForeground }}>ids=[{season.episodeIds.join(",")}]</Text>
       </View>)}
+    </View> : null}
+    {d4Pass && shapeProbe ? <View style={[styles.observation, { borderColor: colors.border, backgroundColor: colors.card }]}>
+      <Text style={[styles.strong, { color: colors.foreground }]}>BP5 · SERIES EPISODE CREATE_LINK PROBE</Text>
+      <Text style={{ color: colors.mutedForeground }}>D6-A candidate only · no player handoff · no playback</Text>
+      <Text style={[styles.strong, { color: colors.foreground }]}>Bir sezon seç</Text>
+      <View style={styles.list}>{shapeProbe.hierarchy.seasons.map((candidate) => {
+        const ref = shapeProbe.playbackRefs.find((item) => item.seasonId === candidate.id);
+        return <Pressable key={candidate.id} disabled={createLinkStarted.current} onPress={() => { setSeasonId(candidate.id); setEpisodeId(null); }} style={[styles.row, { borderColor: seasonId === candidate.id ? colors.primary : colors.border }]}>
+          <Text style={{ color: colors.foreground }}>{candidate.label}</Text>
+          <Text style={{ color: colors.mutedForeground }}>season_id={candidate.id} · cmd present={ref?.hasCmd ? "YES" : "NO"} · type={ref?.cmdType ?? "none"} · length={ref?.cmdLength ?? 0}</Text>
+        </Pressable>;
+      })}</View>
+      {selectedSeason ? <>
+        <Text style={[styles.strong, { color: colors.foreground }]}>Bir episode seç</Text>
+        <View style={styles.list}>{selectedSeason.episodeIds.map((candidate) => <Pressable key={candidate} disabled={createLinkStarted.current} onPress={() => setEpisodeId(candidate)} style={[styles.row, { borderColor: episodeId === candidate ? colors.primary : colors.border }]}><Text style={{ color: colors.foreground }}>Episode {candidate} · id={candidate}</Text></Pressable>)}</View>
+      </> : null}
+      <FocusButton label="BP5 · ONE CREATE_LINK PROBE" disabled={busy || createLinkStarted.current || !selectedPlaybackRef || !selectedEpisode} onPress={() => void runCreateLinkProbe()} />
+      {selectedPlaybackRef && selectedEpisode ? <View style={[styles.observation, { borderColor: colors.border }]}>
+        <Text style={{ color: colors.mutedForeground }}>request: type=vod · action=create_link · cmd=&lt;opaque&gt; · series={selectedEpisode}</Text>
+        <Text style={{ color: colors.mutedForeground }}>create_link request count=1</Text>
+      </View> : null}
+      {createLinkObservation ? <View style={[styles.observation, { borderColor: colors.border }]}>
+        <Text style={[styles.strong, { color: colors.foreground }]}>response: {createLinkObservation.classification}</Text>
+        <Text style={{ color: colors.mutedForeground }}>shape={createLinkObservation.payloadShape} · scheme={createLinkObservation.resolvedScheme ?? "none"} · wrapperPrefix={createLinkObservation.wrapperPrefix ? "YES" : "NO"}</Text>
+        <Text style={{ color: colors.mutedForeground }}>returnedFields=[{createLinkObservation.returnedFieldNames.join(", ")}] · extraTransportHints={createLinkObservation.extraTransportHints ? "YES" : "NO"}</Text>
+        {createLinkObservation.error ? <Text style={{ color: colors.destructive }}>{createLinkObservation.error}</Text> : null}
+      </View> : null}
     </View> : null}
   </View>;
 }
