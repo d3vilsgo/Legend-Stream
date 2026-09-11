@@ -189,12 +189,20 @@ export async function probeStalkerSeriesPhysicalRowShape(
   });
   try {
     const payload = await session.request(params, linked.signal, undefined, { providerId: "r16-d4-series-shape-probe" });
-    const observation = observeStalkerSeriesPayload(payload);
+    const baseObservation = observeStalkerSeriesPayload(payload);
     const rowShapes = rowsFromEnvelope(payload)
       .slice(0, D4_MAX_ROWS)
       .map(asObject)
       .filter((row): row is Record<string, unknown> => Boolean(row))
       .map((row, index) => inspectStalkerSeriesRowShape(row, index + 1));
+    const observation: StalkerSeriesProbeObservation = {
+      ...baseObservation,
+      classification: baseObservation.classification === "UNSUPPORTED"
+        ? "UNSUPPORTED"
+        : rowShapes.length > 0
+          ? "SUCCESS"
+          : "EMPTY",
+    };
     const rootShape = inspectStalkerSeriesRootShape(payload);
     safeLog.info("SERIES_D4_SHAPE_RESPONSE", {
       classification: observation.classification,
