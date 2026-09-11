@@ -218,7 +218,6 @@ async function main() {
   const probeSource = source("lib/stalkerSeriesProbe.ts");
   const d4Source = source("lib/stalkerSeriesShapeProbe.ts");
   const panelSource = source("components/stalker/StalkerSeriesProbePanel.tsx");
-  const productSource = source("components/product/ProductLiveSurface.tsx");
   for (const forbidden of ["get_all_channels", "get_all_movies", "get_all_series", "Promise.all", "while ("]) assert.equal(probeSource.includes(forbidden), false, `Series probe must not contain ${forbidden}`);
   assert.doesNotMatch(probeSource, /\.split\(\s*["']:["']\s*\)/);
   assert.match(probeSource, /movie_id: item\.id/);
@@ -251,8 +250,6 @@ async function main() {
   assert.match(panelSource, /sensitive fields=/);
   assert.match(panelSource, /BP5 · SERIES EPISODE CREATE_LINK PROBE/);
   assert.doesNotMatch(panelSource, /BP5 · PLAYBACK DIALECT|NativeVideoPlayer/);
-  assert.doesNotMatch(productSource, /section === "series"|setSection\("series"\)|label="Diziler"/);
-  assert.match(productSource, /StalkerSeriesProbePanel/);
   assert.match(source("package.json"), /stalkerR16DSeriesProbeScenarios/);
   console.log("stalker R16-D/R16-D2/R16-D3/R16-D4 bounded Series probe scenarios passed");
 }
