@@ -17,7 +17,7 @@ export type StalkerSeriesCreateLinkObservation = StalkerSeriesProbeObservation &
 
 type Params = Record<string, string | number | boolean | undefined>;
 type BoundedResult = { payload: unknown; observation: StalkerSeriesProbeObservation };
-const TIMEOUT = 12_000, MAX_DETAIL = 3, MAX_EPISODE = 2, MAX_PLAYBACK = 2, MAX_ROWS = 30, MAX_CONTAINERS = 12;
+const TIMEOUT = 12_000, MAX_DETAIL = 3, MAX_EPISODE = 2, MAX_PLAYBACK = 1, MAX_ROWS = 30, MAX_CONTAINERS = 12;
 const unsupportedPattern = /\b(?:unknown|unsupported|not\s+implemented|not\s+available)\b/i;
 const sensitiveKey = /(?:cmd|url|uri|token|auth|cookie|mac|password|secret|credential|user)/i;
 const episodeKeys = ["episode", "episode_id", "episode_num", "episode_number"] as const;
