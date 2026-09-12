@@ -209,7 +209,7 @@ async function main() {
     assert.match(home, /<StalkerLiveCatalog[\s\S]*onOpen=\{openLive\}/);
     assert.match(home, /resolveLiveIdentityPresentationRows/);
     assert.match(home, /setPlayable\(\{[\s\S]*url: channel\.streamUrl[\s\S]*liveIdentity:/);
-    assert.match(stalkerLive, /<PagedLiveCatalog[\s\S]*onOpen=\{onOpen\}/);
+    assert.match(stalkerLive, /onPress=\{\(\)\s*=>\s*onOpen\(channel\)\}/);
   });
 
   await scenario("Compatibility player resolves catalog runtime sources and includes Stalker in cached live window", () => {
