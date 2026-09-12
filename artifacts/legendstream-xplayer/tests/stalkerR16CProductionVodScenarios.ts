@@ -149,15 +149,15 @@ async function main() {
   assert.match(surfaceSource, /onFullscreenExit=\{\(\) => setView\("details"\)\}/);
   assert.match(
     surfaceSource,
-    /<FlatList[\\s\\S]*?data=\\{categories\\}[\\s\\S]*?renderItem=\\{\\(\\{ item \\}\\) =>/
+    /<FlatList[\s\S]*?data=\{categories\}[\s\S]*?renderItem=\{\(\{ item \}\) =>/
   );
   assert.match(
     surfaceSource,
-    /accessibilityLabel=\\{\\s*item\\.id === "\\*" \\? "Tümü" : item\\.title\\s*\\}/
+    /accessibilityLabel=\{\s*item\.id === "\*" \? "Tümü" : item\.title\s*\}/
   );
   assert.match(
     surfaceSource,
-    /<Text[^>]*>\\s*\\{item\\.id === "\\*" \\? "Tümü" : item\\.title\\}\\s*<\\/Text>/
+    /<Text[^>]*>\s*\{item\.id === "\*" \? "Tümü" : item\.title\}\s*<\/Text>/
   );
   assert.match(surfaceSource, /currentPage \+ 1/);
   assert.match(surfaceSource, /currentPage - 1/);
