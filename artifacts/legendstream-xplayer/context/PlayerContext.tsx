@@ -17,6 +17,7 @@ import {
   normalizeXtreamBaseUrl,
   Provider,
   ProviderLoadError,
+  ProviderLoadResult,
   ProviderType,
 } from "@/lib/iptv";
 import { mapInBatches, yieldToUi } from "@/lib/cooperative";
@@ -71,6 +72,11 @@ import {
   hasUsableChannelEpg,
   mergeEpgPrograms,
 } from "@/lib/epgRuntime";
+import {
+  removeLegacyStalkerCatalogChannels,
+  syncStalkerCatalogForLifecycle,
+} from "@/lib/stalkerLiveCatalogRouting";
+import type { StalkerLiveSyncOwner } from "@/lib/stalkerLiveSync";
 
 export { ProviderType };
 export type { Channel, EpgProgram };
@@ -364,18 +370,39 @@ function toXtreamLoadProvider(provider: RoutedProvider): Provider {
 
 async function loadProviderSmart(
   provider: RoutedProvider,
-  options: { persistM3U?: boolean } = {},
+  options: {
+    persistM3U?: boolean;
+    signal?: AbortSignal;
+    isCurrent?: () => boolean;
+    stalkerSyncOwner?: StalkerLiveSyncOwner;
+  } = {},
 ) {
+  if (provider.type === "stalker") {
+    const result = await syncStalkerCatalogForLifecycle(provider, {
+      signal: options.signal,
+      isCurrent: options.isCurrent,
+      owner: options.stalkerSyncOwner,
+    });
+    if (!result) throw new Error("Stalker catalog routing could not start canonical sync.");
+    return {
+      provider,
+      loaded: { channels: [], liveChannels: [], epgUrl: provider.epgUrl } as ProviderLoadResult,
+      cacheWriteTask: null,
+      catalogCount: result.persisted,
+    };
+  }
+
   if (resolvedProviderTransport(provider) !== "xtream") {
     const loaded = await loadProvider(provider);
     const cacheWriteTask = options.persistM3U === false
       ? null
       : persistM3ULoadInBackground(provider, loaded);
-    return { provider, loaded, cacheWriteTask };
+    return { provider, loaded, cacheWriteTask, catalogCount: loaded.channels.length };
   }
   const parsed = parseXtreamGetPhp(provider.url);
   if (!parsed) {
-    return { provider, loaded: await loadProvider(provider), cacheWriteTask: null };
+    const loaded = await loadProvider(provider);
+    return { provider, loaded, cacheWriteTask: null, catalogCount: loaded.channels.length };
   }
   const savedXtream: RoutedProvider = {
     ...provider,
@@ -385,10 +412,12 @@ async function loadProviderSmart(
     password: parsed.password,
   };
   try {
+    const loaded = await loadProvider(toXtreamLoadProvider(savedXtream));
     return {
       provider: savedXtream,
-      loaded: await loadProvider(toXtreamLoadProvider(savedXtream)),
+      loaded,
       cacheWriteTask: null,
+      catalogCount: loaded.channels.length,
     };
   } catch {
     const fallback: RoutedProvider = {
@@ -403,7 +432,7 @@ async function loadProviderSmart(
     const cacheWriteTask = options.persistM3U === false
       ? null
       : persistM3ULoadInBackground(fallback, loaded);
-    return { provider: fallback, loaded, cacheWriteTask };
+    return { provider: fallback, loaded, cacheWriteTask, catalogCount: loaded.channels.length };
   }
 }
 
@@ -1097,11 +1126,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const providerToLoad = duplicate
         ? { ...candidate, id: duplicate.id, createdAt: duplicate.createdAt }
         : candidate;
-      const smart = await withProviderConnectDeadline(loadProviderSmart(providerToLoad));
+      const smart = await withProviderConnectDeadline(loadProviderSmart(providerToLoad, {
+        stalkerSyncOwner: providerToLoad.type === "stalker" ? "CONNECT_PROVIDER" : undefined,
+      }));
       const savedProvider = toProvider({
         ...smart.provider,
         lastLoadedAt: Date.now(),
-        channelCount: smart.loaded.channels.length,
+        channelCount: smart.catalogCount,
         epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
       });
       await saveProviderSecrets(savedProvider);
@@ -1145,12 +1176,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     let persistenceOwnsRequest = false;
     setError(null);
     try {
-      const smart = await loadProviderSmart(fromProvider(existing), { persistM3U: false });
+      const smart = await loadProviderSmart(fromProvider(existing), {
+        persistM3U: false,
+        isCurrent: existing.type === "stalker"
+          ? () => isCurrentProviderLoad(ownership)
+          : undefined,
+        stalkerSyncOwner: existing.type === "stalker" ? "REFRESH_PROVIDER" : undefined,
+      });
       if (!isCurrentProviderLoad(ownership)) return;
       const updated = toProvider({
         ...smart.provider,
         lastLoadedAt: Date.now(),
-        channelCount: smart.loaded.channels.length,
+        channelCount: smart.catalogCount,
         epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
         loadError: undefined,
       });
@@ -1279,7 +1316,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const updated = toProvider({
         ...smart.provider,
         lastLoadedAt: Date.now(),
-        channelCount: smart.loaded.channels.length,
+        channelCount: smart.catalogCount,
         epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
         loadError: undefined,
       });
@@ -1337,6 +1374,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const busyId = beginPlayerBusy();
     setError(null);
     try {
+      if (existing.type === "stalker") {
+        clearEpgProviderCache(providerId);
+        await persist({
+          ...current,
+          provider: existing,
+          activeProviderId: providerId,
+          history: historyForProvider(liveHistoryRef.current, providerId),
+          channels: removeLegacyStalkerCatalogChannels(current.channels, providerId),
+        });
+        return true;
+      }
+
       const switchPath = chooseProviderSwitchPath({
         hasInMemoryChannels: current.channels.some(
           (channel) => channel.providerId === providerId,
@@ -1366,7 +1415,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const updated = toProvider({
         ...smart.provider,
         lastLoadedAt: Date.now(),
-        channelCount: smart.loaded.channels.length,
+        channelCount: smart.catalogCount,
         epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
         loadError: undefined,
       });

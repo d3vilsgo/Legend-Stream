@@ -1,5 +1,5 @@
 import React, { forwardRef, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { PixelRatio, StyleSheet, useWindowDimensions, View, ViewStyle } from "react-native";
+import { ActivityIndicator, PixelRatio, StyleSheet, Text, useWindowDimensions, View, ViewStyle } from "react-native";
 import { VLCPlayer } from "react-native-vlc-media-player";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { logPlayerDiagnostic } from "@/lib/playerDiagnostics";
@@ -164,6 +164,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     codecMode === "software" ? "software" : "hardware",
   );
   const [playbackReady, setPlaybackReady] = useState(false);
+  const [firstFramePending, setFirstFramePending] = useState(true);
   const [sourceVideoSize, setSourceVideoSize] = useState<PlayerVideoSize | undefined>(undefined);
 
   const assignRef = useCallback((node: any) => {
@@ -212,6 +213,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     lastLoadEvent.current = undefined;
     lastMetricKey.current = "";
     setPlaybackReady(false);
+    setFirstFramePending(true);
     setSourceVideoSize(undefined);
     resetPlayerRuntimeInfo();
     void logPlayerDiagnostic("vlc_mount", {
@@ -220,6 +222,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
       fit,
     });
     return () => {
+      setFirstFramePending(false);
       void logPlayerDiagnostic("vlc_unmount", {
         codec: codecMode,
         effectiveCodec: runtimeCodecMode,
@@ -334,6 +337,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [isLikelyWindowSurface]);
 
   const handleLoad = useCallback((event: VlcLoadEvent) => {
+    setFirstFramePending(false);
     const previous = lastLoadEvent.current;
     const rawSize = readVideoSize(event as Record<string, unknown>);
     const safeSize = rawSize && !isLikelyWindowSurface(rawSize) ? rawSize : previous?.videoSize;
@@ -370,6 +374,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [acceptRuntimeMetrics, isLikelyWindowSurface, onLoad]);
 
   const handleProgress = useCallback((event: VlcProgressEvent) => {
+    setFirstFramePending(false);
     const { size, fps, codec } = acceptRuntimeMetrics(
       event as Record<string, unknown>,
       "progress-selected-track",
@@ -403,6 +408,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [acceptRuntimeMetrics, onLoad, onProgress]);
 
   const handlePlaying = useCallback(() => {
+    setFirstFramePending(false);
     setPlaybackReady(true);
     void logPlayerDiagnostic("vlc_playing", {
       codec: codecMode,
@@ -420,6 +426,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
 
   const handleEnd = useCallback(() => {
     setPlaybackReady(false);
+    setFirstFramePending(false);
     void logPlayerDiagnostic("vlc_end");
     onEnd();
   }, [onEnd]);
@@ -433,6 +440,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
       !autoFallbackAttempted.current
     ) {
       autoFallbackAttempted.current = true;
+      setFirstFramePending(true);
       void logPlayerDiagnostic("vlc_auto_codec_fallback", {
         from: "hardware",
         to: "software",
@@ -442,6 +450,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
       return;
     }
 
+    setFirstFramePending(false);
     void logPlayerDiagnostic("vlc_error", {
       codec: codecMode,
       effectiveCodec: runtimeCodecMode,
@@ -471,6 +480,10 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
           onError={handleError}
         />
       </View>
+      {firstFramePending ? <View style={styles.loadingOverlay}>
+        <ActivityIndicator size="large" color="#ffffff" />
+        <Text style={styles.loadingText}>Akış hazırlanıyor…</Text>
+      </View> : null}
     </View>
   );
 });
@@ -496,5 +509,17 @@ const styles = StyleSheet.create({
   },
   video: {
     ...StyleSheet.absoluteFillObject,
+  },
+  loadingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    backgroundColor: "rgba(0,0,0,0.72)",
+  },
+  loadingText: {
+    color: "#ffffff",
+    fontSize: 14,
+    fontWeight: "700",
   },
 });

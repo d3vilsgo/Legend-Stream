@@ -12,11 +12,16 @@ import {
 } from "./catalogCache";
 import {
   makeDirectVodRuntimeSource,
+  makeStalkerLiveRuntimeSource,
   parseCatalogRuntimeSource,
   type PersistedLiveCatalogItem,
   type PersistedSeriesCatalogItem,
   type PersistedVodCatalogItem,
 } from "./catalogPersistence";
+import { resolveStalkerLiveCreateLink } from "./stalkerLiveCatalog";
+import { getPersistedStalkerLivePlaybackRef } from "./stalkerLiveCache";
+import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
+import type { StalkerPortalSession } from "./stalkerPortal";
 
 export type CatalogRuntimeProvider = {
   id: string;
@@ -25,9 +30,22 @@ export type CatalogRuntimeProvider = {
   playlistUrl?: string;
   username?: string;
   password?: string;
+  mac?: string;
 };
 
 export type CatalogPageRuntimeItem = Channel | XtreamVodItem | XtreamSeriesItem;
+
+type CatalogRuntimeDependencies = {
+  getStalkerPlaybackRef?: typeof getPersistedStalkerLivePlaybackRef;
+  acquireStalkerSession?: (
+    identity: Parameters<typeof getOrCreateStalkerPortalSession>[0],
+  ) => Pick<StalkerPortalSession, "request">;
+  resolveStalkerLink?: (
+    session: Pick<StalkerPortalSession, "request">,
+    cmd: string,
+    signal?: AbortSignal,
+  ) => Promise<string>;
+};
 
 function normalizeCatalogRuntimeBaseUrl(value: string) {
   const normalized = normalizeXtreamBaseUrl(value);
@@ -58,6 +76,15 @@ function requireXtreamCredentials(provider: CatalogRuntimeProvider) {
   };
 }
 
+function requireStalkerCredentials(provider: CatalogRuntimeProvider) {
+  const portalUrl = provider.url || provider.playlistUrl || "";
+  const mac = provider.mac?.trim() || "";
+  if (provider.type !== "stalker" || !portalUrl || !mac) {
+    throw new Error("Cached Stalker playback credentials are unavailable.");
+  }
+  return { portalUrl, mac };
+}
+
 function providerSource(provider: CatalogRuntimeProvider) {
   return provider.url || provider.playlistUrl || "";
 }
@@ -78,6 +105,12 @@ export function liveRuntimeItem(
     }
   } else if (persisted.playbackRef.type === "m3u-path" && provider.type === "m3u") {
     streamUrl = buildM3UStreamUrl(providerSource(provider), persisted.playbackRef) ?? "";
+  } else if (
+    persisted.playbackRef.type === "stalker-live" &&
+    provider.type === "stalker" &&
+    provider.id === persisted.providerId
+  ) {
+    streamUrl = makeStalkerLiveRuntimeSource(persisted);
   }
   return {
     id: persisted.id,
@@ -85,7 +118,7 @@ export function liveRuntimeItem(
     name: persisted.name,
     streamUrl,
     logoUrl: persisted.logoUrl,
-    category: persisted.category,
+    category: persisted.categoryName ?? persisted.category,
     tvgId: persisted.tvgId,
     streamType: persisted.streamType,
     contentType: "live",
@@ -201,11 +234,24 @@ export async function getNewCachedSeriesItems(provider: CatalogRuntimeProvider, 
 export async function resolveCatalogRuntimeSource(
   source: string,
   provider: CatalogRuntimeProvider | null | undefined,
+  signal?: AbortSignal,
+  dependencies: CatalogRuntimeDependencies = {},
 ): Promise<string> {
   const ref = parseCatalogRuntimeSource(source);
   if (!ref) return source;
   if (!provider || provider.id !== ref.providerId) {
     throw new Error("Cached playback provider is unavailable.");
+  }
+  if (ref.kind === "stalker-live") {
+    const credentials = requireStalkerCredentials(provider);
+    const playbackRef = await (dependencies.getStalkerPlaybackRef ?? getPersistedStalkerLivePlaybackRef)(ref.providerId, ref.itemId);
+    if (!playbackRef) throw new Error("Cached Stalker playback reference is unavailable.");
+    const session = (dependencies.acquireStalkerSession ?? getOrCreateStalkerPortalSession)({
+      providerId: ref.providerId,
+      portalUrl: credentials.portalUrl,
+      mac: credentials.mac,
+    });
+    return (dependencies.resolveStalkerLink ?? resolveStalkerLiveCreateLink)(session, playbackRef.cmd, signal);
   }
   const credentials = requireXtreamCredentials(provider);
   if (ref.kind === "vod-direct") {

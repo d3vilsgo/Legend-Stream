@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -20,6 +20,7 @@ import { DownloadsView } from "@/components/DownloadsView";
 import { FocusButton } from "@/components/FocusButton";
 import { HomeDiscovery, type HomeContentView } from "@/components/home/HomeDiscovery";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
+import { ProductLiveSurface } from "@/components/product/ProductLiveSurface";
 import {
   PagedLiveCatalog,
   PagedMoviesCatalog,
@@ -43,6 +44,7 @@ import { useColors } from "@/hooks/useColors";
 import { useResolvedLiveIdentityChannels } from "@/hooks/useResolvedLiveIdentityChannels";
 import type { DownloadedMedia } from "@/lib/downloads";
 import { homeLiveIdentityPreviewIds } from "@/lib/catalogLiveIdentity";
+import { selectHomeLiveSource } from "@/lib/homeLiveSource";
 import {
   indexLiveChannelsByProviderAndId,
   resolveLiveIdentityPresentationRows,
@@ -63,6 +65,25 @@ import {
 } from "@/lib/providerSwitchUx";
 import { redactSensitiveText } from "@/lib/safeLog";
 import {
+  loadIsolatedStalkerCategoryChannels,
+  loadIsolatedStalkerGenres,
+  resolveIsolatedStalkerChannelLink,
+  runIsolatedStalkerLogin,
+  type StalkerIsolatedAccountInfo,
+  type StalkerIsolatedCategory,
+  type StalkerIsolatedChannel,
+  type StalkerIsolatedChannelStatus,
+  type StalkerIsolatedGenreStatus,
+  type StalkerIsolatedLoginStatus,
+  type StalkerIsolatedPlaybackStatus,
+  type StalkerIsolatedSession,
+} from "@/lib/stalkerIsolatedLogin";
+import {
+  normalizeStalkerProductCategories,
+  toProductCategoryRows,
+  toProductChannelRows,
+} from "@/lib/stalkerProductPresentation";
+import {
   buildEpisodeStreamUrl,
   buildVodStreamUrl,
   getSeriesInfo,
@@ -77,6 +98,7 @@ import { yieldToUi } from "@/lib/cooperative";
 
 type ViewName = HomeContentView | "player";
 type ContentView = Exclude<ViewName, "player">;
+type StalkerIsolatedScreen = "STALKER_HOME_SCREEN" | "STALKER_GENRES_SCREEN" | "STALKER_CHANNELS_SCREEN" | "STALKER_PLAYER_SCREEN";
 type Playable = {
   title: string;
   url: string;
@@ -241,10 +263,11 @@ export default function OptimizedHomeScreenPaged() {
     () => homeLiveIdentityPreviewIds(history),
     [history],
   );
+  const homeIdentityFallbackChannels = provider?.type === "stalker" ? [] : playerLiveChannels;
   const resolvedHomeIdentityChannels = useResolvedLiveIdentityChannels(
     provider,
     homeIdentityIds,
-    playerLiveChannels,
+    homeIdentityFallbackChannels,
   );
   const fullHistoryIdentityIds = useMemo(
     () => view === "history" ? [...history, ...favorites] : [],
@@ -257,7 +280,13 @@ export default function OptimizedHomeScreenPaged() {
   );
 
   const activeSnapshot = provider && snapshot.providerId === provider.id ? snapshot : null;
-  const homeChannels = activeSnapshot?.live.length ? activeSnapshot.live : playerLiveChannels.slice(0, 48);
+  const homeLiveSource = selectHomeLiveSource({
+    provider,
+    snapshot,
+    hasUsableCache,
+    legacyChannels: playerLiveChannels,
+  });
+  const homeChannels = homeLiveSource.channels;
   const homeIdentityChannels = useMemo(() => {
     const byId = new Map<string, Channel>();
     for (const channel of homeChannels) byId.set(channel.id, channel);
@@ -635,7 +664,7 @@ export default function OptimizedHomeScreenPaged() {
     >
       {view === "home" ? <HomeDiscovery
         provider={provider}
-        live={countKnown ? snapshot.counts.live : (provider.type === "stalker" ? playerLiveChannels.length : null)}
+        live={provider.type === "stalker" ? homeLiveSource.totalCount : countKnown ? snapshot.counts.live : null}
         vod={vodCount.totalCount}
         series={seriesCount.totalCount}
         vodCategories={categoryMetadata?.providerId === provider.id ? categoryMetadata.vodCategories : 0}
@@ -735,13 +764,182 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   const [mac, setMac] = useState(existing?.mac ?? "");
   const [epgUrl, setEpgUrl] = useState(existing?.epgUrl ?? "");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [stalkerStatus, setStalkerStatus] = useState<StalkerIsolatedLoginStatus>("IDLE");
+  const [stalkerAccountInfo, setStalkerAccountInfo] = useState<StalkerIsolatedAccountInfo | null>(null);
+  const [stalkerSession, setStalkerSession] = useState<StalkerIsolatedSession | null>(null);
+  const [stalkerScreen, setStalkerScreen] = useState<StalkerIsolatedScreen>("STALKER_HOME_SCREEN");
+  const [stalkerGenreStatus, setStalkerGenreStatus] = useState<StalkerIsolatedGenreStatus>("IDLE");
+  const [stalkerCategories, setStalkerCategories] = useState<StalkerIsolatedCategory[]>([]);
+  const [selectedStalkerCategoryId, setSelectedStalkerCategoryId] = useState<string | null>(null);
+  const [stalkerGenreError, setStalkerGenreError] = useState<string | null>(null);
+  const [stalkerChannelStatus, setStalkerChannelStatus] = useState<StalkerIsolatedChannelStatus>("CHANNELS_IDLE");
+  const [stalkerChannels, setStalkerChannels] = useState<StalkerIsolatedChannel[]>([]);
+  const [selectedStalkerChannelId, setSelectedStalkerChannelId] = useState<string | null>(null);
+  const [stalkerChannelError, setStalkerChannelError] = useState<string | null>(null);
+  const [stalkerPlaybackStatus, setStalkerPlaybackStatus] = useState<StalkerIsolatedPlaybackStatus>("PLAYBACK_IDLE");
+  const [stalkerPlaybackError, setStalkerPlaybackError] = useState<string | null>(null);
+  const [stalkerPlayable, setStalkerPlayable] = useState<Playable | null>(null);
+  const stalkerGenresRequestedRef = useRef(false);
+  const stalkerChannelRequestRef = useRef<{ key: string | null; sequence: number }>({ key: null, sequence: 0 });
+  const stalkerPlaybackRequestRef = useRef<{ key: string | null; sequence: number }>({ key: null, sequence: 0 });
   const credentialsOnly = Boolean(existing?.needsCredentials);
+  const selectedStalkerCategory = useMemo(
+    () => stalkerCategories.find((category) => category.id === selectedStalkerCategoryId) ?? null,
+    [selectedStalkerCategoryId, stalkerCategories],
+  );
+  const stalkerProductCategories = useMemo(() => toProductCategoryRows(stalkerCategories), [stalkerCategories]);
+  const stalkerProductChannels = useMemo(() => toProductChannelRows(stalkerChannels), [stalkerChannels]);
+
+  const loadStalkerGenres = async (force = false) => {
+    if (!stalkerSession || (!force && stalkerGenresRequestedRef.current)) return;
+    stalkerGenresRequestedRef.current = true;
+    setStalkerGenreStatus("GENRES_LOADING");
+    setStalkerGenreError(null);
+    try {
+      const categories = normalizeStalkerProductCategories(await loadIsolatedStalkerGenres(stalkerSession));
+      setStalkerCategories(categories);
+      setSelectedStalkerCategoryId((current) =>
+        current && categories.some((category) => category.id === current)
+          ? current
+          : categories[0]?.id ?? null,
+      );
+      setStalkerChannelStatus("CHANNELS_IDLE");
+      setStalkerChannels([]);
+      setSelectedStalkerChannelId(null);
+      setStalkerChannelError(null);
+      setStalkerPlaybackStatus("PLAYBACK_IDLE");
+      setStalkerPlaybackError(null);
+      setStalkerPlayable(null);
+      setStalkerScreen("STALKER_GENRES_SCREEN");
+      stalkerChannelRequestRef.current = { key: null, sequence: stalkerChannelRequestRef.current.sequence };
+      setStalkerGenreStatus("ITV_CATEGORIES_READY");
+    } catch (caught) {
+      setStalkerGenreError(caught instanceof Error ? caught.message : "Stalker kategorileri yüklenemedi.");
+      setStalkerGenreStatus("GENRES_ERROR");
+    }
+  };
+
+  const openStalkerLiveSurface = () => {
+    setStalkerScreen("STALKER_GENRES_SCREEN");
+    if (stalkerGenreStatus === "IDLE") void loadStalkerGenres();
+  };
+
+  const loadStalkerChannelsForCategory = async (category: StalkerIsolatedCategory, force = false) => {
+    if (!stalkerSession) return;
+    const key = category.id;
+    const currentRequest = stalkerChannelRequestRef.current;
+    if (!force && currentRequest.key === key) {
+      setSelectedStalkerCategoryId(key);
+      setStalkerScreen("STALKER_CHANNELS_SCREEN");
+      return;
+    }
+    const sequence = currentRequest.sequence + 1;
+    stalkerChannelRequestRef.current = { key, sequence };
+    setSelectedStalkerCategoryId(key);
+    setStalkerScreen("STALKER_CHANNELS_SCREEN");
+    setStalkerChannelStatus("CHANNELS_LOADING");
+    setStalkerChannelError(null);
+    setStalkerChannels([]);
+    setSelectedStalkerChannelId(null);
+    setStalkerPlaybackStatus("PLAYBACK_IDLE");
+    setStalkerPlaybackError(null);
+    setStalkerPlayable(null);
+    try {
+      const channels = await loadIsolatedStalkerCategoryChannels(stalkerSession, category);
+      if (stalkerChannelRequestRef.current.sequence !== sequence || stalkerChannelRequestRef.current.key !== key) return;
+      setStalkerChannels(channels);
+      setStalkerChannelStatus("ITV_CHANNELS_READY");
+    } catch (caught) {
+      if (stalkerChannelRequestRef.current.sequence !== sequence || stalkerChannelRequestRef.current.key !== key) return;
+      setStalkerChannelError(caught instanceof Error ? caught.message : "Stalker kanal listesi yüklenemedi.");
+      setStalkerChannelStatus("CHANNELS_ERROR");
+    }
+  };
+
+  const openStalkerChannel = async (channel: StalkerIsolatedChannel, force = false) => {
+    if (!stalkerSession || !selectedStalkerCategory) return;
+    const key = channel.id;
+    const currentRequest = stalkerPlaybackRequestRef.current;
+    if (!force && currentRequest.key === key && stalkerPlaybackStatus === "PLAYBACK_LOADING") return;
+    const sequence = currentRequest.sequence + 1;
+    stalkerPlaybackRequestRef.current = { key, sequence };
+    setSelectedStalkerChannelId(key);
+    setStalkerPlaybackStatus("PLAYBACK_LOADING");
+    setStalkerPlaybackError(null);
+    try {
+      const source = await resolveIsolatedStalkerChannelLink(stalkerSession, channel);
+      if (stalkerPlaybackRequestRef.current.sequence !== sequence || stalkerPlaybackRequestRef.current.key !== key) return;
+      setStalkerPlayable({
+        title: channel.title,
+        subtitle: selectedStalkerCategory.title,
+        url: source,
+        kind: "live",
+        returnTo: "live",
+      });
+      setStalkerPlaybackStatus("PLAYBACK_READY");
+      setStalkerScreen("STALKER_PLAYER_SCREEN");
+    } catch (caught) {
+      if (stalkerPlaybackRequestRef.current.sequence !== sequence || stalkerPlaybackRequestRef.current.key !== key) return;
+      setStalkerPlaybackError(caught instanceof Error ? caught.message : "Stalker oynatma bağlantısı alınamadı.");
+      setStalkerPlaybackStatus("PLAYBACK_ERROR");
+    }
+  };
+
+  const backToStalkerGenres = () => {
+    if (stalkerChannelStatus === "CHANNELS_LOADING") {
+      stalkerChannelRequestRef.current = { key: null, sequence: stalkerChannelRequestRef.current.sequence + 1 };
+      setStalkerChannelStatus("CHANNELS_IDLE");
+    }
+    stalkerPlaybackRequestRef.current = { key: null, sequence: stalkerPlaybackRequestRef.current.sequence + 1 };
+    setStalkerScreen("STALKER_GENRES_SCREEN");
+    setStalkerPlaybackStatus("PLAYBACK_IDLE");
+    setStalkerPlaybackError(null);
+    setStalkerPlayable(null);
+  };
+
+  const retrySelectedStalkerPlayback = () => {
+    if (!selectedStalkerChannelId) return;
+    const channel = stalkerChannels.find((item) => item.id === selectedStalkerChannelId);
+    if (channel) void openStalkerChannel(channel, true);
+  };
 
   const submit = async () => {
     const clean = url.trim();
     if (!/^https?:\/\//i.test(clean)) return setLocalError(t("invalidUrl"));
+    if (type === "stalker" && !mac.trim()) return setLocalError("Stalker için MAC adresi gerekir.");
     if (type === "xtream" && (!username.trim() || !password)) return setLocalError(t("xtreamCredentials"));
     setLocalError(null);
+    if (type === "stalker") {
+      setStalkerStatus("CONNECTING");
+      setStalkerAccountInfo(null);
+      setStalkerSession(null);
+      setStalkerScreen("STALKER_HOME_SCREEN");
+      stalkerGenresRequestedRef.current = false;
+      stalkerChannelRequestRef.current = { key: null, sequence: stalkerChannelRequestRef.current.sequence + 1 };
+      stalkerPlaybackRequestRef.current = { key: null, sequence: stalkerPlaybackRequestRef.current.sequence + 1 };
+      setStalkerGenreStatus("IDLE");
+      setStalkerCategories([]);
+      setSelectedStalkerCategoryId(null);
+      setStalkerGenreError(null);
+      setStalkerChannelStatus("CHANNELS_IDLE");
+      setStalkerChannels([]);
+      setSelectedStalkerChannelId(null);
+      setStalkerChannelError(null);
+      setStalkerPlaybackStatus("PLAYBACK_IDLE");
+      setStalkerPlaybackError(null);
+      setStalkerPlayable(null);
+      try {
+        const result = await runIsolatedStalkerLogin({ portalUrl: clean, mac: mac.trim() });
+        setStalkerAccountInfo(result.accountInfo);
+        setStalkerSession(result.session);
+        setStalkerStatus("CONNECTED");
+        setStalkerScreen("STALKER_HOME_SCREEN");
+      } catch (caught) {
+        setLocalError(caught instanceof Error ? caught.message : "Stalker bağlantısı kurulamadı.");
+        setStalkerStatus("ERROR");
+      }
+      return;
+    }
     await onSubmit({
       providerId: existing?.id,
       name: name.trim() || "My provider",
@@ -749,10 +947,60 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
       playlistUrl: clean,
       username: type === "xtream" ? username.trim() : undefined,
       password: type === "xtream" ? password : undefined,
-      mac: type === "stalker" ? mac.trim() : undefined,
       epgUrl: epgUrl.trim() || undefined,
     });
   };
+
+  if (type === "stalker" && stalkerStatus === "CONNECTED" && stalkerAccountInfo) {
+    if (stalkerScreen === "STALKER_PLAYER_SCREEN" && stalkerPlayable) {
+      return <View style={s.fullPlayer}>
+        <NativeVideoPlayer
+          source={stalkerPlayable.url}
+          title={stalkerPlayable.title}
+          subtitle={stalkerPlayable.subtitle}
+          mediaKind="live"
+          autoFullscreen
+          onFullscreenExit={() => setStalkerScreen("STALKER_CHANNELS_SCREEN")}
+        />
+      </View>;
+    }
+
+    const productScreen = stalkerScreen === "STALKER_CHANNELS_SCREEN"
+      ? "channels"
+      : stalkerScreen === "STALKER_GENRES_SCREEN"
+        ? "categories"
+        : "home";
+
+    return <ProductLiveSurface
+      screen={productScreen}
+      categories={stalkerProductCategories}
+      channels={stalkerProductChannels}
+      selectedCategoryTitle={selectedStalkerCategory?.title}
+      selectedChannelId={selectedStalkerChannelId}
+      categoriesLoading={stalkerGenreStatus === "GENRES_LOADING"}
+      categoriesError={stalkerGenreStatus === "GENRES_ERROR" ? visibleErrorText(stalkerGenreError) : null}
+      channelsLoading={stalkerChannelStatus === "CHANNELS_LOADING"}
+      channelsError={stalkerChannelStatus === "CHANNELS_ERROR" ? visibleErrorText(stalkerChannelError) : null}
+      playbackLoading={stalkerPlaybackStatus === "PLAYBACK_LOADING"}
+      playbackError={stalkerPlaybackStatus === "PLAYBACK_ERROR" ? visibleErrorText(stalkerPlaybackError) : null}
+      onOpenLive={openStalkerLiveSurface}
+      onBackToHome={() => setStalkerScreen("STALKER_HOME_SCREEN")}
+      onBackToCategories={backToStalkerGenres}
+      onRetryCategories={() => void loadStalkerGenres(true)}
+      onRetryChannels={() => {
+        if (selectedStalkerCategory) void loadStalkerChannelsForCategory(selectedStalkerCategory, true);
+      }}
+      onRetryPlayback={retrySelectedStalkerPlayback}
+      onSelectCategory={(id) => {
+        const category = stalkerCategories.find((item) => item.id === id);
+        if (category) void loadStalkerChannelsForCategory(category);
+      }}
+      onSelectChannel={(id) => {
+        const channel = stalkerChannels.find((item) => item.id === id);
+        if (channel) void openStalkerChannel(channel);
+      }}
+    />;
+  }
 
   return <KeyboardAvoidingView style={{ flex: 1, backgroundColor: colors.background }} behavior={Platform.OS === "ios" ? "padding" : undefined}>
     <ScrollView contentContainerStyle={[s.setup, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 140 }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
@@ -765,7 +1013,7 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
         onPress={() => setType(item)}
         disabled={credentialsOnly}
       />)}</View>
-      <Input label={t("sourceName")} value={name} onChangeText={setName} editable={!credentialsOnly} />
+      {type !== "stalker" ? <Input label={t("sourceName")} value={name} onChangeText={setName} editable={!credentialsOnly} /> : null}
       <Input label={t("serverUrl")} value={url} onChangeText={setUrl} autoCapitalize="none" editable={!credentialsOnly || !url} />
       {type === "xtream" ? <>
         <Input label={t("username")} value={username} onChangeText={setUsername} autoCapitalize="none" />
@@ -786,10 +1034,10 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
         />
       </> : null}
       {type === "stalker" ? <Input label={t("macAddress")} value={mac} onChangeText={setMac} autoCapitalize="none" /> : null}
-      <Input label={t("epgOptional")} value={epgUrl} onChangeText={setEpgUrl} autoCapitalize="none" editable={!credentialsOnly} />
+      {type !== "stalker" ? <Input label={t("epgOptional")} value={epgUrl} onChangeText={setEpgUrl} autoCapitalize="none" editable={!credentialsOnly} /> : null}
       {localError || error ? <Text style={{ color: colors.destructive }}>{visibleErrorText(localError || error)}</Text> : null}
       <View style={s.row}>
-        <FocusButton label={busy ? t("connecting") : existing ? t("saveConnect") : t("addConnect")} icon="log-in" variant="primary" onPress={() => void submit()} disabled={busy} />
+        <FocusButton label={(busy || stalkerStatus === "CONNECTING") ? t("connecting") : existing ? t("saveConnect") : t("addConnect")} icon="log-in" variant="primary" onPress={() => void submit()} disabled={busy || stalkerStatus === "CONNECTING"} />
         {onCancel ? <FocusButton label={t("cancel")} variant="ghost" onPress={onCancel} /> : null}
       </View>
     </ScrollView>
