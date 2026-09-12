@@ -137,10 +137,10 @@ async function main() {
   const surfaceSource = fs.readFileSync(path.join(root, "components/stalker/StalkerSeriesProductSurface.tsx"), "utf8");
   assert.match(catalogSource, /Poster item=\{item\}/);
   assert.match(catalogSource, /detail\.description/);
-  assert.match(catalogSource, /label="Önceki"/);
-  assert.match(catalogSource, /label="Sonraki"/);
+  assert.match(catalogSource, /onEndReached=\{screen === "list" && hasNextPage \? onLoadMore : undefined\}/);
+  assert.match(catalogSource, /onRetry=\{onRetryNextPage\}/);
   assert.match(surfaceSource, /currentPage \+ 1/);
-  assert.match(surfaceSource, /currentPage - 1/);
+  assert.match(surfaceSource, /loadPage\(selectedCategory, failedPage, true\)/);
   assert.match(surfaceSource, /onFullscreenExit=\{\(\) => setPlayer\(null\)\}/);
 
   assert.equal(STALKER_SERIES_PRODUCT_LIMITS.maxCreateLinksPerSelection, 1);
