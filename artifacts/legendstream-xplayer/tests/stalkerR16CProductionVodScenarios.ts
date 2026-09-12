@@ -199,7 +199,26 @@ async function main() {
   }
   assert.doesNotMatch(vodSource, /(?:[?&]|["'`])genre(?:_id)?=/);
   assert.doesNotMatch(vodSource, /\.set\(\s*["']genre(?:_id)?["']/);
-  assert.doesNotMatch(vodSource, /for\s*\([^)]*page|while\s*\(|Promise\.all/);
+  const globalSearchMatch = vodSource.match(
+    /export async function searchStalkerVodCatalog\([\s\S]*?\n\}\n\nexport function normalizeStalkerVodResolvedUrl/
+  );
+  assert.ok(globalSearchMatch, "global VOD search implementation must remain source-visible");
+  const globalSearchSource = globalSearchMatch[0];
+  assert.match(
+    globalSearchSource,
+    /while \(page <= STALKER_VOD_MAX_PAGE\) \{[\s\S]*?const result = await loadStalkerVodPage\(session, globalCategory, page, input\);/
+  );
+  assert.doesNotMatch(globalSearchSource, /Promise\.all\s*\(/);
+  assert.match(globalSearchSource, /if \(!result\.hasNextPage\) break;/);
+  assert.match(
+    globalSearchSource,
+    /const nextPage = Math\.max\(page \+ 1, result\.currentPage \+ 1\);[\s\S]*?if \(nextPage <= page\) break;[\s\S]*?page = nextPage;/
+  );
+  assert.match(globalSearchSource, /page = nextPage;[\s\S]*?await yieldToUi\(\);/);
+  assert.match(
+    globalSearchSource,
+    /while \(page <= STALKER_VOD_MAX_PAGE\) \{[\s\S]*?if \(input\.signal\?\.aborted\) throw new Error\("VOD search aborted\."\);[\s\S]*?await loadStalkerVodPage\(session, globalCategory, page, input\);/
+  );
   assert.doesNotMatch(surfaceSource, /StalkerVodProbe|Diagnostic only|Üretim VOD değildir/);
   assert.doesNotMatch(surfaceSource, /\.cmd\}/);
   assert.match(surfaceSource, /source=\{playableUrl\}/);
