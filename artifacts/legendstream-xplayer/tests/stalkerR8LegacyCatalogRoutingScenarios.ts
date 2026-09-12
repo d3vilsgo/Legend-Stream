@@ -175,7 +175,13 @@ async function main() {
   });
 
   await scenario("mounted Stalker Live manual refresh remains the canonical R5 sync hook", () => {
-    assert.match(stalkerCatalog, /onRefresh=\{sync\.refresh\}/);
+    const manualRefresh = blockBetween(
+      stalkerCatalog,
+      'accessibilityLabel="Yenile"',
+      'style={[styles.refreshButton',
+    );
+    assert.match(manualRefresh, /Promise\.resolve\(\s*sync\.refresh\(\)\s*\)\.finally/);
+    assert.match(manualRefresh, /\.finally\([\s\S]*loadCategories\(\)[\s\S]*page\.reload\(\)/);
     assert.match(stalkerCatalog, /onRefresh:\s*_onRefresh/);
   });
 
