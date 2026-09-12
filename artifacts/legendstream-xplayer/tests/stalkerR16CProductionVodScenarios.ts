@@ -160,7 +160,18 @@ async function main() {
     /<Text[^>]*>\s*\{item\.id === "\*" \? "Tümü" : item\.title\}\s*<\/Text>/
   );
   assert.match(surfaceSource, /currentPage \+ 1/);
-  assert.match(surfaceSource, /currentPage - 1/);
+  assert.match(
+    surfaceSource,
+    /onEndReached=\{view === "list" && hasNextPage && !pagingError[\s\S]*?\? \(\) => selectedCategory && void loadPage\(selectedCategory, currentPage \+ 1, true\)[\s\S]*?: undefined\}/
+  );
+  assert.match(
+    surfaceSource,
+    /setItems\(\(previous\) => append \? mergeStalkerVodItems\(previous, result\.items\) : result\.items\);/
+  );
+  assert.match(
+    surfaceSource,
+    /onPress=\{\(\) => selectedCategory && failedPage != null && void loadPage\(selectedCategory, failedPage, true, true\)\}/
+  );
   assert.match(surfaceSource, /pageRequestRef/);
   assert.match(surfaceSource, /activeCategoryRef/);
   assert.match(surfaceSource, /playbackRequestRef/);
