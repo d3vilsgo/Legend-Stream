@@ -50,13 +50,17 @@ async function main() {
   await scenario("Stalker Live is provider-gated onto the persisted paged path without full in-memory filtering", () => {
     assert.match(screenSource, /provider\.type === "stalker"[\s\S]*StalkerLiveCatalog/s);
     assert.match(screenSource, /channels=\{playerLiveChannels\}/);
-    assert.match(stalkerSource, /PagedLiveCatalog/);
     assert.match(stalkerSource, /useStalkerLiveCatalogSync/);
-    assert.match(stalkerSource, /snapshotCount=\{\{/);
-    assert.match(stalkerSource, /epgByChannel=\{epgByChannel\}/);
-    assert.match(stalkerSource, /favorites=\{favorites\}/);
-    assert.match(stalkerSource, /onOpen=\{onOpen\}/);
-    assert.doesNotMatch(stalkerSource, /channels\.filter|FlatList|data=\{.*channels/s);
+    assert.match(stalkerSource, /const page = useCatalogPage\(\{[\s\S]*kind:\s*"live"/s);
+    assert.match(stalkerSource, /snapshotCount:\s*category === "__all__"[\s\S]*sync\.totalCount[\s\S]*sync\.countKnown/s);
+    assert.match(stalkerSource, /data=\{page\.items\}/);
+    assert.match(stalkerSource, /onEndReached=\{page\.loadMore\}/);
+    assert.match(stalkerSource, /epgByChannel\.get\(channel\.id\)/);
+    assert.match(stalkerSource, /favorites\.includes\(channel\.id\)/);
+    assert.match(stalkerSource, /onOpen\(channel\)/);
+    assert.match(stalkerSource, /onFavorite\(channel\.id\)/);
+    assert.doesNotMatch(stalkerSource, /channels\.filter\s*\(/);
+    assert.doesNotMatch(stalkerSource, /data=\{\s*_?channels\s*\}/);
     assert.match(stalkerSyncSource, /getOrCreateStalkerPortalSession/);
     assert.match(stalkerSyncSource, /fetchStalkerLiveCategories/);
     assert.match(stalkerSyncSource, /persistStalkerLiveCategories/);
