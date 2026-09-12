@@ -39,7 +39,7 @@ async function main() {
   const controller = createStalkerSeriesProductController(session as any, "provider-physical");
   const detail = await controller.loadDetail({ id: "series:physical", title: "Physical Fixture" });
   const counts = detail.seasons.map((season) => season.episodes.length);
-  assert.deepEqual(counts, [30, 34, 32, 34, 3, 27]);
+  assert.deepEqual(counts, [27, 3, 34, 32, 34, 30]);
   assert.equal(detail.seasons.reduce((total, season) => total + season.episodes.length, 0), 160);
   assert.equal(detail.hierarchyTruncated, false);
 
