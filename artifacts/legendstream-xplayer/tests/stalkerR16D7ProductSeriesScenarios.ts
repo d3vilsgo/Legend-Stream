@@ -77,7 +77,7 @@ async function main() {
   assert.deepEqual(handoff, {
     source: "http://example.invalid/episode.mkv?token=signed%2Bquery&x=1",
     title: "Bölüm 2",
-    subtitle: "Reacher · Season 1",
+    subtitle: "Reacher · Sezon 1",
     mediaKind: "episode",
   });
 
