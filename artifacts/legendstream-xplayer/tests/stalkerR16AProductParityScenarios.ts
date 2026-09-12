@@ -9,6 +9,13 @@ import {
   type StalkerIsolatedSession,
 } from "../lib/stalkerIsolatedLogin";
 import {
+  adjacentStalkerCategoryId,
+  adjacentStalkerCategoryIndex,
+  isStalkerCategoryHorizontalIntent,
+  resolveStalkerCategorySwipe,
+  STALKER_CATEGORY_SWIPE_THRESHOLD,
+} from "../lib/stalkerCategoryPager";
+import {
   normalizeStalkerProductCategories,
   toProductCategoryRows,
   toProductChannelRows,
@@ -28,6 +35,26 @@ async function main() {
     { id: "10", title: "Haber" },
     { id: "20", title: "Spor" },
   ]);
+
+  const pagerCategories = [
+    { id: "a", title: "A" },
+    { id: "b", title: "B" },
+    { id: "c", title: "C" },
+    { id: "d", title: "D" },
+  ];
+  assert.equal(STALKER_CATEGORY_SWIPE_THRESHOLD, 60);
+  assert.equal(resolveStalkerCategorySwipe(-80, 8), "next", "left swipe must advance exactly one category");
+  assert.equal(resolveStalkerCategorySwipe(80, 8), "previous", "right swipe must move to previous category");
+  assert.equal(resolveStalkerCategorySwipe(30, 2), null, "small finger drift must not switch category");
+  assert.equal(resolveStalkerCategorySwipe(-80, 90), null, "vertical intent must remain available to content scrolling");
+  assert.equal(resolveStalkerCategorySwipe(-80, 8, true), null, "disabled pager must ignore swipe");
+  assert.equal(isStalkerCategoryHorizontalIntent(20, 4), true);
+  assert.equal(isStalkerCategoryHorizontalIntent(20, 18), false);
+  assert.equal(adjacentStalkerCategoryIndex(1, 4, "next"), 2, "one gesture must not skip multiple categories");
+  assert.equal(adjacentStalkerCategoryId(pagerCategories, "b", "next"), "c");
+  assert.equal(adjacentStalkerCategoryId(pagerCategories, "b", "previous"), "a");
+  assert.equal(adjacentStalkerCategoryId(pagerCategories, "a", "previous"), null, "first category must not wrap");
+  assert.equal(adjacentStalkerCategoryId(pagerCategories, "d", "next"), null, "last category must not wrap");
 
   const channelRows = toProductChannelRows([
     { id: "501", title: "TRT Haber", cmd: "ffmpeg http://portal/live/501", logoUrl: "https://img/501.png", number: 12 },
@@ -81,6 +108,38 @@ async function main() {
   assert.match(presentationSource, /screen === "channels"/);
   assert.match(presentationSource, /channels\.map/);
   assert.match(presentationSource, /channel\.logoUrl/);
+
+  const pagerSource = source("components/stalker/StalkerCategoryPager.tsx");
+  assert.match(pagerSource, /PanResponder\.create/);
+  assert.match(pagerSource, /onMoveShouldSetPanResponderCapture/);
+  assert.match(pagerSource, /Platform\.isTV/);
+  assert.match(pagerSource, /focusable/);
+  assert.match(pagerSource, /adjacentStalkerCategoryId/);
+
+  const livePagerSource = source("components/catalog/StalkerLiveCatalog.tsx");
+  assert.match(livePagerSource, /StalkerCategoryPager/);
+  assert.match(livePagerSource, /useCatalogPage/);
+  assert.match(livePagerSource, /getCachedCatalogCategories/);
+  assert.match(livePagerSource, /disabled=\{search\.trim\(\)\.length > 0\}/);
+  assert.match(livePagerSource, /rememberCatalogCategorySelection/);
+
+  const vodPagerSource = source("components/stalker/StalkerVodSurface.tsx");
+  assert.match(vodPagerSource, /StalkerCategoryPager/);
+  assert.match(vodPagerSource, /initialCategoryOpenedRef/);
+  assert.match(vodPagerSource, /pageAbortRef\.current\?\.abort\(\)/);
+  assert.match(vodPagerSource, /activeCategoryRef\.current !== category\.id/);
+  assert.match(vodPagerSource, /setItems\(\[\]\)[\s\S]*setCurrentPage\(1\)/);
+  assert.match(vodPagerSource, /disabled=\{view !== "list" \|\| searchQuery\.trim\(\)\.length > 0\}/);
+
+  const seriesPagerSource = source("components/stalker/StalkerSeriesProductSurface.tsx");
+  assert.match(seriesPagerSource, /StalkerCategoryPager/);
+  assert.match(seriesPagerSource, /selectCategoryById/);
+  assert.match(seriesPagerSource, /initialCategoryOpenedRef/);
+  assert.match(seriesPagerSource, /requestAbort\.current\?\.abort\(\)/);
+  assert.match(seriesPagerSource, /resetPaging\(\)/);
+  assert.match(seriesPagerSource, /currentRequest\(request\.sequence\)/);
+  assert.match(seriesPagerSource, /disabled=\{screen !== "list" \|\| searchQuery\.trim\(\)\.length > 0\}/);
+  assert.match(seriesPagerSource, /showControls=\{screen === "list"\}/);
 
   const rootSource = source("components/OptimizedHomeScreenPaged.tsx");
   assert.match(rootSource, /STALKER_HOME_SCREEN/);

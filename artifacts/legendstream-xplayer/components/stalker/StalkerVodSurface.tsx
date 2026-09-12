@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { FocusButton } from "@/components/FocusButton";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
+import { StalkerCategoryPager } from "@/components/stalker/StalkerCategoryPager";
 import { useColors } from "@/hooks/useColors";
 import { readLatestIsolatedStalkerSessionForProbe } from "@/lib/stalkerIsolatedLogin";
 import { redactSensitiveText } from "@/lib/safeLog";
@@ -71,6 +72,7 @@ export function StalkerVodSurface({
   const playbackAbortRef = useRef<AbortController | null>(null);
   const searchSequenceRef = useRef(0);
   const searchAbortRef = useRef<AbortController | null>(null);
+  const initialCategoryOpenedRef = useRef(false);
 
   const selectedCategory = categories.find((category) => category.id === selectedCategoryId) ?? null;
   const visibleItems = view === "search" ? searchResults : items;
@@ -190,12 +192,26 @@ export function StalkerVodSurface({
       setMaxPageItems(undefined);
       setHasNextPage(false);
       setPagingError(null);
+      setFailedPage(null);
+      setListError(null);
     }
     searchAbortRef.current?.abort();
     setSearchQuery("");
     setSearchResults([]);
     void loadPage(category, 1);
   };
+
+  useEffect(() => {
+    if (
+      categoryStatus === "VOD_CATEGORIES_READY"
+      && categories.length
+      && !selectedCategoryId
+      && !initialCategoryOpenedRef.current
+    ) {
+      initialCategoryOpenedRef.current = true;
+      selectCategory(categories[0]!);
+    }
+  }, [categories, categoryStatus, selectedCategoryId]);
 
   const openMovie = (item: StalkerVodItem) => {
     setSelectedVodItem(item);
@@ -362,62 +378,73 @@ export function StalkerVodSurface({
     ? "Tüm filmlerde arama"
     : selectedCategory?.id === "*" ? "Tümü" : selectedCategory?.title || "Filmler";
 
-  return <FlatList
-    style={styles.screen}
-    contentContainerStyle={styles.section}
-    data={visibleItems}
-    keyExtractor={(item) => item.portalId}
-    numColumns={2}
-    columnWrapperStyle={styles.gridRow}
-    ListHeaderComponent={<View style={styles.headerBlock}>
-      <View style={styles.titleRow}>
-        {view === "list" ? <FocusButton label="Kategoriler" icon="arrow-left" variant="ghost" onPress={() => setView("categories")} /> : null}
-        <View style={{ flex: 1 }}>
-          <Text style={[styles.title, { color: colors.foreground }]}>{displayTitle}</Text>
-          <Text style={{ color: colors.mutedForeground }}>
-            {view === "search" ? "Provider All kataloğunda global arama" : `${items.length} yüklendi${totalItems != null ? ` · ${totalItems} film` : ""}${maxPageItems != null ? ` · sayfa başına ${maxPageItems}` : ""}`}
-          </Text>
+  return <StalkerCategoryPager
+    categories={categories}
+    activeId={selectedCategoryId}
+    disabled={view !== "list" || searchQuery.trim().length > 0}
+    showControls={view === "list"}
+    onSelect={(id) => {
+      const category = categories.find((item) => item.id === id);
+      if (category) selectCategory(category);
+    }}
+  >
+    <FlatList
+      style={styles.screen}
+      contentContainerStyle={styles.section}
+      data={visibleItems}
+      keyExtractor={(item) => item.portalId}
+      numColumns={2}
+      columnWrapperStyle={styles.gridRow}
+      ListHeaderComponent={<View style={styles.headerBlock}>
+        <View style={styles.titleRow}>
+          {view === "list" ? <FocusButton label="Kategoriler" icon="arrow-left" variant="ghost" onPress={() => setView("categories")} /> : null}
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.title, { color: colors.foreground }]}>{displayTitle}</Text>
+            <Text style={{ color: colors.mutedForeground }}>
+              {view === "search" ? "Provider All kataloğunda global arama" : `${items.length} yüklendi${totalItems != null ? ` · ${totalItems} film` : ""}${maxPageItems != null ? ` · sayfa başına ${maxPageItems}` : ""}`}
+            </Text>
+          </View>
         </View>
-      </View>
-      {searchBox}
-      {searchLoading ? <StateCard text="Tüm film kataloğu taranıyor" /> : null}
-      {searchError ? <ErrorCard text={searchError} /> : null}
-      {view === "list" && listStatus === "VOD_LIST_LOADING" ? <StateCard text="Filmler yükleniyor" /> : null}
-      {view === "list" && listStatus === "VOD_LIST_ERROR" && listError ? <View style={styles.headerBlock}>
-        <ErrorCard text={listError} />
-        <FocusButton label="Tekrar dene" icon="refresh-cw" variant="secondary" onPress={() => selectedCategory && void loadPage(selectedCategory, failedPage ?? 1, false, true)} />
+        {searchBox}
+        {searchLoading ? <StateCard text="Tüm film kataloğu taranıyor" /> : null}
+        {searchError ? <ErrorCard text={searchError} /> : null}
+        {view === "list" && listStatus === "VOD_LIST_LOADING" ? <StateCard text="Filmler yükleniyor" /> : null}
+        {view === "list" && listStatus === "VOD_LIST_ERROR" && listError ? <View style={styles.headerBlock}>
+          <ErrorCard text={listError} />
+          <FocusButton label="Tekrar dene" icon="refresh-cw" variant="secondary" onPress={() => selectedCategory && void loadPage(selectedCategory, failedPage ?? 1, false, true)} />
+        </View> : null}
+      </View>}
+      renderItem={({ item }) => <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={item.title}
+        onPress={() => openMovie(item)}
+        style={[styles.movieCard, { borderColor: colors.border, backgroundColor: colors.card }]}
+      >
+        <Poster item={item} />
+        <Text numberOfLines={2} style={[styles.movieTitle, { color: colors.foreground }]}>{item.title}</Text>
+        <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>
+          {[item.year, item.rating].filter(Boolean).join(" · ")}
+        </Text>
+      </Pressable>}
+      ListEmptyComponent={
+        !searchLoading && !searchError && listStatus !== "VOD_LIST_LOADING" && listStatus !== "VOD_LIST_ERROR"
+          ? <StateCard text={view === "search" ? "Aramanızla eşleşen film bulunamadı" : "Bu kategoride film bulunamadı"} />
+          : null
+      }
+      onEndReached={view === "list" && hasNextPage && !pagingError
+        ? () => selectedCategory && void loadPage(selectedCategory, currentPage + 1, true)
+        : undefined}
+      onEndReachedThreshold={0.55}
+      ListFooterComponent={view === "list" ? <View style={styles.footer}>
+        {loadingMore ? <StateCard text={`Sayfa ${currentPage + 1} yükleniyor`} /> : null}
+        {pagingError ? <View style={styles.footer}>
+          <ErrorCard text={pagingError} />
+          <FocusButton label="Tekrar dene" icon="refresh-cw" variant="secondary" onPress={() => selectedCategory && failedPage != null && void loadPage(selectedCategory, failedPage, true, true)} />
+        </View> : null}
+        {!hasNextPage && items.length ? <Text style={{ color: colors.mutedForeground, textAlign: "center" }}>Kategori sonu</Text> : null}
       </View> : null}
-    </View>}
-    renderItem={({ item }) => <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={item.title}
-      onPress={() => openMovie(item)}
-      style={[styles.movieCard, { borderColor: colors.border, backgroundColor: colors.card }]}
-    >
-      <Poster item={item} />
-      <Text numberOfLines={2} style={[styles.movieTitle, { color: colors.foreground }]}>{item.title}</Text>
-      <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>
-        {[item.year, item.rating].filter(Boolean).join(" · ")}
-      </Text>
-    </Pressable>}
-    ListEmptyComponent={
-      !searchLoading && !searchError && listStatus !== "VOD_LIST_LOADING" && listStatus !== "VOD_LIST_ERROR"
-        ? <StateCard text={view === "search" ? "Aramanızla eşleşen film bulunamadı" : "Bu kategoride film bulunamadı"} />
-        : null
-    }
-    onEndReached={view === "list" && hasNextPage && !pagingError
-      ? () => selectedCategory && void loadPage(selectedCategory, currentPage + 1, true)
-      : undefined}
-    onEndReachedThreshold={0.55}
-    ListFooterComponent={view === "list" ? <View style={styles.footer}>
-      {loadingMore ? <StateCard text={`Sayfa ${currentPage + 1} yükleniyor`} /> : null}
-      {pagingError ? <View style={styles.footer}>
-        <ErrorCard text={pagingError} />
-        <FocusButton label="Tekrar dene" icon="refresh-cw" variant="secondary" onPress={() => selectedCategory && failedPage != null && void loadPage(selectedCategory, failedPage, true, true)} />
-      </View> : null}
-      {!hasNextPage && items.length ? <Text style={{ color: colors.mutedForeground, textAlign: "center" }}>Kategori sonu</Text> : null}
-    </View> : null}
-  />;
+    />
+  </StalkerCategoryPager>;
 }
 
 function SearchBox({ value, onChange }: { value: string; onChange: (value: string) => void }) {
