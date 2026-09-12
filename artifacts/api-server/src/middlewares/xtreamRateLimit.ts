@@ -1,8 +1,25 @@
 import type { RequestHandler } from "express";
 
 const WINDOW_MS = 60_000;
+const CLEANUP_INTERVAL_MS = 30_000;
 const MAX_REQUESTS = Math.max(10, Number(process.env.XTREAM_RATE_LIMIT_PER_MINUTE) || 60);
 const buckets = new Map<string, { startedAt: number; count: number }>();
+
+function cleanupExpiredBuckets(now = Date.now()): void {
+  for (const [bucketKey, bucket] of buckets) {
+    if (now - bucket.startedAt >= WINDOW_MS) {
+      buckets.delete(bucketKey);
+    }
+  }
+}
+
+const cleanupInterval = setInterval(cleanupExpiredBuckets, CLEANUP_INTERVAL_MS);
+cleanupInterval.unref?.();
+
+export function shutdownRateLimitCleanup(): void {
+  clearInterval(cleanupInterval);
+  buckets.clear();
+}
 
 export const xtreamRateLimit: RequestHandler = (req, res, next) => {
   const now = Date.now();
@@ -26,9 +43,7 @@ export const xtreamRateLimit: RequestHandler = (req, res, next) => {
     return;
   }
   if (buckets.size > 10_000) {
-    for (const [bucketKey, bucket] of buckets) {
-      if (now - bucket.startedAt >= WINDOW_MS) buckets.delete(bucketKey);
-    }
+    cleanupExpiredBuckets(now);
   }
   next();
 };
