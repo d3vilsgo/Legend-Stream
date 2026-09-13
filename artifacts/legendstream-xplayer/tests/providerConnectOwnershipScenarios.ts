@@ -98,7 +98,8 @@ async function main() {
 
   await scenario("cancelled or stale attempts cannot persist provider metadata", () => {
     assert.match(playerSource, /const persistConnectedProviderAttempt = async \([\s\S]*if \(!isCurrentConnectAttempt\(attempt\)\) return null;/);
-    assert.match(playerSource, /await AsyncStorage\.setItem\(STORAGE_KEY, serializedPlayerState\(next\)\);[\s\S]*if \(!isCurrentConnectAttempt\(attempt\)\) \{[\s\S]*AsyncStorage\.setItem\(STORAGE_KEY, serializedPlayerState\(stateRef\.current\)\)/);
+    assert.match(playerSource, /const restoreCurrentState = async \(\) => \{[\s\S]*AsyncStorage\.setItem\(STORAGE_KEY, serializedPlayerState\(stateRef\.current\)\)/);
+    assert.match(playerSource, /await AsyncStorage\.setItem\(STORAGE_KEY, serializedPlayerState\(next\)\);[\s\S]*if \(!isCurrentConnectAttempt\(attempt\)\) \{\s*await restoreCurrentState\(\);/);
     assert.match(playerSource, /if \(!isCurrentConnectAttempt\(attempt\)\) return false;\s*await saveProviderSecrets\(savedProvider\);\s*if \(!isCurrentConnectAttempt\(attempt\)\) return false;/);
   });
 
@@ -112,7 +113,7 @@ async function main() {
 
   await scenario("Stalker connect propagates AbortSignal and current ownership downstream", () => {
     assert.match(playerSource, /loadProviderSmart\(providerToLoad, \{[\s\S]*signal: attempt\.signal,[\s\S]*isCurrent: \(\) => isCurrentConnectAttempt\(attempt\),[\s\S]*stalkerSyncOwner:/);
-    assert.match(routingSource, /bootstrapStalkerCatalogForLifecycle\(provider, \{[\s\S]*signal: options\.signal,[\s\S]*isCurrent: options\.isCurrent/);
+    assert.match(routingSource, /bootstrapStalkerProviderForLifecycle\(provider, \{[\s\S]*signal: options\.signal,[\s\S]*isCurrent: options\.isCurrent/);
     assert.match(bootstrapSource, /await session\.handshake\(options\.signal\);/);
     assert.match(bootstrapSource, /fetchLiveCategories[\s\S]*options\.signal/);
   });
