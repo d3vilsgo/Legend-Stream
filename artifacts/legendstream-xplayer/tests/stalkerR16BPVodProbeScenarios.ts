@@ -119,13 +119,17 @@ async function main() {
     assert.doesNotMatch(isolatedSource, /get_all_channels/);
   });
 
-  await scenario("Probe remains diagnostic but is retired from normal product UI", () => {
+  await scenario("Probe remains diagnostic but is retired from canonical product routing", () => {
     assert.match(panelSource, /Diagnostic only/);
     assert.match(panelSource, /Üretim VOD değildir/);
-    const productSource = source("components/product/ProductLiveSurface.tsx");
-    assert.doesNotMatch(productSource, /StalkerVodProbePanel/);
-    assert.match(productSource, /label="Filmler"/);
-    assert.match(productSource, /StalkerVodSurface/);
+    const productSource = source("components/OptimizedHomeScreenPaged.tsx");
+    assert.doesNotMatch(productSource, /StalkerVodProbePanel|ProductLiveSurface/);
+    assert.match(productSource, /\{ key: "movies" as const, label: t\("movies"\), icon: "film" as const \}/);
+    const stalkerMoviesRoute = productSource
+      .split("\n")
+      .find((line) => line.includes('view === "movies" && provider.type === "stalker"')) ?? "";
+    assert.match(stalkerMoviesRoute, /StalkerProductErrorBoundary product="movies"/);
+    assert.match(stalkerMoviesRoute, /<StalkerVodSurface provider=\{provider\}/);
   });
 
   await scenario("R15 and R16-A regressions remain wired", () => {
