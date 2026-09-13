@@ -68,8 +68,10 @@ async function main() {
   await scenario("Home unknown-total fallback uses bounded category metadata as categories", () => {
     assert.match(repositorySource, /SELECT COUNT\(\*\) FROM catalog_categories WHERE provider_id = \? AND kind = 'vod'/);
     assert.match(repositorySource, /SELECT COUNT\(\*\) FROM catalog_categories WHERE provider_id = \? AND kind = 'series'/);
-    assert.match(screenSource, /vodCategories=\{categoryMetadata\?\.providerId === provider\.id \? categoryMetadata\.vodCategories : 0\}/);
-    assert.match(screenSource, /seriesCategories=\{categoryMetadata\?\.providerId === provider\.id \? categoryMetadata\.seriesCategories : 0\}/);
+    const homeDiscoveryRoute = screenSource.match(/\{view\s*===\s*"home"\s*\?\s*<HomeDiscovery[\s\S]*?\/>/)?.[0];
+    assert.ok(homeDiscoveryRoute, "HomeDiscovery route must remain in the canonical paged Home shell");
+    assert.match(homeDiscoveryRoute, /vodCategories=\{\s*provider\.type\s*===\s*"stalker"\s*\?\s*0\s*:\s*categoryMetadata\?\.providerId\s*===\s*provider\.id\s*\?\s*categoryMetadata\.vodCategories\s*:\s*0\s*\}/);
+    assert.match(homeDiscoveryRoute, /seriesCategories=\{\s*provider\.type\s*===\s*"stalker"\s*\?\s*0\s*:\s*categoryMetadata\?\.providerId\s*===\s*provider\.id\s*\?\s*categoryMetadata\.seriesCategories\s*:\s*0\s*\}/);
     assert.match(homeSource, /vod === null[\s\S]*t\("categoryCount"/);
     assert.match(homeSource, /series === null[\s\S]*t\("categoryCount"/);
     assert.doesNotMatch(homeSource, /vodCategories\.toLocaleString\(\)[\s\S]*t\("titles"/);
