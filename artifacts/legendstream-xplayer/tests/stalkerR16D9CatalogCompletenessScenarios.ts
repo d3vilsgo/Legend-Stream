@@ -23,7 +23,7 @@ const seriesLib = source("lib/stalkerSeriesProduct.ts");
 const seriesCatalog = source("components/stalker/StalkerSeriesProductCatalog.tsx");
 const seriesSurface = source("components/stalker/StalkerSeriesProductSurface.tsx");
 const vodSurface = source("components/stalker/StalkerVodSurface.tsx");
-const productSurface = source("components/product/ProductLiveSurface.tsx");
+const productShell = source("components/OptimizedHomeScreenPaged.tsx");
 
 const season = (id: string, count = 1): StalkerSeriesProductSeason => ({
   id,
@@ -141,10 +141,17 @@ async function main() {
   assert.match(vodSurface, /searchStalkerVodCatalog/);
   assert.match(vodSurface, /pageAbortRef\.current\?\.abort\(\)/);
   assert.match(vodSurface, /sessionStillCurrent/);
-  assert.match(vodSurface, /<NativeVideoPlayer[\s\S]*?mediaKind="movie"[\s\S]*?autoFullscreen/);
-  assert.match(productSurface, /!vodPlayerActive/);
-  assert.match(productSurface, /section === "movies" \? <StalkerVodSurface/);
-  assert.match(productSurface, /onPlayerActiveChange=\{setVodPlayerActive\}/);
+  assert.match(vodSurface, /if \(view === "player" && selectedVodItem && playableUrl\) return <View/);
+  assert.match(vodSurface, /<NativeVideoPlayer[\s\S]*?source=\{playableUrl\}[\s\S]*?mediaKind="movie"[\s\S]*?autoFullscreen[\s\S]*?onFullscreenExit=\{\(\) => setView\("details"\)\}/);
+
+  // D12A product-shell contract: Stalker Movies stays inside the shared LegendStream shell.
+  assert.match(productShell, /import \{ StalkerVodSurface \} from "@\/components\/stalker\/StalkerVodSurface";/);
+  const stalkerMoviesRoute = productShell
+    .split("\n")
+    .find((line) => line.includes('view === "movies" && provider.type === "stalker"')) ?? "";
+  assert.match(stalkerMoviesRoute, /StalkerProductErrorBoundary product="movies"/);
+  assert.match(stalkerMoviesRoute, /<StalkerVodSurface provider=\{provider\} onBack=\{\(\) => setView\("home"\)\} \/>/);
+  assert.doesNotMatch(productShell, /ProductLiveSurface/);
 
   // Regression guards: exact Series create_link dialect and no alternate fallback remain intact.
   assert.match(seriesLib, /type:\s*"vod"[\s\S]*?action:\s*"create_link"[\s\S]*?cmd:\s*ref\.cmd[\s\S]*?series:\s*episodeId/);
