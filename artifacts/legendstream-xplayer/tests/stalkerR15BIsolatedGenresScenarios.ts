@@ -13,7 +13,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
 const screenSource = source("components/OptimizedHomeScreenPaged.tsx");
 const isolatedLoginSource = source("lib/stalkerIsolatedLogin.ts");
-const productSurfaceSource = source("components/product/ProductLiveSurface.tsx");
+const liveCatalogSource = source("components/catalog/StalkerLiveCatalog.tsx");
 
 let passed = 0;
 async function scenario(name: string, run: () => void | Promise<void>) {
@@ -65,20 +65,18 @@ async function main() {
     assert.deepEqual(harness.calls, ["handshake", "get_profile", "get_main_info"]);
   });
 
-  await scenario("Entering isolated Stalker Live surface triggers get_genres once", () => {
-    const setupBlock = screenSource.slice(
-      screenSource.indexOf("function ProviderSetup"),
-      screenSource.indexOf("type HistorySectionRow"),
+  await scenario("Canonical Stalker Live surface is shell-routed and provider-gated", () => {
+    const routeBlock = screenSource.slice(
+      screenSource.indexOf('{view === "live" && provider.type === "stalker"'),
+      screenSource.indexOf('{view === "movies"'),
     );
-    const openLiveBlock = setupBlock.slice(
-      setupBlock.indexOf("const openStalkerLiveSurface"),
-      setupBlock.indexOf("const loadStalkerChannelsForCategory"),
-    );
-    assert.match(openLiveBlock, /setStalkerScreen\("STALKER_GENRES_SCREEN"\)/);
-    assert.match(openLiveBlock, /stalkerGenreStatus === "IDLE"/);
-    assert.match(openLiveBlock, /void loadStalkerGenres\(\)/);
-    assert.match(setupBlock, /stalkerGenresRequestedRef\.current/);
-    assert.match(setupBlock, /onOpenLive=\{openStalkerLiveSurface\}/);
+    assert.match(routeBlock, /<StalkerLiveCatalog/);
+    assert.match(routeBlock, /providerId=\{provider\.id\}/);
+    assert.match(routeBlock, /onOpen=\{openLive\}/);
+    assert.match(routeBlock, /onFavorite=\{\(id\) => void toggleFavorite\(id\)\}/);
+    assert.match(liveCatalogSource, /useStalkerLiveCatalogSync\([\s\S]*provider\?\.id === providerId && provider\.type === "stalker" \? provider : null/);
+    assert.match(liveCatalogSource, /if \(!provider \|\| provider\.id !== providerId \|\| provider\.type !== "stalker"\) return null;/);
+    assert.doesNotMatch(screenSource, /ProductLiveSurface|openStalkerLiveSurface|STALKER_GENRES_SCREEN/);
   });
 
   await scenario("get_genres uses the Stalker ITV request contract", async () => {
@@ -103,9 +101,7 @@ async function main() {
       { id: "sports", title: "Sports", order: 1 },
       { id: "dup", title: "Duplicate", order: 3 },
     ]);
-    assert.match(screenSource, /toProductCategoryRows\(stalkerCategories\)/);
-    assert.match(productSurfaceSource, /categories\.map/);
-    assert.match(productSurfaceSource, /category\.title/);
+    assert.match(liveCatalogSource, /<StalkerCategoryPager[\s\S]*categories=\{categories\}[\s\S]*activeId=\{category\}[\s\S]*onSelect=\{setCategory\}/);
   });
 
   await scenario("get_genres failure leaves connected authentication state intact", async () => {
@@ -121,15 +117,15 @@ async function main() {
     assert.equal(statuses.at(-1), "GENRES_ERROR");
   });
 
-  await scenario("Category failure remains retryable without rerunning login", () => {
-    const setupBlock = screenSource.slice(
-      screenSource.indexOf("function ProviderSetup"),
-      screenSource.indexOf("type HistorySectionRow"),
+  await scenario("Canonical Live refresh retries sync and page without rerunning isolated login", () => {
+    const refreshBlock = liveCatalogSource.slice(
+      liveCatalogSource.indexOf("onPress={() => {"),
+      liveCatalogSource.indexOf("style={[styles.refreshButton"),
     );
-    assert.match(setupBlock, /onRetryCategories=\{\(\) => void loadStalkerGenres\(true\)\}/);
-    const retryBlock = setupBlock.slice(setupBlock.indexOf("onRetryCategories="), setupBlock.indexOf("onRetryChannels="));
-    assert.doesNotMatch(retryBlock, /runIsolatedStalkerLogin/);
-    assert.match(productSurfaceSource, /categoriesError[\s\S]*LocalError[\s\S]*onRetry=\{onRetryCategories\}/);
+    assert.match(refreshBlock, /Promise\.resolve\(sync\.refresh\(\)\)\.finally/);
+    assert.match(refreshBlock, /loadCategories\(\)/);
+    assert.match(refreshBlock, /page\.reload\(\)/);
+    assert.doesNotMatch(refreshBlock, /runIsolatedStalkerLogin|loadIsolatedStalkerGenres/);
   });
 
   await scenario("Retry calls category loading only", async () => {
@@ -142,19 +138,19 @@ async function main() {
     assert.deepEqual(harness.calls, ["handshake", "get_profile", "get_main_info", "get_genres"]);
   });
 
-  await scenario("Ordinary rerender is guarded from duplicate get_genres requests", () => {
-    assert.match(screenSource, /if \(!stalkerSession \|\| \(!force && stalkerGenresRequestedRef\.current\)\) return;/);
-    assert.match(screenSource, /stalkerGenresRequestedRef\.current = true;/);
-    assert.doesNotMatch(screenSource, /useEffect\([\s\S]{0,240}loadStalkerGenres/);
+  await scenario("Category cache refresh is generation-guarded", () => {
+    const loadBlock = liveCatalogSource.slice(
+      liveCatalogSource.indexOf("const loadCategories = useCallback"),
+      liveCatalogSource.indexOf("const setCategory = useCallback"),
+    );
+    assert.match(loadBlock, /const generation = \+\+categoryGeneration\.current/);
+    assert.match(loadBlock, /if \(categoryGeneration\.current !== generation\) return;/);
+    assert.match(liveCatalogSource, /if \(sync\.categoriesReady\) loadCategories\(\)/);
   });
 
-  await scenario("R15-B surface entry does not automatically call get_ordered_list", () => {
-    const setupBlock = screenSource.slice(
-      screenSource.indexOf("const openStalkerLiveSurface"),
-      screenSource.indexOf("const loadStalkerChannelsForCategory"),
-    );
-    assert.match(setupBlock, /void loadStalkerGenres\(\)/);
-    assert.doesNotMatch(setupBlock, /loadIsolatedStalkerCategoryChannels|get_ordered_list|get_all_channels|create_link/);
+  await scenario("Stalker Live entry does not invoke isolated ordered-list or playback helpers directly", () => {
+    assert.doesNotMatch(liveCatalogSource, /loadIsolatedStalkerCategoryChannels|get_ordered_list|get_all_channels|create_link|resolveIsolatedStalkerChannelLink/);
+    assert.match(liveCatalogSource, /if \(!sync\.categoriesReady\)/);
   });
 
   await scenario("R15-B login and genre helpers never call aggregate channels or playback links", () => {
@@ -165,14 +161,11 @@ async function main() {
     assert.doesNotMatch(loginAndGenreSource, /get_ordered_list|get_all_channels|create_link/);
   });
 
-  await scenario("Shared persist and SQL catalog persistence are not required", () => {
+  await scenario("Isolated helper remains persistence-free while production Live uses canonical page repository", () => {
     assert.doesNotMatch(isolatedLoginSource, /\bpersist\(|saveProviderSecrets|AsyncStorage|SecureStore/);
-    const setupBlock = screenSource.slice(
-      screenSource.indexOf("function ProviderSetup"),
-      screenSource.indexOf("type HistorySectionRow"),
-    );
-    assert.doesNotMatch(setupBlock, /\bpersist\(|saveProviderSecrets|replaceProviderCatalogAtomically|rememberStalkerLiveCategories/);
-    assert.doesNotMatch(productSurfaceSource, /usePlayer|useCatalogSync|useCatalogPage|catalogPageRepository/);
+    assert.match(liveCatalogSource, /getCachedCatalogCategories\(providerId, "live"\)/);
+    assert.match(liveCatalogSource, /const page = useCatalogPage\(\{/);
+    assert.doesNotMatch(screenSource, /ProductLiveSurface|stalkerGenresRequestedRef/);
   });
 
   await scenario("Xtream behavior remains on shared submit lifecycle", () => {
@@ -181,7 +174,7 @@ async function main() {
       screenSource.indexOf("type HistorySectionRow"),
     );
     assert.match(setupBlock, /if \(type === "xtream" && \(!username\.trim\(\) \|\| !password\)\)/);
-    assert.match(setupBlock, /await onSubmit\(\{[\s\S]*username: type === "xtream"/);
+    assert.match(setupBlock, /await onSubmit\(\{[\s\S]*username: type === "xtream" \? username\.trim\(\) : undefined/);
   });
 
   await scenario("M3U behavior remains on shared submit lifecycle", () => {
@@ -190,12 +183,12 @@ async function main() {
       screenSource.indexOf("type HistorySectionRow"),
     );
     assert.match(setupBlock, /await onSubmit\(\{[\s\S]*type,[\s\S]*playlistUrl: clean/);
-    assert.match(setupBlock, /epgUrl: epgUrl\.trim\(\) \|\| undefined/);
+    assert.match(setupBlock, /epgUrl: type === "stalker" \? undefined : epgUrl\.trim\(\) \|\| undefined/);
   });
 
   await scenario("Existing R15-A focused scenarios remain present", () => {
     const r15aSource = source("tests/stalkerR15AIsolatedLoginScenarios.ts");
-    assert.match(r15aSource, /Stalker setup routes to isolated login/);
+    assert.match(r15aSource, /ProviderSetup submits Stalker through canonical shared provider lifecycle/);
     assert.match(r15aSource, /Optional get_main_info failure does not break login/);
   });
 

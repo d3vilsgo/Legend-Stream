@@ -14,7 +14,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
 const screenSource = source("components/OptimizedHomeScreenPaged.tsx");
 const isolatedLoginSource = source("lib/stalkerIsolatedLogin.ts");
-const productSurfaceSource = source("components/product/ProductLiveSurface.tsx");
+const liveCatalogSource = source("components/catalog/StalkerLiveCatalog.tsx");
 
 let passed = 0;
 async function scenario(name: string, run: () => void | Promise<void>) {
@@ -111,12 +111,11 @@ async function main() {
     ]);
   });
 
-  await scenario("Channels become visible in the isolated Stalker product surface", () => {
-    assert.match(screenSource, /toProductChannelRows\(stalkerChannels\)/);
-    assert.match(screenSource, /stalkerScreen === "STALKER_CHANNELS_SCREEN"/);
-    assert.match(productSurfaceSource, /channels\.map/);
-    assert.match(productSurfaceSource, /channel\.title/);
-    assert.match(productSurfaceSource, /channel\.logoUrl/);
+  await scenario("Canonical Live rows are sourced from page.items", () => {
+    assert.match(liveCatalogSource, /data=\{page\.items\}/);
+    assert.match(liveCatalogSource, /keyExtractor=\{\(channel\) => channel\.id\}/);
+    assert.match(liveCatalogSource, /channel\.logoUrl/);
+    assert.match(liveCatalogSource, /channel\.name/);
   });
 
   await scenario("ordered-list failure does not invalidate CONNECTED", async () => {
@@ -135,58 +134,56 @@ async function main() {
     assert.equal(statuses.at(-1), "CHANNELS_ERROR");
   });
 
-  await scenario("ordered-list failure does not remove categories", () => {
-    const loadBlock = screenSource.slice(
-      screenSource.indexOf("const loadStalkerChannelsForCategory"),
-      screenSource.indexOf("const openStalkerChannel"),
-    );
-    assert.match(loadBlock, /setStalkerChannelStatus\("CHANNELS_ERROR"\)/);
-    assert.doesNotMatch(loadBlock, /setStalkerCategories\(\[\]\)|setStalkerStatus\("ERROR"\)/);
-    assert.match(screenSource, /selectedStalkerCategory/);
+  await scenario("Category controls remain independent from paged channel acquisition", () => {
+    assert.match(liveCatalogSource, /<StalkerCategoryPager[\s\S]*categories=\{categories\}[\s\S]*onSelect=\{setCategory\}/);
+    assert.match(liveCatalogSource, /const page = useCatalogPage\(\{/);
+    assert.doesNotMatch(screenSource, /loadStalkerChannelsForCategory|selectedStalkerCategory|STALKER_CHANNELS_SCREEN/);
   });
 
-  await scenario("Retry calls only channel-list logic", () => {
-    const setupBlock = screenSource.slice(
-      screenSource.indexOf("function ProviderSetup"),
-      screenSource.indexOf("type HistorySectionRow"),
+  await scenario("Canonical retry refreshes sync categories and current page only", () => {
+    const refreshBlock = liveCatalogSource.slice(
+      liveCatalogSource.indexOf("onPress={() => {"),
+      liveCatalogSource.indexOf("style={[styles.refreshButton"),
     );
-    assert.match(setupBlock, /onRetryChannels=\{\(\) => \{[\s\S]*loadStalkerChannelsForCategory\(selectedStalkerCategory, true\)/);
-    const retryBlock = setupBlock.slice(setupBlock.indexOf("onRetryChannels="), setupBlock.indexOf("onRetryPlayback="));
-    assert.doesNotMatch(retryBlock, /runIsolatedStalkerLogin|loadStalkerGenres/);
-    assert.match(productSurfaceSource, /channelsError[\s\S]*LocalError[\s\S]*onRetry=\{onRetryChannels\}/);
+    assert.match(refreshBlock, /sync\.refresh\(\)/);
+    assert.match(refreshBlock, /loadCategories\(\)/);
+    assert.match(refreshBlock, /page\.reload\(\)/);
+    assert.doesNotMatch(refreshBlock, /runIsolatedStalkerLogin|loadIsolatedStalkerCategoryChannels/);
   });
 
-  await scenario("Ordinary rerender does not duplicate ordered-list requests", () => {
-    assert.doesNotMatch(screenSource, /useEffect\([\s\S]{0,220}loadStalkerChannelsForCategory/);
-    const loadBlock = screenSource.slice(
-      screenSource.indexOf("const loadStalkerChannelsForCategory"),
-      screenSource.indexOf("const openStalkerChannel"),
+  await scenario("Paged Live acquisition is provider-gated", () => {
+    const pageBlock = liveCatalogSource.slice(
+      liveCatalogSource.indexOf("const page = useCatalogPage"),
+      liveCatalogSource.indexOf("const epgSeedKey"),
     );
-    assert.match(loadBlock, /if \(!force && currentRequest\.key === key\) \{[\s\S]{0,180}return;/);
+    assert.match(pageBlock, /provider: provider\?\.id === providerId && provider\.type === "stalker" \? provider : null/);
+    assert.match(liveCatalogSource, /if \(!provider \|\| provider\.id !== providerId \|\| provider\.type !== "stalker"\) return null;/);
   });
 
-  await scenario("Same-category in-flight or cached request dedup works", () => {
-    const loadBlock = screenSource.slice(
-      screenSource.indexOf("const loadStalkerChannelsForCategory"),
-      screenSource.indexOf("const openStalkerChannel"),
+  await scenario("Paged Live acquisition remains category-aware", () => {
+    const pageBlock = liveCatalogSource.slice(
+      liveCatalogSource.indexOf("const page = useCatalogPage"),
+      liveCatalogSource.indexOf("const epgSeedKey"),
     );
-    assert.match(loadBlock, /stalkerChannelRequestRef\.current = \{ key, sequence \};/);
-    assert.match(loadBlock, /if \(!force && currentRequest\.key === key\) \{[\s\S]{0,180}return;/);
-    assert.match(loadBlock, /setStalkerScreen\("STALKER_CHANNELS_SCREEN"\)/);
+    assert.match(pageBlock, /kind: "live"/);
+    assert.match(pageBlock, /categoryId: category/);
+    assert.match(pageBlock, /search,/);
+    assert.match(pageBlock, /enabled: true/);
+    assert.match(liveCatalogSource, /onEndReached=\{page\.loadMore\}/);
   });
 
-  await scenario("Stale category response cannot overwrite the currently selected category", () => {
-    assert.match(screenSource, /stalkerChannelRequestRef\.current\.sequence !== sequence/);
-    assert.match(screenSource, /stalkerChannelRequestRef\.current\.key !== key/);
+  await scenario("Category cache responses are generation-guarded", () => {
+    const loadBlock = liveCatalogSource.slice(
+      liveCatalogSource.indexOf("const loadCategories = useCallback"),
+      liveCatalogSource.indexOf("const setCategory = useCallback"),
+    );
+    assert.match(loadBlock, /const generation = \+\+categoryGeneration\.current/);
+    assert.match(loadBlock, /if \(categoryGeneration\.current !== generation\) return;/);
   });
 
-  await scenario("R15-C category loading does not call create_link before channel selection", () => {
-    const surfaceBlock = screenSource.slice(
-      screenSource.indexOf("const loadStalkerChannelsForCategory"),
-      screenSource.indexOf("const openStalkerChannel"),
-    );
-    assert.match(surfaceBlock, /loadIsolatedStalkerCategoryChannels/);
-    assert.doesNotMatch(surfaceBlock, /create_link|resolveIsolatedStalkerChannelLink|NativeVideoPlayer|setPlayer|openPlayer/);
+  await scenario("Paged channel acquisition does not resolve playback links in the UI layer", () => {
+    assert.match(liveCatalogSource, /const page = useCatalogPage\(\{/);
+    assert.doesNotMatch(liveCatalogSource, /create_link|resolveIsolatedStalkerChannelLink/);
   });
 
   await scenario("create_link is isolated to the channel playback helper", () => {
@@ -201,29 +198,27 @@ async function main() {
     assert.match(playbackSource, /\{ type: "itv", action: "create_link", cmd \}/);
   });
 
-  await scenario("Channel rows initiate playback only from explicit channel press", () => {
-    assert.match(productSurfaceSource, /onPress=\{\(\) => onSelectChannel\(channel\.id\)\}/);
-    const wiringBlock = screenSource.slice(
-      screenSource.indexOf("onSelectChannel="),
-      screenSource.indexOf("/>;", screenSource.indexOf("onSelectChannel=")),
+  await scenario("Channel rows hand off explicit open and favorite actions", () => {
+    assert.match(liveCatalogSource, /onPress=\{\(\) => onOpen\(channel\)\}/);
+    assert.match(liveCatalogSource, /onPress=\{\(\) => onFavorite\(channel\.id\)\}/);
+    const routeBlock = screenSource.slice(
+      screenSource.indexOf('{view === "live" && provider.type === "stalker"'),
+      screenSource.indexOf('{view === "movies"'),
     );
-    assert.match(wiringBlock, /stalkerChannels\.find/);
-    assert.match(wiringBlock, /openStalkerChannel\(channel\)/);
-    assert.doesNotMatch(productSurfaceSource, /get_all_channels|replaceProviderCatalogAtomically|rememberStalkerLiveCategories/);
+    assert.match(routeBlock, /onOpen=\{openLive\}/);
+    assert.equal((liveCatalogSource.match(/\b_channels\b/g) ?? []).length, 1);
+    assert.doesNotMatch(liveCatalogSource, /data=\{_channels\}/);
+    assert.match(liveCatalogSource, /data=\{page\.items\}/);
   });
 
   await scenario("get_all_channels never appears in the R15-C isolated runtime path", () => {
     assert.doesNotMatch(isolatedLoginSource, /get_all_channels/);
   });
 
-  await scenario("No SQL or shared catalog persistence dependency is introduced", () => {
+  await scenario("Isolated helper persistence remains independent from canonical paged Live", () => {
     assert.doesNotMatch(isolatedLoginSource, /AsyncStorage|SecureStore|replaceProviderCatalogAtomically|rememberStalkerLiveCategories|\bpersist\(/);
-    const setupBlock = screenSource.slice(
-      screenSource.indexOf("function ProviderSetup"),
-      screenSource.indexOf("type HistorySectionRow"),
-    );
-    assert.doesNotMatch(setupBlock, /replaceProviderCatalogAtomically|rememberStalkerLiveCategories|\bpersist\(/);
-    assert.doesNotMatch(productSurfaceSource, /usePlayer|useCatalogSync|useCatalogPage|catalogPageRepository/);
+    assert.match(liveCatalogSource, /useCatalogPage/);
+    assert.doesNotMatch(screenSource, /ProductLiveSurface|stalkerChannelRequestRef|loadStalkerChannelsForCategory/);
   });
 
   await scenario("Xtream routing remains unchanged", () => {
@@ -232,7 +227,7 @@ async function main() {
       screenSource.indexOf("type HistorySectionRow"),
     );
     assert.match(setupBlock, /if \(type === "xtream" && \(!username\.trim\(\) \|\| !password\)\)/);
-    assert.match(setupBlock, /await onSubmit\(\{[\s\S]*username: type === "xtream"/);
+    assert.match(setupBlock, /await onSubmit\(\{[\s\S]*username: type === "xtream" \? username\.trim\(\) : undefined/);
   });
 
   await scenario("M3U routing remains unchanged", () => {
@@ -241,7 +236,7 @@ async function main() {
       screenSource.indexOf("type HistorySectionRow"),
     );
     assert.match(setupBlock, /await onSubmit\(\{[\s\S]*type,[\s\S]*playlistUrl: clean/);
-    assert.match(setupBlock, /epgUrl: epgUrl\.trim\(\) \|\| undefined/);
+    assert.match(setupBlock, /epgUrl: type === "stalker" \? undefined : epgUrl\.trim\(\) \|\| undefined/);
   });
 
   await scenario("R15-A tests remain present", () => {
@@ -251,7 +246,7 @@ async function main() {
 
   await scenario("R15-B tests remain present", () => {
     const r15bSource = source("tests/stalkerR15BIsolatedGenresScenarios.ts");
-    assert.match(r15bSource, /Entering isolated Stalker Live surface triggers get_genres once/);
+    assert.match(r15bSource, /Canonical Stalker Live surface is shell-routed and provider-gated/);
   });
 
   await scenario("All category is not substituted with get_all_channels", async () => {

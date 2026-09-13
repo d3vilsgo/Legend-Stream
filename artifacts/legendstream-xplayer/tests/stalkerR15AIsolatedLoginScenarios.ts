@@ -11,7 +11,6 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
 const screenSource = source("components/OptimizedHomeScreenPaged.tsx");
 const isolatedLoginSource = source("lib/stalkerIsolatedLogin.ts");
-const productSurfaceSource = source("components/product/ProductLiveSurface.tsx");
 
 let passed = 0;
 async function scenario(name: string, run: () => void | Promise<void>) {
@@ -55,17 +54,25 @@ function sessionHarness(options: {
 }
 
 async function main() {
-  await scenario("Stalker setup routes to isolated login instead of shared connectProvider", () => {
+  await scenario("ProviderSetup submits Stalker through canonical shared provider lifecycle", () => {
     const setupBlock = screenSource.slice(
       screenSource.indexOf("function ProviderSetup"),
       screenSource.indexOf("type HistorySectionRow"),
     );
-    assert.match(setupBlock, /runIsolatedStalkerLogin\(\{ portalUrl: clean, mac: mac\.trim\(\) \}\)/);
-    assert.match(setupBlock, /if \(type === "stalker"\)[\s\S]*return;/);
-    assert.match(setupBlock, /await onSubmit\(/);
-    assert.ok(setupBlock.indexOf('if (type === "stalker")') < setupBlock.indexOf("await onSubmit("));
-    assert.match(setupBlock, /type !== "stalker" \? <Input label=\{t\("sourceName"\)\}/);
-    assert.match(setupBlock, /type !== "stalker" \? <Input label=\{t\("epgOptional"\)\}/);
+    const activationBlock = screenSource.slice(
+      screenSource.indexOf("if (adding || editingProvider || !provider)"),
+      screenSource.indexOf("const openLive"),
+    );
+
+    assert.ok(setupBlock.includes('(["xtream", "m3u", "stalker"] as ProviderType[])'));
+    assert.match(setupBlock, /if \(type === "stalker" && !mac\.trim\(\)\)/);
+    assert.match(setupBlock, /playlistUrl: clean/);
+    assert.match(setupBlock, /mac: type === "stalker" \? mac\.trim\(\) : undefined/);
+    assert.match(setupBlock, /epgUrl: type === "stalker" \? undefined : epgUrl\.trim\(\) \|\| undefined/);
+    assert.match(setupBlock, /await onSubmit\(\{/);
+    assert.match(activationBlock, /const ok = await connectProvider\(config\)/);
+    assert.doesNotMatch(setupBlock, /runIsolatedStalkerLogin|setStalkerScreen|STALKER_(?:HOME|GENRES|CHANNELS|PLAYER)_SCREEN/);
+    assert.doesNotMatch(screenSource, /ProductLiveSurface/);
   });
 
   await scenario("Handshake plus profile success reaches CONNECTED with optional main info", async () => {
@@ -95,14 +102,11 @@ async function main() {
     assert.doesNotMatch(loginFunctionSource, /get_genres|get_ordered_list|get_all_channels|create_link/);
   });
 
-  await scenario("Shared persist is not required for isolated Stalker login completion", () => {
+  await scenario("Isolated helper remains persistence-free without owning production activation", () => {
     assert.doesNotMatch(isolatedLoginSource, /\bpersist\(/);
     assert.doesNotMatch(isolatedLoginSource, /saveProviderSecrets|saveCredentials|AsyncStorage|SecureStore/);
-    assert.match(screenSource, /ProductLiveSurface/);
-    assert.match(screenSource, /setStalkerScreen\("STALKER_HOME_SCREEN"\)/);
-    assert.match(productSurfaceSource, /LEGEND/);
-    assert.match(productSurfaceSource, /Canlı TV/);
-    assert.doesNotMatch(productSurfaceSource, /usePlayer|useCatalogSync|connectProvider/);
+    assert.doesNotMatch(screenSource, /runIsolatedStalkerLogin|ProductLiveSurface|setStalkerScreen/);
+    assert.match(screenSource, /connectProvider\(config\)/);
   });
 
   await scenario("Handshake failure exits CONNECTING through controlled error state", async () => {
@@ -152,8 +156,10 @@ async function main() {
       screenSource.indexOf("type HistorySectionRow"),
     );
     assert.match(setupBlock, /if \(type === "xtream" && \(!username\.trim\(\) \|\| !password\)\)/);
-    assert.match(setupBlock, /await onSubmit\(\{[\s\S]*username: type === "xtream"/);
-    assert.match(setupBlock, /epgUrl: epgUrl\.trim\(\) \|\| undefined/);
+    assert.match(setupBlock, /await onSubmit\(\{[\s\S]*username: type === "xtream" \? username\.trim\(\) : undefined/);
+    assert.match(setupBlock, /password: type === "xtream" \? password : undefined/);
+    assert.match(setupBlock, /playlistUrl: clean/);
+    assert.match(setupBlock, /epgUrl: type === "stalker" \? undefined : epgUrl\.trim\(\) \|\| undefined/);
   });
 
   console.log(`stalker R15-A isolated login scenarios passed: ${passed}/8`);

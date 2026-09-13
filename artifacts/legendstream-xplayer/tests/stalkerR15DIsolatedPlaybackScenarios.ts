@@ -14,7 +14,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
 const screenSource = source("components/OptimizedHomeScreenPaged.tsx");
 const isolatedLoginSource = source("lib/stalkerIsolatedLogin.ts");
-const productSurfaceSource = source("components/product/ProductLiveSurface.tsx");
+const liveCatalogSource = source("components/catalog/StalkerLiveCatalog.tsx");
 
 let passed = 0;
 async function scenario(name: string, run: () => void | Promise<void>) {
@@ -96,35 +96,35 @@ async function main() {
     assert.deepEqual(harness.calls, [{ type: "itv", action: "get_ordered_list", genre: "sports", p: 1 }]);
   });
 
-  await scenario("Selecting category transitions to channels screen", () => {
-    const loadBlock = screenSource.slice(
-      screenSource.indexOf("const loadStalkerChannelsForCategory"),
-      screenSource.indexOf("const openStalkerChannel"),
+  await scenario("Category selection stays inside canonical Stalker pager state", () => {
+    const setCategoryBlock = liveCatalogSource.slice(
+      liveCatalogSource.indexOf("const setCategory = useCallback"),
+      liveCatalogSource.indexOf("const page = useCatalogPage"),
     );
-    assert.match(loadBlock, /setSelectedStalkerCategoryId\(key\)/);
-    assert.match(loadBlock, /setStalkerScreen\("STALKER_CHANNELS_SCREEN"\)/);
-    assert.match(screenSource, /onSelectCategory=\{\(id\) => \{[\s\S]*loadStalkerChannelsForCategory\(category\)/);
+    assert.match(setCategoryBlock, /rememberCatalogCategorySelection\(providerId, "live", id\)/);
+    assert.match(liveCatalogSource, /<StalkerCategoryPager[\s\S]*onSelect=\{setCategory\}/);
+    assert.doesNotMatch(screenSource, /STALKER_CHANNELS_SCREEN|setStalkerScreen/);
   });
 
-  await scenario("Genres are not stacked with channel list in the same UX state", () => {
-    assert.match(productSurfaceSource, /screen === "categories"/);
-    assert.match(productSurfaceSource, /screen === "channels"/);
-    assert.doesNotMatch(productSurfaceSource, /GET_ORDERED_LIST completed|GET_GENRES completed|GET_ORDERED_LIST tamamlandı|GET_GENRES tamamlandı/);
-    assert.match(screenSource, /stalkerScreen === "STALKER_CHANNELS_SCREEN"/);
+  await scenario("Canonical pager composes categories and page.items without isolated screens", () => {
+    assert.match(liveCatalogSource, /<StalkerCategoryPager[\s\S]*categories=\{categories\}/);
+    assert.match(liveCatalogSource, /data=\{page\.items\}/);
+    assert.doesNotMatch(screenSource, /STALKER_GENRES_SCREEN|STALKER_CHANNELS_SCREEN/);
   });
 
-  await scenario("Back from channels returns to genres without re-login", () => {
-    const start = screenSource.indexOf("const backToStalkerGenres");
-    const backSource = screenSource.slice(start, screenSource.indexOf("const retrySelectedStalkerPlayback", start));
-    assert.match(backSource, /setStalkerScreen\("STALKER_GENRES_SCREEN"\)/);
-    assert.doesNotMatch(backSource, /runIsolatedStalkerLogin|setStalkerSession\(null\)|setStalkerStatus\("CONNECTING"\)/);
-    assert.match(screenSource, /onBackToCategories=\{backToStalkerGenres\}/);
+  await scenario("Changing category does not re-run isolated login", () => {
+    const setCategoryBlock = liveCatalogSource.slice(
+      liveCatalogSource.indexOf("const setCategory = useCallback"),
+      liveCatalogSource.indexOf("const epgSeedKey"),
+    );
+    assert.match(setCategoryBlock, /categoryId: category/);
+    assert.doesNotMatch(setCategoryBlock, /runIsolatedStalkerLogin|loadIsolatedStalkerGenres/);
   });
 
   await scenario("Channel tap triggers create_link exactly once", async () => {
     const harness = sessionHarness();
-    const source = await resolveIsolatedStalkerChannelLink(harness.session, channel);
-    assert.equal(source, "http://stream.example/live/101.ts");
+    const resolved = await resolveIsolatedStalkerChannelLink(harness.session, channel);
+    assert.equal(resolved, "http://stream.example/live/101.ts");
     assert.deepEqual(harness.calls, [{ type: "itv", action: "create_link", cmd: channel.cmd }]);
   });
 
@@ -145,74 +145,72 @@ async function main() {
     assert.equal(harness.calls.some((call) => call.action === "create_link"), false);
   });
 
-  await scenario("Rapid duplicate channel taps are guarded from uncontrolled fan-out", () => {
-    const openSource = screenSource.slice(
-      screenSource.indexOf("const openStalkerChannel"),
-      screenSource.indexOf("const backToStalkerGenres"),
+  await scenario("Channel tap delegates exactly one production onOpen handoff", () => {
+    assert.equal((liveCatalogSource.match(/onOpen\(channel\)/g) ?? []).length, 1);
+    assert.match(liveCatalogSource, /onPress=\{\(\) => onOpen\(channel\)\}/);
+    const routeBlock = screenSource.slice(
+      screenSource.indexOf('{view === "live" && provider.type === "stalker"'),
+      screenSource.indexOf('{view === "movies"'),
     );
-    assert.match(openSource, /stalkerPlaybackStatus === "PLAYBACK_LOADING"/);
-    assert.match(openSource, /if \(!force && currentRequest\.key === key && stalkerPlaybackStatus === "PLAYBACK_LOADING"\) return;/);
+    assert.match(routeBlock, /onOpen=\{openLive\}/);
   });
 
-  await scenario("Stale create_link response cannot open the wrong channel", () => {
-    const openSource = screenSource.slice(
-      screenSource.indexOf("const openStalkerChannel"),
-      screenSource.indexOf("const backToStalkerGenres"),
+  await scenario("Production Live UI does not own create_link request state", () => {
+    assert.doesNotMatch(liveCatalogSource, /stalkerPlaybackRequestRef|stalkerPlaybackStatus|create_link|resolveIsolatedStalkerChannelLink/);
+    const openLiveBlock = screenSource.slice(
+      screenSource.indexOf("const openLive"),
+      screenSource.indexOf("const openMovie"),
     );
-    assert.match(openSource, /stalkerPlaybackRequestRef\.current\.sequence !== sequence/);
-    assert.match(openSource, /stalkerPlaybackRequestRef\.current\.key !== key/);
+    assert.match(openLiveBlock, /channel\.streamUrl/);
   });
 
-  await scenario("create_link failure leaves channel list intact", async () => {
+  await scenario("create_link failure remains a lower-level helper failure", async () => {
     const harness = sessionHarness({ failCreateLink: true });
     await assert.rejects(resolveIsolatedStalkerChannelLink(harness.session, channel), /link unavailable/);
-    const openSource = screenSource.slice(
-      screenSource.indexOf("const openStalkerChannel"),
-      screenSource.indexOf("const backToStalkerGenres"),
-    );
-    assert.match(openSource, /setStalkerPlaybackStatus\("PLAYBACK_ERROR"\)/);
-    assert.doesNotMatch(openSource, /setStalkerChannels\(\[\]\)|setStalkerCategories\(\[\]\)|setStalkerStatus\("ERROR"\)/);
+    assert.doesNotMatch(screenSource, /stalkerPlaybackStatus|stalkerPlaybackRequestRef|setStalkerPlayable/);
   });
 
-  await scenario("Playback failure is presented locally without invalidating session content", () => {
-    assert.match(productSurfaceSource, /playbackError[\s\S]*LocalError[\s\S]*Yayın başlatılamadı/);
-    const setupBlock = screenSource.slice(
-      screenSource.indexOf("const openStalkerChannel"),
-      screenSource.indexOf("const submit"),
+  await scenario("Missing shared playback URL fails at root handoff without opening player", () => {
+    const openLiveBlock = screenSource.slice(
+      screenSource.indexOf("const openLive"),
+      screenSource.indexOf("const openMovie"),
     );
-    assert.doesNotMatch(setupBlock, /setStalkerStatus\("ERROR"\)|setStalkerCategories\(\[\]\)/);
+    assert.match(openLiveBlock, /if \(!channel\.streamUrl\) \{ setCatalogError\([\s\S]*return; \}/);
+    assert.ok(openLiveBlock.indexOf("if (!channel.streamUrl)") < openLiveBlock.indexOf("setPlayable("));
   });
 
-  await scenario("Successful create_link hands normalized URL to player", async () => {
+  await scenario("Canonical Live handoff reaches shared application player", async () => {
     const harness = sessionHarness({ createLinkPayload: "ffmpeg http://stream.example/direct.ts" });
-    const source = await resolveIsolatedStalkerChannelLink(harness.session, channel);
-    assert.equal(source, "http://stream.example/direct.ts");
-    assert.match(screenSource, /setStalkerPlayable\(\{[\s\S]*url: source/);
-    assert.match(screenSource, /<NativeVideoPlayer[\s\S]*source=\{stalkerPlayable\.url\}/);
+    const resolved = await resolveIsolatedStalkerChannelLink(harness.session, channel);
+    assert.equal(resolved, "http://stream.example/direct.ts");
+    const openLiveBlock = screenSource.slice(
+      screenSource.indexOf("const openLive"),
+      screenSource.indexOf("const openMovie"),
+    );
+    assert.match(openLiveBlock, /url: channel\.streamUrl/);
+    assert.match(openLiveBlock, /kind: "live"/);
+    assert.match(openLiveBlock, /returnTo: "live"/);
+    assert.match(openLiveBlock, /setView\("player"\)/);
+    assert.match(screenSource, /<NativeVideoPlayer source=\{playable\.url\}/);
   });
 
-  await scenario("Back from player returns to the same channel surface", () => {
-    assert.match(screenSource, /onFullscreenExit=\{\(\) => setStalkerScreen\("STALKER_CHANNELS_SCREEN"\)\}/);
-    const playerBlock = screenSource.slice(
-      screenSource.indexOf('stalkerScreen === "STALKER_PLAYER_SCREEN"'),
-      screenSource.indexOf("const productScreen"),
-    );
-    assert.doesNotMatch(playerBlock, /loadStalkerGenres|loadStalkerChannelsForCategory|runIsolatedStalkerLogin/);
-    assert.doesNotMatch(playerBlock, /setStalkerChannels\(\[\]\)|setStalkerCategories\(\[\]\)/);
+  await scenario("Shared player exits back to recorded content destination", () => {
+    assert.match(screenSource, /onFullscreenExit=\{\(\) => setView\(playable\.returnTo\)\}/);
+    assert.doesNotMatch(screenSource, /STALKER_PLAYER_SCREEN|backToStalkerGenres/);
   });
 
   await scenario("get_all_channels remains unreachable from the isolated R15-D path", () => {
     assert.doesNotMatch(isolatedLoginSource, /get_all_channels/);
   });
 
-  await scenario("No SQL or shared catalog persistence dependency is used", () => {
+  await scenario("No SQL or shared catalog persistence dependency is used by isolated helpers", () => {
     assert.doesNotMatch(isolatedLoginSource, /AsyncStorage|SecureStore|replaceProviderCatalogAtomically|rememberStalkerLiveCategories|\bpersist\(/);
     const setupBlock = screenSource.slice(
       screenSource.indexOf("function ProviderSetup"),
       screenSource.indexOf("type HistorySectionRow"),
     );
     assert.doesNotMatch(setupBlock, /replaceProviderCatalogAtomically|rememberStalkerLiveCategories|\bpersist\(/);
-    assert.doesNotMatch(productSurfaceSource, /usePlayer|useCatalogSync|useCatalogPage|catalogPageRepository/);
+    assert.match(liveCatalogSource, /useCatalogPage/);
   });
 
   await scenario("Xtream routing remains unchanged", () => {
@@ -221,7 +219,7 @@ async function main() {
       screenSource.indexOf("type HistorySectionRow"),
     );
     assert.match(setupBlock, /if \(type === "xtream" && \(!username\.trim\(\) \|\| !password\)\)/);
-    assert.match(setupBlock, /await onSubmit\(\{[\s\S]*username: type === "xtream"/);
+    assert.match(setupBlock, /await onSubmit\(\{[\s\S]*username: type === "xtream" \? username\.trim\(\) : undefined/);
   });
 
   await scenario("M3U routing remains unchanged", () => {
@@ -230,7 +228,7 @@ async function main() {
       screenSource.indexOf("type HistorySectionRow"),
     );
     assert.match(setupBlock, /await onSubmit\(\{[\s\S]*type,[\s\S]*playlistUrl: clean/);
-    assert.match(setupBlock, /epgUrl: epgUrl\.trim\(\) \|\| undefined/);
+    assert.match(setupBlock, /epgUrl: type === "stalker" \? undefined : epgUrl\.trim\(\) \|\| undefined/);
   });
 
   await scenario("R15-A B and C focused tests remain wired", () => {
@@ -253,10 +251,15 @@ async function main() {
       sessionHarness({ createLinkPayload: { link: "http://stream.example/link.ts" } }).session,
       channel,
     );
-    assert.deepEqual([fromCmd, fromUrl, fromLink], [
+    const fromString = await resolveIsolatedStalkerChannelLink(
+      sessionHarness({ createLinkPayload: "ffmpeg http://stream.example/string.ts" }).session,
+      channel,
+    );
+    assert.deepEqual([fromCmd, fromUrl, fromLink, fromString], [
       "http://stream.example/cmd.ts",
       "http://stream.example/url.ts",
       "http://stream.example/link.ts",
+      "http://stream.example/string.ts",
     ]);
   });
 
