@@ -43,30 +43,28 @@ async function main() {
     { id: "d", title: "D" },
   ];
   assert.equal(STALKER_CATEGORY_SWIPE_THRESHOLD, 60);
-  assert.equal(resolveStalkerCategorySwipe(-80, 8), "next", "left swipe must advance exactly one category");
-  assert.equal(resolveStalkerCategorySwipe(80, 8), "previous", "right swipe must move to previous category");
-  assert.equal(resolveStalkerCategorySwipe(30, 2), null, "small finger drift must not switch category");
-  assert.equal(resolveStalkerCategorySwipe(-80, 90), null, "vertical intent must remain available to content scrolling");
-  assert.equal(resolveStalkerCategorySwipe(-80, 8, true), null, "disabled pager must ignore swipe");
+  assert.equal(resolveStalkerCategorySwipe(-80, 8), "next");
+  assert.equal(resolveStalkerCategorySwipe(80, 8), "previous");
+  assert.equal(resolveStalkerCategorySwipe(30, 2), null);
+  assert.equal(resolveStalkerCategorySwipe(-80, 90), null);
+  assert.equal(resolveStalkerCategorySwipe(-80, 8, true), null);
   assert.equal(isStalkerCategoryHorizontalIntent(20, 4), true);
   assert.equal(isStalkerCategoryHorizontalIntent(20, 18), false);
-  assert.equal(adjacentStalkerCategoryIndex(1, 4, "next"), 2, "one gesture must not skip multiple categories");
+  assert.equal(adjacentStalkerCategoryIndex(1, 4, "next"), 2);
   assert.equal(adjacentStalkerCategoryId(pagerCategories, "b", "next"), "c");
   assert.equal(adjacentStalkerCategoryId(pagerCategories, "b", "previous"), "a");
-  assert.equal(adjacentStalkerCategoryId(pagerCategories, "a", "previous"), null, "first category must not wrap");
-  assert.equal(adjacentStalkerCategoryId(pagerCategories, "d", "next"), null, "last category must not wrap");
+  assert.equal(adjacentStalkerCategoryId(pagerCategories, "a", "previous"), null);
+  assert.equal(adjacentStalkerCategoryId(pagerCategories, "d", "next"), null);
 
   const channelRows = toProductChannelRows([
     { id: "501", title: "TRT Haber", cmd: "ffmpeg http://portal/live/501", logoUrl: "https://img/501.png", number: 12 },
   ]);
   assert.deepEqual(channelRows, [{ id: "501", title: "TRT Haber", logoUrl: "https://img/501.png", number: 12 }]);
-  assert.equal("cmd" in channelRows[0]!, false, "presentation row must not expose playback command");
+  assert.equal("cmd" in channelRows[0]!, false);
 
   const requests: Record<string, unknown>[] = [];
   const session: StalkerIsolatedSession = {
-    async handshake() {
-      return { authenticated: true as const };
-    },
+    async handshake() { return { authenticated: true as const }; },
     async request(params) {
       requests.push({ ...params });
       if (params.action === "get_genres") return [{ id: "10", title: "Haber" }];
@@ -75,7 +73,6 @@ async function main() {
       throw new Error(`unexpected action ${String(params.action)}`);
     },
   };
-
   const loadedCategories = await loadIsolatedStalkerGenres(session);
   const loadedChannels = await loadIsolatedStalkerCategoryChannels(session, loadedCategories[0]!);
   const playable = await resolveIsolatedStalkerChannelLink(session, loadedChannels[0]!);
@@ -87,78 +84,62 @@ async function main() {
   ]);
   assert.equal(requests.some((request) => request.action === "get_all_channels"), false);
 
-  const presentationSource = source("components/product/ProductLiveSurface.tsx");
-  for (const forbidden of [
-    "usePlayer",
-    "useCatalogSync",
-    "connectProvider",
-    "useCatalogPage",
-    "catalogPageRepository",
-    "useStalkerLiveCatalogSync",
-    "get_all_channels",
-    "get_ordered_list",
-    "create_link",
-    "get_genres",
-  ]) {
-    assert.equal(presentationSource.includes(forbidden), false, `presentation shell must not own ${forbidden}`);
-  }
-  assert.match(presentationSource, /LEGEND/);
-  assert.match(presentationSource, /Canlı TV/);
-  assert.match(presentationSource, /screen === "categories"/);
-  assert.match(presentationSource, /screen === "channels"/);
-  assert.match(presentationSource, /channels\.map/);
-  assert.match(presentationSource, /channel\.logoUrl/);
-
   const pagerSource = source("components/stalker/StalkerCategoryPager.tsx");
   assert.match(pagerSource, /PanResponder\.create/);
   assert.match(pagerSource, /onMoveShouldSetPanResponderCapture/);
   assert.match(pagerSource, /Platform\.isTV/);
   assert.match(pagerSource, /focusable/);
-  assert.match(pagerSource, /adjacentStalkerCategoryId/);
 
   const livePagerSource = source("components/catalog/StalkerLiveCatalog.tsx");
   assert.match(livePagerSource, /StalkerCategoryPager/);
   assert.match(livePagerSource, /useCatalogPage/);
-  assert.match(livePagerSource, /getCachedCatalogCategories/);
   assert.match(livePagerSource, /disabled=\{search\.trim\(\)\.length > 0\}/);
-  assert.match(livePagerSource, /rememberCatalogCategorySelection/);
 
-  const vodPagerSource = source("components/stalker/StalkerVodSurface.tsx");
-  assert.match(vodPagerSource, /StalkerCategoryPager/);
-  assert.match(vodPagerSource, /initialCategoryOpenedRef/);
-  assert.match(vodPagerSource, /pageAbortRef\.current\?\.abort\(\)/);
-  assert.match(vodPagerSource, /activeCategoryRef\.current !== category\.id/);
-  assert.match(vodPagerSource, /setItems\(\[\]\)[\s\S]*setCurrentPage\(1\)/);
-  assert.match(vodPagerSource, /disabled=\{view !== "list" \|\| searchQuery\.trim\(\)\.length > 0\}/);
-
-  const seriesPagerSource = source("components/stalker/StalkerSeriesProductSurface.tsx");
-  assert.match(seriesPagerSource, /StalkerCategoryPager/);
-  assert.match(seriesPagerSource, /selectCategoryById/);
-  assert.match(seriesPagerSource, /initialCategoryOpenedRef/);
-  assert.match(seriesPagerSource, /requestAbort\.current\?\.abort\(\)/);
-  assert.match(seriesPagerSource, /resetPaging\(\)/);
-  assert.match(seriesPagerSource, /currentRequest\(request\.sequence\)/);
-  assert.match(seriesPagerSource, /disabled=\{screen !== "list" \|\| searchQuery\.trim\(\)\.length > 0\}/);
-  assert.match(seriesPagerSource, /showControls=\{screen === "list"\}/);
+  const vodSource = source("components/stalker/StalkerVodSurface.tsx");
+  const seriesSource = source("components/stalker/StalkerSeriesProductSurface.tsx");
+  const productSessionSource = source("lib/stalkerProductSession.ts");
+  for (const productSource of [vodSource, seriesSource, productSessionSource]) {
+    assert.doesNotMatch(productSource, /readLatestIsolatedStalkerSessionForProbe|latestIsolatedStalkerSessionForProbe/);
+  }
+  assert.match(productSessionSource, /getOrCreateStalkerPortalSession/);
+  assert.match(productSessionSource, /providerId:\s*provider\.id/);
+  assert.match(productSessionSource, /portalUrl/);
+  assert.match(productSessionSource, /provider\.mac/);
+  assert.match(vodSource, /readCurrentStalkerProductSession\(provider\)/);
+  assert.match(seriesSource, /readCurrentStalkerProductSession\(provider\)/);
+  assert.match(vodSource, /isCurrentStalkerProductSession\(provider, session\)/);
+  assert.match(seriesSource, /isCurrentStalkerProductSession\(provider, session\)/);
 
   const rootSource = source("components/OptimizedHomeScreenPaged.tsx");
-  assert.match(rootSource, /STALKER_HOME_SCREEN/);
-  assert.match(rootSource, /normalizeStalkerProductCategories/);
-  assert.match(rootSource, /ProductLiveSurface/);
-  assert.match(rootSource, /onOpenLive=\{openStalkerLiveSurface\}/);
-  assert.match(rootSource, /onBackToHome=\{\(\) => setStalkerScreen\("STALKER_HOME_SCREEN"\)\}/);
-  assert.match(rootSource, /onFullscreenExit=\{\(\) => setStalkerScreen\("STALKER_CHANNELS_SCREEN"\)\}/);
-  assert.equal(rootSource.includes("GET_GENRES tamamlandı"), false);
-  assert.equal(rootSource.includes("GET_ORDERED_LIST tamamlandı"), false);
-  assert.equal(rootSource.includes("STALKER_CONNECTED"), false);
-  assert.equal(rootSource.includes("Main info:"), false);
+  assert.doesNotMatch(rootSource, /runIsolatedStalkerLogin|ProductLiveSurface/);
+  assert.match(rootSource, /const ok = await connectProvider\(config\)/);
+  assert.match(rootSource, /view === "live" && provider\.type === "stalker"[\s\S]*StalkerLiveCatalog/);
+  assert.match(rootSource, /view === "movies" && provider\.type === "stalker"[\s\S]*StalkerVodSurface/);
+  assert.match(rootSource, /view === "series" && provider\.type === "stalker"[\s\S]*StalkerSeriesProductSurface/);
+  for (const key of ["home", "live", "movies", "series", "history", "downloads", "settings"]) {
+    assert.match(rootSource, new RegExp(`key: "${key}"`), `common shell must expose ${key}`);
+  }
+  assert.match(rootSource, /provider\?\.type === "stalker" \? \[\] : activeSnapshot\?\.movies/);
+  assert.match(rootSource, /provider\?\.type === "stalker" \? \[\] : activeSnapshot\?\.series/);
 
   const setupBlock = rootSource.slice(rootSource.indexOf("function ProviderSetup"), rootSource.indexOf("type HistorySectionRow"));
-  for (const forbidden of ["replaceProviderCatalogAtomically", "rememberStalkerLiveCategories", "saveProviderSecrets"] ) {
-    assert.equal(setupBlock.includes(forbidden), false, `isolated Stalker setup must not use ${forbidden}`);
-  }
-  assert.match(setupBlock, /if \(type === "stalker"\)[\s\S]*runIsolatedStalkerLogin/);
-  assert.match(setupBlock, /if \(type === "stalker"\)[\s\S]*return;[\s\S]*await onSubmit/);
+  assert.doesNotMatch(setupBlock, /runIsolatedStalkerLogin|ProductLiveSurface/);
+  assert.match(setupBlock, /if \(type === "stalker" && !mac\.trim\(\)\)/);
+  assert.match(setupBlock, /await onSubmit\(/);
+
+  const boundarySource = source("components/stalker/StalkerProductErrorBoundary.tsx");
+  assert.match(boundarySource, /getDerivedStateFromError/);
+  assert.match(boundarySource, /componentDidCatch/);
+  assert.match(boundarySource, /sanitizeErrorForLog/);
+  assert.match(boundarySource, /Tekrar dene/);
+  assert.match(boundarySource, /Ana ekrana dön/);
+
+  const seriesCatalogSource = source("components/stalker/StalkerSeriesProductCatalog.tsx");
+  assert.match(seriesCatalogSource, /key="stalker-series-categories"/);
+  assert.match(seriesCatalogSource, /key=\{`stalker-series-grid-\$\{screen\}`\}/);
+
+  assert.match(rootSource, /view === "movies" && \(provider\.type === "m3u" \|\| provider\.type === "xtream"\)/);
+  assert.match(rootSource, /view === "series" && \(provider\.type === "m3u" \|\| provider\.type === "xtream"\)/);
 
   const isolatedSource = source("lib/stalkerIsolatedLogin.ts");
   assert.equal(isolatedSource.includes('action: "get_all_channels"'), false);

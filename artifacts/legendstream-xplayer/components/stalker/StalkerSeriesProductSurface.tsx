@@ -4,7 +4,11 @@ import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
 import { StalkerCategoryPager } from "@/components/stalker/StalkerCategoryPager";
 import { StalkerSeriesProductCatalog, type StalkerSeriesProductScreen } from "@/components/stalker/StalkerSeriesProductCatalog";
 import { redactSensitiveText } from "@/lib/safeLog";
-import { isCurrentStalkerProductSession, readCurrentStalkerProductSession } from "@/lib/stalkerProductSession";
+import {
+  isCurrentStalkerProductSession,
+  readCurrentStalkerProductSession,
+  type StalkerProductProviderIdentity,
+} from "@/lib/stalkerProductSession";
 import {
   buildStalkerSeriesPlayerHandoff,
   createStalkerSeriesProductController,
@@ -22,12 +26,15 @@ import {
 const visibleError = (caught: unknown, fallback: string) =>
   redactSensitiveText(caught instanceof Error ? caught.message : fallback);
 
-export function StalkerSeriesProductSurface() {
-  const current = readCurrentStalkerProductSession();
-  const session = current?.session ?? null;
-  const providerScopeId = current?.providerScopeId ?? "stalker-session-unavailable";
+export function StalkerSeriesProductSurface({ provider }: { provider: StalkerProductProviderIdentity }) {
+  const current = useMemo(
+    () => readCurrentStalkerProductSession(provider),
+    [provider.id, provider.url, provider.playlistUrl, provider.mac],
+  );
+  const session = current.session;
+  const providerScopeId = current.providerScopeId;
   const controller = useMemo(
-    () => session ? createStalkerSeriesProductController(session, providerScopeId) : null,
+    () => createStalkerSeriesProductController(session, providerScopeId),
     [providerScopeId, session],
   );
   const ownership = useMemo(() => new StalkerSeriesPlaybackOwnership(providerScopeId), [providerScopeId]);
@@ -74,7 +81,7 @@ export function StalkerSeriesProductSurface() {
     return { abort, sequence: ++requestSequence.current };
   };
   const currentRequest = (sequence: number) =>
-    requestSequence.current === sequence && Boolean(session && isCurrentStalkerProductSession(session));
+    requestSequence.current === sequence && isCurrentStalkerProductSession(provider, session);
 
   const resetPaging = () => {
     pageInFlight.current = null;
@@ -88,10 +95,6 @@ export function StalkerSeriesProductSurface() {
   };
 
   const loadCategories = async () => {
-    if (!controller || !session) {
-      setError("Stalker oturumu kullanılamıyor.");
-      return;
-    }
     const request = beginRequest();
     ownership.invalidate();
     setLoading(true);
@@ -117,7 +120,6 @@ export function StalkerSeriesProductSurface() {
   };
 
   const loadPage = async (category: StalkerSeriesProductCategory, page: number, append = false) => {
-    if (!controller || !session) return;
     const key = `${providerScopeId}:${category.id}:${page}`;
     if (pageInFlight.current === key) return;
     pageInFlight.current = key;
@@ -178,19 +180,13 @@ export function StalkerSeriesProductSurface() {
   };
 
   useEffect(() => {
-    if (
-      categories.length
-      && screen === "categories"
-      && !selectedCategoryId
-      && !initialCategoryOpenedRef.current
-    ) {
+    if (categories.length && screen === "categories" && !selectedCategoryId && !initialCategoryOpenedRef.current) {
       initialCategoryOpenedRef.current = true;
       selectCategoryById(categories[0]!.id);
     }
   }, [categories, screen, selectedCategoryId]);
 
   const loadDetail = async (item: StalkerSeriesProductItem) => {
-    if (!controller || !session) return;
     const request = beginRequest();
     ownership.invalidate();
     setScreen("detail");
@@ -213,7 +209,7 @@ export function StalkerSeriesProductSurface() {
   };
 
   const playEpisode = async (seasonId: string, episodeId: string) => {
-    if (!controller || !session || !detail) return;
+    if (!detail) return;
     const episodeKey = stalkerSeriesEpisodeIdentity(providerScopeId, detail.seriesId, seasonId, episodeId);
     const ticket = ownership.begin(episodeKey);
     const request = beginRequest();
@@ -232,6 +228,7 @@ export function StalkerSeriesProductSurface() {
   };
 
   useEffect(() => {
+    initialCategoryOpenedRef.current = false;
     void loadCategories();
     return () => {
       requestAbort.current?.abort();
@@ -239,10 +236,8 @@ export function StalkerSeriesProductSurface() {
       requestSequence.current += 1;
       searchSequence.current += 1;
       ownership.invalidate();
-      controller?.clear();
+      controller.clear();
     };
-    // Controller and session are stable for this mounted product session.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [controller, session]);
 
   useEffect(() => {
@@ -256,7 +251,7 @@ export function StalkerSeriesProductSurface() {
       if (screen === "search") setScreen(searchReturnScreen);
       return;
     }
-    if (!controller || !categories.length) return;
+    if (!categories.length) return;
     const timer = setTimeout(() => {
       const abort = new AbortController();
       searchAbort.current = abort;
@@ -265,42 +260,28 @@ export function StalkerSeriesProductSurface() {
       setSearchError(null);
       void searchStalkerSeriesCatalog(controller, categories, query, abort.signal)
         .then((results) => {
-          if (searchSequence.current !== sequence || abort.signal.aborted) return;
+          if (searchSequence.current !== sequence || abort.signal.aborted || !isCurrentStalkerProductSession(provider, session)) return;
           setSearchResults(results);
         })
         .catch((caught) => {
-          if (searchSequence.current !== sequence || abort.signal.aborted) return;
+          if (searchSequence.current !== sequence || abort.signal.aborted || !isCurrentStalkerProductSession(provider, session)) return;
           setSearchError(visibleError(caught, "Dizi araması tamamlanamadı."));
           setSearchResults([]);
         })
         .finally(() => {
-          if (searchSequence.current === sequence && !abort.signal.aborted) setSearchLoading(false);
+          if (searchSequence.current === sequence && !abort.signal.aborted && isCurrentStalkerProductSession(provider, session)) setSearchLoading(false);
         });
     }, 300);
     return () => clearTimeout(timer);
-  }, [categories, controller, searchQuery, searchReturnScreen, screen]);
+  }, [categories, controller, provider, searchQuery, searchReturnScreen, screen, session]);
 
   if (player) {
     return <View style={{ flex: 1, minHeight: 420 }}>
-      <NativeVideoPlayer
-        source={player.source}
-        title={player.title}
-        subtitle={player.subtitle}
-        mediaKind={player.mediaKind}
-        autoFullscreen
-        allowDownload={false}
-        onFullscreenExit={() => setPlayer(null)}
-      />
+      <NativeVideoPlayer source={player.source} title={player.title} subtitle={player.subtitle} mediaKind={player.mediaKind} autoFullscreen allowDownload={false} onFullscreenExit={() => setPlayer(null)} />
     </View>;
   }
 
-  return <StalkerCategoryPager
-    categories={categories}
-    activeId={selectedCategoryId}
-    disabled={screen !== "list" || searchQuery.trim().length > 0}
-    showControls={screen === "list"}
-    onSelect={selectCategoryById}
-  >
+  return <StalkerCategoryPager categories={categories} activeId={selectedCategoryId} disabled={screen !== "list" || searchQuery.trim().length > 0} showControls={screen === "list"} onSelect={selectCategoryById}>
     <StalkerSeriesProductCatalog
       screen={screen}
       categories={categories}
@@ -335,9 +316,7 @@ export function StalkerSeriesProductSurface() {
         } else if (screen === "list" && selectedCategory) void loadPage(selectedCategory, 1, false);
         else if (screen === "detail" && selectedSeriesItem) void loadDetail(selectedSeriesItem);
       }}
-      onRetryNextPage={() => {
-        if (selectedCategory && failedPage != null) void loadPage(selectedCategory, failedPage, true);
-      }}
+      onRetryNextPage={() => { if (selectedCategory && failedPage != null) void loadPage(selectedCategory, failedPage, true); }}
       onBack={() => {
         requestAbort.current?.abort();
         requestSequence.current += 1;
@@ -357,17 +336,10 @@ export function StalkerSeriesProductSurface() {
         }
       }}
       onSelectCategory={selectCategoryById}
-      onSelectSeries={(id) => {
-        const item = visibleItems.find((candidate) => candidate.id === id);
-        if (item) void loadDetail(item);
-      }}
+      onSelectSeries={(id) => { const item = visibleItems.find((candidate) => candidate.id === id); if (item) void loadDetail(item); }}
       onSelectSeason={setSelectedSeasonId}
       onSelectEpisode={(seasonId, episodeId) => void playEpisode(seasonId, episodeId)}
-      onLoadMore={() => {
-        if (selectedCategory && hasNextPage && !loadingMore && !pagingError) {
-          void loadPage(selectedCategory, currentPage + 1, true);
-        }
-      }}
+      onLoadMore={() => { if (selectedCategory && hasNextPage && !loadingMore && !pagingError) void loadPage(selectedCategory, currentPage + 1, true); }}
     />
   </StalkerCategoryPager>;
 }
