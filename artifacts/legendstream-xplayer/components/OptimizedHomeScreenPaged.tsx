@@ -117,7 +117,7 @@ export default function OptimizedHomeScreenPaged() {
   const { t } = useI18n();
   const {
     provider, providers, channels, epgByChannel, favorites, history, isHydrating, isLoading, isEpgLoading,
-    error, connectProvider, refreshProvider, recoverLegacyCatalogFallback, toggleFavorite, recordWatched,
+    error, connectProvider, cancelProviderConnect, refreshProvider, recoverLegacyCatalogFallback, toggleFavorite, recordWatched,
     removeWatched, resolveProviderForSwitch, setActiveProvider, removeProvider, disconnectProvider, clearError,
   } = usePlayer();
   const { snapshot, hasUsableCache, isSyncing, isRefreshing, refreshSnapshot, refreshCatalog } = useCatalogSync();
@@ -255,7 +255,7 @@ export default function OptimizedHomeScreenPaged() {
   if (!provider && !adding && !editingProvider) return <SavedAccounts providers={providers} busy={providerSwitchBusy} switchingProviderId={switchingProviderId} error={error} onOpen={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} onRemove={(id) => void removeProvider(id)} />;
 
   if (adding || editingProvider || !provider) {
-    return <ProviderSetup existing={editingProvider} busy={isLoading} error={error} onCancel={providers.length ? () => { setAdding(false); setEditingProviderId(null); } : undefined} onSubmit={async (config) => {
+    return <ProviderSetup existing={editingProvider} busy={isLoading} error={error} onCancel={providers.length ? () => { cancelProviderConnect(); setAdding(false); setEditingProviderId(null); } : undefined} onSubmit={async (config) => {
       clearError();
       const ok = await connectProvider(config);
       if (ok) { setAdding(false); setEditingProviderId(null); setView("home"); }

@@ -44,6 +44,12 @@ import {
 } from "@/lib/m3uTransportRouting";
 import { safeLog } from "@/lib/safeLog";
 import {
+  ProviderConnectAttemptGate,
+  withProviderConnectDeadline,
+  type ProviderConnectAttempt,
+  type ProviderConnectCancelReason,
+} from "@/lib/providerConnectAttempt";
+import {
   chooseProviderSwitchPath,
   hasPrimedProviderSwitchSnapshot,
   peekProviderSwitchSnapshot,
@@ -172,6 +178,7 @@ interface PlayerContextValue extends PlayerState {
   error: string | null;
   m3uCatalogCommit: CatalogSyncOwnership & { sequence: number } | null;
   connectProvider: (config: ProviderInput) => Promise<boolean>;
+  cancelProviderConnect: () => void;
   mergeImportedProviders: (providers: ProviderConfig[]) => Promise<ProviderMetadataCommitMetrics>;
   removeProvider: (providerId?: string) => Promise<void>;
   disconnectProvider: () => Promise<void>;
@@ -824,37 +831,6 @@ async function loadBulkProviderEpg(
   return normalizeProgramText(programs);
 }
 
-function withProviderConnectDeadline<T>(promise: Promise<T>): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      reject(
-        new ProviderLoadError(
-          "The provider connection timed out. Check the URL, server response time, and try again.",
-          "PROVIDER_TIMEOUT",
-        ),
-      );
-    }, PROVIDER_CONNECT_TIMEOUT_MS);
-
-    promise.then(
-      (value) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
 export function PlayerProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<PlayerState>(emptyState);
   const [isHydrating, setIsHydrating] = useState(true);
@@ -869,6 +845,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const providerLoadGateRef = useRef(new ProviderLoadRequestGate());
   const playerBusySequenceRef = useRef(0);
   const playerBusyOwnerRef = useRef<number | null>(null);
+  const connectAttemptGateRef = useRef(new ProviderConnectAttemptGate());
+  const connectBusyOwnerRef = useRef<{ attemptId: number; busyId: number } | null>(null);
+  const connectPersistenceQueueRef = useRef<Promise<void>>(Promise.resolve());
   const liveHistoryRef = useRef<LiveHistoryV2>(emptyLiveHistoryV2());
   const liveHistoryMutationQueueRef = useRef(new LiveHistoryMutationQueue());
   const epgCacheRef = useRef(
@@ -899,6 +878,31 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (playerBusyOwnerRef.current !== busyId) return;
     playerBusyOwnerRef.current = null;
     setIsLoading(false);
+  };
+
+  const finishConnectBusy = (attemptId: number) => {
+    const owner = connectBusyOwnerRef.current;
+    if (!owner || owner.attemptId !== attemptId) return;
+    connectBusyOwnerRef.current = null;
+    finishPlayerBusy(owner.busyId);
+  };
+
+  const isCurrentConnectAttempt = (attempt: ProviderConnectAttempt) =>
+    connectAttemptGateRef.current.isCurrent(attempt);
+
+  const cancelConnectAttempt = (
+    attempt: ProviderConnectAttempt,
+    reason: ProviderConnectCancelReason,
+  ) => {
+    if (!connectAttemptGateRef.current.cancel(attempt, reason)) return false;
+    safeLog.info("LS_PROVIDER_CONNECT_CANCEL", { attemptId: attempt.id, reason });
+    finishConnectBusy(attempt.id);
+    return true;
+  };
+
+  const cancelProviderConnect = () => {
+    const attempt = connectAttemptGateRef.current.current();
+    if (attempt) cancelConnectAttempt(attempt, "USER");
   };
 
   const beginForegroundProviderLoad = (providerId: string) => {
@@ -964,6 +968,41 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       // Keep the in-memory session usable and leave the previous on-disk state intact.
     }
     return generation;
+  };
+
+  const persistConnectedProviderAttempt = async (
+    attempt: ProviderConnectAttempt,
+    next: PlayerState,
+  ) => {
+    const run = async (): Promise<number | null> => {
+      if (!isCurrentConnectAttempt(attempt)) return null;
+      const restoreCurrentState = async () => {
+        try {
+          await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(stateRef.current));
+        } catch {
+          // Best-effort rollback only; stale connect state is never applied in memory.
+        }
+      };
+      try {
+        await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
+        if (!isCurrentConnectAttempt(attempt)) {
+          await restoreCurrentState();
+          return null;
+        }
+        await AsyncStorage.setItem(SECURE_MIGRATION_KEY, "1");
+        if (!isCurrentConnectAttempt(attempt)) {
+          await restoreCurrentState();
+          return null;
+        }
+        return applyPlayerState(next);
+      } catch {
+        await restoreCurrentState();
+        return null;
+      }
+    };
+    const queued = connectPersistenceQueueRef.current.then(run, run);
+    connectPersistenceQueueRef.current = queued.then(() => undefined, () => undefined);
+    return queued;
   };
 
   const observeM3UCacheWrite = (
@@ -1100,8 +1139,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const connectProvider = async (config: ProviderInput) => {
     providerLoadGateRef.current.invalidateAll();
+    const { attempt, superseded } = connectAttemptGateRef.current.begin();
+    if (superseded) {
+      safeLog.info("LS_PROVIDER_CONNECT_CANCEL", { attemptId: superseded.id, reason: "SUPERSEDED" });
+      finishConnectBusy(superseded.id);
+    }
     const busyId = beginPlayerBusy();
+    connectBusyOwnerRef.current = { attemptId: attempt.id, busyId };
+    safeLog.info("LS_PROVIDER_CONNECT_START", { attemptId: attempt.id, providerType: config.type });
     setError(null);
+    let loadStartedAt: number | null = null;
+    let loadEndLogged = false;
 
     try {
       const sourceUrl = (config.url || config.playlistUrl).trim();
@@ -1119,6 +1167,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         createdAt: Date.now(),
       };
       const candidate = await resolveProviderTransport(rawCandidate);
+      if (!isCurrentConnectAttempt(attempt)) return false;
+      safeLog.info("LS_PROVIDER_CONNECT_TRANSPORT_RESOLVED", { attemptId: attempt.id, resolvedType: candidate.type });
       const current = stateRef.current;
       const duplicate = config.providerId
         ? current.providers.find((item) => item.id === config.providerId)
@@ -1126,44 +1176,97 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       const providerToLoad = duplicate
         ? { ...candidate, id: duplicate.id, createdAt: duplicate.createdAt }
         : candidate;
-      const smart = await withProviderConnectDeadline(loadProviderSmart(providerToLoad, {
-        stalkerSyncOwner: providerToLoad.type === "stalker" ? "CONNECT_PROVIDER" : undefined,
-      }));
+      loadStartedAt = Date.now();
+      safeLog.info("LS_PROVIDER_CONNECT_LOAD_START", { attemptId: attempt.id });
+      let smart;
+      try {
+        smart = await withProviderConnectDeadline(loadProviderSmart(providerToLoad, {
+          signal: attempt.signal,
+          isCurrent: () => isCurrentConnectAttempt(attempt),
+          stalkerSyncOwner: providerToLoad.type === "stalker" ? "CONNECT_PROVIDER" : undefined,
+        }), {
+          timeoutMs: PROVIDER_CONNECT_TIMEOUT_MS,
+          onTimeout: () => {
+            const timeoutError = new ProviderLoadError(
+              "The provider connection timed out. Check the URL, server response time, and try again.",
+              "PROVIDER_TIMEOUT",
+            );
+            if (isCurrentConnectAttempt(attempt)) {
+              safeLog.info("LS_PROVIDER_CONNECT_TIMEOUT", { attemptId: attempt.id });
+              cancelConnectAttempt(attempt, "TIMEOUT");
+              setError(timeoutError.message);
+            }
+            return timeoutError;
+          },
+        });
+        safeLog.info("LS_PROVIDER_CONNECT_LOAD_END", {
+          attemptId: attempt.id,
+          result: isCurrentConnectAttempt(attempt) ? "SUCCESS" : "CANCELLED",
+          elapsedMs: Date.now() - loadStartedAt,
+        });
+        loadEndLogged = true;
+      } catch (caught) {
+        safeLog.info("LS_PROVIDER_CONNECT_LOAD_END", {
+          attemptId: attempt.id,
+          result: attempt.cancelReason ? "CANCELLED" : "ERROR",
+          elapsedMs: Date.now() - loadStartedAt,
+        });
+        loadEndLogged = true;
+        throw caught;
+      }
+      if (!isCurrentConnectAttempt(attempt)) return false;
       const savedProvider = toProvider({
         ...smart.provider,
         lastLoadedAt: Date.now(),
         channelCount: smart.catalogCount,
         epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
       });
+      if (!isCurrentConnectAttempt(attempt)) return false;
       await saveProviderSecrets(savedProvider);
+      if (!isCurrentConnectAttempt(attempt)) return false;
+      const latest = stateRef.current;
       const providers = duplicate
-        ? current.providers.map((item) =>
+        ? latest.providers.map((item) =>
             item.id === duplicate.id ? savedProvider : item,
           )
-        : [...current.providers, savedProvider];
+        : [...latest.providers, savedProvider];
+      if (!isCurrentConnectAttempt(attempt)) return false;
       clearEpgProviderCache(savedProvider.id);
-      const generation = await persist({
-        ...current,
+      const generation = await persistConnectedProviderAttempt(attempt, {
+        ...latest,
         providers,
         provider: savedProvider,
         activeProviderId: savedProvider.id,
         history: historyForProvider(liveHistoryRef.current, savedProvider.id),
         channels: [
-          ...current.channels.filter(
+          ...latest.channels.filter(
             (channel) => channel.providerId !== savedProvider.id,
           ),
           ...smart.loaded.channels,
         ],
       });
+      if (generation === null || !isCurrentConnectAttempt(attempt)) return false;
+      safeLog.info("LS_PROVIDER_CONNECT_PUBLISH", { attemptId: attempt.id });
       observeM3UCacheWrite(savedProvider.id, generation, smart.cacheWriteTask);
       return true;
     } catch (caught) {
+      if (!loadEndLogged && loadStartedAt !== null) {
+        safeLog.info("LS_PROVIDER_CONNECT_LOAD_END", {
+          attemptId: attempt.id,
+          result: attempt.cancelReason ? "CANCELLED" : "ERROR",
+          elapsedMs: Date.now() - loadStartedAt,
+        });
+      }
+      if (!isCurrentConnectAttempt(attempt)) return false;
       setError(
         caught instanceof Error ? caught.message : "The provider could not be loaded.",
       );
       return false;
     } finally {
-      finishPlayerBusy(busyId);
+      if (connectAttemptGateRef.current.isCurrent(attempt)) {
+        connectAttemptGateRef.current.finish(attempt);
+      }
+      finishConnectBusy(attempt.id);
     }
   };
 
@@ -1330,7 +1433,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         provider: latest.provider?.id === providerId ? updated : latest.provider,
         providers: latest.providers.map((item) => item.id === providerId ? updated : item),
         channels: [
-          ...latest.channels.filter((channel) => channel.providerId !== providerId),
+          ...latest.channels.filter(
+            (channel) => channel.providerId !== providerId,
+          ),
           ...smart.loaded.channels,
         ],
       });
@@ -1710,6 +1815,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       error,
       m3uCatalogCommit,
       connectProvider,
+      cancelProviderConnect,
       mergeImportedProviders,
       removeProvider,
       disconnectProvider,
