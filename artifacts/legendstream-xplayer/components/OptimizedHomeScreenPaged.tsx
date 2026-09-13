@@ -66,6 +66,7 @@ import {
   tryBeginProviderSwitch,
 } from "@/lib/providerSwitchUx";
 import { redactSensitiveText } from "@/lib/safeLog";
+import type { StalkerProductProviderIdentity } from "@/lib/stalkerProductSession";
 import {
   buildEpisodeStreamUrl,
   buildVodStreamUrl,
@@ -97,6 +98,12 @@ const providerPresentation = (provider: ProviderConfig) => providerListPresentat
   ...provider,
   type: provider.declaredType ?? provider.type,
 });
+
+function isStalkerProductProvider(
+  provider: ProviderConfig,
+): provider is ProviderConfig & StalkerProductProviderIdentity {
+  return provider.type === "stalker";
+}
 
 function snapshotCount(providerId: string, snapshotProviderId: string | undefined, total: number, ready: boolean, usable: boolean) {
   const matches = snapshotProviderId === providerId;
@@ -325,10 +332,10 @@ export default function OptimizedHomeScreenPaged() {
     {view === "live" && provider.type === "stalker" ? <StalkerLiveCatalog providerId={provider.id} channels={playerLiveChannels} epgByChannel={epgByChannel} favorites={favorites} epgLoading={isEpgLoading} refreshing={isLoading} onRefresh={refreshPagedCatalog} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} /> : null}
 
     {view === "movies" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedMoviesCatalog provider={provider} snapshotCount={vodCount} sortMode={catalogSort} onSort={changeCatalogSort} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} onOpen={openMovie} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
-    {view === "movies" && provider.type === "stalker" ? <StalkerProductErrorBoundary product="movies" providerId={provider.id} onBack={() => setView("home")}><StalkerVodSurface provider={provider} onBack={() => setView("home")} /></StalkerProductErrorBoundary> : null}
+    {view === "movies" && provider.type === "stalker" && isStalkerProductProvider(provider) ? <StalkerProductErrorBoundary product="movies" providerId={provider.id} onBack={() => setView("home")}><StalkerVodSurface provider={provider} onBack={() => setView("home")} /></StalkerProductErrorBoundary> : null}
 
     {view === "series" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedSeriesCatalog provider={provider} snapshotCount={seriesCount} sortMode={catalogSort} onSort={changeCatalogSort} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} selected={selectedSeries} info={seriesInfo} onOpen={(item) => void openSeries(item)} onBack={() => { seriesRequestGenerationRef.current += 1; setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
-    {view === "series" && provider.type === "stalker" ? <StalkerProductErrorBoundary product="series" providerId={provider.id} onBack={() => setView("home")}><StalkerSeriesProductSurface provider={provider} /></StalkerProductErrorBoundary> : null}
+    {view === "series" && provider.type === "stalker" && isStalkerProductProvider(provider) ? <StalkerProductErrorBoundary product="series" providerId={provider.id} onBack={() => setView("home")}><StalkerSeriesProductSurface provider={provider} /></StalkerProductErrorBoundary> : null}
 
     {view === "history" ? <HistoryView providerId={provider.id} channels={resolvedFullHistoryIdentityChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
 
