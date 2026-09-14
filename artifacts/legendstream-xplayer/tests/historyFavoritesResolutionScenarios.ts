@@ -139,6 +139,9 @@ async function main() {
     assert.ok(HOME_LIVE_IDENTITY_PREVIEW_LIMIT < LIVE_ID_LOOKUP_CHUNK_SIZE);
     assert.match(screenSource, /homeLiveIdentityPreviewIds\(history\)/);
     assert.match(screenSource, /view === "history" \? \[\.\.\.history, \.\.\.favorites\] : \[\]/);
+    assert.match(screenSource, /const EMPTY_LIVE_CHANNELS: readonly Channel\[\] = \[\];/);
+    assert.match(screenSource, /const homeIdentityFallbackChannels = provider\?\.type === "stalker" \? EMPTY_LIVE_CHANNELS : playerLiveChannels;/);
+    assert.doesNotMatch(screenSource, /const homeIdentityFallbackChannels = provider\?\.type === "stalker" \? \[\] : playerLiveChannels;/);
   });
 
   await scenario("History Favorites lookup is indexed and full-view rendering is virtualized", () => {

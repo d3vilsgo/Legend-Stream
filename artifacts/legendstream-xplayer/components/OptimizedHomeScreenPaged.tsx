@@ -93,6 +93,7 @@ type Playable = {
 };
 
 const CATALOG_SORT_KEY = "@legendstream/catalog-sort-v1";
+const EMPTY_LIVE_CHANNELS: readonly Channel[] = [];
 const visibleErrorText = (value?: string | null) => value ? redactSensitiveText(value) : null;
 const providerPresentation = (provider: ProviderConfig) => providerListPresentation({
   ...provider,
@@ -185,7 +186,7 @@ export default function OptimizedHomeScreenPaged() {
 
   const playerLiveChannels = useMemo(() => provider ? channels.filter((channel) => channel.providerId === provider.id && (channel.contentType ?? "live") === "live") : [], [channels, provider]);
   const homeIdentityIds = useMemo(() => homeLiveIdentityPreviewIds(history), [history]);
-  const homeIdentityFallbackChannels = provider?.type === "stalker" ? [] : playerLiveChannels;
+  const homeIdentityFallbackChannels = provider?.type === "stalker" ? EMPTY_LIVE_CHANNELS : playerLiveChannels;
   const resolvedHomeIdentityChannels = useResolvedLiveIdentityChannels(provider, homeIdentityIds, homeIdentityFallbackChannels);
   const fullHistoryIdentityIds = useMemo(() => view === "history" ? [...history, ...favorites] : [], [view, history, favorites]);
   const resolvedFullHistoryIdentityChannels = useResolvedLiveIdentityChannels(provider, fullHistoryIdentityIds, playerLiveChannels);
