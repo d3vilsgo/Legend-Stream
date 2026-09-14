@@ -34,7 +34,9 @@ async function main() {
     const { attempt } = gate.begin(100);
     const pending = deferred<string>();
     attempt.signal.addEventListener("abort", () => pending.reject(new Error("aborted")), { once: true });
-    let trigger: (() => void) | null = null;
+    const timeout = {
+      callback: null as (() => void) | null,
+    };
     const wrapped = withProviderConnectDeadline(pending.promise, {
       timeoutMs: 30_000,
       onTimeout: () => {
@@ -42,12 +44,13 @@ async function main() {
         return new Error("timeout");
       },
       scheduler: {
-        setTimeout: (callback) => { trigger = callback; return 1; },
+        setTimeout: (callback) => { timeout.callback = callback; return 1; },
         clearTimeout: () => undefined,
       },
     });
-    assert.ok(trigger);
-    trigger!();
+    const fireTimeout = timeout.callback;
+    assert.ok(fireTimeout);
+    fireTimeout();
     await assert.rejects(wrapped, /timeout/);
     assert.equal(attempt.signal.aborted, true);
     assert.equal(attempt.cancelReason, "TIMEOUT");
