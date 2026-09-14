@@ -17,6 +17,7 @@ import { PlayerProvider } from "@/context/PlayerContext";
 import { I18nProvider } from "@/context/I18nContext";
 import { MediaLibraryProvider } from "@/context/MediaLibraryContext";
 import { CatalogSyncProvider } from "@/context/CatalogSyncContext";
+import { StalkerPostActivationCatalogBridge } from "@/components/catalog/StalkerPostActivationCatalogBridge";
 import { cleanupProviderBackupTempFiles } from "@/lib/providerBackupFiles";
 import { safeLog } from "@/lib/safeLog";
 import {
@@ -101,6 +102,7 @@ export default function RootLayout() {
             <I18nProvider>
               <PlayerProvider>
                 <CatalogSyncProvider>
+                  <StalkerPostActivationCatalogBridge />
                   <MediaLibraryProvider>
                     <RootLayoutNav />
                   </MediaLibraryProvider>
