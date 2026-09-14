@@ -195,8 +195,14 @@ async function main() {
     assert.match(syncSource, /commitStaging[\s\S]*assertCurrent\(options\.signal, options\.isCurrent\)[\s\S]*notePublishSuccess/s);
   });
 
-  await scenario("R6 Home ownership stays sealed and Stalker never falls back to legacy live channels", () => {
-    assert.match(homeSource, /provider\?\.type === "stalker" \? \[\] : playerLiveChannels/);
+  await scenario("R6 Home ownership keeps Stalker fallback stable and sealed from revision ownership", () => {
+    const stableFallbackIndex = homeSource.indexOf("const EMPTY_LIVE_CHANNELS: readonly Channel[] = [];");
+    const componentIndex = homeSource.indexOf("export default function OptimizedHomeScreenPaged()");
+    assert.ok(stableFallbackIndex >= 0);
+    assert.ok(componentIndex > stableFallbackIndex);
+    assert.match(homeSource, /const homeIdentityFallbackChannels = provider\?\.type === "stalker" \? EMPTY_LIVE_CHANNELS : playerLiveChannels;/);
+    assert.doesNotMatch(homeSource, /provider\?\.type === "stalker" \? \[\] : playerLiveChannels/);
+    assert.match(homeSource, /useResolvedLiveIdentityChannels\(\s*provider,\s*homeIdentityIds,\s*homeIdentityFallbackChannels\s*\)/s);
     assert.doesNotMatch(homeSource, /noteStalkerLivePublishSuccess|subscribeStalkerLivePublishRevision|readStalkerLivePublishRevision/);
   });
 
