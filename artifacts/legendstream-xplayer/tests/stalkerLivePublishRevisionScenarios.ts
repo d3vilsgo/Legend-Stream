@@ -25,6 +25,9 @@ const syncSource = source("lib/stalkerLiveSync.ts");
 const homeSource = source("components/OptimizedHomeScreenPaged.tsx");
 const bridgeSource = source("components/catalog/StalkerPostActivationCatalogBridge.tsx");
 const layoutSource = source("app/_layout.tsx");
+const contextSource = source("context/CatalogSyncContext.tsx");
+const lifecycleSource = source("lib/stalkerCatalogLifecycle.ts");
+const stalkerSyncHookSource = source("hooks/useStalkerLiveCatalogSync.ts");
 
 const PROVIDER = { id: "r7-provider", url: "http://portal.invalid/stalker_portal/", mac: "00:1A:79:12:34:56" };
 
@@ -197,34 +200,42 @@ async function main() {
     assert.doesNotMatch(homeSource, /noteStalkerLivePublishSuccess|subscribeStalkerLivePublishRevision|readStalkerLivePublishRevision/);
   });
 
-  await scenario("post-activation bridge is mounted inside catalog sync ownership", () => {
+  await scenario("post-activation bridge remains only a revision and visible-state adapter", () => {
     assert.match(layoutSource, /<CatalogSyncProvider>[\s\S]*<StalkerPostActivationCatalogBridge \/>[\s\S]*<MediaLibraryProvider>/);
-  });
-
-  await scenario("active Stalker provider starts canonical live sync after activation", () => {
-    assert.match(bridgeSource, /provider\.type !== "stalker"/);
-    assert.match(bridgeSource, /syncStalkerLiveCatalog\(\{[\s\S]*provider: \{ id: providerId, url: portalUrl, mac \}[\s\S]*signal: controller\.signal[\s\S]*isCurrent/s);
-    assert.match(bridgeSource, /provider\?\.lastLoadedAt/);
-    assert.doesNotMatch(bridgeSource, /get_all_channels|get_ordered_list|create_link/);
-  });
-
-  await scenario("post-activation sync ownership aborts and invalidates stale provider work", () => {
-    assert.match(bridgeSource, /const syncGenerationRef = useRef\(0\)/);
-    assert.match(bridgeSource, /syncGenerationRef\.current === generation/);
-    assert.match(bridgeSource, /activeProviderIdRef\.current === providerId/);
-    assert.match(bridgeSource, /return \(\) => \{\s*disposed = true;\s*controller\.abort\(\);/);
-  });
-
-  await scenario("successful Stalker publish refreshes only the active Home snapshot", () => {
-    assert.match(bridgeSource, /subscribeStalkerLivePublishRevision\(providerId, "live"/);
-    assert.match(bridgeSource, /if \(activeProviderIdRef\.current !== providerId\) return;/);
+    assert.match(bridgeSource, /subscribeStalkerLivePublishRevision/);
     assert.match(bridgeSource, /refreshSnapshot\(\)/);
+    assert.doesNotMatch(bridgeSource, /syncStalkerLiveCatalog|AbortController|LS_STALKER_POST_ACTIVATION_SYNC/);
   });
 
-  await scenario("post-activation diagnostics expose no portal credentials", () => {
-    const diagnosticCalls = bridgeSource.match(/safeLog\.info\("LS_STALKER_POST_ACTIVATION_SYNC_[\s\S]*?\n\s*\}\);/g) ?? [];
-    assert.equal(diagnosticCalls.length, 3);
-    assert.doesNotMatch(diagnosticCalls.join("\n"), /\burl\b|\bmac\b|password|username|bearer|token/i);
+  await scenario("CatalogSyncContext is the only initial Stalker full-sync owner", () => {
+    assert.match(contextSource, /runStalkerActivationLifecycle/);
+    assert.match(contextSource, /executeStalkerCatalogLifecycleSync/);
+    assert.match(contextSource, /syncStalkerLiveCatalog/);
+    assert.match(contextSource, /AbortController/);
+    assert.match(contextSource, /generationRef\.current/);
+  });
+
+  await scenario("Stalker Live presentation hook delegates manual refresh to common catalog lifecycle", () => {
+    assert.match(stalkerSyncHookSource, /useCatalogSync/);
+    assert.match(stalkerSyncHookSource, /refresh:\s*refreshCatalog/);
+    assert.doesNotMatch(stalkerSyncHookSource, /getOrCreateStalkerPortalSession|fetchStalkerLiveCategories|persistStalkerLiveCategories/);
+  });
+
+  await scenario("P3 lifecycle diagnostics distinguish hydration cache decision start and end", () => {
+    for (const marker of [
+      "LS_STALKER_LIFECYCLE_HYDRATED",
+      "LS_STALKER_LIFECYCLE_CACHE",
+      "LS_STALKER_LIFECYCLE_DECISION",
+      "LS_STALKER_LIFECYCLE_SYNC_START",
+      "LS_STALKER_LIFECYCLE_SYNC_END",
+    ]) assert.match(lifecycleSource, new RegExp(marker));
+  });
+
+  await scenario("P3 common catalog lifecycle exposes visible failure repair and retry actions", () => {
+    assert.match(bridgeSource, /Tekrar dene/);
+    assert.match(bridgeSource, /Provider ayarları/);
+    assert.match(lifecycleSource, /Stalker bağlantı bilgileri eksik/);
+    assert.match(contextSource, /credentials-required/);
   });
 
   assert.equal(passed, 14);

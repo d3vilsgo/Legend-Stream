@@ -35,7 +35,6 @@ import {
   freshCatalogRunState,
   hasUsableCatalogCache,
   isCatalogSyncOwnershipCurrent,
-  isCatalogSyncActive,
   shouldBlockInitialCatalogSync,
   type CatalogRunState,
   type CatalogSyncMode,
@@ -82,6 +81,15 @@ import {
 } from "@/lib/xtreamKindCache";
 import { runIndependentCatalogKinds } from "@/lib/xtreamKindSync";
 import { stableXtreamLiveId } from "@/lib/xtreamIdentity";
+import { safeLog } from "@/lib/safeLog";
+import { syncStalkerLiveCatalog } from "@/lib/stalkerLiveSync";
+import {
+  executeStalkerCatalogLifecycleSync,
+  makeStalkerCatalogLifecycleState,
+  runStalkerActivationLifecycle,
+  safeStalkerCatalogLifecycleError,
+  type StalkerCatalogLifecycleState,
+} from "@/lib/stalkerCatalogLifecycle";
 
 export type CatalogSnapshot = {
   providerId?: string;
@@ -95,8 +103,13 @@ export type CatalogSnapshot = {
   newSeries: XtreamSeriesItem[];
 };
 
+export type CatalogObservableSyncState =
+  | CatalogSyncState
+  | CatalogRunState
+  | StalkerCatalogLifecycleState;
+
 type CatalogSyncContextValue = {
-  syncState: CatalogSyncState | CatalogRunState | null;
+  syncState: CatalogObservableSyncState | null;
   snapshot: CatalogSnapshot;
   cacheReady: boolean;
   hasUsableCache: boolean;
@@ -159,10 +172,16 @@ function asLoadProvider(provider: NonNullable<ReturnType<typeof usePlayer>["prov
 }
 
 export function CatalogSyncProvider({ children }: { children: ReactNode }) {
-  const { provider, channels, m3uCatalogCommit, recoverLegacyCatalogFallback } = usePlayer();
+  const {
+    provider,
+    channels,
+    isHydrating,
+    m3uCatalogCommit,
+    recoverLegacyCatalogFallback,
+  } = usePlayer();
   const colors = useColors();
   const { language } = useI18n();
-  const [syncState, setSyncStateLocal] = useState<CatalogSyncState | CatalogRunState | null>(null);
+  const [syncState, setSyncStateLocal] = useState<CatalogObservableSyncState | null>(null);
   const [snapshot, setSnapshot] = useState<CatalogSnapshot>(EMPTY_SNAPSHOT);
   const [hasUsableCache, setHasUsableCache] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -678,9 +697,85 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     return task;
   }, [channels, provider, publishState, recoverLegacyCatalogFallback, refreshSnapshotFor]);
 
+  const runStalkerSync = useCallback(async (mode: CatalogSyncMode) => {
+    const active = provider;
+    if (!active || active.type !== "stalker" || active.id !== latestProviderIdRef.current) return;
+    const running = runningRef.current;
+    if (running && isCatalogSyncOwnershipCurrent(
+      latestProviderIdRef.current,
+      generationRef.current,
+      running.ownership,
+    )) return running.task;
+
+    const generation = ++generationRef.current;
+    const ownership: CatalogSyncOwnership = { providerId: active.id, generation };
+    const controller = new AbortController();
+    activeRunIdRef.current = generation;
+    activeModeRef.current = mode;
+    abortControllerRef.current = controller;
+    cancelRef.current = false;
+    if (mode === "initial") setIsInitialSyncRunning(true);
+    else setIsRefreshing(true);
+
+    if (mode === "manual" || mode === "background") {
+      safeLog.info("LS_STALKER_LIFECYCLE_DECISION", {
+        providerId: active.id,
+        decision: mode === "manual" ? "MANUAL_REFRESH" : "BACKGROUND_REFRESH",
+      });
+    }
+
+    const isCurrent = () =>
+      !controller.signal.aborted &&
+      isCatalogSyncOwnershipCurrent(
+        latestProviderIdRef.current,
+        generationRef.current,
+        ownership,
+      );
+
+    const task = (async () => {
+      try {
+        await executeStalkerCatalogLifecycleSync({
+          provider: active,
+          mode,
+          signal: controller.signal,
+          isCurrent,
+          sync: syncStalkerLiveCatalog,
+          refreshSnapshot: () => refreshSnapshotFor(active, ownership),
+          onState: (next) => {
+            if (isCurrent()) setSyncStateLocal(next);
+          },
+          log: (marker, payload) => safeLog.info(marker, payload),
+        });
+      } finally {
+        if (
+          activeRunIdRef.current === generation &&
+          isCatalogSyncOwnershipCurrent(
+            latestProviderIdRef.current,
+            generationRef.current,
+            ownership,
+          )
+        ) {
+          if (mode === "initial") setIsInitialSyncRunning(false);
+          else setIsRefreshing(false);
+          activeRunIdRef.current = null;
+          activeModeRef.current = null;
+        }
+        if (abortControllerRef.current === controller) abortControllerRef.current = null;
+      }
+    })();
+
+    runningRef.current = { ownership, task };
+    const releaseTaskOwnership = () => {
+      if (runningRef.current?.task === task) runningRef.current = null;
+    };
+    void task.then(releaseTaskOwnership, releaseTaskOwnership);
+    return task;
+  }, [provider, refreshSnapshotFor]);
+
   const refreshCatalog = useCallback(async () => {
-    await runSync("manual");
-  }, [runSync]);
+    if (provider?.type === "stalker") await runStalkerSync("manual");
+    else await runSync("manual");
+  }, [provider?.type, runStalkerSync, runSync]);
 
   const cancelInitialSync = useCallback(() => {
     if (activeModeRef.current !== "initial") return;
@@ -716,31 +811,61 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     setIsInitialSyncRunning(false);
     setIsRefreshing(false);
 
-    if (!active) return;
+    if (isHydrating || !active) return;
     let disposed = false;
     let backgroundTimer: ReturnType<typeof setTimeout> | undefined;
     cancelRef.current = false;
+    const lifecycleIsCurrent = () =>
+      !disposed &&
+      isCatalogSyncOwnershipCurrent(
+        latestProviderIdRef.current,
+        generationRef.current,
+        lifecycleOwnership,
+      );
 
     void (async () => {
       try {
+        if (active.type === "stalker") {
+          const result = await runStalkerActivationLifecycle({
+            provider: active,
+            isCurrent: lifecycleIsCurrent,
+            readLiveCount: async () => {
+              await initCatalogCache();
+              return (await getCatalogCounts(active.id)).live;
+            },
+            refreshSnapshot: async () => {
+              await refreshSnapshotFor(active, lifecycleOwnership);
+              if (lifecycleIsCurrent()) clearProviderSwitchSnapshot(active.id);
+            },
+            runInitialSync: async () => {
+              await runStalkerSync("initial");
+            },
+            onState: (next) => {
+              if (lifecycleIsCurrent()) setSyncStateLocal(next);
+            },
+            log: (marker, payload) => safeLog.info(marker, payload),
+          });
+
+          if (!lifecycleIsCurrent()) return;
+          if (result.decision === "USE_CACHE" && backgroundStartedRef.current !== active.id) {
+            backgroundStartedRef.current = active.id;
+            backgroundTimer = setTimeout(() => {
+              if (lifecycleIsCurrent()) void runStalkerSync("background");
+            }, BACKGROUND_SYNC_DELAY_MS);
+          }
+          return;
+        }
+
         await initCatalogCache();
         const [counts, state] = await Promise.all([
           getCatalogCounts(active.id),
           getCatalogSyncState(active.id),
         ]);
-        if (disposed || !isCatalogSyncOwnershipCurrent(
-          latestProviderIdRef.current,
-          generationRef.current,
-          lifecycleOwnership,
-        )) return;
+        if (!lifecycleIsCurrent()) return;
         const usable = hasUsableCatalogCache(counts);
 
         await refreshSnapshotFor(active, lifecycleOwnership);
-        if (disposed || !isCatalogSyncOwnershipCurrent(
-          latestProviderIdRef.current,
-          generationRef.current,
-          lifecycleOwnership,
-        )) return;
+        if (!lifecycleIsCurrent()) return;
         clearProviderSwitchSnapshot(active.id);
         if (disposed || resolvedProviderTransport(active) !== "xtream") return;
 
@@ -752,19 +877,24 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         if (backgroundStartedRef.current !== active.id) {
           backgroundStartedRef.current = active.id;
           backgroundTimer = setTimeout(() => {
-            if (!disposed && isCatalogSyncOwnershipCurrent(
-              latestProviderIdRef.current,
-              generationRef.current,
-              lifecycleOwnership,
-            )) void runSync("background");
+            if (lifecycleIsCurrent()) void runSync("background");
           }, BACKGROUND_SYNC_DELAY_MS);
         }
-      } catch {
-        if (isCatalogSyncOwnershipCurrent(
-          latestProviderIdRef.current,
-          generationRef.current,
-          lifecycleOwnership,
-        )) clearProviderSwitchSnapshot(active.id);
+      } catch (caught) {
+        if (!lifecycleIsCurrent()) return;
+        clearProviderSwitchSnapshot(active.id);
+        if (active.type === "stalker") {
+          const safe = safeStalkerCatalogLifecycleError(caught);
+          setSyncStateLocal(makeStalkerCatalogLifecycleState(
+            active.id,
+            "error",
+            {
+              message: safe.message,
+              errorCode: safe.errorCode,
+              retryAvailable: true,
+            },
+          ));
+        }
       }
     })();
 
@@ -774,9 +904,15 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
       abortCatalogRequest(abortControllerRef.current);
       if (backgroundTimer) clearTimeout(backgroundTimer);
     };
-  }, [provider?.id]);
+  }, [
+    isHydrating,
+    provider?.id,
+    provider?.type,
+    provider?.type === "stalker" ? provider.lastLoadedAt : undefined,
+    provider?.type === "stalker" ? provider.needsCredentials : undefined,
+  ]);
 
-  const isSyncing = isCatalogSyncActive(syncState?.phase);
+  const isSyncing = syncState?.phase === "preparing" || syncState?.phase === "syncing";
   const value = useMemo<CatalogSyncContextValue>(() => ({
     syncState,
     snapshot,
@@ -789,9 +925,13 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     cancelInitialSync,
   }), [cacheReady, cancelInitialSync, hasUsableCache, isRefreshing, isSyncing, refreshCatalog, refreshSnapshot, snapshot, syncState]);
 
+  const persistedSyncPhase =
+    syncState?.phase === "credentials-required" || syncState?.phase === "cache-ready"
+      ? undefined
+      : syncState?.phase;
   const isInitialBlocking =
     resolvedProviderTransport(provider) === "xtream" &&
-    shouldBlockInitialCatalogSync(hasUsableCache, isInitialSyncRunning, syncState?.phase);
+    shouldBlockInitialCatalogSync(hasUsableCache, isInitialSyncRunning, persistedSyncPhase);
   const progress = syncState && syncState.total > 0
     ? Math.max(0, Math.min(1, syncState.completed / syncState.total))
     : 0;
@@ -807,18 +947,18 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
       onRequestClose={cancelInitialSync}
     >
       <View style={styles.modalBackdrop}>
-        <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={[styles.modalCard, { backgroundColor: colors.card, borderColor: colors.border }]}> 
           <ActivityIndicator size="large" color={colors.primary} />
-          <Text style={[styles.modalTitle, { color: colors.foreground }]}>
+          <Text style={[styles.modalTitle, { color: colors.foreground }]}> 
             {tr ? "Kataloglar hazırlanıyor…" : "Preparing catalogs…"}
           </Text>
-          <Text numberOfLines={2} style={[styles.modalMessage, { color: colors.mutedForeground }]}>
+          <Text numberOfLines={2} style={[styles.modalMessage, { color: colors.mutedForeground }]}> 
             {syncState?.message || (tr ? "İçerikler cihaza kaydediliyor" : "Saving content on this device")}
           </Text>
-          <View style={[styles.progressTrack, { backgroundColor: colors.muted }]}>
+          <View style={[styles.progressTrack, { backgroundColor: colors.muted }]}> 
             <View style={[styles.progressFill, { width: `${Math.round(progress * 100)}%`, backgroundColor: colors.primary }]} />
           </View>
-          <Text style={[styles.progressText, { color: colors.mutedForeground }]}>
+          <Text style={[styles.progressText, { color: colors.mutedForeground }]}> 
             {syncState?.completed ?? 0} / {syncState?.total ?? SYNC_STAGE_TOTAL}
           </Text>
           <Pressable
@@ -829,7 +969,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
               {tr ? "Vazgeç" : "Cancel"}
             </Text>
           </Pressable>
-          <Text style={[styles.fallbackText, { color: colors.mutedForeground }]}>
+          <Text style={[styles.fallbackText, { color: colors.mutedForeground }]}> 
             {tr
               ? "Vazgeçersen mevcut isteğe bağlı yükleme davranışı kullanılmaya devam eder."
               : "If cancelled, the existing on-demand loading path remains available."}
