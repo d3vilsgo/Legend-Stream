@@ -9,6 +9,8 @@ const packageRoot = resolve(testsDir, "..");
 const source = (path: string) => readFileSync(resolve(packageRoot, path), "utf8");
 const routeSource = source("app/(tabs)/index.tsx");
 const stalkerMainSource = source("components/StalkerMainPage.tsx");
+const stalkerVodSource = source("components/stalker/StalkerVodSurface.tsx");
+const stalkerSeriesSource = source("components/stalker/StalkerSeriesProductSurface.tsx");
 const goldenSource = source("components/OptimizedHomeScreenPaged.tsx");
 
 function gitBlobSha(text: string) {
@@ -38,12 +40,17 @@ async function main() {
     assert.doesNotMatch(routeSource, /OptimizedHomeScreenPaged[^\n]*provider/);
   });
 
-  await scenario("dedicated Stalker page does not own legacy Stalker presentation surfaces", () => {
-    assert.doesNotMatch(stalkerMainSource, /StalkerCategoryPager/);
-    assert.doesNotMatch(stalkerMainSource, /StalkerLiveCatalog/);
-    assert.doesNotMatch(stalkerMainSource, /StalkerVodSurface/);
-    assert.doesNotMatch(stalkerMainSource, /StalkerSeriesProductSurface/);
-    assert.match(stalkerMainSource, /PagedLiveCatalog/);
+  await scenario("dedicated Stalker page routes each product to its active surface", () => {
+    assert.match(stalkerMainSource, /view === "live"[\s\S]*?<PagedLiveCatalog/);
+    assert.match(
+      stalkerMainSource,
+      /view === "movies"[\s\S]*?<StalkerProductErrorBoundary product="movies"[\s\S]*?<StalkerVodSurface provider=\{provider\} onBack=\{\(\) => navigate\("home"\)\}/,
+    );
+    assert.match(
+      stalkerMainSource,
+      /view === "series"[\s\S]*?<StalkerProductErrorBoundary product="series"[\s\S]*?<StalkerSeriesProductSurface provider=\{provider\}/,
+    );
+    assert.doesNotMatch(stalkerMainSource, /CatalogMigrationShell/);
   });
 
   await scenario("dedicated Stalker page owns normalized top-level player handoff", () => {
@@ -52,6 +59,13 @@ async function main() {
     assert.match(stalkerMainSource, /if \(view === "player"\)/);
     assert.match(stalkerMainSource, /<NativeVideoPlayer/);
     assert.match(stalkerMainSource, /onFullscreenExit=\{\(\) => setView\(playable\.returnTo\)\}/);
+  });
+
+  await scenario("product surfaces retain their proven local playback handoff", () => {
+    assert.match(stalkerVodSource, /resolveStalkerVodLink\(session, item/);
+    assert.match(stalkerVodSource, /<NativeVideoPlayer source=\{playableUrl\}/);
+    assert.match(stalkerSeriesSource, /controller\.resolveEpisode\(detail\.seriesId, seasonId, episodeId/);
+    assert.match(stalkerSeriesSource, /<NativeVideoPlayer source=\{player\.source\}/);
   });
 
   await scenario("golden Xtream M3U main-page source remains byte-for-byte frozen", () => {
@@ -69,8 +83,8 @@ async function main() {
     assert.match(stalkerMainSource, /type StalkerCategoryPresentation = \{[\s\S]*id: string;[\s\S]*name: string;[\s\S]*order: number;/);
   });
 
-  assert.equal(passed, 6);
-  process.stdout.write(`stalker R17-A main boundary scenarios: ${passed}/6 passed\n`);
+  assert.equal(passed, 7);
+  process.stdout.write(`stalker R17-A main boundary scenarios: ${passed}/7 passed\n`);
 }
 
 void main().catch((error: unknown) => {

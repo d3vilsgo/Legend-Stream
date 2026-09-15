@@ -8,7 +8,6 @@ import {
   SectionList,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -22,6 +21,9 @@ import { FocusButton } from "@/components/FocusButton";
 import { HomeDiscovery, type HomeContentView } from "@/components/home/HomeDiscovery";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
 import { PagedLiveCatalog } from "@/components/catalog/PagedCatalogViews";
+import { StalkerProductErrorBoundary } from "@/components/stalker/StalkerProductErrorBoundary";
+import { StalkerSeriesProductSurface } from "@/components/stalker/StalkerSeriesProductSurface";
+import { StalkerVodSurface } from "@/components/stalker/StalkerVodSurface";
 import { PlayerChromeTimeoutSetting } from "@/components/PlayerChromeTimeoutSetting";
 import { ProviderBackupPanel } from "@/components/ProviderBackupPanel";
 import { ProviderSubscriptionChip } from "@/components/ProviderSubscriptionChip";
@@ -48,6 +50,7 @@ import {
   tryBeginProviderSwitch,
 } from "@/lib/providerSwitchUx";
 import { redactSensitiveText } from "@/lib/safeLog";
+import type { StalkerProductProviderIdentity } from "@/lib/stalkerProductSession";
 import { yieldToUi } from "@/lib/cooperative";
 
 type StalkerViewName = HomeContentView | "player";
@@ -81,6 +84,12 @@ const providerPresentation = (provider: ProviderConfig) =>
     ...provider,
     type: provider.declaredType ?? provider.type,
   });
+
+function isStalkerProductProvider(
+  provider: ProviderConfig,
+): provider is ProviderConfig & StalkerProductProviderIdentity {
+  return provider.type === "stalker";
+}
 
 /**
  * R17 parity freeze:
@@ -136,7 +145,7 @@ export default function StalkerMainPage() {
     [channels, provider?.id],
   );
 
-  if (!provider || provider.type !== "stalker") return null;
+  if (!provider || !isStalkerProductProvider(provider)) return null;
 
   const navigate = (target: StalkerContentView) => {
     setCatalogError(null);
@@ -326,11 +335,15 @@ export default function StalkerMainPage() {
       ) : null}
 
       {view === "movies" ? (
-        <CatalogMigrationShell title={t("movies")} loadingText={t("loadingMovies")} />
+        <StalkerProductErrorBoundary product="movies" providerId={provider.id} onBack={() => navigate("home")}>
+          <StalkerVodSurface provider={provider} onBack={() => navigate("home")} />
+        </StalkerProductErrorBoundary>
       ) : null}
 
       {view === "series" ? (
-        <CatalogMigrationShell title={t("series")} loadingText={t("loadingSeries")} />
+        <StalkerProductErrorBoundary product="series" providerId={provider.id} onBack={() => navigate("home")}>
+          <StalkerSeriesProductSurface provider={provider} />
+        </StalkerProductErrorBoundary>
       ) : null}
 
       {view === "history" ? (
@@ -391,43 +404,6 @@ export default function StalkerMainPage() {
         </ScrollView>
       ) : null}
     </View>
-  );
-}
-
-function CatalogMigrationShell({ title, loadingText }: { title: string; loadingText: string }) {
-  const colors = useColors();
-  const { t } = useI18n();
-  const [search, setSearch] = useState("");
-  return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={s.catalogContent} showsVerticalScrollIndicator={false}>
-      <View style={s.catalogHead}>
-        <View>
-          <Text style={[s.title, { color: colors.foreground }]}>{title}</Text>
-          <Text style={{ color: colors.mutedForeground }}>—</Text>
-        </View>
-        <FocusButton label={t("loading")} icon="refresh-cw" variant="ghost" onPress={() => undefined} disabled />
-      </View>
-      <View style={[s.search, { borderColor: colors.border, backgroundColor: colors.card }]}>
-        <Feather name="search" size={18} color={colors.mutedForeground} />
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder={`${t("search")} ${title.toLowerCase()}`}
-          placeholderTextColor={colors.mutedForeground}
-          style={{ flex: 1, color: colors.foreground, minHeight: 44 }}
-        />
-      </View>
-      <Pressable disabled style={[s.sortControl, { borderColor: colors.border, backgroundColor: colors.card }]}>
-        <Feather name="sliders" size={16} color={colors.mutedForeground} />
-        <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 13 }}>
-          {t("providerOrder")}
-        </Text>
-      </Pressable>
-      <View style={s.migrationLoading}>
-        <ActivityIndicator size="small" color={colors.primary} />
-        <Text style={{ color: colors.mutedForeground, fontWeight: "600" }}>{loadingText}</Text>
-      </View>
-    </ScrollView>
   );
 }
 
@@ -597,9 +573,4 @@ const s = StyleSheet.create({
   settings: { borderWidth: 1, borderRadius: 16, padding: 18, gap: 8 },
   rail: { gap: 6, paddingVertical: 14 },
   episode: { borderWidth: 1, borderRadius: 12, padding: 14, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
-  catalogContent: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
-  catalogHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 12 },
-  search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
-  sortControl: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, marginBottom: 10 },
-  migrationLoading: { minHeight: 140, alignItems: "center", justifyContent: "center", gap: 10 },
 });
