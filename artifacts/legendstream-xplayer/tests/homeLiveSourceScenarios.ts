@@ -141,7 +141,14 @@ async function main() {
     const screenSource = source("components/OptimizedHomeScreenPaged.tsx");
     const selectorSource = source("lib/homeLiveSource.ts");
     assert.match(screenSource, /selectHomeLiveSource/);
-    assert.match(screenSource, /provider\?\.type === "stalker" \? \[\] : playerLiveChannels/);
+    assert.match(
+      screenSource,
+      /const homeIdentityFallbackChannels = provider\?\.type === "stalker" \? EMPTY_LIVE_CHANNELS : playerLiveChannels/,
+    );
+    assert.doesNotMatch(
+      screenSource,
+      /provider\?\.type === "stalker" \? \[\] : playerLiveChannels/,
+    );
     assert.doesNotMatch(selectorSource, /handshake|get_profile|get_genres|get_all_channels|get_ordered_list|create_link|fetch/);
     assert.doesNotMatch(screenSource, /bootstrapProfile|getProfile|get_all_channels|get_main_info/);
   });
