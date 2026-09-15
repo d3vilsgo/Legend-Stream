@@ -186,7 +186,8 @@ async function main() {
   });
 
   await scenario("R6 Home keeps Stalker legacy channel fallback disabled", () => {
-    assert.match(home, /homeIdentityFallbackChannels = provider\?\.type === "stalker" \? \[\] : playerLiveChannels/);
+    assert.match(home, /homeIdentityFallbackChannels = provider\?\.type === "stalker" \? EMPTY_LIVE_CHANNELS : playerLiveChannels/);
+    assert.doesNotMatch(home, /homeIdentityFallbackChannels = provider\?\.type === "stalker" \? \[\] : playerLiveChannels/);
     assert.match(home, /selectHomeLiveSource\(/);
   });
 
