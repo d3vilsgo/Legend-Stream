@@ -230,9 +230,10 @@ export function CompatibilityVideoPlayer({
       setResolvedSource(currentSource);
       return () => { cancelled = true; };
     }
+    const controller = new AbortController();
     setResolvedSource(null);
     setErrorText(null);
-    void resolveCatalogRuntimeSource(currentSource, provider)
+    void resolveCatalogRuntimeSource(currentSource, provider, controller.signal)
       .then((next) => {
         if (!cancelled) setResolvedSource(next);
       })
@@ -243,7 +244,10 @@ export function CompatibilityVideoPlayer({
         revealControls(true);
         revealMediaInfo();
       });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
   }, [
     currentSource,
     provider?.id,
@@ -252,6 +256,7 @@ export function CompatibilityVideoPlayer({
     provider?.playlistUrl,
     provider?.username,
     provider?.password,
+    provider?.mac,
     revealControls,
     revealMediaInfo,
   ]);
@@ -338,7 +343,7 @@ export function CompatibilityVideoPlayer({
       !currentLiveIdentity ||
       !provider ||
       provider.id !== currentLiveIdentity.providerId ||
-      (provider.type !== "m3u" && provider.type !== "xtream")
+      (provider.type !== "m3u" && provider.type !== "xtream" && provider.type !== "stalker")
     ) {
       setCachedLiveChannels([]);
       return () => { cancelled = true; };

@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -27,6 +27,9 @@ import {
   type CatalogSortMode,
 } from "@/components/catalog/PagedCatalogViews";
 import { StalkerLiveCatalog } from "@/components/catalog/StalkerLiveCatalog";
+import { StalkerProductErrorBoundary } from "@/components/stalker/StalkerProductErrorBoundary";
+import { StalkerSeriesProductSurface } from "@/components/stalker/StalkerSeriesProductSurface";
+import { StalkerVodSurface } from "@/components/stalker/StalkerVodSurface";
 import { PlayerChromeTimeoutSetting } from "@/components/PlayerChromeTimeoutSetting";
 import { ProviderBackupPanel } from "@/components/ProviderBackupPanel";
 import { ProviderSubscriptionChip } from "@/components/ProviderSubscriptionChip";
@@ -43,6 +46,7 @@ import { useColors } from "@/hooks/useColors";
 import { useResolvedLiveIdentityChannels } from "@/hooks/useResolvedLiveIdentityChannels";
 import type { DownloadedMedia } from "@/lib/downloads";
 import { homeLiveIdentityPreviewIds } from "@/lib/catalogLiveIdentity";
+import { selectHomeLiveSource } from "@/lib/homeLiveSource";
 import {
   indexLiveChannelsByProviderAndId,
   resolveLiveIdentityPresentationRows,
@@ -62,6 +66,7 @@ import {
   tryBeginProviderSwitch,
 } from "@/lib/providerSwitchUx";
 import { redactSensitiveText } from "@/lib/safeLog";
+import type { StalkerProductProviderIdentity } from "@/lib/stalkerProductSession";
 import {
   buildEpisodeStreamUrl,
   buildVodStreamUrl,
@@ -88,21 +93,20 @@ type Playable = {
 };
 
 const CATALOG_SORT_KEY = "@legendstream/catalog-sort-v1";
-
+const EMPTY_LIVE_CHANNELS: readonly Channel[] = [];
 const visibleErrorText = (value?: string | null) => value ? redactSensitiveText(value) : null;
-
 const providerPresentation = (provider: ProviderConfig) => providerListPresentation({
   ...provider,
   type: provider.declaredType ?? provider.type,
 });
 
-function snapshotCount(
-  providerId: string,
-  snapshotProviderId: string | undefined,
-  total: number,
-  ready: boolean,
-  usable: boolean,
-) {
+function isStalkerProductProvider(
+  provider: ProviderConfig,
+): provider is ProviderConfig & StalkerProductProviderIdentity {
+  return provider.type === "stalker";
+}
+
+function snapshotCount(providerId: string, snapshotProviderId: string | undefined, total: number, ready: boolean, usable: boolean) {
   const matches = snapshotProviderId === providerId;
   const countKnown = matches && (usable || ready || total > 0);
   return { totalCount: countKnown ? total : null, countKnown };
@@ -113,36 +117,11 @@ export default function OptimizedHomeScreenPaged() {
   const insets = useSafeAreaInsets();
   const { t } = useI18n();
   const {
-    provider,
-    providers,
-    channels,
-    epgByChannel,
-    favorites,
-    history,
-    isHydrating,
-    isLoading,
-    isEpgLoading,
-    error,
-    connectProvider,
-    refreshProvider,
-    recoverLegacyCatalogFallback,
-    toggleFavorite,
-    recordWatched,
-    removeWatched,
-    resolveProviderForSwitch,
-    setActiveProvider,
-    removeProvider,
-    disconnectProvider,
-    clearError,
+    provider, providers, channels, epgByChannel, favorites, history, isHydrating, isLoading, isEpgLoading,
+    error, connectProvider, cancelProviderConnect, refreshProvider, recoverLegacyCatalogFallback, toggleFavorite, recordWatched,
+    removeWatched, resolveProviderForSwitch, setActiveProvider, removeProvider, disconnectProvider, clearError,
   } = usePlayer();
-  const {
-    snapshot,
-    hasUsableCache,
-    isSyncing,
-    isRefreshing,
-    refreshSnapshot,
-    refreshCatalog,
-  } = useCatalogSync();
+  const { snapshot, hasUsableCache, isSyncing, isRefreshing, refreshSnapshot, refreshCatalog } = useCatalogSync();
   useCredentialDiagnosticsStartup();
 
   const [view, setView] = useState<ViewName>("home");
@@ -155,9 +134,7 @@ export default function OptimizedHomeScreenPaged() {
   const [seriesInfo, setSeriesInfo] = useState<XtreamSeriesInfo | null>(null);
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
   const [categoryMetadataRefresh, setCategoryMetadataRefresh] = useState(0);
-  const [categoryMetadata, setCategoryMetadata] = useState<
-    (CatalogCategoryMetadata & { providerId: string }) | null
-  >(null);
+  const [categoryMetadata, setCategoryMetadata] = useState<(CatalogCategoryMetadata & { providerId: string }) | null>(null);
   const [switchingProviderId, setSwitchingProviderId] = useState<string | null>(null);
   const switchingProviderRef = useRef<string | null>(null);
   const activeProviderIdRef = useRef<string | null>(provider?.id ?? null);
@@ -165,16 +142,11 @@ export default function OptimizedHomeScreenPaged() {
 
   React.useEffect(() => {
     let cancelled = false;
-    AsyncStorage.getItem(CATALOG_SORT_KEY)
-      .then((saved) => {
-        if (cancelled) return;
-        if (saved === "alpha") setCatalogSort("alphaAsc");
-        else if (
-          saved === "default" || saved === "alphaAsc" || saved === "alphaDesc" ||
-          saved === "idAsc" || saved === "idDesc" || saved === "added"
-        ) setCatalogSort(saved);
-      })
-      .catch(() => undefined);
+    AsyncStorage.getItem(CATALOG_SORT_KEY).then((saved) => {
+      if (cancelled) return;
+      if (saved === "alpha") setCatalogSort("alphaAsc");
+      else if (saved === "default" || saved === "alphaAsc" || saved === "alphaDesc" || saved === "idAsc" || saved === "idDesc" || saved === "added") setCatalogSort(saved);
+    }).catch(() => undefined);
     return () => { cancelled = true; };
   }, []);
 
@@ -194,26 +166,13 @@ export default function OptimizedHomeScreenPaged() {
       return () => { cancelled = true; };
     }
     const providerId = provider.id;
-    void getCachedCatalogCategoryMetadata(providerId)
-      .then((metadata) => {
-        if (!cancelled && activeProviderIdRef.current === providerId) {
-          setCategoryMetadata({ providerId, ...metadata });
-        }
-      })
-      .catch(() => {
-        if (!cancelled && activeProviderIdRef.current === providerId) setCategoryMetadata(null);
-      });
+    void getCachedCatalogCategoryMetadata(providerId).then((metadata) => {
+      if (!cancelled && activeProviderIdRef.current === providerId) setCategoryMetadata({ providerId, ...metadata });
+    }).catch(() => {
+      if (!cancelled && activeProviderIdRef.current === providerId) setCategoryMetadata(null);
+    });
     return () => { cancelled = true; };
-  }, [
-    provider?.id,
-    provider?.type,
-    categoryMetadataRefresh,
-    snapshot.providerId,
-    snapshot.ready,
-    snapshot.counts.live,
-    snapshot.counts.vod,
-    snapshot.counts.series,
-  ]);
+  }, [provider?.id, provider?.type, categoryMetadataRefresh, snapshot.providerId, snapshot.ready, snapshot.counts.live, snapshot.counts.vod, snapshot.counts.series]);
 
   const changeCatalogSort = (mode: CatalogSortMode) => {
     setCatalogSort(mode);
@@ -222,94 +181,48 @@ export default function OptimizedHomeScreenPaged() {
 
   const credentials = useMemo<XtreamCredentials | null>(() => {
     if (!provider || provider.type !== "xtream" || !provider.username || !provider.password) return null;
-    return {
-      baseUrl: provider.url || provider.playlistUrl,
-      username: provider.username,
-      password: provider.password,
-    };
+    return { baseUrl: provider.url || provider.playlistUrl, username: provider.username, password: provider.password };
   }, [provider]);
 
-  const playerLiveChannels = useMemo(
-    () => provider
-      ? channels.filter((channel) =>
-          channel.providerId === provider.id && (channel.contentType ?? "live") === "live",
-        )
-      : [],
-    [channels, provider],
-  );
-  const homeIdentityIds = useMemo(
-    () => homeLiveIdentityPreviewIds(history),
-    [history],
-  );
-  const resolvedHomeIdentityChannels = useResolvedLiveIdentityChannels(
-    provider,
-    homeIdentityIds,
-    playerLiveChannels,
-  );
-  const fullHistoryIdentityIds = useMemo(
-    () => view === "history" ? [...history, ...favorites] : [],
-    [view, history, favorites],
-  );
-  const resolvedFullHistoryIdentityChannels = useResolvedLiveIdentityChannels(
-    provider,
-    fullHistoryIdentityIds,
-    playerLiveChannels,
-  );
+  const playerLiveChannels = useMemo(() => provider ? channels.filter((channel) => channel.providerId === provider.id && (channel.contentType ?? "live") === "live") : [], [channels, provider]);
+  const homeIdentityIds = useMemo(() => homeLiveIdentityPreviewIds(history), [history]);
+  const homeIdentityFallbackChannels = provider?.type === "stalker" ? EMPTY_LIVE_CHANNELS : playerLiveChannels;
+  const resolvedHomeIdentityChannels = useResolvedLiveIdentityChannels(provider, homeIdentityIds, homeIdentityFallbackChannels);
+  const fullHistoryIdentityIds = useMemo(() => view === "history" ? [...history, ...favorites] : [], [view, history, favorites]);
+  const resolvedFullHistoryIdentityChannels = useResolvedLiveIdentityChannels(provider, fullHistoryIdentityIds, playerLiveChannels);
 
   const activeSnapshot = provider && snapshot.providerId === provider.id ? snapshot : null;
-  const homeChannels = activeSnapshot?.live.length ? activeSnapshot.live : playerLiveChannels.slice(0, 48);
+  const homeLiveSource = selectHomeLiveSource({ provider, snapshot, hasUsableCache, legacyChannels: playerLiveChannels });
+  const homeChannels = homeLiveSource.channels;
   const homeIdentityChannels = useMemo(() => {
     const byId = new Map<string, Channel>();
     for (const channel of homeChannels) byId.set(channel.id, channel);
-    for (const channel of resolvedHomeIdentityChannels) {
-      if (!byId.has(channel.id)) byId.set(channel.id, channel);
-    }
+    for (const channel of resolvedHomeIdentityChannels) if (!byId.has(channel.id)) byId.set(channel.id, channel);
     return [...byId.values()];
   }, [homeChannels, resolvedHomeIdentityChannels]);
-  const homeMovies = activeSnapshot?.movies ?? [];
-  const homeSeries = activeSnapshot?.series ?? [];
-  const liveCount = provider
-    ? snapshotCount(provider.id, snapshot.providerId, snapshot.counts.live, snapshot.ready, hasUsableCache)
-    : { totalCount: null, countKnown: false };
-  const vodCount = provider
-    ? snapshotCount(provider.id, snapshot.providerId, snapshot.counts.vod, snapshot.ready, hasUsableCache)
-    : { totalCount: null, countKnown: false };
-  const seriesCount = provider
-    ? snapshotCount(provider.id, snapshot.providerId, snapshot.counts.series, snapshot.ready, hasUsableCache)
-    : { totalCount: null, countKnown: false };
+  const homeMovies = provider?.type === "stalker" ? [] : activeSnapshot?.movies ?? [];
+  const homeSeries = provider?.type === "stalker" ? [] : activeSnapshot?.series ?? [];
+
+  const liveCount = provider ? snapshotCount(provider.id, snapshot.providerId, snapshot.counts.live, snapshot.ready, hasUsableCache) : { totalCount: null, countKnown: false };
+  const vodCount = provider ? provider.type === "stalker" ? { totalCount: null, countKnown: false } : snapshotCount(provider.id, snapshot.providerId, snapshot.counts.vod, snapshot.ready, hasUsableCache) : { totalCount: null, countKnown: false };
+  const seriesCount = provider ? provider.type === "stalker" ? { totalCount: null, countKnown: false } : snapshotCount(provider.id, snapshot.providerId, snapshot.counts.series, snapshot.ready, hasUsableCache) : { totalCount: null, countKnown: false };
 
   const refreshPagedCatalog = async () => {
     if (!provider) return;
     try {
-      if (provider.type === "xtream") {
-        await refreshCatalog();
-      } else if (provider.type === "m3u") {
-        await refreshProvider();
-        await yieldToUi();
-        await refreshSnapshot();
-      } else if (provider.type === "stalker") {
-        await refreshProvider();
-      }
-    } finally {
-      setCategoryMetadataRefresh((value) => value + 1);
-    }
+      if (provider.type === "xtream") await refreshCatalog();
+      else if (provider.type === "m3u") { await refreshProvider(); await yieldToUi(); await refreshSnapshot(); }
+      else if (provider.type === "stalker") await refreshProvider();
+    } finally { setCategoryMetadataRefresh((value) => value + 1); }
   };
 
   const switchProvider = async (id: string) => {
     if (id === provider?.id) return;
     const target = providers.find((item) => item.id === id);
-    if (!target) {
-      setCatalogError("The saved provider could not be opened.");
-      return;
-    }
-    if (target.needsCredentials) {
-      setAdding(false);
-      setEditingProviderId(id);
-      return;
-    }
+    if (!target) return setCatalogError("The saved provider could not be opened.");
+    if (target.needsCredentials) { setAdding(false); setEditingProviderId(id); return; }
     const gate = tryBeginProviderSwitch(switchingProviderRef.current, id);
     if (!gate.started) return;
-
     seriesRequestGenerationRef.current += 1;
     switchingProviderRef.current = id;
     setSwitchingProviderId(id);
@@ -317,23 +230,10 @@ export default function OptimizedHomeScreenPaged() {
     setCatalogError(null);
     try {
       const routedTarget = await resolveProviderForSwitch(id);
-      if (!routedTarget) {
-        setCatalogError("The saved provider could not be opened.");
-        return;
-      }
-      try {
-        const prepared = await prepareProviderSwitchCache(routedTarget);
-        if (!prepared) clearProviderSwitchSnapshot(id);
-      } catch {
-        clearProviderSwitchSnapshot(id);
-      }
+      if (!routedTarget) return setCatalogError("The saved provider could not be opened.");
+      try { const prepared = await prepareProviderSwitchCache(routedTarget); if (!prepared) clearProviderSwitchSnapshot(id); } catch { clearProviderSwitchSnapshot(id); }
       const ok = await setActiveProvider(id);
-      if (ok) {
-        await yieldToUi();
-        setView("home");
-      } else {
-        clearProviderSwitchSnapshot(id);
-      }
+      if (ok) { await yieldToUi(); setView("home"); } else clearProviderSwitchSnapshot(id);
     } catch (caught) {
       clearProviderSwitchSnapshot(id);
       setCatalogError(safeProviderSwitchError(caught));
@@ -345,182 +245,69 @@ export default function OptimizedHomeScreenPaged() {
 
   const navigate = (target: ContentView) => {
     setView(target);
-    if (target !== "series") {
-      seriesRequestGenerationRef.current += 1;
-      setSelectedSeries(null);
-      setSeriesInfo(null);
-    }
+    if (target !== "series") { seriesRequestGenerationRef.current += 1; setSelectedSeries(null); setSeriesInfo(null); }
   };
 
-  if (isHydrating) {
-    return <View style={[s.centered, { backgroundColor: colors.background }]}>
-      <Text style={{ color: colors.foreground }}>{t("loading")}</Text>
-    </View>;
-  }
+  if (isHydrating) return <View style={[s.centered, { backgroundColor: colors.background }]}><Text style={{ color: colors.foreground }}>{t("loading")}</Text></View>;
 
-  const editingProvider = editingProviderId
-    ? providers.find((item) => item.id === editingProviderId) ?? null
-    : null;
+  const editingProvider = editingProviderId ? providers.find((item) => item.id === editingProviderId) ?? null : null;
   const providerSwitchBusy = isLoading || switchingProviderId !== null;
 
-  if (!provider && !adding && !editingProvider) {
-    return <SavedAccounts
-      providers={providers}
-      busy={providerSwitchBusy}
-      switchingProviderId={switchingProviderId}
-      error={error}
-      onOpen={(id) => void switchProvider(id)}
-      onAdd={() => setAdding(true)}
-      onRemove={(id) => void removeProvider(id)}
-    />;
-  }
+  if (!provider && !adding && !editingProvider) return <SavedAccounts providers={providers} busy={providerSwitchBusy} switchingProviderId={switchingProviderId} error={error} onOpen={(id) => void switchProvider(id)} onAdd={() => setAdding(true)} onRemove={(id) => void removeProvider(id)} />;
 
   if (adding || editingProvider || !provider) {
-    return <ProviderSetup
-      existing={editingProvider}
-      busy={isLoading}
-      error={error}
-      onCancel={providers.length ? () => {
-        setAdding(false);
-        setEditingProviderId(null);
-      } : undefined}
-      onSubmit={async (config) => {
-        clearError();
-        const ok = await connectProvider(config);
-        if (ok) {
-          setAdding(false);
-          setEditingProviderId(null);
-          setView("home");
-        }
-      }}
-    />;
+    return <ProviderSetup existing={editingProvider} busy={isLoading} error={error} onCancel={providers.length ? () => { cancelProviderConnect(); setAdding(false); setEditingProviderId(null); } : undefined} onSubmit={async (config) => {
+      clearError();
+      const ok = await connectProvider(config);
+      if (ok) { setAdding(false); setEditingProviderId(null); setView("home"); }
+    }} />;
   }
 
   const openLive = (channel: Channel) => {
-    if (!channel.streamUrl) {
-      setCatalogError("The cached playback address is unavailable. Refresh Live TV and try again.");
-      return;
-    }
-    setPlayable({
-      title: channel.name,
-      subtitle: channel.category,
-      url: channel.streamUrl,
-      kind: "live",
-      returnTo: "live",
-      liveIdentity: { providerId: channel.providerId, channelId: channel.id },
-    });
+    if (!channel.streamUrl) { setCatalogError("The cached playback address is unavailable. Refresh Live TV and try again."); return; }
+    setPlayable({ title: channel.name, subtitle: channel.category, url: channel.streamUrl, kind: "live", returnTo: "live", liveIdentity: { providerId: channel.providerId, channelId: channel.id } });
     void recordWatched(channel.id);
     setView("player");
   };
 
   const openMovie = (item: XtreamVodItem) => {
     try {
-      setPlayable({
-        title: item.name,
-        subtitle: item.genre || t("movies"),
-        url: buildVodStreamUrl(credentials, item),
-        kind: "movie",
-        returnTo: "movies",
-        vodIdentity: { providerId: provider.id, itemId: String(item.stream_id) },
-      });
+      setPlayable({ title: item.name, subtitle: item.genre || t("movies"), url: buildVodStreamUrl(credentials, item), kind: "movie", returnTo: "movies", vodIdentity: { providerId: provider.id, itemId: String(item.stream_id) } });
       setView("player");
-    } catch (caught) {
-      setCatalogError(caught instanceof Error ? caught.message : t("loadingMovies"));
-    }
+    } catch (caught) { setCatalogError(caught instanceof Error ? caught.message : t("loadingMovies")); }
   };
 
-  const isCurrentSeriesRequest = (providerId: string, generation: number) =>
-    activeProviderIdRef.current === providerId && seriesRequestGenerationRef.current === generation;
-
+  const isCurrentSeriesRequest = (providerId: string, generation: number) => activeProviderIdRef.current === providerId && seriesRequestGenerationRef.current === generation;
   const openSeries = async (item: XtreamSeriesItem) => {
     const requestProviderId = provider.id;
     const requestGeneration = ++seriesRequestGenerationRef.current;
-    setSelectedSeries(item);
-    setSeriesInfo(null);
-    setCatalogError(null);
+    setSelectedSeries(item); setSeriesInfo(null); setCatalogError(null);
     try {
       if (provider.type === "m3u") {
         const info = await loadM3USeriesInfoFromCache(provider, item.series_id);
         if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return;
-        if (!info) {
-          setCatalogError(t("loadingEpisodes"));
-          return;
-        }
-        if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return;
-        registerLocalEpisodeQueue(info);
-        setSeriesInfo(info);
-        return;
+        if (!info) { setCatalogError(t("loadingEpisodes")); return; }
+        registerLocalEpisodeQueue(info); setSeriesInfo(info); return;
       }
       if (!credentials) return;
       const info = await getSeriesInfo(credentials, item.series_id);
-      if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return;
-      setSeriesInfo(info);
+      if (isCurrentSeriesRequest(requestProviderId, requestGeneration)) setSeriesInfo(info);
     } catch (caught) {
       if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return;
-      if (await recoverLegacyCatalogFallback(requestProviderId, caught)) {
-        if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return;
-        setSelectedSeries(null);
-        setSeriesInfo(null);
-        setView("home");
-        return;
-      }
+      if (await recoverLegacyCatalogFallback(requestProviderId, caught)) { if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return; setSelectedSeries(null); setSeriesInfo(null); setView("home"); return; }
       setCatalogError(caught instanceof Error ? caught.message : t("loadingEpisodes"));
     }
   };
 
   const playEpisode = (episode: XtreamEpisode) => {
     if (!selectedSeries) return;
-    try {
-      setPlayable({
-        title: episode.title || selectedSeries.name,
-        subtitle: selectedSeries.name,
-        url: buildEpisodeStreamUrl(credentials, episode),
-        kind: "episode",
-        returnTo: "series",
-      });
-      setView("player");
-    } catch (caught) {
-      setCatalogError(caught instanceof Error ? caught.message : t("loadingEpisodes"));
-    }
+    try { setPlayable({ title: episode.title || selectedSeries.name, subtitle: selectedSeries.name, url: buildEpisodeStreamUrl(credentials, episode), kind: "episode", returnTo: "series" }); setView("player"); }
+    catch (caught) { setCatalogError(caught instanceof Error ? caught.message : t("loadingEpisodes")); }
   };
+  const openDownload = (item: DownloadedMedia) => { setPlayable({ title: item.title, subtitle: item.subtitle, url: item.uri, kind: "download", returnTo: "downloads" }); setView("player"); };
+  const openProgress = (item: MediaProgress) => { setPlayable({ title: item.title, subtitle: item.subtitle, url: item.source, kind: item.kind, returnTo: "history" }); setView("player"); };
 
-  const openDownload = (item: DownloadedMedia) => {
-    setPlayable({
-      title: item.title,
-      subtitle: item.subtitle,
-      url: item.uri,
-      kind: "download",
-      returnTo: "downloads",
-    });
-    setView("player");
-  };
-
-  const openProgress = (item: MediaProgress) => {
-    setPlayable({
-      title: item.title,
-      subtitle: item.subtitle,
-      url: item.source,
-      kind: item.kind,
-      returnTo: "history",
-    });
-    setView("player");
-  };
-
-  if (view === "player") {
-    return <View style={s.fullPlayer}>
-      {playable ? <NativeVideoPlayer
-        source={playable.url}
-        title={playable.title}
-        subtitle={playable.subtitle}
-        mediaKind={playable.kind}
-        liveIdentity={playable.liveIdentity}
-        vodIdentity={playable.vodIdentity}
-        autoFullscreen
-        allowDownload={playable.kind === "movie" || playable.kind === "episode"}
-        onFullscreenExit={() => setView(playable.returnTo)}
-      /> : null}
-    </View>;
-  }
+  if (view === "player") return <View style={s.fullPlayer}>{playable ? <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => setView(playable.returnTo)} /> : null}</View>;
 
   const nav = [
     { key: "home" as const, label: t("home"), icon: "home" as const },
@@ -536,118 +323,39 @@ export default function OptimizedHomeScreenPaged() {
 
   return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
     <View style={[s.header, { borderColor: colors.border }, view === "home" ? s.homeHeaderPremium : null]}>
-      <View style={s.headerTop}>
-        <Text style={[s.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text>
-        <ProviderSubscriptionChip provider={provider} />
-      </View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.nav}>
-        {nav.map((item) => <FocusButton
-          key={item.key}
-          label={item.label}
-          icon={item.icon}
-          variant={view === item.key ? "secondary" : "ghost"}
-          onPress={() => navigate(item.key)}
-        />)}
-      </ScrollView>
+      <View style={s.headerTop}><Text style={[s.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text><ProviderSubscriptionChip provider={provider} /></View>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.nav}>{nav.map((item) => <FocusButton key={item.key} label={item.label} icon={item.icon} variant={view === item.key ? "secondary" : "ghost"} onPress={() => navigate(item.key)} />)}</ScrollView>
     </View>
 
-    {error || catalogError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}> 
-      <Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError)}</Text>
-      <Pressable onPress={() => {
-        clearError();
-        setCatalogError(null);
-      }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable>
-    </View> : null}
+    {error || catalogError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}><Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError)}</Text><Pressable onPress={() => { clearError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable></View> : null}
 
-    {view === "live" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedLiveCatalog
-      provider={provider}
-      snapshotCount={liveCount}
-      hasMeaningfulM3ULiveGroups={categoryMetadata?.providerId === provider.id
-        ? categoryMetadata.hasMeaningfulM3ULiveGroups
-        : null}
-      epgByChannel={epgByChannel}
-      favorites={favorites}
-      epgLoading={isEpgLoading}
-      refreshing={isLoading || isRefreshing || isSyncing}
-      onRefresh={refreshPagedCatalog}
-      onOpen={openLive}
-      onFavorite={(id) => void toggleFavorite(id)}
-      onDrawerVisibilityChange={setCatalogDrawerOpen}
-    /> : null}
+    {view === "live" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedLiveCatalog provider={provider} snapshotCount={liveCount} hasMeaningfulM3ULiveGroups={categoryMetadata?.providerId === provider.id ? categoryMetadata.hasMeaningfulM3ULiveGroups : null} epgByChannel={epgByChannel} favorites={favorites} epgLoading={isEpgLoading} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
+    {view === "live" && provider.type === "stalker" ? <StalkerLiveCatalog providerId={provider.id} channels={playerLiveChannels} epgByChannel={epgByChannel} favorites={favorites} epgLoading={isEpgLoading} refreshing={isLoading} onRefresh={refreshPagedCatalog} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} /> : null}
 
-    {view === "live" && provider.type === "stalker" ? <StalkerLiveCatalog
-      providerId={provider.id}
-      channels={playerLiveChannels}
-      epgByChannel={epgByChannel}
-      favorites={favorites}
-      epgLoading={isEpgLoading}
-      refreshing={isLoading}
-      onRefresh={refreshPagedCatalog}
-      onOpen={openLive}
-      onFavorite={(id) => void toggleFavorite(id)}
-    /> : null}
+    {view === "movies" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedMoviesCatalog provider={provider} snapshotCount={vodCount} sortMode={catalogSort} onSort={changeCatalogSort} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} onOpen={openMovie} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
+    {view === "movies" && provider.type === "stalker" && isStalkerProductProvider(provider) ? <StalkerProductErrorBoundary product="movies" providerId={provider.id} onBack={() => setView("home")}><StalkerVodSurface provider={provider} onBack={() => setView("home")} /></StalkerProductErrorBoundary> : null}
 
-    {view === "movies" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedMoviesCatalog
-      provider={provider}
-      snapshotCount={vodCount}
-      sortMode={catalogSort}
-      onSort={changeCatalogSort}
-      refreshing={isLoading || isRefreshing || isSyncing}
-      onRefresh={refreshPagedCatalog}
-      onOpen={openMovie}
-      onDrawerVisibilityChange={setCatalogDrawerOpen}
-    /> : null}
+    {view === "series" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedSeriesCatalog provider={provider} snapshotCount={seriesCount} sortMode={catalogSort} onSort={changeCatalogSort} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} selected={selectedSeries} info={seriesInfo} onOpen={(item) => void openSeries(item)} onBack={() => { seriesRequestGenerationRef.current += 1; setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
+    {view === "series" && provider.type === "stalker" && isStalkerProductProvider(provider) ? <StalkerProductErrorBoundary product="series" providerId={provider.id} onBack={() => setView("home")}><StalkerSeriesProductSurface provider={provider} /></StalkerProductErrorBoundary> : null}
 
-    {view === "series" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedSeriesCatalog
-      provider={provider}
-      snapshotCount={seriesCount}
-      sortMode={catalogSort}
-      onSort={changeCatalogSort}
-      refreshing={isLoading || isRefreshing || isSyncing}
-      onRefresh={refreshPagedCatalog}
-      selected={selectedSeries}
-      info={seriesInfo}
-      onOpen={(item) => void openSeries(item)}
-      onBack={() => {
-        seriesRequestGenerationRef.current += 1;
-        setSelectedSeries(null);
-        setSeriesInfo(null);
-      }}
-      onEpisode={playEpisode}
-      onDrawerVisibilityChange={setCatalogDrawerOpen}
-    /> : null}
+    {view === "history" ? <HistoryView providerId={provider.id} channels={resolvedFullHistoryIdentityChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
 
-    {view === "history" ? <HistoryView
-      providerId={provider.id}
-      channels={resolvedFullHistoryIdentityChannels}
-      favorites={favorites}
-      history={history}
-      onOpen={openLive}
-      onOpenMedia={openProgress}
-    /> : null}
-
-    {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? <ScrollView
-      style={{ flex: 1 }}
-      contentContainerStyle={s.content}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-      scrollEnabled={!catalogDrawerOpen}
-    >
+    {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEnabled={!catalogDrawerOpen}>
       {view === "home" ? <HomeDiscovery
         provider={provider}
-        live={countKnown ? snapshot.counts.live : (provider.type === "stalker" ? playerLiveChannels.length : null)}
+        live={provider.type === "stalker" ? homeLiveSource.totalCount : countKnown ? snapshot.counts.live : null}
         vod={vodCount.totalCount}
         series={seriesCount.totalCount}
-        vodCategories={categoryMetadata?.providerId === provider.id ? categoryMetadata.vodCategories : 0}
-        seriesCategories={categoryMetadata?.providerId === provider.id ? categoryMetadata.seriesCategories : 0}
-        catalogLoading={isSyncing}
+        vodCategories={provider.type === "stalker" ? 0 : categoryMetadata?.providerId === provider.id ? categoryMetadata.vodCategories : 0}
+        seriesCategories={provider.type === "stalker" ? 0 : categoryMetadata?.providerId === provider.id ? categoryMetadata.seriesCategories : 0}
+        catalogLoading={provider.type === "stalker" ? false : isSyncing}
         channels={homeIdentityChannels}
         history={history}
         movies={homeMovies}
         seriesItems={homeSeries}
         newChannels={activeSnapshot?.newChannels ?? []}
-        newMovies={activeSnapshot?.newMovies ?? []}
-        newSeries={activeSnapshot?.newSeries ?? []}
+        newMovies={provider.type === "stalker" ? [] : activeSnapshot?.newMovies ?? []}
+        newSeries={provider.type === "stalker" ? [] : activeSnapshot?.newSeries ?? []}
         onNavigate={navigate}
         onOpenLive={openLive}
         onOpenMovie={openMovie}
@@ -656,29 +364,14 @@ export default function OptimizedHomeScreenPaged() {
         onRemoveLive={(id) => void removeWatched(id)}
       /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
-      {view === "settings" ? <Settings
-        provider={provider}
-        providers={providers}
-        busy={providerSwitchBusy}
-        switchingProviderId={switchingProviderId}
-        onEdit={() => setEditingProviderId(provider.id)}
-        onAdd={() => setAdding(true)}
-        onSwitch={(id) => void switchProvider(id)}
-        onDisconnect={() => void disconnectProvider()}
-        onRemove={(id) => void removeProvider(id)}
-      /> : null}
+      {view === "settings" ? <Settings provider={provider} providers={providers} busy={providerSwitchBusy} switchingProviderId={switchingProviderId} onEdit={() => setEditingProviderId(provider.id)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
     </ScrollView> : null}
   </View>;
 }
 
 function SavedAccounts({ providers, busy, switchingProviderId, error, onOpen, onAdd, onRemove }: {
-  providers: ProviderConfig[];
-  busy: boolean;
-  switchingProviderId: string | null;
-  error: string | null;
-  onOpen: (id: string) => void;
-  onAdd: () => void;
-  onRemove: (id: string) => void;
+  providers: ProviderConfig[]; busy: boolean; switchingProviderId: string | null; error: string | null;
+  onOpen: (id: string) => void; onAdd: () => void; onRemove: (id: string) => void;
 }) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -690,20 +383,13 @@ function SavedAccounts({ providers, busy, switchingProviderId, error, onOpen, on
     {error ? <Text style={{ color: colors.destructive }}>{visibleErrorText(error)}</Text> : null}
     <View style={{ gap: 10 }}>{providers.map((item) => {
       const switching = switchingProviderId === item.id;
-      return <View key={item.id} style={[s.accountCard, { borderColor: switching ? colors.primary : colors.border, backgroundColor: colors.card, opacity: busy && !switching ? 0.6 : 1 }]}> 
+      return <View key={item.id} style={[s.accountCard, { borderColor: switching ? colors.primary : colors.border, backgroundColor: colors.card, opacity: busy && !switching ? 0.6 : 1 }]}>
         <Pressable style={{ flex: 1 }} onPress={() => onOpen(item.id)} disabled={busy}>
-          <View style={s.rowBetween}>
-            <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16, flex: 1 }}>{item.name}</Text>
-            {switching ? <ActivityIndicator size="small" color={colors.primary} /> : null}
-          </View>
-          <Text style={{ color: item.needsCredentials ? colors.destructive : switching ? colors.primary : colors.mutedForeground }}>
-            {switching ? t("opening") : item.needsCredentials ? t("credentialsMissing") : providerPresentation(item).meta}
-          </Text>
+          <View style={s.rowBetween}><Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16, flex: 1 }}>{item.name}</Text>{switching ? <ActivityIndicator size="small" color={colors.primary} /> : null}</View>
+          <Text style={{ color: item.needsCredentials ? colors.destructive : switching ? colors.primary : colors.mutedForeground }}>{switching ? t("opening") : item.needsCredentials ? t("credentialsMissing") : providerPresentation(item).meta}</Text>
           <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{providerPresentation(item).host}</Text>
         </Pressable>
-        <Pressable disabled={busy} onPress={() => onRemove(item.id)} style={s.iconButton}>
-          <Feather name="trash-2" size={20} color={colors.mutedForeground} />
-        </Pressable>
+        <Pressable disabled={busy} onPress={() => onRemove(item.id)} style={s.iconButton}><Feather name="trash-2" size={20} color={colors.mutedForeground} /></Pressable>
       </View>;
     })}</View>
     <FocusButton label={busy ? t("opening") : t("addNewAccount")} icon="plus" variant="primary" onPress={onAdd} disabled={busy} />
@@ -716,12 +402,7 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   busy: boolean;
   error: string | null;
   onCancel?: () => void;
-  onSubmit: (config: Omit<ProviderConfig, "id" | "connectedAt" | "createdAt" | "url" | "channelCount" | "needsCredentials"> & {
-    providerId?: string;
-    url?: string;
-    epgUrl?: string;
-    mac?: string;
-  }) => Promise<void>;
+  onSubmit: (config: Omit<ProviderConfig, "id" | "connectedAt" | "createdAt" | "url" | "channelCount" | "needsCredentials"> & { providerId?: string; url?: string; epgUrl?: string; mac?: string; }) => Promise<void>;
 }) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
@@ -740,6 +421,7 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
   const submit = async () => {
     const clean = url.trim();
     if (!/^https?:\/\//i.test(clean)) return setLocalError(t("invalidUrl"));
+    if (type === "stalker" && !mac.trim()) return setLocalError("Stalker için MAC adresi gerekir.");
     if (type === "xtream" && (!username.trim() || !password)) return setLocalError(t("xtreamCredentials"));
     setLocalError(null);
     await onSubmit({
@@ -750,7 +432,7 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
       username: type === "xtream" ? username.trim() : undefined,
       password: type === "xtream" ? password : undefined,
       mac: type === "stalker" ? mac.trim() : undefined,
-      epgUrl: epgUrl.trim() || undefined,
+      epgUrl: type === "stalker" ? undefined : epgUrl.trim() || undefined,
     });
   };
 
@@ -758,40 +440,17 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
     <ScrollView contentContainerStyle={[s.setup, { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 140 }]} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
       <Text style={[s.brandLarge, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text>
       <Text style={[s.title, { color: colors.foreground }]}>{credentialsOnly ? t("credentialsMissing") : existing ? t("editIptvSource") : t("addIptvSource")}</Text>
-      <View style={s.row}>{(["xtream", "m3u", "stalker"] as ProviderType[]).map((item) => <FocusButton
-        key={item}
-        label={item === "xtream" ? "Xtream" : item === "m3u" ? "M3U" : "Stalker"}
-        variant={type === item ? "secondary" : "ghost"}
-        onPress={() => setType(item)}
-        disabled={credentialsOnly}
-      />)}</View>
+      <View style={s.row}>{(["xtream", "m3u", "stalker"] as ProviderType[]).map((item) => <FocusButton key={item} label={item === "xtream" ? "Xtream" : item === "m3u" ? "M3U" : "Stalker"} variant={type === item ? "secondary" : "ghost"} onPress={() => setType(item)} disabled={credentialsOnly} />)}</View>
       <Input label={t("sourceName")} value={name} onChangeText={setName} editable={!credentialsOnly} />
       <Input label={t("serverUrl")} value={url} onChangeText={setUrl} autoCapitalize="none" editable={!credentialsOnly || !url} />
       {type === "xtream" ? <>
         <Input label={t("username")} value={username} onChangeText={setUsername} autoCapitalize="none" />
-        <Input
-          label={t("password")}
-          value={password}
-          onChangeText={setPassword}
-          secureTextEntry={!passwordVisible}
-          trailingAction={<Pressable
-            accessibilityRole="button"
-            accessibilityLabel={passwordVisible ? "Şifreyi gizle" : "Şifreyi göster"}
-            hitSlop={8}
-            onPress={() => setPasswordVisible((value) => !value)}
-            style={s.iconButton}
-          >
-            <Feather name={passwordVisible ? "eye-off" : "eye"} size={20} color={colors.mutedForeground} />
-          </Pressable>}
-        />
+        <Input label={t("password")} value={password} onChangeText={setPassword} secureTextEntry={!passwordVisible} trailingAction={<Pressable accessibilityRole="button" accessibilityLabel={passwordVisible ? "Şifreyi gizle" : "Şifreyi göster"} hitSlop={8} onPress={() => setPasswordVisible((value) => !value)} style={s.iconButton}><Feather name={passwordVisible ? "eye-off" : "eye"} size={20} color={colors.mutedForeground} /></Pressable>} />
       </> : null}
       {type === "stalker" ? <Input label={t("macAddress")} value={mac} onChangeText={setMac} autoCapitalize="none" /> : null}
-      <Input label={t("epgOptional")} value={epgUrl} onChangeText={setEpgUrl} autoCapitalize="none" editable={!credentialsOnly} />
+      {type !== "stalker" ? <Input label={t("epgOptional")} value={epgUrl} onChangeText={setEpgUrl} autoCapitalize="none" editable={!credentialsOnly} /> : null}
       {localError || error ? <Text style={{ color: colors.destructive }}>{visibleErrorText(localError || error)}</Text> : null}
-      <View style={s.row}>
-        <FocusButton label={busy ? t("connecting") : existing ? t("saveConnect") : t("addConnect")} icon="log-in" variant="primary" onPress={() => void submit()} disabled={busy} />
-        {onCancel ? <FocusButton label={t("cancel")} variant="ghost" onPress={onCancel} /> : null}
-      </View>
+      <View style={s.row}><FocusButton label={busy ? t("connecting") : existing ? t("saveConnect") : t("addConnect")} icon="log-in" variant="primary" onPress={() => void submit()} disabled={busy} />{onCancel ? <FocusButton label={t("cancel")} variant="ghost" onPress={onCancel} /> : null}</View>
     </ScrollView>
   </KeyboardAvoidingView>;
 }
@@ -799,91 +458,40 @@ function ProviderSetup({ existing, busy, error, onCancel, onSubmit }: {
 type HistorySectionRow = { key: string; channel: Channel };
 
 function HistoryView({ providerId, channels, favorites, history, onOpen, onOpenMedia }: {
-  providerId: string;
-  channels: Channel[];
-  favorites: string[];
-  history: string[];
-  onOpen: (channel: Channel) => void;
-  onOpenMedia: (item: MediaProgress) => void;
+  providerId: string; channels: Channel[]; favorites: string[]; history: string[];
+  onOpen: (channel: Channel) => void; onOpenMedia: (item: MediaProgress) => void;
 }) {
   const colors = useColors();
   const { t } = useI18n();
   const channelIndex = useMemo(() => indexLiveChannelsByProviderAndId(channels), [channels]);
-  const recent = useMemo(
-    () => resolveLiveIdentityPresentationRows(providerId, history, channelIndex)
-      .map((channel, index) => ({ key: `history:${index}:${channel.id}`, channel })),
-    [providerId, history, channelIndex],
-  );
-  const favs = useMemo(
-    () => resolveLiveIdentityPresentationRows(providerId, favorites, channelIndex)
-      .map((channel, index) => ({ key: `favorite:${index}:${channel.id}`, channel })),
-    [providerId, favorites, channelIndex],
-  );
-  const sections = useMemo(
-    () => [
-      { title: t("recentlyWatched"), data: recent },
-      { title: t("favorites"), data: favs },
-    ],
-    [recent, favs, t],
-  );
+  const recent = useMemo(() => resolveLiveIdentityPresentationRows(providerId, history, channelIndex).map((channel, index) => ({ key: `history:${index}:${channel.id}`, channel })), [providerId, history, channelIndex]);
+  const favs = useMemo(() => resolveLiveIdentityPresentationRows(providerId, favorites, channelIndex).map((channel, index) => ({ key: `favorite:${index}:${channel.id}`, channel })), [providerId, favorites, channelIndex]);
+  const sections = useMemo(() => [{ title: t("recentlyWatched"), data: recent }, { title: t("favorites"), data: favs }], [recent, favs, t]);
   return <SectionList<HistorySectionRow>
-    style={{ flex: 1 }}
-    contentContainerStyle={s.content}
-    sections={sections}
-    keyExtractor={(item) => item.key}
-    ListHeaderComponent={<View>
-      <Text style={[s.title, { color: colors.foreground }]}>{t("history")}</Text>
-      <View style={{ marginBottom: 30 }}><ContinueWatchingView onOpen={onOpenMedia} /></View>
-    </View>}
+    style={{ flex: 1 }} contentContainerStyle={s.content} sections={sections} keyExtractor={(item) => item.key}
+    ListHeaderComponent={<View><Text style={[s.title, { color: colors.foreground }]}>{t("history")}</Text><View style={{ marginBottom: 30 }}><ContinueWatchingView onOpen={onOpenMedia} /></View></View>}
     renderSectionHeader={({ section }) => <Text style={[s.section, { color: colors.foreground, marginBottom: 10 }]}>{section.title}</Text>}
-    renderItem={({ item }) => <Pressable onPress={() => onOpen(item.channel)} style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}>
-      <View style={{ flex: 1 }}>
-        <Text style={{ color: colors.foreground, fontWeight: "700" }}>{item.channel.name}</Text>
-        <Text style={{ color: colors.mutedForeground }}>{item.channel.category}</Text>
-      </View>
-      <Feather name="play" size={20} color={colors.primary} />
-    </Pressable>}
+    renderItem={({ item }) => <Pressable onPress={() => onOpen(item.channel)} style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}><View style={{ flex: 1 }}><Text style={{ color: colors.foreground, fontWeight: "700" }}>{item.channel.name}</Text><Text style={{ color: colors.mutedForeground }}>{item.channel.category}</Text></View><Feather name="play" size={20} color={colors.primary} /></Pressable>}
     ListEmptyComponent={<Text style={{ color: colors.mutedForeground }}>{t("nothingYet")}</Text>}
-    initialNumToRender={24}
-    maxToRenderPerBatch={24}
-    windowSize={9}
-    removeClippedSubviews={Platform.OS !== "web"}
-    keyboardShouldPersistTaps="handled"
-    showsVerticalScrollIndicator={false}
+    initialNumToRender={24} maxToRenderPerBatch={24} windowSize={9} removeClippedSubviews={Platform.OS !== "web"} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false}
   />;
 }
 
 function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAdd, onSwitch, onDisconnect, onRemove }: {
-  provider: ProviderConfig;
-  providers: ProviderConfig[];
-  busy: boolean;
-  switchingProviderId: string | null;
-  onEdit: () => void;
-  onAdd: () => void;
-  onSwitch: (id: string) => void;
-  onDisconnect: () => void;
-  onRemove: (id: string) => void;
+  provider: ProviderConfig; providers: ProviderConfig[]; busy: boolean; switchingProviderId: string | null;
+  onEdit: () => void; onAdd: () => void; onSwitch: (id: string) => void; onDisconnect: () => void; onRemove: (id: string) => void;
 }) {
   const colors = useColors();
   const { t, language, languages, setLanguage } = useI18n();
   return <View>
     <Text style={[s.title, { color: colors.foreground }]}>{t("settings")}</Text>
-    <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}> 
+    <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16 }}>{t("activeConnection")}</Text>
       <Text style={{ color: colors.foreground }}>{provider.name}</Text>
       <Text style={{ color: colors.mutedForeground }}>{(provider.declaredType ?? provider.type).toUpperCase()} · {provider.channelCount ?? 0}</Text>
-      <View style={s.row}>
-        <FocusButton label={t("editSource")} icon="edit-2" onPress={onEdit} />
-        <FocusButton label={t("addAccount")} icon="plus" onPress={onAdd} />
-        <FocusButton label={t("disconnect")} icon="log-out" variant="ghost" onPress={onDisconnect} />
-      </View>
+      <View style={s.row}><FocusButton label={t("editSource")} icon="edit-2" onPress={onEdit} /><FocusButton label={t("addAccount")} icon="plus" onPress={onAdd} /><FocusButton label={t("disconnect")} icon="log-out" variant="ghost" onPress={onDisconnect} /></View>
     </View>
-    <View style={{ marginTop: 24 }}>
-      <Text style={[s.section, { color: colors.foreground }]}>{t("language")}</Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.rail}>
-        {languages.map((item) => <FocusButton key={item.code} label={item.label} variant={language === item.code ? "secondary" : "ghost"} onPress={() => void setLanguage(item.code)} />)}
-      </ScrollView>
-    </View>
+    <View style={{ marginTop: 24 }}><Text style={[s.section, { color: colors.foreground }]}>{t("language")}</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.rail}>{languages.map((item) => <FocusButton key={item.code} label={item.label} variant={language === item.code ? "secondary" : "ghost"} onPress={() => void setLanguage(item.code)} />)}</ScrollView></View>
     <PlayerChromeTimeoutSetting />
     <ProviderBackupPanel />
     <CredentialDiagnosticsPanel />
@@ -892,20 +500,9 @@ function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAd
       <View style={{ gap: 8 }}>{providers.map((item) => {
         const active = item.id === provider.id;
         const switching = switchingProviderId === item.id;
-        return <View key={item.id} style={[s.accountCard, { borderColor: switching || active ? colors.primary : colors.border, backgroundColor: colors.card, opacity: busy && !switching && !active ? 0.6 : 1 }]}> 
-          <Pressable disabled={busy} onPress={() => onSwitch(item.id)} style={{ flex: 1 }}>
-            <View style={s.rowBetween}>
-              <Text style={{ color: colors.foreground, fontWeight: "800", flex: 1 }}>{item.name}{active ? ` · ${t("active")}` : ""}</Text>
-              {switching ? <ActivityIndicator size="small" color={colors.primary} /> : active ? <Feather name="check-circle" size={18} color={colors.primary} /> : null}
-            </View>
-            <Text style={{ color: item.needsCredentials ? colors.destructive : switching ? colors.primary : colors.mutedForeground }}>
-              {switching ? t("opening") : item.needsCredentials ? t("credentialsMissing") : providerPresentation(item).meta}
-            </Text>
-            <Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{providerPresentation(item).host}</Text>
-          </Pressable>
-          <Pressable disabled={busy} onPress={() => onRemove(item.id)} style={s.iconButton}>
-            <Feather name="trash-2" size={20} color={colors.mutedForeground} />
-          </Pressable>
+        return <View key={item.id} style={[s.accountCard, { borderColor: switching || active ? colors.primary : colors.border, backgroundColor: colors.card, opacity: busy && !switching && !active ? 0.6 : 1 }]}>
+          <Pressable disabled={busy} onPress={() => onSwitch(item.id)} style={{ flex: 1 }}><View style={s.rowBetween}><Text style={{ color: colors.foreground, fontWeight: "800", flex: 1 }}>{item.name}{active ? ` · ${t("active")}` : ""}</Text>{switching ? <ActivityIndicator size="small" color={colors.primary} /> : active ? <Feather name="check-circle" size={18} color={colors.primary} /> : null}</View><Text style={{ color: item.needsCredentials ? colors.destructive : switching ? colors.primary : colors.mutedForeground }}>{switching ? t("opening") : item.needsCredentials ? t("credentialsMissing") : providerPresentation(item).meta}</Text><Text numberOfLines={1} style={{ color: colors.mutedForeground, fontSize: 12 }}>{providerPresentation(item).host}</Text></Pressable>
+          <Pressable disabled={busy} onPress={() => onRemove(item.id)} style={s.iconButton}><Feather name="trash-2" size={20} color={colors.mutedForeground} /></Pressable>
         </View>;
       })}</View>
     </View>
@@ -913,22 +510,10 @@ function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAd
 }
 
 function Input({ label, trailingAction, ...props }: {
-  label: string;
-  value: string;
-  onChangeText: (value: string) => void;
-  autoCapitalize?: "none" | "sentences";
-  secureTextEntry?: boolean;
-  editable?: boolean;
-  trailingAction?: React.ReactNode;
+  label: string; value: string; onChangeText: (value: string) => void; autoCapitalize?: "none" | "sentences"; secureTextEntry?: boolean; editable?: boolean; trailingAction?: React.ReactNode;
 }) {
   const colors = useColors();
-  return <View style={{ gap: 6 }}>
-    <Text style={{ color: colors.mutedForeground, fontWeight: "700" }}>{label}</Text>
-    <View style={{ position: "relative" }}>
-      <TextInput {...props} style={[s.input, trailingAction ? { paddingRight: 52 } : null, { color: colors.foreground, backgroundColor: colors.card, borderColor: colors.border }]} placeholderTextColor={colors.mutedForeground} />
-      {trailingAction ? <View pointerEvents="box-none" style={s.inputTrailingAction}>{trailingAction}</View> : null}
-    </View>
-  </View>;
+  return <View style={{ gap: 6 }}><Text style={{ color: colors.mutedForeground, fontWeight: "700" }}>{label}</Text><View style={{ position: "relative" }}><TextInput {...props} style={[s.input, trailingAction ? { paddingRight: 52 } : null, { color: colors.foreground, backgroundColor: colors.card, borderColor: colors.border }]} placeholderTextColor={colors.mutedForeground} />{trailingAction ? <View pointerEvents="box-none" style={s.inputTrailingAction}>{trailingAction}</View> : null}</View></View>;
 }
 
 const s = StyleSheet.create({

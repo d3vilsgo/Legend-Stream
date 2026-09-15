@@ -1,3 +1,11 @@
+import { safeLog } from "./safeLog";
+import {
+  beginStalkerDiagnosticTimer,
+  classifyStalkerDiagnosticAction,
+  logStalkerDiagnosticMarker,
+  stalkerDiagnosticNowMs,
+} from "./stalkerDiagnostics";
+
 export type StalkerPortalErrorCode =
   | "INVALID_URL"
   | "MISSING_MAC"
@@ -7,7 +15,8 @@ export type StalkerPortalErrorCode =
   | "HTTP_ERROR"
   | "INVALID_RESPONSE"
   | "AUTH_FAILED"
-  | "MISSING_TOKEN";
+  | "MISSING_TOKEN"
+  | "PORTAL_RATE_LIMITED_OR_ANTI_DDOS";
 
 export class StalkerPortalError extends Error {
   constructor(
@@ -28,6 +37,19 @@ export type StalkerPortalTarget = {
   endpointKind: StalkerPortalEndpointKind;
 };
 
+export type StalkerPortalRequestTiming = {
+  fetchWaitMs: number;
+  bodyReadWaitMs: number;
+  postBodyYieldStartMs: number;
+  postBodyYieldMs: number;
+  jsonParseMs: number;
+};
+
+export type StalkerPortalDiagnosticsContext = {
+  syncRunId?: string;
+  providerId?: string;
+};
+
 type FetchLike = (
   input: string | URL | Request,
   init?: RequestInit,
@@ -39,9 +61,11 @@ type StalkerPortalSessionOptions = {
   fetchImpl?: FetchLike;
   timeoutMs?: number;
   afterResponse?: () => void | Promise<void>;
+  diagnostics?: StalkerPortalDiagnosticsContext;
 };
 
 type StalkerActionParams = Record<string, string | number | boolean | undefined>;
+type RequestTimingObserver = (timing: StalkerPortalRequestTiming) => void;
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 const USER_AGENT = "Mozilla/5.0 (Linux; Android 12; SmartTV) AppleWebKit/537.36";
@@ -142,6 +166,34 @@ function payloadLooksLikeAuthFailure(payload: unknown) {
   return [row.error, row.message, row.reason, row.status].some(textLooksLikeAuthFailure);
 }
 
+function textLooksLikePortalTrafficProtection(value: unknown) {
+  if (typeof value !== "string") return false;
+  const text = value.trim().toLowerCase().replace(/\s+/g, " ");
+  if (!text) return false;
+  const ddosProtection = /\bddos\b/.test(text) && /protect|protection|blocked|blocking|limit/.test(text);
+  const explicitRateLimit = /\brate[ -]?limit(?:ed|ing)?\b|\btoo many requests\b/.test(text);
+  return ddosProtection || explicitRateLimit;
+}
+
+function payloadLooksLikePortalTrafficProtection(payload: unknown) {
+  if (textLooksLikePortalTrafficProtection(payload)) return true;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return false;
+  const row = payload as Record<string, unknown>;
+  return [row.error, row.message, row.reason, row.status].some(textLooksLikePortalTrafficProtection);
+}
+
+function portalTrafficProtectionError(diagnostics: StalkerPortalDiagnosticsContext) {
+  safeLog.info("LS_STALKER_PORTAL_PROTECTION", {
+    syncRunId: diagnostics.syncRunId,
+    providerId: diagnostics.providerId,
+    antiDdosDetected: true,
+  });
+  return new StalkerPortalError(
+    "PORTAL_RATE_LIMITED_OR_ANTI_DDOS",
+    "Stalker portal temporarily rejected request traffic.",
+  );
+}
+
 function tokenFromHandshake(payload: unknown) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "";
   const row = payload as Record<string, unknown>;
@@ -159,9 +211,14 @@ export class StalkerPortalSession {
   #endpointUrl: string;
   #mac: string;
   #token: string | null = null;
+  #handshake: { generation: number; promise: Promise<string> } | null = null;
+  #authenticationGeneration = 0;
+  #lifecycleController = new AbortController();
+  #disposed = false;
   #fetchImpl: FetchLike;
   #timeoutMs: number;
   #afterResponse: () => void | Promise<void>;
+  #providerId?: string;
 
   constructor(options: StalkerPortalSessionOptions) {
     const mac = options.mac.trim();
@@ -176,10 +233,25 @@ export class StalkerPortalSession {
     this.#fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.#afterResponse = options.afterResponse ?? (() => undefined);
+    this.#providerId = options.diagnostics?.providerId;
   }
 
-  invalidateSession() {
+  invalidateSession(diagnostics: StalkerPortalDiagnosticsContext = {}) {
+    this.#authenticationGeneration += 1;
     this.#token = null;
+    safeLog.info("LS_STALKER_HANDSHAKE_INVALIDATE", {
+      syncRunId: diagnostics.syncRunId,
+      providerId: diagnostics.providerId ?? this.#providerId,
+      authGeneration: this.#authenticationGeneration,
+      reason: "EXPLICIT_OR_AUTH",
+    });
+  }
+
+  dispose() {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    this.invalidateSession();
+    this.#lifecycleController.abort();
   }
 
   isAuthenticated() {
@@ -187,27 +259,19 @@ export class StalkerPortalSession {
   }
 
   async handshake(signal?: AbortSignal) {
-    const payload = await this.#requestOnce(
-      { type: "stb", action: "handshake", token: "" },
-      null,
-      signal,
-    );
-    const token = tokenFromHandshake(payload);
-    if (!token) {
-      this.invalidateSession();
-      throw new StalkerPortalError(
-        "MISSING_TOKEN",
-        "Stalker portal handshake did not return a session token.",
-      );
-    }
-    this.#token = token;
+    await this.#ensureAuthenticated(signal);
     return { authenticated: true as const };
   }
 
-  async request(params: StalkerActionParams, signal?: AbortSignal) {
-    if (!this.#token) await this.handshake(signal);
+  async request(
+    params: StalkerActionParams,
+    signal?: AbortSignal,
+    onTiming?: RequestTimingObserver,
+    diagnostics: StalkerPortalDiagnosticsContext = {},
+  ) {
+    const requestToken = await this.#ensureAuthenticated(signal, diagnostics);
     try {
-      return await this.#requestOnce(params, this.#token, signal);
+      return await this.#requestOnce(params, requestToken, signal, onTiming, diagnostics);
     } catch (caught) {
       if (
         !(caught instanceof StalkerPortalError) ||
@@ -216,9 +280,9 @@ export class StalkerPortalSession {
       ) {
         throw caught;
       }
-      this.invalidateSession();
-      await this.handshake(signal);
-      return this.#requestOnce(params, this.#token, signal);
+      this.#invalidateTokenIfCurrent(requestToken, diagnostics);
+      const retryToken = await this.#ensureAuthenticated(signal, diagnostics);
+      return this.#requestOnce(params, retryToken, signal, onTiming, diagnostics);
     }
   }
 
@@ -226,10 +290,115 @@ export class StalkerPortalSession {
     return this.request({ type: "stb", action: "get_profile" }, signal);
   }
 
+  async #ensureAuthenticated(signal?: AbortSignal, diagnostics: StalkerPortalDiagnosticsContext = {}) {
+    if (this.#disposed) {
+      throw new StalkerPortalError("CANCELLED", "Stalker portal session was disposed.");
+    }
+    if (signal?.aborted) {
+      throw new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled.");
+    }
+    if (this.#token) {
+      safeLog.info("LS_STALKER_HANDSHAKE_REUSE", {
+        syncRunId: diagnostics.syncRunId,
+        providerId: diagnostics.providerId ?? this.#providerId,
+        authGeneration: this.#authenticationGeneration,
+        reason: "TOKEN_PRESENT",
+      });
+      return this.#token;
+    }
+
+    const generation = this.#authenticationGeneration;
+    let pending = this.#handshake;
+    if (!pending || pending.generation !== generation) {
+      const promise = this.#performHandshake(generation, diagnostics);
+      pending = { generation, promise };
+      this.#handshake = pending;
+      void promise.finally(() => {
+        if (this.#handshake?.promise === promise) this.#handshake = null;
+      }).catch(() => undefined);
+    } else {
+      safeLog.info("LS_STALKER_HANDSHAKE_REUSE", {
+        syncRunId: diagnostics.syncRunId,
+        providerId: diagnostics.providerId ?? this.#providerId,
+        authGeneration: generation,
+        reason: "PENDING_HANDSHAKE",
+      });
+    }
+    return this.#waitForAuthentication(pending.promise, signal);
+  }
+
+  async #performHandshake(generation: number, diagnostics: StalkerPortalDiagnosticsContext = {}) {
+    const startedAt = Date.now();
+    safeLog.info("LS_STALKER_HANDSHAKE_START", {
+      syncRunId: diagnostics.syncRunId,
+      providerId: diagnostics.providerId ?? this.#providerId,
+      authGeneration: generation,
+      reason: "TOKEN_MISSING",
+    });
+    const payload = await this.#requestOnce(
+      { type: "stb", action: "handshake", token: "" },
+      null,
+      this.#lifecycleController.signal,
+      undefined,
+      diagnostics,
+    );
+    const token = tokenFromHandshake(payload);
+    if (!token) {
+      if (generation === this.#authenticationGeneration) this.invalidateSession();
+      throw new StalkerPortalError(
+        "MISSING_TOKEN",
+        "Stalker portal handshake did not return a session token.",
+      );
+    }
+    if (this.#disposed || generation !== this.#authenticationGeneration) {
+      throw new StalkerPortalError("CANCELLED", "Stalker portal authentication was superseded.");
+    }
+    this.#token = token;
+    safeLog.info("LS_STALKER_HANDSHAKE_SUCCESS", {
+      syncRunId: diagnostics.syncRunId,
+      providerId: diagnostics.providerId ?? this.#providerId,
+      authGeneration: generation,
+      elapsedMs: Math.max(0, Date.now() - startedAt),
+    });
+    return token;
+  }
+
+  #waitForAuthentication(promise: Promise<string>, signal?: AbortSignal) {
+    if (!signal) return promise;
+    if (signal.aborted) {
+      return Promise.reject(new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled."));
+    }
+    return new Promise<string>((resolve, reject) => {
+      const onAbort = () => {
+        cleanup();
+        reject(new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled."));
+      };
+      const cleanup = () => signal.removeEventListener("abort", onAbort);
+      signal.addEventListener("abort", onAbort, { once: true });
+      promise.then(
+        (token) => {
+          cleanup();
+          resolve(token);
+        },
+        (caught) => {
+          cleanup();
+          reject(caught);
+        },
+      );
+    });
+  }
+
+  #invalidateTokenIfCurrent(token: string, diagnostics: StalkerPortalDiagnosticsContext = {}) {
+    if (this.#token !== token) return;
+    this.invalidateSession(diagnostics);
+  }
+
   async #requestOnce(
     params: StalkerActionParams,
     token: string | null,
     externalSignal?: AbortSignal,
+    onTiming?: RequestTimingObserver,
+    diagnostics: StalkerPortalDiagnosticsContext = {},
   ) {
     const url = new URL(this.#endpointUrl);
     for (const [key, value] of Object.entries(params)) {
@@ -239,10 +408,28 @@ export class StalkerPortalSession {
       url.searchParams.set("JsHttpRequest", "1-xml");
     }
 
+    const providerId = diagnostics.providerId ?? this.#providerId;
+    const action = classifyStalkerDiagnosticAction(params.action);
+    const requestStartedAt = stalkerDiagnosticNowMs();
+    const elapsed = () => Math.max(0, stalkerDiagnosticNowMs() - requestStartedAt);
     const requestSignal = linkedRequestSignal(externalSignal, this.#timeoutMs);
+    let fetchWaitMs = 0;
+    let bodyReadWaitMs = 0;
+    let postBodyYieldStartMs = 0;
+    let postBodyYieldMs = 0;
+    let jsonParseMs = 0;
     try {
       let response: Response;
+      const fetchProbe = beginStalkerDiagnosticTimer();
+      logStalkerDiagnosticMarker("STALKER_FETCH_START", {
+        syncRunId: diagnostics.syncRunId,
+        providerId,
+        action,
+        endpointKind: this.endpointKind,
+        elapsedMs: elapsed(),
+      });
       try {
+        const fetchStartedAt = Date.now();
         response = await this.#fetchImpl(url.toString(), {
           headers: {
             Accept: "*/*",
@@ -252,6 +439,18 @@ export class StalkerPortalSession {
             ...(token ? { Authorization: `Bearer ${token}` } : {}),
           },
           signal: requestSignal.signal,
+        });
+        fetchWaitMs = Math.max(0, Date.now() - fetchStartedAt);
+        logStalkerDiagnosticMarker("STALKER_FETCH_RESOLVED", {
+          syncRunId: diagnostics.syncRunId,
+          providerId,
+          action,
+          endpointKind: this.endpointKind,
+          elapsedMs: elapsed(),
+          durationMs: fetchProbe.elapsed(),
+          timerLatenessMs: fetchProbe.lateness(),
+          status: response.status,
+          ok: response.ok,
         });
       } catch (caught) {
         if (externalSignal?.aborted) {
@@ -265,11 +464,34 @@ export class StalkerPortalSession {
           throw new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled.");
         }
         throw new StalkerPortalError("NETWORK_ERROR", "Stalker portal could not be reached.");
+      } finally {
+        fetchProbe.cancel();
       }
 
       let text: string;
+      const bodyProbe = beginStalkerDiagnosticTimer();
+      logStalkerDiagnosticMarker("STALKER_BODY_READ_START", {
+        syncRunId: diagnostics.syncRunId,
+        providerId,
+        action,
+        endpointKind: this.endpointKind,
+        elapsedMs: elapsed(),
+      });
       try {
+        const bodyReadStartedAt = Date.now();
         text = await response.text();
+        bodyReadWaitMs = Math.max(0, Date.now() - bodyReadStartedAt);
+        logStalkerDiagnosticMarker("STALKER_BODY_READ_END", {
+          syncRunId: diagnostics.syncRunId,
+          providerId,
+          action,
+          endpointKind: this.endpointKind,
+          elapsedMs: elapsed(),
+          durationMs: bodyProbe.elapsed(),
+          timerLatenessMs: bodyProbe.lateness(),
+          status: response.status,
+          ok: true,
+        });
       } catch (caught) {
         if (externalSignal?.aborted) {
           throw new StalkerPortalError("CANCELLED", "Stalker portal request was cancelled.");
@@ -285,8 +507,33 @@ export class StalkerPortalSession {
           "NETWORK_ERROR",
           "Stalker portal response body could not be read.",
         );
+      } finally {
+        bodyProbe.cancel();
       }
+
+      const bodyReadFinishedAt = Date.now();
+      const postBodyYieldStartedAt = Date.now();
+      const postBodyProbe = beginStalkerDiagnosticTimer();
+      postBodyYieldStartMs = Math.max(0, postBodyYieldStartedAt - bodyReadFinishedAt);
+      logStalkerDiagnosticMarker("STALKER_POST_BODY_YIELD_START", {
+        syncRunId: diagnostics.syncRunId,
+        providerId,
+        action,
+        endpointKind: this.endpointKind,
+        elapsedMs: elapsed(),
+      });
       await this.#afterResponse();
+      postBodyYieldMs = Math.max(0, Date.now() - postBodyYieldStartedAt);
+      logStalkerDiagnosticMarker("STALKER_POST_BODY_YIELD_END", {
+        syncRunId: diagnostics.syncRunId,
+        providerId,
+        action,
+        endpointKind: this.endpointKind,
+        elapsedMs: elapsed(),
+        durationMs: postBodyProbe.elapsed(),
+        timerLatenessMs: postBodyProbe.lateness(),
+      });
+      postBodyProbe.cancel();
 
       if (!response.ok) {
         if (response.status === 401 || response.status === 403) {
@@ -303,25 +550,84 @@ export class StalkerPortalSession {
         );
       }
 
+      if (textLooksLikePortalTrafficProtection(text)) {
+        throw portalTrafficProtectionError({
+          syncRunId: diagnostics.syncRunId,
+          providerId,
+        });
+      }
+
       let parsed: unknown;
+      const parseProbe = beginStalkerDiagnosticTimer();
+      logStalkerDiagnosticMarker("STALKER_JSON_PARSE_START", {
+        syncRunId: diagnostics.syncRunId,
+        providerId,
+        action,
+        endpointKind: this.endpointKind,
+        elapsedMs: elapsed(),
+      });
+      const jsonParseStartedAt = Date.now();
       try {
         parsed = JSON.parse(text);
       } catch {
+        jsonParseMs = Math.max(0, Date.now() - jsonParseStartedAt);
+        logStalkerDiagnosticMarker("STALKER_JSON_PARSE_END", {
+          syncRunId: diagnostics.syncRunId,
+          providerId,
+          action,
+          endpointKind: this.endpointKind,
+          elapsedMs: elapsed(),
+          durationMs: parseProbe.elapsed(),
+          timerLatenessMs: parseProbe.lateness(),
+          ok: false,
+        });
+        parseProbe.cancel();
+        onTiming?.({ fetchWaitMs, bodyReadWaitMs, postBodyYieldStartMs, postBodyYieldMs, jsonParseMs });
         throw new StalkerPortalError(
           "INVALID_RESPONSE",
           "Stalker portal returned an invalid JSON response.",
         );
       }
+      jsonParseMs = Math.max(0, Date.now() - jsonParseStartedAt);
+      logStalkerDiagnosticMarker("STALKER_JSON_PARSE_END", {
+        syncRunId: diagnostics.syncRunId,
+        providerId,
+        action,
+        endpointKind: this.endpointKind,
+        elapsedMs: elapsed(),
+        durationMs: parseProbe.elapsed(),
+        timerLatenessMs: parseProbe.lateness(),
+        ok: true,
+      });
+      parseProbe.cancel();
+      onTiming?.({ fetchWaitMs, bodyReadWaitMs, postBodyYieldStartMs, postBodyYieldMs, jsonParseMs });
+
       const payload =
         parsed && typeof parsed === "object" && !Array.isArray(parsed) && "js" in parsed
           ? (parsed as { js?: unknown }).js
           : parsed;
+      if (payloadLooksLikePortalTrafficProtection(payload)) {
+        throw portalTrafficProtectionError({
+          syncRunId: diagnostics.syncRunId,
+          providerId,
+        });
+      }
       if (payloadLooksLikeAuthFailure(payload)) {
         throw new StalkerPortalError(
           "AUTH_FAILED",
           "Stalker portal session is not authorized.",
         );
       }
+      logStalkerDiagnosticMarker("STALKER_REQUEST_RETURN", {
+        syncRunId: diagnostics.syncRunId,
+        providerId,
+        action,
+        endpointKind: this.endpointKind,
+        elapsedMs: elapsed(),
+        durationMs: elapsed(),
+        status: response.status,
+        ok: true,
+      });
       return payload;
     } finally {
       requestSignal.cleanup();

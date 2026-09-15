@@ -84,7 +84,14 @@ scenario("normal production Home and provider runtime contract is preserved", ()
     { query: true, i18n: true, player: true, catalog: true, media: true, cleanup: true },
   );
   assert.match(layoutSource, /<QueryClientProvider[\s\S]*?<I18nProvider>[\s\S]*?<PlayerProvider>[\s\S]*?<CatalogSyncProvider>[\s\S]*?<MediaLibraryProvider>[\s\S]*?<RootLayoutNav/);
-  assert.match(indexSource, /return <OptimizedHomeScreenV6 \/>/);
+  assert.match(
+    indexSource,
+    /function ProviderMainPageRouter\(\) \{[\s\S]*?const \{ provider \} = usePlayer\(\);[\s\S]*?return provider\?\.type === "stalker" \? <StalkerMainPage \/> : <OptimizedHomeScreenV6 \/>;[\s\S]*?\}/,
+  );
+  assert.match(
+    indexSource,
+    /export default function IndexScreen\(\) \{\s*if \(isCatalogBenchmarkBuildEnabled\(\)\) return <Redirect href="\/catalog-benchmark" \/>;\s*return <ProviderMainPageRouter \/>;\s*\}/,
+  );
 });
 
 assert.equal(passed, 9);

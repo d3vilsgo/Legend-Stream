@@ -431,7 +431,7 @@ async function main() {
     const fallbackSource = playerSource.slice(fallbackStart, backgroundStart);
     const backgroundSource = playerSource.slice(backgroundStart, activationStart);
     assert.match(refreshSource, /beginForegroundProviderLoad\(providerId\)/);
-    assert.match(refreshSource, /loadProviderSmart\(fromProvider\(existing\), \{ persistM3U: false \}\)/);
+    assert.match(refreshSource, /loadProviderSmart\(fromProvider\(existing\), \{[\s\S]*persistM3U: false,[\s\S]*isCurrent: existing\.type === "stalker"[\s\S]*\? \(\) => isCurrentProviderLoad\(ownership\)[\s\S]*: undefined,[\s\S]*\}\)/);
     assert.match(refreshSource, /if \(!isCurrentProviderLoad\(ownership\)\) return;[\s\S]*persistM3ULoadInBackground\(smart\.provider, smart\.loaded\)/);
     assert.match(refreshSource, /catch \(caught\) \{\s*if \(!isCurrentProviderLoad\(ownership\)\) return;[\s\S]*setError\(message\)/);
     assert.match(refreshSource, /finishProviderLoad\(ownership, persistenceOwnsRequest, busyId\)/);

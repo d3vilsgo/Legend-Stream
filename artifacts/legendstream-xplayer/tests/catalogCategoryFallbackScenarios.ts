@@ -170,7 +170,14 @@ scenario("category change creates a distinct paging identity and rejects the sta
 });
 
 scenario("manual refresh re-ingests then re-reads the current category page", () => {
-  assert.match(syncSource, /const refreshCatalog = useCallback\(async \(\) => \{\s*await runSync\("manual"\);/s);
+  assert.match(
+    syncSource,
+    /if \(provider\?\.type === "stalker"\) await runStalkerSync\("manual"\);/,
+  );
+  assert.match(
+    syncSource,
+    /else await runSync\("manual"\);/,
+  );
   for (const block of [moviesBlock, seriesBlock]) {
     assert.match(block, /Promise\.resolve\(onRefresh\(\)\)\.finally\(\(\) => \{\s*reloadCategories\(\);\s*page\.reload\(\);/s);
     assert.doesNotMatch(block, /setCategory\(["']__all__["']\)/);
