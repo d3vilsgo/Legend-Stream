@@ -227,7 +227,7 @@ async function main() {
   await scenario("remaining raw Stalker cmd handling is canonical input or bypassed legacy loader only", () => {
     assert.match(iptv, /async function loadStalker/);
     assert.match(iptv, /replace\(\s*\/\^ffmpeg/);
-    assert.match(home, /homeIdentityFallbackChannels = provider\?\.type === "stalker" \? \[\] : playerLiveChannels/);
+    assert.match(home, /homeIdentityFallbackChannels = provider\?\.type === "stalker" \? EMPTY_LIVE_CHANNELS : playerLiveChannels/);
     const runtimeStalker = blockBetween(runtime, 'if (ref.kind === "stalker-live") {', "}");
     assert.doesNotMatch(runtimeStalker, /replace\(\^ffmpeg|rawCommand/);
   });
