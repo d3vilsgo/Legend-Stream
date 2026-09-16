@@ -21,9 +21,12 @@ import { FocusButton } from "@/components/FocusButton";
 import { HomeDiscovery, type HomeContentView } from "@/components/home/HomeDiscovery";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
 import { PagedLiveCatalog } from "@/components/catalog/PagedCatalogViews";
+import {
+  StalkerGoldenMoviesCatalog,
+  type StalkerMoviePlayable,
+} from "@/components/stalker/StalkerGoldenMoviesCatalog";
 import { StalkerProductErrorBoundary } from "@/components/stalker/StalkerProductErrorBoundary";
 import { StalkerSeriesProductSurface } from "@/components/stalker/StalkerSeriesProductSurface";
-import { StalkerVodSurface } from "@/components/stalker/StalkerVodSurface";
 import { PlayerChromeTimeoutSetting } from "@/components/PlayerChromeTimeoutSetting";
 import { ProviderBackupPanel } from "@/components/ProviderBackupPanel";
 import { ProviderSubscriptionChip } from "@/components/ProviderSubscriptionChip";
@@ -99,7 +102,8 @@ function isStalkerProductProvider(
  * - Product adapters resolve a normalized Playable and hand it to this page. They do not
  *   own a private player.
  * - Live can already use the golden PagedLiveCatalog because useCatalogPage has a proven
- *   Stalker-live backend seam. VOD and Series remain explicit R17-C/R17-D migration seams.
+ *   Stalker-live backend seam. Movies use a controlled golden presentation clone while
+ *   Series remains the explicit R17-D migration seam.
  */
 export default function StalkerMainPage() {
   const colors = useColors();
@@ -180,6 +184,17 @@ export default function StalkerMainPage() {
       url: item.uri,
       kind: "download",
       returnTo: "downloads",
+    });
+  };
+
+  const openMovie = (movie: StalkerMoviePlayable) => {
+    openResolvedPlayable({
+      title: movie.title,
+      subtitle: movie.subtitle,
+      url: movie.url,
+      kind: "movie",
+      returnTo: "movies",
+      vodIdentity: { providerId: provider.id, itemId: movie.itemId },
     });
   };
 
@@ -336,7 +351,11 @@ export default function StalkerMainPage() {
 
       {view === "movies" ? (
         <StalkerProductErrorBoundary product="movies" providerId={provider.id} onBack={() => navigate("home")}>
-          <StalkerVodSurface provider={provider} onBack={() => navigate("home")} />
+          <StalkerGoldenMoviesCatalog
+            provider={provider}
+            onPlayable={openMovie}
+            onDrawerVisibilityChange={setCatalogDrawerOpen}
+          />
         </StalkerProductErrorBoundary>
       ) : null}
 
