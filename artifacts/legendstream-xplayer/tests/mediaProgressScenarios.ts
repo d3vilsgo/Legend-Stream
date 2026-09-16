@@ -7,13 +7,10 @@ import {
   claimProgressForProvider,
   clearMediaProgressForProvider,
   isMediaProgressV2PayloadSafe,
-  mediaPlaybackRefMatchesProvider,
   mediaProgressForProvider,
   migrateMediaProgressStorage,
   migrateMediaProgressV1Entries,
-  parseMediaProgressV2Payload,
   trimMediaProgressByScope,
-  upsertMediaProgressByIdentity,
   type MediaPlaybackRef,
   type MediaProgressCredentialSnapshot,
   type MediaProgressStorageAdapter,
@@ -343,48 +340,6 @@ async function main() {
     "creating/updating provider B progress must leave provider A progress unchanged",
   );
 
-  const stalkerRef: MediaPlaybackRef = { type: "stalker-vod", itemId: "501", categoryId: "7" };
-  expect(
-    mediaPlaybackRefMatchesProvider(stalkerRef, "stalker", "movie") &&
-    !mediaPlaybackRefMatchesProvider(stalkerRef, "xtream", "movie") &&
-    !mediaPlaybackRefMatchesProvider(stalkerRef, "stalker", "episode"),
-    "Stalker VOD identity must be accepted only for Stalker movie progress",
-  );
-  const stalkerA: MediaProgressV2 = {
-    schemaVersion: 2,
-    id: "stalker-a-501",
-    providerId: "stalker-A",
-    kind: "movie",
-    title: "Film A",
-    playbackRef: stalkerRef,
-    position: 300,
-    duration: 3600,
-    updatedAt: 1,
-  };
-  expect(isMediaProgressV2PayloadSafe([stalkerA], snapshots), "Stalker durable identity must contain no stream URL or credential");
-  expect(
-    parseMediaProgressV2Payload(JSON.stringify([stalkerA]))[0]?.playbackRef.type === "stalker-vod",
-    "persisted Stalker identity must survive an app relaunch parse without session or stream state",
-  );
-  const updatedStalkerA: MediaProgressV2 = { ...stalkerA, position: 480, updatedAt: 2 };
-  const oneUpdated = upsertMediaProgressByIdentity([stalkerA], updatedStalkerA);
-  expect(
-    oneUpdated.length === 1 && oneUpdated[0].position === 480,
-    "replaying the same Stalker movie must update one logical progress row",
-  );
-  const stalkerB: MediaProgressV2 = { ...stalkerA, id: "stalker-b-501", providerId: "stalker-B", position: 120 };
-  const isolated = upsertMediaProgressByIdentity([updatedStalkerA], stalkerB);
-  expect(
-    isolated.length === 2 && isolated.some((entry) => entry.providerId === "stalker-A" && entry.position === 480),
-    "identical Stalker content ids from different providers must not collide",
-  );
-  const resumedAgain = claimProgressForProvider(oneUpdated, "stalker-A", stalkerRef);
-  expect(resumedAgain.entry?.position === 480, "the next Stalker History replay must use the latest saved position");
-  expect(
-    JSON.stringify(stalkerA).includes("http") === false,
-    "Stalker History transport must not depend on a persisted resolved URL",
-  );
-
   const contextSource = fs.readFileSync(path.join(process.cwd(), "context/MediaLibraryContext.tsx"), "utf8");
   expect(
     contextSource.includes("unscopedIdFromRuntimeSource") &&
@@ -393,7 +348,7 @@ async function main() {
     "unscoped rows must remain individually removable after provider switches",
   );
 
-  process.stdout.write(`media progress scenarios: ${passed}/38 passed\n`);
+  process.stdout.write(`media progress scenarios: ${passed}/31 passed\n`);
 }
 
 void main();

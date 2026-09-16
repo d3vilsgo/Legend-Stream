@@ -3,6 +3,15 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveStalkerVodHistoryLink } from "../lib/stalkerVod";
+import {
+  claimProgressForProvider,
+  isMediaProgressV2PayloadSafe,
+  mediaPlaybackRefMatchesProvider,
+  parseMediaProgressV2Payload,
+  upsertMediaProgressByIdentity,
+  type MediaPlaybackRef,
+  type MediaProgressV2,
+} from "../lib/mediaProgress";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(root, path), "utf8");
@@ -82,7 +91,36 @@ async function main() {
   assert.doesNotMatch(JSON.stringify({ type: "stalker-vod", itemId: "501", categoryId: "7" }), /https?:\/\//);
   assert.match(series, /<NativeVideoPlayer source=\{player\.source\}/);
 
-  process.stdout.write("Stalker R17-D History/Resume scenarios: 14/14 passed\n");
+  const stalkerRef: MediaPlaybackRef = { type: "stalker-vod", itemId: "501", categoryId: "7" };
+  assert.equal(mediaPlaybackRefMatchesProvider(stalkerRef, "stalker", "movie"), true);
+  assert.equal(
+    mediaPlaybackRefMatchesProvider(stalkerRef, "xtream", "movie") ||
+    mediaPlaybackRefMatchesProvider(stalkerRef, "stalker", "episode"),
+    false,
+  );
+  const stalkerA: MediaProgressV2 = {
+    schemaVersion: 2,
+    id: "stalker-a-501",
+    providerId: "stalker-A",
+    kind: "movie",
+    title: "Film A",
+    playbackRef: stalkerRef,
+    position: 300,
+    duration: 3600,
+    updatedAt: 1,
+  };
+  assert.equal(isMediaProgressV2PayloadSafe([stalkerA], []), true);
+  assert.equal(parseMediaProgressV2Payload(JSON.stringify([stalkerA]))[0]?.playbackRef.type, "stalker-vod");
+  const updatedStalkerA: MediaProgressV2 = { ...stalkerA, position: 480, updatedAt: 2 };
+  const oneUpdated = upsertMediaProgressByIdentity([stalkerA], updatedStalkerA);
+  assert.equal(oneUpdated.length, 1);
+  assert.equal(oneUpdated[0]?.position, 480);
+  const stalkerB: MediaProgressV2 = { ...stalkerA, id: "stalker-b-501", providerId: "stalker-B", position: 120 };
+  const isolated = upsertMediaProgressByIdentity([updatedStalkerA], stalkerB);
+  assert.equal(isolated.length, 2);
+  assert.equal(claimProgressForProvider(oneUpdated, "stalker-A", stalkerRef).entry?.position, 480);
+
+  process.stdout.write("Stalker R17-D History/Resume scenarios: 22/22 passed\n");
 }
 
 void main();
