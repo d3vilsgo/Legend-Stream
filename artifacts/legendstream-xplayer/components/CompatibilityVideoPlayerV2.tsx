@@ -81,6 +81,7 @@ const normalizeCurrentTime = (raw: unknown, rawDuration: unknown) => {
 type PlaybackSnapshot = {
   source: string;
   title: string;
+  subtitle?: string;
   kind: PlayerMediaKind;
   position: number;
   duration: number;
@@ -133,6 +134,7 @@ export function CompatibilityVideoPlayer({
   const playbackRef = useRef<PlaybackSnapshot>({
     source,
     title,
+    subtitle,
     kind: initialKind,
     position: 0,
     duration: 0,
@@ -327,6 +329,7 @@ export function CompatibilityVideoPlayer({
     await saveProgress({
       kind: snapshot.kind,
       title: snapshot.title,
+      subtitle: snapshot.subtitle,
       source: snapshot.source,
       position: snapshot.position,
       duration: snapshot.duration,
@@ -480,7 +483,14 @@ export function CompatibilityVideoPlayer({
   const switchTo = useCallback(async (item: PlayerSelectableItem) => {
     await persistProgress();
     const kind: PlayerMediaKind = item.isLive ? "live" : inferMediaKind(item.source);
-    playbackRef.current = { source: item.source, title: item.title, kind, position: 0, duration: 0 };
+    playbackRef.current = {
+      source: item.source,
+      title: item.title,
+      subtitle: item.subtitle,
+      kind,
+      position: 0,
+      duration: 0,
+    };
     setCurrentSource(item.source);
     setCurrentTitle(item.title);
     setCurrentSubtitle(item.subtitle);

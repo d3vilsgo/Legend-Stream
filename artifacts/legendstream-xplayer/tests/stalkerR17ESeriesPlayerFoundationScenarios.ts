@@ -64,8 +64,8 @@ async function main() {
       episodeId: "2",
     },
     url: "https://fresh.example/episode/2.m3u8",
-    title: "Bölüm 2",
-    subtitle: "Series A · Sezon 2",
+    title: "Series A",
+    subtitle: "Sezon 2 · Bölüm 2",
     kind: "episode",
   });
 
@@ -110,7 +110,8 @@ async function main() {
   assert.match(main, /onFullscreenExit=\{\(\) => \{[\s\S]*?setView\(playable\.returnTo\)[\s\S]*?setPlayable\(null\)/);
   assert.match(playerAlias, /CompatibilityVideoPlayer as NativeVideoPlayer/);
   const seriesOpenBlock = main.slice(main.indexOf("const openSeriesEpisode"), main.indexOf("const openProgress"));
-  assert.doesNotMatch(seriesOpenBlock, /progressRef|stalker-episode.*saveProgress/);
+  assert.match(seriesOpenBlock, /progressRef: \{[\s\S]*?type: "stalker-episode"[\s\S]*?seriesId: intent\.identity\.seriesId/);
+  assert.doesNotMatch(seriesOpenBlock, /saveProgress|NativeVideoPlayer/);
 
   process.stdout.write("Stalker R17-E Series player foundation scenarios: 24/24 passed\n");
 }

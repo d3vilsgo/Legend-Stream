@@ -87,8 +87,8 @@ async function main() {
       episodeId: "2",
     },
     url: "http://example.invalid/episode.mkv?token=signed%2Bquery&x=1",
-    title: "Bölüm 2",
-    subtitle: "Reacher · Sezon 1",
+    title: "Reacher",
+    subtitle: "Sezon 1 · Bölüm 2",
     kind: "episode",
   });
 

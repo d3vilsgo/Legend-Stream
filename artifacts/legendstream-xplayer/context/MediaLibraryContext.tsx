@@ -143,7 +143,7 @@ function runtimeSourceFor(entry: MediaProgressV2, provider: ProviderConfig | nul
   if (entry.playbackRef.type === "xtream-vod" || entry.playbackRef.type === "xtream-episode") {
     return xtreamRuntimeSource(provider, entry.playbackRef) ?? `${UNSCOPED_RUNTIME_PREFIX}${encodeURIComponent(entry.id)}`;
   }
-  if (entry.playbackRef.type === "stalker-vod") {
+  if (entry.playbackRef.type === "stalker-vod" || entry.playbackRef.type === "stalker-episode") {
     return `${UNSCOPED_RUNTIME_PREFIX}${encodeURIComponent(entry.id)}`;
   }
   return m3uRuntimeSource(provider, entry.playbackRef) ?? `${UNSCOPED_RUNTIME_PREFIX}${encodeURIComponent(entry.id)}`;

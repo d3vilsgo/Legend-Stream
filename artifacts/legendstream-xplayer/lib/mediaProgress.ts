@@ -24,6 +24,7 @@ export type MediaPlaybackRef =
   | { type: "m3u-vod"; itemId: string }
   | { type: "m3u-episode"; itemId: string }
   | { type: "stalker-vod"; itemId: string; categoryId: string }
+  | { type: "stalker-episode"; seriesId: string; seasonId: string; episodeId: string }
   | { type: "unresolved"; mediaKind: MediaKind; legacyTag: string };
 
 export type MediaProgressV2 = {
@@ -299,6 +300,11 @@ function isPlaybackRef(value: unknown): value is MediaPlaybackRef {
     return typeof raw.itemId === "string" && raw.itemId.length > 0 &&
       typeof raw.categoryId === "string" && raw.categoryId.length > 0;
   }
+  if (raw.type === "stalker-episode") {
+    return typeof raw.seriesId === "string" && raw.seriesId.length > 0 &&
+      typeof raw.seasonId === "string" && raw.seasonId.length > 0 &&
+      typeof raw.episodeId === "string" && raw.episodeId.length > 0;
+  }
   return raw.type === "unresolved" &&
     (raw.mediaKind === "movie" || raw.mediaKind === "episode") &&
     typeof raw.legacyTag === "string" && raw.legacyTag.length > 0;
@@ -343,7 +349,8 @@ export function parseMediaProgressV2Payload(raw: string): MediaProgressV2[] {
 }
 
 const FORBIDDEN_PERSISTED_KEYS = new Set([
-  "source", "url", "playlistUrl", "epgUrl", "username", "password", "mac", "credentials",
+  "source", "url", "playlisturl", "epgurl", "username", "password", "mac", "credentials",
+  "token", "authtoken", "sessiontoken", "authorization", "cookie", "cmd",
 ]);
 
 function containsForbiddenKey(value: unknown): boolean {
@@ -351,7 +358,7 @@ function containsForbiddenKey(value: unknown): boolean {
   const raw = asObject(value);
   if (!raw) return false;
   for (const [key, child] of Object.entries(raw)) {
-    if (FORBIDDEN_PERSISTED_KEYS.has(key)) return true;
+    if (FORBIDDEN_PERSISTED_KEYS.has(key.toLowerCase())) return true;
     if (containsForbiddenKey(child)) return true;
   }
   return false;
@@ -458,6 +465,9 @@ export function playbackRefKey(ref: MediaPlaybackRef): string {
   if (ref.type === "m3u-vod") return `m3u-vod:${ref.itemId}`;
   if (ref.type === "m3u-episode") return `m3u-episode:${ref.itemId}`;
   if (ref.type === "stalker-vod") return `stalker-vod:${ref.itemId}:${ref.categoryId}`;
+  if (ref.type === "stalker-episode") {
+    return `stalker-episode:${ref.seriesId}:${ref.seasonId}:${ref.episodeId}`;
+  }
   return `unresolved:${ref.mediaKind}:${ref.legacyTag}`;
 }
 
@@ -468,6 +478,9 @@ export function samePlaybackRef(a: MediaPlaybackRef, b: MediaPlaybackRef): boole
   if (a.type === "m3u-vod" && b.type === "m3u-vod") return a.itemId === b.itemId;
   if (a.type === "m3u-episode" && b.type === "m3u-episode") return a.itemId === b.itemId;
   if (a.type === "stalker-vod" && b.type === "stalker-vod") return a.itemId === b.itemId;
+  if (a.type === "stalker-episode" && b.type === "stalker-episode") {
+    return a.seriesId === b.seriesId && a.seasonId === b.seasonId && a.episodeId === b.episodeId;
+  }
   return false;
 }
 
@@ -477,6 +490,7 @@ export function mediaPlaybackRefMatchesProvider(
   kind: MediaKind,
 ) {
   if (ref.type === "stalker-vod") return providerType === "stalker" && kind === "movie";
+  if (ref.type === "stalker-episode") return providerType === "stalker" && kind === "episode";
   if (ref.type === "xtream-vod") return providerType === "xtream" && kind === "movie";
   if (ref.type === "xtream-episode") return providerType === "xtream" && kind === "episode";
   if (ref.type === "m3u-vod") return providerType === "m3u" && kind === "movie";

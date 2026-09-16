@@ -59,9 +59,10 @@ import {
   type StalkerProductProviderIdentity,
 } from "@/lib/stalkerProductSession";
 import { resolveStalkerVodHistoryLink } from "@/lib/stalkerVod";
-import type {
-  StalkerSeriesEpisodeIdentity,
-  StalkerSeriesPlayableIntent,
+import {
+  resolveStalkerSeriesHistoryEpisode,
+  type StalkerSeriesEpisodeIdentity,
+  type StalkerSeriesPlayableIntent,
 } from "@/lib/stalkerSeriesProduct";
 import { yieldToUi } from "@/lib/cooperative";
 
@@ -234,15 +235,55 @@ export default function StalkerMainPage() {
       kind: intent.kind,
       returnTo: "series",
       seriesIdentity: intent.identity,
+      progressRef: {
+        type: "stalker-episode",
+        seriesId: intent.identity.seriesId,
+        seasonId: intent.identity.seasonId,
+        episodeId: intent.identity.episodeId,
+      },
     });
   };
 
   const openProgress = async (item: MediaProgress) => {
-    if (item.playbackRef.type === "stalker-vod") {
-      historyPlaybackAbortRef.current?.abort();
+    historyPlaybackAbortRef.current?.abort();
+    const sequence = ++historyPlaybackSequenceRef.current;
+    if (item.playbackRef.type === "stalker-episode") {
+      if (item.providerId !== provider.id) {
+        setCatalogError("Bölüm artık etkin sağlayıcıya ait değil.");
+        return;
+      }
       const abort = new AbortController();
       historyPlaybackAbortRef.current = abort;
-      const sequence = ++historyPlaybackSequenceRef.current;
+      setCatalogError(null);
+      try {
+        const intent = await resolveStalkerSeriesHistoryEpisode(
+          readCurrentStalkerProductSession(provider).session,
+          provider.id,
+          item.playbackRef,
+          item.title,
+          abort.signal,
+        );
+        if (abort.signal.aborted || sequence !== historyPlaybackSequenceRef.current) return;
+        openResolvedPlayable({
+          title: intent.title,
+          subtitle: intent.subtitle,
+          url: intent.url,
+          kind: intent.kind,
+          returnTo: "history",
+          seriesIdentity: intent.identity,
+          progressRef: item.playbackRef,
+        });
+      } catch (caught) {
+        if (abort.signal.aborted || sequence !== historyPlaybackSequenceRef.current) return;
+        setCatalogError(redactSensitiveText(
+          caught instanceof Error ? caught.message : "Bölüm geçmişten yeniden açılamadı.",
+        ));
+      }
+      return;
+    }
+    if (item.playbackRef.type === "stalker-vod") {
+      const abort = new AbortController();
+      historyPlaybackAbortRef.current = abort;
       setCatalogError(null);
       try {
         const { url } = await resolveStalkerVodHistoryLink(

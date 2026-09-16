@@ -66,6 +66,12 @@ export type StalkerSeriesPlayableIntent = {
   kind: "episode";
 };
 
+export type StalkerSeriesEpisodeReplayRef = {
+  seriesId: string;
+  seasonId: string;
+  episodeId: string;
+};
+
 export function stalkerSeriesEpisodeIdentity(
   providerId: string,
   seriesId: string,
@@ -97,8 +103,8 @@ export function buildStalkerSeriesPlayableIntent(
   return {
     identity: stalkerSeriesEpisodeIdentity(providerId, detail.seriesId, seasonId, episodeId),
     url,
-    title: episode.label,
-    subtitle: `${detail.title} · ${season.label}`,
+    title: detail.title,
+    subtitle: `${season.label} · ${episode.label}`,
     kind: "episode",
   };
 }
@@ -500,6 +506,46 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
 }
 
 export type StalkerSeriesProductController = ReturnType<typeof createStalkerSeriesProductController>;
+
+/**
+ * Rebuilds the transient Series playback reference from durable identity.
+ * `loadDetail(movie_id)` is the provider's targeted hierarchy lookup: its
+ * current response supplies both the season cmd and the embedded episode ids.
+ */
+export async function resolveStalkerSeriesHistoryEpisode(
+  session: StalkerIsolatedSession,
+  providerId: string,
+  ref: StalkerSeriesEpisodeReplayRef,
+  seriesTitle: string,
+  signal?: AbortSignal,
+): Promise<StalkerSeriesPlayableIntent> {
+  const controller = createStalkerSeriesProductController(session, providerId);
+  try {
+    const detail = await controller.loadDetail({ id: ref.seriesId, title: seriesTitle }, signal);
+    const season = detail.seasons.find((item) => item.id === ref.seasonId);
+    if (!season) {
+      throw new StalkerPortalError("INVALID_RESPONSE", "Series season is no longer available.");
+    }
+    if (!season.episodes.some((item) => item.id === ref.episodeId)) {
+      throw new StalkerPortalError("INVALID_RESPONSE", "Series episode is no longer available.");
+    }
+    const url = await controller.resolveEpisode(
+      ref.seriesId,
+      ref.seasonId,
+      ref.episodeId,
+      signal,
+    );
+    return buildStalkerSeriesPlayableIntent(
+      providerId,
+      detail,
+      ref.seasonId,
+      ref.episodeId,
+      url,
+    );
+  } finally {
+    controller.clear();
+  }
+}
 
 export function findStalkerSeriesGlobalCategory(categories: readonly StalkerSeriesProductCategory[]) {
   return categories.find((category) => {
