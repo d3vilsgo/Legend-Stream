@@ -8,9 +8,11 @@ import {
   catalogPageCursorFromRow,
   CatalogPageFlightGuard,
   DEFAULT_CATALOG_PAGE_SIZE,
+  LIVE_CATEGORIES_WITH_NAMES_SQL,
   LIVE_CATEGORY_FIRST_SEEN_SQL,
   MAX_CATALOG_PAGE_SIZE,
   normalizeCatalogPageLimit,
+  resolveLiveCategoryDisplayName,
   resolveCatalogTotalCount,
   resolveCatalogTotalCountUpdate,
   type CatalogPageRequest,
@@ -276,6 +278,48 @@ async function main() {
     assert.deepEqual(providerB.map((row) => row.category_id), ["Sports", "News"]);
   });
 
+  await scenario("Live drawer reads provider names without losing provider category order", () => {
+    const db = new DatabaseSync(":memory:");
+    db.exec(`
+      CREATE TABLE catalog_items (
+        provider_id TEXT NOT NULL, kind TEXT NOT NULL, item_id TEXT NOT NULL,
+        category_id TEXT, name TEXT NOT NULL, PRIMARY KEY (provider_id, kind, item_id)
+      );
+      CREATE TABLE catalog_categories (
+        provider_id TEXT NOT NULL, kind TEXT NOT NULL, category_id TEXT NOT NULL,
+        category_name TEXT NOT NULL, PRIMARY KEY (provider_id, kind, category_id)
+      );
+      INSERT INTO catalog_items VALUES
+        ('stalker-a', 'live', '1', '234', 'First channel'),
+        ('stalker-a', 'live', '2', '229', 'Second channel'),
+        ('stalker-a', 'live', '3', '830', 'Third channel');
+      INSERT INTO catalog_categories VALUES
+        ('stalker-a', 'live', '229', 'DE | SKY SPORT'),
+        ('stalker-a', 'live', '830', 'US | SPORTS'),
+        ('stalker-a', 'live', '234', 'TR | ULUSAL');
+    `);
+    const rows = db.prepare(LIVE_CATEGORIES_WITH_NAMES_SQL).all(
+      "stalker-a",
+      "stalker-a",
+    ) as Array<{ category_id: string; category_name: string | null }>;
+    const displayed = rows.map((row) => ({
+      id: row.category_id,
+      name: resolveLiveCategoryDisplayName(row.category_id, row.category_name),
+    }));
+    assert.deepEqual(displayed, [
+      { id: "229", name: "DE | SKY SPORT" },
+      { id: "830", name: "US | SPORTS" },
+      { id: "234", name: "TR | ULUSAL" },
+    ]);
+    assert.equal(displayed.some((category) => category.name === category.id), false);
+    assert.equal(resolveLiveCategoryDisplayName("558", null), "Kategori");
+    assert.equal(resolveLiveCategoryDisplayName("Sports", null), "Sports");
+    assert.match(repositorySource, /persisted\.playbackRef\.type === "stalker-live"/);
+    assert.match(repositorySource, /if \(!stalkerLive\)[\s\S]*LIVE_CATEGORY_FIRST_SEEN_SQL/);
+    assert.match(repositorySource, /category_name: resolveLiveCategoryDisplayName\(row\.category_id, row\.category_name\)/);
+    assert.match(viewsSource, /\{ id: "__all__", name: allLabel \}/);
+  });
+
   await scenario("search is SQL-paged and stale pre-search cursor is rejected", () => {
     const initial = request("vod");
     const rows = runPlan(buildCatalogPageSql(initial)).rows;
@@ -382,8 +426,8 @@ async function main() {
     assert.doesNotMatch(screenSource, /setHomeVodCount|setHomeSeriesCount/);
   });
 
-  assert.equal(passed, 20);
-  console.log("catalog paging scenarios: 20/20 passed");
+  assert.equal(passed, 21);
+  console.log("catalog paging scenarios: 21/21 passed");
 }
 
 void main().catch((error) => {

@@ -11,7 +11,10 @@ import {
   assertStalkerLiveStagingTarget,
   stalkerLiveStagingProviderId,
 } from "./stalkerLiveStaging";
-import type { StalkerLiveCategory } from "./stalkerLiveCatalog";
+import {
+  normalizeStalkerLiveCategoryName,
+  type StalkerLiveCategory,
+} from "./stalkerLiveCatalog";
 
 export { stalkerLiveStagingProviderId } from "./stalkerLiveStaging";
 
@@ -120,7 +123,7 @@ export async function commitStalkerLiveStaging(
            VALUES (?, 'live', ?, ?, NULL)`,
           providerId,
           category.id,
-          category.name || category.id,
+          normalizeStalkerLiveCategoryName(category.name),
         );
       }
 
@@ -160,7 +163,10 @@ export async function getCachedStalkerLiveCategories(providerId: string): Promis
       WHERE provider_id = ? AND kind = 'live' ORDER BY rowid ASC`,
     providerId,
   );
-  return rows.map((row) => ({ id: row.category_id, name: row.category_name }));
+  return rows.map((row) => ({
+    id: row.category_id,
+    name: normalizeStalkerLiveCategoryName(row.category_name),
+  }));
 }
 
 export async function getPersistedStalkerLivePlaybackRef(

@@ -4,8 +4,10 @@ import {
   buildCatalogPageSql,
   catalogPageCursorFromRow,
   catalogPageCursorSeen,
+  LIVE_CATEGORIES_WITH_NAMES_SQL,
   LIVE_CATEGORY_FIRST_SEEN_SQL,
   normalizeCatalogPageLimit,
+  resolveLiveCategoryDisplayName,
   type CatalogPageKind,
   type CatalogPageRequest,
   type CatalogPageSqlRow,
@@ -239,13 +241,39 @@ export async function getCachedCatalogCategories(
 ): Promise<XtreamCategory[]> {
   if (kind !== "live") return getCachedCategories(providerId, kind);
   const db = await pageDatabase();
-  const rows = await db.getAllAsync<{ category_id: string }>(
-    LIVE_CATEGORY_FIRST_SEEN_SQL,
+  const sample = await db.getFirstAsync<{ payload: string | null }>(
+    `SELECT payload FROM catalog_items
+      WHERE provider_id = ? AND kind = 'live'
+      ORDER BY rowid ASC LIMIT 1`,
+    providerId,
+  );
+  let stalkerLive = false;
+  if (sample?.payload) {
+    try {
+      const persisted = normalizePersistedCatalogPayload(providerId, "live", JSON.parse(sample.payload));
+      stalkerLive = persisted?.catalogKind === "live" && persisted.playbackRef.type === "stalker-live";
+    } catch {
+      stalkerLive = false;
+    }
+  }
+  if (!stalkerLive) {
+    const rows = await db.getAllAsync<{ category_id: string }>(
+      LIVE_CATEGORY_FIRST_SEEN_SQL,
+      providerId,
+    );
+    return rows.map((row) => ({
+      category_id: row.category_id,
+      category_name: row.category_id,
+    }));
+  }
+  const rows = await db.getAllAsync<{ category_id: string; category_name: string | null }>(
+    LIVE_CATEGORIES_WITH_NAMES_SQL,
+    providerId,
     providerId,
   );
   return rows.map((row) => ({
     category_id: row.category_id,
-    category_name: row.category_id,
+    category_name: resolveLiveCategoryDisplayName(row.category_id, row.category_name),
   }));
 }
 
