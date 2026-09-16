@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -36,6 +36,7 @@ import {
   usePlayer,
 } from "@/context/PlayerContext";
 import type { MediaProgress } from "@/context/MediaLibraryContext";
+import type { MediaPlaybackRef } from "@/lib/mediaProgress";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import type { DownloadedMedia } from "@/lib/downloads";
@@ -53,7 +54,11 @@ import {
   tryBeginProviderSwitch,
 } from "@/lib/providerSwitchUx";
 import { redactSensitiveText } from "@/lib/safeLog";
-import type { StalkerProductProviderIdentity } from "@/lib/stalkerProductSession";
+import {
+  readCurrentStalkerProductSession,
+  type StalkerProductProviderIdentity,
+} from "@/lib/stalkerProductSession";
+import { resolveStalkerVodHistoryLink } from "@/lib/stalkerVod";
 import { yieldToUi } from "@/lib/cooperative";
 
 type StalkerViewName = HomeContentView | "player";
@@ -67,6 +72,7 @@ type Playable = {
   returnTo: StalkerContentView;
   liveIdentity?: LiveChannelIdentity;
   vodIdentity?: CatalogPlaybackIdentity;
+  progressRef?: MediaPlaybackRef;
 };
 
 /**
@@ -137,6 +143,8 @@ export default function StalkerMainPage() {
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
   const [switchingProviderId, setSwitchingProviderId] = useState<string | null>(null);
   const switchingProviderRef = useRef<string | null>(null);
+  const historyPlaybackAbortRef = useRef<AbortController | null>(null);
+  const historyPlaybackSequenceRef = useRef(0);
 
   const playerLiveChannels = useMemo(
     () => provider
@@ -148,6 +156,11 @@ export default function StalkerMainPage() {
       : [],
     [channels, provider?.id],
   );
+
+  useEffect(() => () => {
+    historyPlaybackAbortRef.current?.abort();
+    historyPlaybackSequenceRef.current += 1;
+  }, [provider?.id]);
 
   if (!provider || !isStalkerProductProvider(provider)) return null;
 
@@ -195,10 +208,48 @@ export default function StalkerMainPage() {
       kind: "movie",
       returnTo: "movies",
       vodIdentity: { providerId: provider.id, itemId: movie.itemId },
+      progressRef: {
+        type: "stalker-vod",
+        itemId: movie.itemId,
+        categoryId: movie.categoryId,
+      },
     });
   };
 
-  const openProgress = (item: MediaProgress) => {
+  const openProgress = async (item: MediaProgress) => {
+    if (item.playbackRef.type === "stalker-vod") {
+      historyPlaybackAbortRef.current?.abort();
+      const abort = new AbortController();
+      historyPlaybackAbortRef.current = abort;
+      const sequence = ++historyPlaybackSequenceRef.current;
+      setCatalogError(null);
+      try {
+        const { url } = await resolveStalkerVodHistoryLink(
+          readCurrentStalkerProductSession(provider).session,
+          {
+            itemId: item.playbackRef.itemId,
+            categoryId: item.playbackRef.categoryId,
+          },
+          { signal: abort.signal },
+        );
+        if (abort.signal.aborted || sequence !== historyPlaybackSequenceRef.current) return;
+        openResolvedPlayable({
+          title: item.title,
+          subtitle: item.subtitle,
+          url,
+          kind: "movie",
+          returnTo: "history",
+          vodIdentity: { providerId: provider.id, itemId: item.playbackRef.itemId },
+          progressRef: item.playbackRef,
+        });
+      } catch (caught) {
+        if (abort.signal.aborted || sequence !== historyPlaybackSequenceRef.current) return;
+        setCatalogError(redactSensitiveText(
+          caught instanceof Error ? caught.message : "Film geçmişten yeniden açılamadı.",
+        ));
+      }
+      return;
+    }
     openResolvedPlayable({
       title: item.title,
       subtitle: item.subtitle,
@@ -264,6 +315,7 @@ export default function StalkerMainPage() {
             mediaKind={playable.kind}
             liveIdentity={playable.liveIdentity}
             vodIdentity={playable.vodIdentity}
+            progressRef={playable.progressRef}
             autoFullscreen
             allowDownload={playable.kind === "movie" || playable.kind === "episode"}
             onFullscreenExit={() => setView(playable.returnTo)}

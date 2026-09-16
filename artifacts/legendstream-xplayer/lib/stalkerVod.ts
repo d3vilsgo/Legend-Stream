@@ -186,3 +186,40 @@ export async function resolveStalkerVodLink(session: StalkerVodSession, item: St
   const payload = await session.request({ type: "vod", action: "create_link", cmd, disable_ad: 0, download: 0 }, input.signal, undefined, { providerId: "stalker-vod-playback" });
   return normalizeStalkerVodResolvedUrl(payload);
 }
+
+export type StalkerVodHistoryIdentity = { itemId: string; categoryId: string };
+
+export async function findStalkerVodItemByIdentity(
+  session: StalkerVodSession,
+  identity: StalkerVodHistoryIdentity,
+  input: { signal?: AbortSignal } = {},
+) {
+  const itemId = identity.itemId.trim();
+  const categoryId = identity.categoryId.trim();
+  if (!itemId || !categoryId) throw new StalkerPortalError("INVALID_RESPONSE", "Stalker VOD history identity is invalid.");
+  let page = 1;
+  while (page <= STALKER_VOD_MAX_PAGE) {
+    if (input.signal?.aborted) throw new Error("VOD history replay aborted.");
+    const result = await loadStalkerVodPage(session, { id: categoryId, title: "" }, page, input);
+    const match = result.items.find((item) => item.portalId === itemId);
+    if (match) return match;
+    if (!result.hasNextPage) break;
+    const nextPage = Math.max(page + 1, result.currentPage + 1);
+    if (nextPage <= page) break;
+    page = nextPage;
+    await yieldToUi();
+  }
+  throw new StalkerPortalError("INVALID_RESPONSE", "Stalker VOD history item is no longer available.");
+}
+
+export async function resolveStalkerVodHistoryLink(
+  session: StalkerVodSession,
+  identity: StalkerVodHistoryIdentity,
+  input: { signal?: AbortSignal } = {},
+) {
+  const item = await findStalkerVodItemByIdentity(session, identity, input);
+  return {
+    item,
+    url: await resolveStalkerVodLink(session, item, input),
+  };
+}

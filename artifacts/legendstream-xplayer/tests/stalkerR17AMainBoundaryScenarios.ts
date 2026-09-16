@@ -67,6 +67,14 @@ async function main() {
     assert.match(stalkerMainSource, /onFullscreenExit=\{\(\) => setView\(playable\.returnTo\)\}/);
   });
 
+  await scenario("Stalker History re-resolves durable movie identity and preserves origin-aware player return", () => {
+    assert.match(stalkerMainSource, /item\.playbackRef\.type === "stalker-vod"/);
+    assert.match(stalkerMainSource, /resolveStalkerVodHistoryLink/);
+    assert.match(stalkerMainSource, /returnTo: "history"/);
+    assert.match(stalkerMainSource, /progressRef=\{playable\.progressRef\}/);
+    assert.doesNotMatch(stalkerMainSource, /url:\s*item\.source[\s\S]*?playbackRef\.type === "stalker-vod"/);
+  });
+
   await scenario("final Stalker Movies presentation owns no private player or legacy pager", () => {
     assert.doesNotMatch(stalkerMoviesSource, /NativeVideoPlayer/);
     assert.doesNotMatch(stalkerMoviesSource, /StalkerCategoryPager/);
@@ -140,8 +148,8 @@ async function main() {
     assert.match(stalkerMoviesSource, /if \(sort === "default"\) return items;/);
   });
 
-  assert.equal(passed, 12);
-  process.stdout.write(`stalker R17-A main boundary scenarios: ${passed}/12 passed\n`);
+  assert.equal(passed, 13);
+  process.stdout.write(`stalker R17-A main boundary scenarios: ${passed}/13 passed\n`);
 }
 
 void main().catch((error: unknown) => {

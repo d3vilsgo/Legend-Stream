@@ -21,12 +21,14 @@ import {
   clearMediaProgressForProvider,
   isMediaProgressV2PayloadSafe,
   makeMediaProgressId,
+  mediaPlaybackRefMatchesProvider,
   mediaProgressForProvider,
   migrateMediaProgressStorage,
   normalizeXtreamProgressBaseUrl,
   parseCanonicalXtreamProgressSource,
   samePlaybackRef,
   trimMediaProgressByScope,
+  upsertMediaProgressByIdentity,
   type MediaKind,
   type MediaPlaybackRef,
   type MediaProgressCredentialSnapshot,
@@ -49,13 +51,14 @@ type SaveProgressInput = {
   source: string;
   position: number;
   duration: number;
+  playbackRef?: MediaPlaybackRef;
 };
 
 type MediaLibraryValue = {
   entries: MediaProgress[];
   unscopedEntries: MediaProgress[];
   loaded: boolean;
-  getProgress: (source: string) => MediaProgress | undefined;
+  getProgress: (source: string, playbackRef?: MediaPlaybackRef) => MediaProgress | undefined;
   saveProgress: (entry: SaveProgressInput) => Promise<void>;
   removeProgress: (source: string) => Promise<void>;
   clearProgress: () => Promise<void>;
@@ -139,6 +142,9 @@ function runtimeSourceFor(entry: MediaProgressV2, provider: ProviderConfig | nul
   }
   if (entry.playbackRef.type === "xtream-vod" || entry.playbackRef.type === "xtream-episode") {
     return xtreamRuntimeSource(provider, entry.playbackRef) ?? `${UNSCOPED_RUNTIME_PREFIX}${encodeURIComponent(entry.id)}`;
+  }
+  if (entry.playbackRef.type === "stalker-vod") {
+    return `${UNSCOPED_RUNTIME_PREFIX}${encodeURIComponent(entry.id)}`;
   }
   return m3uRuntimeSource(provider, entry.playbackRef) ?? `${UNSCOPED_RUNTIME_PREFIX}${encodeURIComponent(entry.id)}`;
 }
@@ -335,7 +341,7 @@ export function MediaLibraryProvider({ children }: { children: ReactNode }) {
     [allEntries, provider?.id, toView],
   );
 
-  const getProgress = useCallback((source: string) => {
+  const getProgress = useCallback((source: string, explicitRef?: MediaPlaybackRef) => {
     const indexedId = sourceIndexRef.current.get(source);
     if (indexedId) {
       const exact = entriesRef.current.find((entry) => entry.id === indexedId);
@@ -343,7 +349,9 @@ export function MediaLibraryProvider({ children }: { children: ReactNode }) {
     }
     if (!provider) return undefined;
     const kind = inferProgressKind(source, provider);
-    const ref = playbackRefFromRuntimeSource(source, kind, provider);
+    const ref = explicitRef && mediaPlaybackRefMatchesProvider(explicitRef, provider.type, kind)
+      ? explicitRef
+      : playbackRefFromRuntimeSource(source, kind, provider);
     if (!ref) return undefined;
     const claim = claimProgressForProvider(entriesRef.current, provider.id, ref);
     if (!claim.entry) return undefined;
@@ -356,7 +364,9 @@ export function MediaLibraryProvider({ children }: { children: ReactNode }) {
     const current = entriesRef.current;
     const indexedId = sourceIndexRef.current.get(entry.source);
     const indexed = indexedId ? current.find((item) => item.id === indexedId) : undefined;
-    let ref = indexed?.playbackRef ?? playbackRefFromRuntimeSource(entry.source, entry.kind, provider);
+    let ref = entry.playbackRef && mediaPlaybackRefMatchesProvider(entry.playbackRef, provider.type, entry.kind)
+      ? entry.playbackRef
+      : indexed?.playbackRef ?? playbackRefFromRuntimeSource(entry.source, entry.kind, provider);
     if (!ref) {
       const previousUnresolved = current.find(
         (item) => item.providerId === provider.id && item.kind === entry.kind &&
@@ -393,8 +403,7 @@ export function MediaLibraryProvider({ children }: { children: ReactNode }) {
       updatedAt: now,
     };
 
-    const withoutIdentity = current.filter((item) => item.id !== previous?.id);
-    const next = [nextEntry, ...withoutIdentity]
+    const next = upsertMediaProgressByIdentity(current, nextEntry)
       .filter((item) => item.duration <= 0 || item.position < Math.max(0, item.duration - 30));
     await persist(next);
   }, [persist, provider]);

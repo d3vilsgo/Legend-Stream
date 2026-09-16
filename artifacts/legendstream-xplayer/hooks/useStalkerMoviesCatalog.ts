@@ -21,6 +21,7 @@ export type StalkerMoviePlayable = {
   subtitle?: string;
   url: string;
   itemId: string;
+  categoryId: string;
 };
 
 export function useStalkerMoviesCatalog({
@@ -199,6 +200,7 @@ export function useStalkerMoviesCatalog({
         subtitle: item.genre || category?.title || moviesLabel,
         url,
         itemId: item.portalId,
+        categoryId: item.categoryId ?? selectedCategoryId ?? category?.id ?? "*",
       });
     } catch (caught) {
       if (abort.signal.aborted || sequence !== playbackSequenceRef.current || !sessionStillCurrent()) return;

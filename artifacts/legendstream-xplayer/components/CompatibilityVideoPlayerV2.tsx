@@ -2,6 +2,7 @@ import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AppState, BackHandler, StyleSheet, Text, View } from "react-native";
 import { useMediaLibrary } from "@/context/MediaLibraryContext";
+import type { MediaPlaybackRef } from "@/lib/mediaProgress";
 import { selectChannelEpg, usePlayer } from "@/context/PlayerContext";
 import { downloadMedia } from "@/lib/downloads";
 import {
@@ -83,6 +84,7 @@ type PlaybackSnapshot = {
   kind: PlayerMediaKind;
   position: number;
   duration: number;
+  progressRef?: MediaPlaybackRef;
 };
 
 export function CompatibilityVideoPlayer({
@@ -92,6 +94,7 @@ export function CompatibilityVideoPlayer({
   mediaKind,
   liveIdentity,
   vodIdentity,
+  progressRef,
   autoFullscreen = true,
   onFullscreenExit,
   allowDownload = false,
@@ -102,6 +105,7 @@ export function CompatibilityVideoPlayer({
   mediaKind?: PlayerMediaKind;
   liveIdentity?: LiveChannelIdentity;
   vodIdentity?: CatalogPlaybackIdentity;
+  progressRef?: MediaPlaybackRef;
   autoFullscreen?: boolean;
   onFullscreenExit?: () => void;
   allowDownload?: boolean;
@@ -132,6 +136,7 @@ export function CompatibilityVideoPlayer({
     kind: initialKind,
     position: 0,
     duration: 0,
+    progressRef,
   });
 
   const [currentSource, setCurrentSource] = useState(source);
@@ -325,6 +330,7 @@ export function CompatibilityVideoPlayer({
       source: snapshot.source,
       position: snapshot.position,
       duration: snapshot.duration,
+      playbackRef: snapshot.progressRef,
     });
   }, [saveProgress]);
 
@@ -633,7 +639,7 @@ export function CompatibilityVideoPlayer({
       (snapshot.kind === "movie" || snapshot.kind === "episode") &&
       normalizedDuration > 0
     ) {
-      const saved = getProgress(snapshot.source);
+      const saved = getProgress(snapshot.source, snapshot.progressRef);
       if (saved?.position && saved.position > 5) {
         const ratio = Math.max(0, Math.min(1, saved.position / normalizedDuration));
         vlcRef.current?.seek?.(ratio);

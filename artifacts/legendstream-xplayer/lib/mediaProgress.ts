@@ -23,6 +23,7 @@ export type MediaPlaybackRef =
     }
   | { type: "m3u-vod"; itemId: string }
   | { type: "m3u-episode"; itemId: string }
+  | { type: "stalker-vod"; itemId: string; categoryId: string }
   | { type: "unresolved"; mediaKind: MediaKind; legacyTag: string };
 
 export type MediaProgressV2 = {
@@ -294,6 +295,10 @@ function isPlaybackRef(value: unknown): value is MediaPlaybackRef {
   if (raw.type === "m3u-vod" || raw.type === "m3u-episode") {
     return typeof raw.itemId === "string" && raw.itemId.length > 0;
   }
+  if (raw.type === "stalker-vod") {
+    return typeof raw.itemId === "string" && raw.itemId.length > 0 &&
+      typeof raw.categoryId === "string" && raw.categoryId.length > 0;
+  }
   return raw.type === "unresolved" &&
     (raw.mediaKind === "movie" || raw.mediaKind === "episode") &&
     typeof raw.legacyTag === "string" && raw.legacyTag.length > 0;
@@ -452,6 +457,7 @@ export function playbackRefKey(ref: MediaPlaybackRef): string {
   }
   if (ref.type === "m3u-vod") return `m3u-vod:${ref.itemId}`;
   if (ref.type === "m3u-episode") return `m3u-episode:${ref.itemId}`;
+  if (ref.type === "stalker-vod") return `stalker-vod:${ref.itemId}:${ref.categoryId}`;
   return `unresolved:${ref.mediaKind}:${ref.legacyTag}`;
 }
 
@@ -461,7 +467,33 @@ export function samePlaybackRef(a: MediaPlaybackRef, b: MediaPlaybackRef): boole
   if (a.type === "xtream-episode" && b.type === "xtream-episode") return a.episodeId === b.episodeId;
   if (a.type === "m3u-vod" && b.type === "m3u-vod") return a.itemId === b.itemId;
   if (a.type === "m3u-episode" && b.type === "m3u-episode") return a.itemId === b.itemId;
+  if (a.type === "stalker-vod" && b.type === "stalker-vod") return a.itemId === b.itemId;
   return false;
+}
+
+export function mediaPlaybackRefMatchesProvider(
+  ref: MediaPlaybackRef,
+  providerType: MediaProgressCredentialSnapshot["type"],
+  kind: MediaKind,
+) {
+  if (ref.type === "stalker-vod") return providerType === "stalker" && kind === "movie";
+  if (ref.type === "xtream-vod") return providerType === "xtream" && kind === "movie";
+  if (ref.type === "xtream-episode") return providerType === "xtream" && kind === "episode";
+  if (ref.type === "m3u-vod") return providerType === "m3u" && kind === "movie";
+  if (ref.type === "m3u-episode") return providerType === "m3u" && kind === "episode";
+  return false;
+}
+
+export function upsertMediaProgressByIdentity(
+  entries: readonly MediaProgressV2[],
+  next: MediaProgressV2,
+): MediaProgressV2[] {
+  return [
+    next,
+    ...entries.filter((entry) => !(
+      entry.providerId === next.providerId && samePlaybackRef(entry.playbackRef, next.playbackRef)
+    )),
+  ];
 }
 
 export function trimMediaProgressByScope(entries: readonly MediaProgressV2[], limit = 100): MediaProgressV2[] {
