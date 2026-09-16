@@ -92,7 +92,7 @@ async function main() {
     const safe = safeProviderSwitchError(new Error("GET https://secret.example/get.php?username=alice&password=swordfish failed"));
     assert.doesNotMatch(safe, /alice|swordfish|secret\.example|get\.php|username=|password=/i);
     assert.match(screenSource, /setCatalogError\(safeProviderSwitchError\(caught\)\)/);
-    assert.match(screenSource, /visibleErrorText\(error \|\| catalogError\)/);
+    assert.match(screenSource, /visibleErrorText\(error \|\| catalogError \|\| visibleScopedError\)/);
   });
 
   await scenario("active account marker follows the committed provider id", () => {
