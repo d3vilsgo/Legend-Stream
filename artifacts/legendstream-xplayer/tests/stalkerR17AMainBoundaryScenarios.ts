@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  createStalkerSeriesProductController,
+  sortStalkerSeriesItems,
+} from "../lib/stalkerSeriesProduct";
 
 const testsDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(testsDir, "..");
@@ -14,14 +17,6 @@ const stalkerMoviesControllerSource = source("hooks/useStalkerMoviesCatalog.ts")
 const stalkerSeriesSource = source("components/stalker/StalkerSeriesProductSurface.tsx");
 const goldenSource = source("components/OptimizedHomeScreenPaged.tsx");
 const goldenCatalogSource = source("components/catalog/PagedCatalogViews.tsx");
-
-function gitBlobSha(text: string) {
-  const bytes = Buffer.from(text, "utf8");
-  return createHash("sha1")
-    .update(`blob ${bytes.length}\0`)
-    .update(bytes)
-    .digest("hex");
-}
 
 let passed = 0;
 async function scenario(name: string, run: () => void | Promise<void>) {
@@ -87,12 +82,16 @@ async function main() {
     assert.match(stalkerSeriesSource, /emitPlayable\(buildStalkerSeriesPlayableIntent/);
     assert.doesNotMatch(stalkerSeriesSource, /NativeVideoPlayer/);
     assert.match(stalkerMainSource, /const openSeriesEpisode = \(intent: StalkerSeriesPlayableIntent\)[\s\S]*?returnTo: "series"/);
-    assert.match(stalkerMainSource, /Series presentation remains a visual migration seam/);
+    assert.match(stalkerMainSource, /Series adapts protocol data into the shared Golden Series catalog/);
   });
 
-  await scenario("golden Xtream M3U main-page source remains byte-for-byte frozen", () => {
-    assert.equal(gitBlobSha(goldenSource), "b51c5a09d203e02baa0e716c60749e419679fd1c");
-    assert.equal(gitBlobSha(goldenCatalogSource), "f0f17f575470e1db991e9314156232733e97c926");
+  await scenario("Xtream M3U and Stalker share one Golden Series presentation boundary", () => {
+    assert.match(goldenSource, /<PagedSeriesCatalog/);
+    assert.match(goldenCatalogSource, /export function GoldenSeriesCatalog/);
+    assert.match(goldenCatalogSource, /export function PagedSeriesCatalog[\s\S]*?<GoldenSeriesCatalog/);
+    assert.match(stalkerSeriesSource, /GoldenSeriesCatalog/);
+    assert.match(stalkerSeriesSource, /return <GoldenSeriesCatalog/);
+    assert.doesNotMatch(stalkerSeriesSource, /StalkerSeriesProductCatalog|StalkerCategoryPager/);
   });
 
   await scenario("clone freezes golden navigation order and category identity seam", () => {
@@ -150,8 +149,41 @@ async function main() {
     assert.match(stalkerMoviesSource, /if \(sort === "default"\) return items;/);
   });
 
-  assert.equal(passed, 13);
-  process.stdout.write(`stalker R17-A main boundary scenarios: ${passed}/13 passed\n`);
+  await scenario("Stalker Series preserves provider category labels and ordering for the Golden drawer", async () => {
+    const session = {
+      async request() {
+        return { data: [
+          { id: "229", title: "DE | SKY SPORT" },
+          { id: "234", title: "TR | ULUSAL" },
+          { id: "*", title: "ALL" },
+        ] };
+      },
+    };
+    const categories = await createStalkerSeriesProductController(session as any, "provider-A").loadCategories();
+    assert.deepEqual(categories.map(({ id, title }) => [id, title]), [
+      ["229", "DE | SKY SPORT"],
+      ["234", "TR | ULUSAL"],
+      ["*", "ALL"],
+    ]);
+    assert.match(stalkerSeriesSource, /name: category\.id === globalCategory\?\.id \? t\("all"\) : category\.title/);
+    assert.doesNotMatch(stalkerSeriesSource, /name:\s*category\.id\s*[,}]/);
+  });
+
+  await scenario("Stalker Series defaults to provider order and reuses Golden interaction geometry", () => {
+    const providerItems = [
+      { id: "20", title: "Zulu" },
+      { id: "3", title: "Alpha" },
+    ];
+    assert.deepEqual(sortStalkerSeriesItems(providerItems, "default").map((item) => item.id), ["20", "3"]);
+    assert.deepEqual(sortStalkerSeriesItems(providerItems, "alphaAsc").map((item) => item.id), ["3", "20"]);
+    assert.match(goldenCatalogSource, /const columns = width >= 900 \? 5 : width >= 650 \? 4 : width >= 420 \? 3 : 2/);
+    assert.match(goldenCatalogSource, /<CategoryDrawer visible=\{drawerOpen\}/);
+    assert.match(goldenCatalogSource, /onEndReachedThreshold=\{0\.55\}/);
+    assert.match(stalkerMainSource, /onDrawerVisibilityChange=\{setCatalogDrawerOpen\}/);
+  });
+
+  assert.equal(passed, 15);
+  process.stdout.write(`stalker R17-A main boundary scenarios: ${passed}/15 passed\n`);
 }
 
 void main().catch((error: unknown) => {

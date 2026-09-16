@@ -115,8 +115,8 @@ function isStalkerProductProvider(
  *   own a private player.
  * - Live can already use the golden PagedLiveCatalog because useCatalogPage has a proven
  *   Stalker-live backend seam. Movies use a controlled golden presentation clone while
- *   Series presentation remains a visual migration seam, but episode playback now hands
- *   a normalized intent to this page instead of owning a private player.
+ *   Series adapts protocol data into the shared Golden Series catalog. Both product
+ *   adapters hand normalized playback intents to this page instead of owning a player.
  */
 export default function StalkerMainPage() {
   const colors = useColors();
@@ -457,7 +457,7 @@ export default function StalkerMainPage() {
 
       {presentedView === "series" ? (
         <StalkerProductErrorBoundary product="series" providerId={provider.id} onBack={() => navigate("home")}>
-          <StalkerSeriesProductSurface provider={provider} onPlayable={openSeriesEpisode} />
+          <StalkerSeriesProductSurface provider={provider} onPlayable={openSeriesEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} />
         </StalkerProductErrorBoundary>
       ) : null}
 

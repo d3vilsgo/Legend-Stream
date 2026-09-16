@@ -44,8 +44,13 @@ import type {
 } from "@/lib/xtreamCatalog";
 
 export type CatalogSortMode = CatalogPageSort;
-type CategoryOption = { id: string; name: string };
+export type CategoryOption = { id: string; name: string };
 type SnapshotCount = { totalCount: number | null; countKnown: boolean };
+
+export type GoldenSeriesCardModel = { id: string; title: string; image?: string };
+export type GoldenSeriesEpisodeModel = { id: string; title: string; seasonId: string };
+export type GoldenSeriesSeasonModel = { id: string; label: string; episodes: GoldenSeriesEpisodeModel[] };
+export type GoldenSeriesDetailModel = { title: string; seasons: GoldenSeriesSeasonModel[] };
 
 function pagedProviderType(type: ProviderType): CatalogPageProviderType | null {
   return type === "m3u" || type === "xtream" ? type : null;
@@ -620,6 +625,145 @@ export function PagedMoviesCatalog({
   </View>;
 }
 
+export function GoldenSeriesCatalog({
+  categories,
+  selectedCategory,
+  onSelectCategory,
+  search,
+  onSearch,
+  sortMode,
+  supportsAdded,
+  onSort,
+  refreshing,
+  onRefresh,
+  items,
+  totalCount,
+  countKnown,
+  loadingInitial,
+  loadingMore,
+  onLoadMore,
+  detail,
+  detailLoading,
+  error,
+  onRetry,
+  footerError,
+  onRetryMore,
+  onOpen,
+  onBack,
+  onEpisode,
+  onDrawerVisibilityChange,
+}: {
+  categories: CategoryOption[];
+  selectedCategory: string;
+  onSelectCategory: (id: string) => void;
+  search: string;
+  onSearch: (value: string) => void;
+  sortMode: CatalogSortMode;
+  supportsAdded: boolean;
+  onSort: (mode: CatalogSortMode) => void;
+  refreshing: boolean;
+  onRefresh: () => void;
+  items: GoldenSeriesCardModel[];
+  totalCount: number | null;
+  countKnown: boolean;
+  loadingInitial: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
+  detail: GoldenSeriesDetailModel | null;
+  detailLoading: boolean;
+  error?: string | null;
+  onRetry?: () => void;
+  footerError?: string | null;
+  onRetryMore?: () => void;
+  onOpen: (id: string) => void;
+  onBack: () => void;
+  onEpisode: (seasonId: string, episodeId: string) => void;
+  onDrawerVisibilityChange: (visible: boolean) => void;
+}) {
+  const colors = useColors();
+  const { t } = useI18n();
+  const { width } = useWindowDimensions();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
+  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+
+  useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
+  useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
+
+  if (detail || detailLoading) {
+    return <View style={s.seriesDetail}>
+      <FocusButton label={t("back")} icon="arrow-left" variant="ghost" onPress={onBack} />
+      <Text style={[s.title, { color: colors.foreground, marginTop: 14 }]}>{detail?.title ?? t("series")}</Text>
+      {error ? <CatalogErrorState message={error} onRetry={onRetry} /> : null}
+      {detailLoading
+        ? <CatalogLoadingSkeleton text={t("loadingEpisodes")} />
+        : detail && detail.seasons.length
+          ? detail.seasons.map((season) => <View key={season.id} style={{ marginTop: 18 }}>
+              <Text style={[s.section, { color: colors.foreground }]}>{season.label}</Text>
+              <View style={s.list}>{season.episodes.map((episode) => <Pressable
+                key={episode.id}
+                onPress={() => onEpisode(season.id, episode.id)}
+                style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}
+              >
+                <Text style={{ color: colors.foreground, flex: 1 }}>{episode.title}</Text>
+                <Feather name="play-circle" size={24} color={colors.primary} />
+              </Pressable>)}</View>
+            </View>)
+          : <Text style={{ color: colors.mutedForeground }}>{t("noEpisodes")}</Text>}
+    </View>;
+  }
+
+  if (loadingInitial && items.length === 0) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
+
+  return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
+    <FlatList
+      key={`golden-series-${columns}`}
+      style={{ flex: 1 }}
+      contentContainerStyle={s.gridListContent}
+      data={items}
+      numColumns={columns}
+      keyExtractor={(item) => item.id}
+      ListHeaderComponent={<CatalogHeader
+        title={t("series")}
+        detail={t("seriesCount", { count: countText(totalCount, countKnown) })}
+        search={search}
+        onSearch={onSearch}
+        loading={refreshing || loadingInitial}
+        onRefresh={onRefresh}
+      >
+        <SortControl selected={sortMode} supportsAdded={supportsAdded} onSelect={onSort} />
+      </CatalogHeader>}
+      ListFooterComponent={footerError
+        ? <CatalogErrorState message={footerError} onRetry={onRetryMore} />
+        : <PageFooter loading={loadingMore} />}
+      ListEmptyComponent={error
+        ? <CatalogErrorState message={error} onRetry={onRetry} />
+        : <View style={s.emptyGrid}><Text>—</Text></View>}
+      onEndReached={onLoadMore}
+      onEndReachedThreshold={0.55}
+      renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
+        <GridCard title={item.title} image={item.image} onPress={() => onOpen(item.id)} />
+      </View>}
+      initialNumToRender={Math.max(8, columns * 3)}
+      maxToRenderPerBatch={Math.max(8, columns * 3)}
+      windowSize={7}
+      removeClippedSubviews={Platform.OS !== "web"}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    />
+    <CategoryDrawer visible={drawerOpen} items={categories} selected={selectedCategory} onClose={() => setDrawerOpen(false)} onSelect={onSelectCategory} />
+  </View>;
+}
+
+function CatalogErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  const colors = useColors();
+  const { t } = useI18n();
+  return <View style={[s.catalogError, { borderColor: colors.destructive, backgroundColor: colors.card }]}>
+    <Text style={{ color: colors.mutedForeground, flex: 1 }}>{message}</Text>
+    {onRetry ? <FocusButton label={t("refresh")} icon="refresh-cw" variant="secondary" onPress={onRetry} /> : null}
+  </View>;
+}
+
 export function PagedSeriesCatalog({
   provider,
   snapshotCount,
@@ -647,11 +791,8 @@ export function PagedSeriesCatalog({
   onEpisode: (episode: XtreamEpisode) => void;
   onDrawerVisibilityChange: (visible: boolean) => void;
 }) {
-  const colors = useColors();
   const { t } = useI18n();
-  const { width } = useWindowDimensions();
   const [search, setSearch] = useState("");
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "series");
   const [category, setCategory] = useRememberedCategory(provider.id, "series", categories, categoriesReady);
   const providerType = pagedProviderType(provider.type);
@@ -667,75 +808,51 @@ export function PagedSeriesCatalog({
     snapshotCount: allOnlySnapshotCount(category, search, snapshotCount),
   });
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
-  const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const detail = selected ? {
+    title: selected.name,
+    seasons: Object.entries(info?.episodes || {}).map(([season, episodes]) => ({
+      id: season,
+      label: `${t("season")} ${season}`,
+      episodes: episodes.map((episode) => ({
+        id: String(episode.id),
+        title: episode.title || `${t("episode")} ${episode.episode_num ?? ""}`,
+        seasonId: season,
+      })),
+    })),
+  } : null;
 
-  useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
-  useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
-  if (selected) {
-    const groups = Object.entries(info?.episodes || {});
-    return <View style={s.seriesDetail}>
-      <FocusButton label={t("back")} icon="arrow-left" variant="ghost" onPress={onBack} />
-      <Text style={[s.title, { color: colors.foreground, marginTop: 14 }]}>{selected.name}</Text>
-      {!info
-        ? <CatalogLoadingSkeleton text={t("loadingEpisodes")} />
-        : groups.length
-          ? groups.map(([season, episodes]) => <View key={season} style={{ marginTop: 18 }}>
-              <Text style={[s.section, { color: colors.foreground }]}>{t("season")} {season}</Text>
-              <View style={s.list}>{episodes.map((episode) => <Pressable
-                key={String(episode.id)}
-                onPress={() => onEpisode(episode)}
-                style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}
-              >
-                <Text style={{ color: colors.foreground, flex: 1 }}>{episode.title || `${t("episode")} ${episode.episode_num ?? ""}`}</Text>
-                <Feather name="play-circle" size={24} color={colors.primary} />
-              </Pressable>)}</View>
-            </View>)
-          : <Text style={{ color: colors.mutedForeground }}>{t("noEpisodes")}</Text>}
-    </View>;
-  }
-
-  if (page.loadingInitial && page.items.length === 0) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
-
-  return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
-    <FlatList
-      key={`series-${columns}`}
-      style={{ flex: 1 }}
-      contentContainerStyle={s.gridListContent}
-      data={page.items}
-      numColumns={columns}
-      keyExtractor={(item) => String(item.series_id)}
-      ListHeaderComponent={<CatalogHeader
-        title={t("series")}
-        detail={t("seriesCount", { count: countText(page.totalCount, page.countKnown) })}
-        search={search}
-        onSearch={setSearch}
-        loading={refreshing || page.loadingInitial}
-        onRefresh={() => {
-          void Promise.resolve(onRefresh()).finally(() => {
-            reloadCategories();
-            page.reload();
-          });
-        }}
-      >
-        <SortControl selected={effectiveSort} supportsAdded={provider.type === "xtream"} onSelect={onSort} />
-      </CatalogHeader>}
-      ListFooterComponent={<PageFooter loading={page.loadingMore} />}
-      ListEmptyComponent={<View style={s.emptyGrid}><Text>—</Text></View>}
-      onEndReached={page.loadMore}
-      onEndReachedThreshold={0.55}
-      renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
-        <GridCard title={item.name} image={item.cover} onPress={() => onOpen(item)} />
-      </View>}
-      initialNumToRender={Math.max(8, columns * 3)}
-      maxToRenderPerBatch={Math.max(8, columns * 3)}
-      windowSize={7}
-      removeClippedSubviews={Platform.OS !== "web"}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-    />
-    <CategoryDrawer visible={drawerOpen} items={drawerItems} selected={category} onClose={() => setDrawerOpen(false)} onSelect={setCategory} />
-  </View>;
+  return <GoldenSeriesCatalog
+    categories={drawerItems}
+    selectedCategory={category}
+    onSelectCategory={setCategory}
+    search={search}
+    onSearch={setSearch}
+    sortMode={effectiveSort}
+    supportsAdded={provider.type === "xtream"}
+    onSort={onSort}
+    refreshing={refreshing}
+    onRefresh={() => {
+      void Promise.resolve(onRefresh()).finally(() => {
+        reloadCategories();
+        page.reload();
+      });
+    }}
+    items={page.items.map((item) => ({ id: String(item.series_id), title: item.name, image: item.cover }))}
+    totalCount={page.totalCount}
+    countKnown={page.countKnown}
+    loadingInitial={page.loadingInitial}
+    loadingMore={page.loadingMore}
+    onLoadMore={page.loadMore}
+    detail={detail}
+    detailLoading={Boolean(selected && !info)}
+    onOpen={(id) => { const item = page.items.find((candidate) => String(candidate.series_id) === id); if (item) onOpen(item); }}
+    onBack={onBack}
+    onEpisode={(seasonId, episodeId) => {
+      const episode = info?.episodes?.[seasonId]?.find((candidate) => String(candidate.id) === episodeId);
+      if (episode) onEpisode(episode);
+    }}
+    onDrawerVisibilityChange={onDrawerVisibilityChange}
+  />;
 }
 
 const s = StyleSheet.create({
@@ -763,6 +880,7 @@ const s = StyleSheet.create({
   pageFooterSpacer: { height: 20 },
   skeletonRoot: { flex: 1, minHeight: 220, alignItems: "center", justifyContent: "center", gap: 10, padding: 24 },
   emptyGrid: { padding: 30, alignItems: "center" },
+  catalogError: { margin: 18, borderWidth: 1, borderRadius: 12, padding: 14, flexDirection: "row", alignItems: "center", gap: 10 },
   seriesDetail: { flex: 1, padding: 18, maxWidth: 1500, width: "100%", alignSelf: "center" },
   list: { gap: 8 },
   episode: { borderWidth: 1, borderRadius: 12, padding: 14, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },

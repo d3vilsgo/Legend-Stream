@@ -274,6 +274,22 @@ export function mergeStalkerSeriesItems(
   return merged;
 }
 
+export type StalkerSeriesSortMode = "default" | "alphaAsc" | "alphaDesc" | "idAsc" | "idDesc";
+
+export function sortStalkerSeriesItems(
+  items: readonly StalkerSeriesProductItem[],
+  mode: StalkerSeriesSortMode,
+) {
+  if (mode === "default") return [...items];
+  const sorted = [...items];
+  if (mode === "alphaAsc" || mode === "alphaDesc") {
+    const direction = mode === "alphaAsc" ? 1 : -1;
+    return sorted.sort((a, b) => direction * a.title.localeCompare(b.title, "tr", { numeric: true, sensitivity: "base" }));
+  }
+  const direction = mode === "idAsc" ? 1 : -1;
+  return sorted.sort((a, b) => direction * a.id.localeCompare(b.id, "en", { numeric: true, sensitivity: "base" }));
+}
+
 function normalizedSearchText(value: string) {
   return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("tr-TR").trim();
 }

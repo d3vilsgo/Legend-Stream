@@ -45,7 +45,8 @@ assert.match(vod, /onFullscreenExit=\{\(\) => setView\("details"\)\}/);
 assert.match(stalkerMain, /const presentedView = view === "player" \? playable\?\.returnTo \?\? "home" : view/);
 assert.match(stalkerMain, /presentedView === "series"[\s\S]*?<StalkerSeriesProductSurface provider=\{provider\} onPlayable=\{openSeriesEpisode\}/);
 assert.match(stalkerMain, /onFullscreenExit=\{\(\) => \{[\s\S]*?setView\(playable\.returnTo\)[\s\S]*?setPlayable\(null\)/);
-assert.match(series, /selectedSeasonId=\{selectedSeasonId\}/);
+assert.match(series, /detail\.seasons\.map/);
+assert.match(series, /onEpisode=\{\(seasonId, episodeId\)/);
 
 // K/L/M: Live-only queue/EPG and movie/episode-only progress semantics remain in the canonical core.
 assert.match(compatibilityPlayer, /currentKind !== "live"/);

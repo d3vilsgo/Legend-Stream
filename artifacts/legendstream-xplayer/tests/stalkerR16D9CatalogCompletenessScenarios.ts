@@ -20,7 +20,7 @@ const root = path.resolve(__dirname, "..");
 const source = (relative: string) => fs.readFileSync(path.join(root, relative), "utf8");
 
 const seriesLib = source("lib/stalkerSeriesProduct.ts");
-const seriesCatalog = source("components/stalker/StalkerSeriesProductCatalog.tsx");
+const seriesCatalog = source("components/catalog/PagedCatalogViews.tsx");
 const seriesSurface = source("components/stalker/StalkerSeriesProductSurface.tsx");
 const vodSurface = source("components/stalker/StalkerVodSurface.tsx");
 const productShell = source("components/OptimizedHomeScreenPaged.tsx");
@@ -123,15 +123,17 @@ async function main() {
   assert.deepEqual(vodPages, [1, 2]);
   assert.deepEqual(vodSearchResults.map((item) => item.portalId), ["v2"]);
 
-  // UI/source contracts: virtualized category/list surfaces, horizontal season tabs, one selected season body.
+  // UI/source contracts: the Stalker adapter feeds the shared virtualized Golden Series surface.
   assert.match(seriesCatalog, /FlatList/);
-  assert.match(seriesCatalog, /horizontal[\s\S]*?seasonTabs/);
-  assert.match(seriesCatalog, /selectedSeason\.episodes\.map/);
-  assert.doesNotMatch(seriesCatalog, /season\.episodes\.map/);
+  assert.match(seriesCatalog, /export function GoldenSeriesCatalog/);
+  assert.match(seriesCatalog, /detail\.seasons\.map/);
+  assert.match(seriesCatalog, /season\.episodes\.map/);
   assert.match(seriesCatalog, /onEndReached/);
   assert.match(seriesSurface, /mergeStalkerSeriesItems/);
   assert.match(seriesSurface, /AbortController/);
   assert.match(seriesSurface, /searchStalkerSeriesCatalog/);
+  assert.match(seriesSurface, /return <GoldenSeriesCatalog/);
+  assert.doesNotMatch(seriesSurface, /StalkerSeriesProductCatalog|StalkerCategoryPager/);
   assert.match(seriesLib, /for \(const raw of rowsFromEnvelope\(payload\)\) \{/);
 
   // VOD uses the same bounded lazy/search discipline and canonical player path.

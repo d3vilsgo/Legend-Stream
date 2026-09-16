@@ -72,20 +72,21 @@ async function main() {
   assert.equal(source, "http://example.invalid/episode.mkv?token=signed%2Bquery&x=1");
 
   const root = path.resolve(__dirname, "..");
-  const catalogSource = fs.readFileSync(path.join(root, "components/stalker/StalkerSeriesProductCatalog.tsx"), "utf8");
+  const catalogSource = fs.readFileSync(path.join(root, "components/catalog/PagedCatalogViews.tsx"), "utf8");
   const surfaceSource = fs.readFileSync(path.join(root, "components/stalker/StalkerSeriesProductSurface.tsx"), "utf8");
   const rootSource = fs.readFileSync(path.join(root, "components/OptimizedHomeScreenPaged.tsx"), "utf8");
   const stalkerMainSource = fs.readFileSync(path.join(root, "components/StalkerMainPage.tsx"), "utf8");
   const boundarySource = fs.readFileSync(path.join(root, "components/stalker/StalkerProductErrorBoundary.tsx"), "utf8");
 
-  assert.match(catalogSource, /Poster item=\{item\}/);
-  assert.match(catalogSource, /detail\.description/);
-  assert.match(catalogSource, /key="stalker-series-categories"/);
-  assert.match(catalogSource, /key=\{`stalker-series-grid-\$\{screen\}`\}/);
-  assert.match(catalogSource, /onEndReached=\{screen === "list" && hasNextPage \? onLoadMore : undefined\}/);
-  assert.match(catalogSource, /onRetry=\{onRetryNextPage\}/);
+  assert.match(catalogSource, /export function GoldenSeriesCatalog/);
+  assert.match(catalogSource, /GridCard title=\{item\.title\} image=\{item\.image\}/);
+  assert.match(catalogSource, /key=\{`golden-series-\$\{columns\}`\}/);
+  assert.match(catalogSource, /onEndReached=\{onLoadMore\}/);
+  assert.match(catalogSource, /<CategoryDrawer visible=\{drawerOpen\}/);
   assert.match(surfaceSource, /currentPage \+ 1/);
   assert.match(surfaceSource, /loadPage\(selectedCategory, failedPage, true\)/);
+  assert.match(surfaceSource, /return <GoldenSeriesCatalog/);
+  assert.doesNotMatch(surfaceSource, /StalkerSeriesProductCatalog|StalkerCategoryPager/);
   assert.doesNotMatch(surfaceSource, /NativeVideoPlayer|CompatibilityVideoPlayer/);
   assert.match(surfaceSource, /emitPlayable\(buildStalkerSeriesPlayableIntent/);
   assert.match(stalkerMainSource, /<StalkerSeriesProductSurface provider=\{provider\} onPlayable=\{openSeriesEpisode\}/);
