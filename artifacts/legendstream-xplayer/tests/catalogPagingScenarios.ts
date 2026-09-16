@@ -415,8 +415,22 @@ async function main() {
   });
 
   await scenario("source guards prove count page search sort category and infinite scroll are page-owned", () => {
-    const endReachedMatches = viewsSource.match(/onEndReached=\{page\.loadMore\}/g) ?? [];
-    assert.equal(endReachedMatches.length, 3);
+    const liveStart = viewsSource.indexOf("export function PagedLiveCatalog");
+    const moviesStart = viewsSource.indexOf("export function PagedMoviesCatalog");
+    const goldenSeriesStart = viewsSource.indexOf("export function GoldenSeriesCatalog");
+    const pagedSeriesStart = viewsSource.indexOf("export function PagedSeriesCatalog");
+    assert.ok(liveStart >= 0 && moviesStart > liveStart);
+    assert.ok(goldenSeriesStart > moviesStart && pagedSeriesStart > goldenSeriesStart);
+
+    const liveSource = viewsSource.slice(liveStart, moviesStart);
+    const moviesSource = viewsSource.slice(moviesStart, goldenSeriesStart);
+    const goldenSeriesSource = viewsSource.slice(goldenSeriesStart, pagedSeriesStart);
+    const pagedSeriesSource = viewsSource.slice(pagedSeriesStart);
+
+    assert.match(liveSource, /onEndReached=\{page\.loadMore\}/);
+    assert.match(moviesSource, /onEndReached=\{page\.loadMore\}/);
+    assert.match(pagedSeriesSource, /onLoadMore=\{page\.loadMore\}/);
+    assert.match(goldenSeriesSource, /onEndReached=\{onLoadMore\}/);
     assert.match(viewsSource, /categoryId:\s*category/);
     assert.match(hookSource, /queryKey/);
     assert.match(hookSource, /nextCursor/);
