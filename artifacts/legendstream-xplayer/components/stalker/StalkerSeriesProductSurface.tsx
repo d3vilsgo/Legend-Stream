@@ -1,6 +1,4 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { View } from "react-native";
-import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
 import { StalkerCategoryPager } from "@/components/stalker/StalkerCategoryPager";
 import { StalkerSeriesProductCatalog, type StalkerSeriesProductScreen } from "@/components/stalker/StalkerSeriesProductCatalog";
 import { redactSensitiveText } from "@/lib/safeLog";
@@ -10,14 +8,15 @@ import {
   type StalkerProductProviderIdentity,
 } from "@/lib/stalkerProductSession";
 import {
-  buildStalkerSeriesPlayerHandoff,
+  buildStalkerSeriesPlayableIntent,
   createStalkerSeriesProductController,
   firstStalkerSeriesSeasonId,
   mergeStalkerSeriesItems,
   searchStalkerSeriesCatalog,
   stalkerSeriesEpisodeIdentity,
+  stalkerSeriesEpisodeIdentityKey,
   StalkerSeriesPlaybackOwnership,
-  type StalkerSeriesPlayerHandoff,
+  type StalkerSeriesPlayableIntent,
   type StalkerSeriesProductCategory,
   type StalkerSeriesProductDetail,
   type StalkerSeriesProductItem,
@@ -26,7 +25,13 @@ import {
 const visibleError = (caught: unknown, fallback: string) =>
   redactSensitiveText(caught instanceof Error ? caught.message : fallback);
 
-export function StalkerSeriesProductSurface({ provider }: { provider: StalkerProductProviderIdentity }) {
+export function StalkerSeriesProductSurface({
+  provider,
+  onPlayable,
+}: {
+  provider: StalkerProductProviderIdentity;
+  onPlayable?: (intent: StalkerSeriesPlayableIntent) => void;
+}) {
   const current = useMemo(
     () => readCurrentStalkerProductSession(provider),
     [provider.id, provider.url, provider.playlistUrl, provider.mac],
@@ -34,8 +39,8 @@ export function StalkerSeriesProductSurface({ provider }: { provider: StalkerPro
   const session = current.session;
   const providerScopeId = current.providerScopeId;
   const controller = useMemo(
-    () => createStalkerSeriesProductController(session, providerScopeId),
-    [providerScopeId, session],
+    () => createStalkerSeriesProductController(session, provider.id),
+    [provider.id, session],
   );
   const ownership = useMemo(() => new StalkerSeriesPlaybackOwnership(providerScopeId), [providerScopeId]);
 
@@ -57,7 +62,6 @@ export function StalkerSeriesProductSurface({ provider }: { provider: StalkerPro
   const [failedPage, setFailedPage] = useState<number | null>(null);
   const [playbackLoading, setPlaybackLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
-  const [player, setPlayer] = useState<StalkerSeriesPlayerHandoff | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<StalkerSeriesProductItem[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
@@ -210,7 +214,14 @@ export function StalkerSeriesProductSurface({ provider }: { provider: StalkerPro
 
   const playEpisode = async (seasonId: string, episodeId: string) => {
     if (!detail) return;
-    const episodeKey = stalkerSeriesEpisodeIdentity(providerScopeId, detail.seriesId, seasonId, episodeId);
+    const emitPlayable = onPlayable;
+    if (!emitPlayable) {
+      setPlaybackError("Üst seviye oynatıcı sahibi kullanılamıyor.");
+      return;
+    }
+    const episodeKey = stalkerSeriesEpisodeIdentityKey(
+      stalkerSeriesEpisodeIdentity(provider.id, detail.seriesId, seasonId, episodeId),
+    );
     const ticket = ownership.begin(episodeKey);
     const request = beginRequest();
     setPlaybackLoading(true);
@@ -218,7 +229,7 @@ export function StalkerSeriesProductSurface({ provider }: { provider: StalkerPro
     try {
       const source = await controller.resolveEpisode(detail.seriesId, seasonId, episodeId, request.abort.signal);
       if (!currentRequest(request.sequence) || !ownership.isCurrent(ticket)) return;
-      setPlayer(buildStalkerSeriesPlayerHandoff(detail, seasonId, episodeId, source));
+      emitPlayable(buildStalkerSeriesPlayableIntent(provider.id, detail, seasonId, episodeId, source));
     } catch (caught) {
       if (!currentRequest(request.sequence) || !ownership.isCurrent(ticket)) return;
       setPlaybackError(visibleError(caught, "Bölüm oynatma bağlantısı alınamadı."));
@@ -274,12 +285,6 @@ export function StalkerSeriesProductSurface({ provider }: { provider: StalkerPro
     }, 300);
     return () => clearTimeout(timer);
   }, [categories, controller, provider, searchQuery, searchReturnScreen, screen, session]);
-
-  if (player) {
-    return <View style={{ flex: 1, minHeight: 420 }}>
-      <NativeVideoPlayer source={player.source} title={player.title} subtitle={player.subtitle} mediaKind={player.mediaKind} autoFullscreen allowDownload={false} onFullscreenExit={() => setPlayer(null)} />
-    </View>;
-  }
 
   return <StalkerCategoryPager categories={categories} activeId={selectedCategoryId} disabled={screen !== "list" || searchQuery.trim().length > 0} showControls={screen === "list"} onSelect={selectCategoryById}>
     <StalkerSeriesProductCatalog

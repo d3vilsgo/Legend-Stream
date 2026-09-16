@@ -75,6 +75,7 @@ async function main() {
   const catalogSource = fs.readFileSync(path.join(root, "components/stalker/StalkerSeriesProductCatalog.tsx"), "utf8");
   const surfaceSource = fs.readFileSync(path.join(root, "components/stalker/StalkerSeriesProductSurface.tsx"), "utf8");
   const rootSource = fs.readFileSync(path.join(root, "components/OptimizedHomeScreenPaged.tsx"), "utf8");
+  const stalkerMainSource = fs.readFileSync(path.join(root, "components/StalkerMainPage.tsx"), "utf8");
   const boundarySource = fs.readFileSync(path.join(root, "components/stalker/StalkerProductErrorBoundary.tsx"), "utf8");
 
   assert.match(catalogSource, /Poster item=\{item\}/);
@@ -85,7 +86,10 @@ async function main() {
   assert.match(catalogSource, /onRetry=\{onRetryNextPage\}/);
   assert.match(surfaceSource, /currentPage \+ 1/);
   assert.match(surfaceSource, /loadPage\(selectedCategory, failedPage, true\)/);
-  assert.match(surfaceSource, /onFullscreenExit=\{\(\) => setPlayer\(null\)\}/);
+  assert.doesNotMatch(surfaceSource, /NativeVideoPlayer|CompatibilityVideoPlayer/);
+  assert.match(surfaceSource, /emitPlayable\(buildStalkerSeriesPlayableIntent/);
+  assert.match(stalkerMainSource, /<StalkerSeriesProductSurface provider=\{provider\} onPlayable=\{openSeriesEpisode\}/);
+  assert.match(stalkerMainSource, /returnTo: "series"/);
   assert.match(surfaceSource, /readCurrentStalkerProductSession\(provider\)/);
   assert.doesNotMatch(surfaceSource, /readLatestIsolatedStalkerSessionForProbe|latestIsolatedStalkerSessionForProbe/);
 

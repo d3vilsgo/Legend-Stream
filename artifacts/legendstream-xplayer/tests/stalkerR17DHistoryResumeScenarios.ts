@@ -82,14 +82,15 @@ async function main() {
   assert.match(main, /item\.playbackRef\.type === "stalker-vod"[\s\S]*?resolveStalkerVodHistoryLink\([\s\S]*?readCurrentStalkerProductSession\(provider\)\.session/);
   assert.match(main, /returnTo: "history"[\s\S]*?progressRef: item\.playbackRef/);
   assert.match(main, /returnTo: "movies"[\s\S]*?progressRef:/);
-  assert.match(main, /onFullscreenExit=\{\(\) => setView\(playable\.returnTo\)\}/);
+  assert.match(main, /onFullscreenExit=\{\(\) => \{[\s\S]*?setView\(playable\.returnTo\)[\s\S]*?setPlayable\(null\)/);
   assert.match(main, /catch \(caught\)[\s\S]*?setCatalogError\(redactSensitiveText/);
   assert.match(player, /saveProgress\(\{[\s\S]*?playbackRef: snapshot\.progressRef/);
   assert.match(player, /getProgress\(snapshot\.source, snapshot\.progressRef\)/);
   assert.match(player, /normalizedDuration > 0[\s\S]*?saved\.position > 5[\s\S]*?vlcRef\.current\?\.seek/);
   assert.match(media, /\| \{ type: "stalker-vod"; itemId: string; categoryId: string \}/);
   assert.doesNotMatch(JSON.stringify({ type: "stalker-vod", itemId: "501", categoryId: "7" }), /https?:\/\//);
-  assert.match(series, /<NativeVideoPlayer source=\{player\.source\}/);
+  assert.doesNotMatch(series, /NativeVideoPlayer/);
+  assert.match(series, /emitPlayable\(buildStalkerSeriesPlayableIntent/);
 
   const stalkerRef: MediaPlaybackRef = { type: "stalker-vod", itemId: "501", categoryId: "7" };
   assert.equal(mediaPlaybackRefMatchesProvider(stalkerRef, "stalker", "movie"), true);

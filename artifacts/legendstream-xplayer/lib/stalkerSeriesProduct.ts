@@ -50,27 +50,56 @@ export type StalkerSeriesProductPage = {
   hasNextPage: boolean;
 };
 
-export type StalkerSeriesPlayerHandoff = {
-  source: string;
-  title: string;
-  subtitle: string;
-  mediaKind: "episode";
+export type StalkerSeriesEpisodeIdentity = {
+  type: "stalker-episode";
+  providerId: string;
+  seriesId: string;
+  seasonId: string;
+  episodeId: string;
 };
 
-export function buildStalkerSeriesPlayerHandoff(
+export type StalkerSeriesPlayableIntent = {
+  identity: StalkerSeriesEpisodeIdentity;
+  url: string;
+  title: string;
+  subtitle: string;
+  kind: "episode";
+};
+
+export function stalkerSeriesEpisodeIdentity(
+  providerId: string,
+  seriesId: string,
+  seasonId: string,
+  episodeId: string,
+): StalkerSeriesEpisodeIdentity {
+  return { type: "stalker-episode", providerId, seriesId, seasonId, episodeId };
+}
+
+export function stalkerSeriesEpisodeIdentityKey(identity: StalkerSeriesEpisodeIdentity) {
+  return JSON.stringify([
+    identity.providerId,
+    identity.seriesId,
+    identity.seasonId,
+    identity.episodeId,
+  ]);
+}
+
+export function buildStalkerSeriesPlayableIntent(
+  providerId: string,
   detail: StalkerSeriesProductDetail,
   seasonId: string,
   episodeId: string,
-  source: string,
-): StalkerSeriesPlayerHandoff {
+  url: string,
+): StalkerSeriesPlayableIntent {
   const season = detail.seasons.find((item) => item.id === seasonId);
   const episode = season?.episodes.find((item) => item.id === episodeId);
   if (!season || !episode) throw new Error("Series episode selection is no longer available.");
   return {
-    source,
+    identity: stalkerSeriesEpisodeIdentity(providerId, detail.seriesId, seasonId, episodeId),
+    url,
     title: episode.label,
     subtitle: `${detail.title} · ${season.label}`,
-    mediaKind: "episode",
+    kind: "episode",
   };
 }
 
@@ -296,10 +325,6 @@ function playbackRefKey(seriesId: string, seasonId: string) {
   return JSON.stringify([seriesId, seasonId]);
 }
 
-export function stalkerSeriesEpisodeIdentity(providerId: string, seriesId: string, seasonId: string, episodeId: string) {
-  return JSON.stringify([providerId, seriesId, seasonId, episodeId]);
-}
-
 export class StalkerSeriesPlaybackOwnership {
   private providerId: string;
   private sequence = 0;
@@ -429,8 +454,9 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
           const episodeId = exactScalarIdentifier(rawEpisodeId);
           if (!episodeId || seenEpisodes.has(episodeId)) continue;
           seenEpisodes.add(episodeId);
+          const identity = stalkerSeriesEpisodeIdentity(providerId, item.id, id, episodeId);
           episodes.push({
-            key: stalkerSeriesEpisodeIdentity(providerId, item.id, id, episodeId),
+            key: stalkerSeriesEpisodeIdentityKey(identity),
             id: episodeId,
             label: `Bölüm ${redactSensitiveText(episodeId).slice(0, 40)}`,
             seasonId: id,

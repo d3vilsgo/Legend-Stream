@@ -43,15 +43,15 @@ async function main() {
   });
 
   await scenario("dedicated Stalker page routes Movies to its golden catalog and keeps Series migration explicit", () => {
-    assert.match(stalkerMainSource, /view === "live"[\s\S]*?<PagedLiveCatalog/);
+    assert.match(stalkerMainSource, /presentedView === "live"[\s\S]*?<PagedLiveCatalog/);
     assert.match(
       stalkerMainSource,
-      /view === "movies"[\s\S]*?<StalkerProductErrorBoundary product="movies"[\s\S]*?<StalkerGoldenMoviesCatalog[\s\S]*?onPlayable=\{openMovie\}/,
+      /presentedView === "movies"[\s\S]*?<StalkerProductErrorBoundary product="movies"[\s\S]*?<StalkerGoldenMoviesCatalog[\s\S]*?onPlayable=\{openMovie\}/,
     );
     assert.doesNotMatch(stalkerMainSource, /StalkerVodSurface/);
     assert.match(
       stalkerMainSource,
-      /view === "series"[\s\S]*?<StalkerProductErrorBoundary product="series"[\s\S]*?<StalkerSeriesProductSurface provider=\{provider\}/,
+      /presentedView === "series"[\s\S]*?<StalkerProductErrorBoundary product="series"[\s\S]*?<StalkerSeriesProductSurface provider=\{provider\} onPlayable=\{openSeriesEpisode\}/,
     );
     assert.doesNotMatch(stalkerMainSource, /CatalogMigrationShell/);
   });
@@ -62,9 +62,9 @@ async function main() {
     assert.match(stalkerMoviesControllerSource, /resolveStalkerVodLink\(session, item/);
     assert.match(stalkerMoviesControllerSource, /onPlayable\(\{/);
     assert.match(stalkerMainSource, /const openMovie = \(movie: StalkerMoviePlayable\)[\s\S]*?openResolvedPlayable\(\{[\s\S]*?returnTo: "movies"/);
-    assert.match(stalkerMainSource, /if \(view === "player"\)/);
+    assert.match(stalkerMainSource, /view === "player" && playable/);
     assert.match(stalkerMainSource, /<NativeVideoPlayer/);
-    assert.match(stalkerMainSource, /onFullscreenExit=\{\(\) => setView\(playable\.returnTo\)\}/);
+    assert.match(stalkerMainSource, /onFullscreenExit=\{\(\) => \{[\s\S]*?setView\(playable\.returnTo\)/);
   });
 
   await scenario("Stalker History re-resolves durable movie identity and preserves origin-aware player return", () => {
@@ -82,10 +82,12 @@ async function main() {
     assert.match(stalkerMoviesSource, /useStalkerMoviesCatalog\(/);
   });
 
-  await scenario("Series local playback remains a temporary R17-D seam and is not generalized", () => {
+  await scenario("Series emits episode intent to the page-level player and owns no private player", () => {
     assert.match(stalkerSeriesSource, /controller\.resolveEpisode\(detail\.seriesId, seasonId, episodeId/);
-    assert.match(stalkerSeriesSource, /<NativeVideoPlayer source=\{player\.source\}/);
-    assert.match(stalkerMainSource, /Series remains the explicit R17-D migration seam/);
+    assert.match(stalkerSeriesSource, /emitPlayable\(buildStalkerSeriesPlayableIntent/);
+    assert.doesNotMatch(stalkerSeriesSource, /NativeVideoPlayer/);
+    assert.match(stalkerMainSource, /const openSeriesEpisode = \(intent: StalkerSeriesPlayableIntent\)[\s\S]*?returnTo: "series"/);
+    assert.match(stalkerMainSource, /Series presentation remains a visual migration seam/);
   });
 
   await scenario("golden Xtream M3U main-page source remains byte-for-byte frozen", () => {

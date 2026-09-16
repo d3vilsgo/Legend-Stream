@@ -59,6 +59,10 @@ import {
   type StalkerProductProviderIdentity,
 } from "@/lib/stalkerProductSession";
 import { resolveStalkerVodHistoryLink } from "@/lib/stalkerVod";
+import type {
+  StalkerSeriesEpisodeIdentity,
+  StalkerSeriesPlayableIntent,
+} from "@/lib/stalkerSeriesProduct";
 import { yieldToUi } from "@/lib/cooperative";
 
 type StalkerViewName = HomeContentView | "player";
@@ -73,6 +77,7 @@ type Playable = {
   liveIdentity?: LiveChannelIdentity;
   vodIdentity?: CatalogPlaybackIdentity;
   progressRef?: MediaPlaybackRef;
+  seriesIdentity?: StalkerSeriesEpisodeIdentity;
 };
 
 /**
@@ -109,7 +114,8 @@ function isStalkerProductProvider(
  *   own a private player.
  * - Live can already use the golden PagedLiveCatalog because useCatalogPage has a proven
  *   Stalker-live backend seam. Movies use a controlled golden presentation clone while
- *   Series remains the explicit R17-D migration seam.
+ *   Series presentation remains a visual migration seam, but episode playback now hands
+ *   a normalized intent to this page instead of owning a private player.
  */
 export default function StalkerMainPage() {
   const colors = useColors();
@@ -216,6 +222,21 @@ export default function StalkerMainPage() {
     });
   };
 
+  const openSeriesEpisode = (intent: StalkerSeriesPlayableIntent) => {
+    if (intent.identity.providerId !== provider.id) {
+      setCatalogError("Bölüm artık etkin sağlayıcıya ait değil.");
+      return;
+    }
+    openResolvedPlayable({
+      title: intent.title,
+      subtitle: intent.subtitle,
+      url: intent.url,
+      kind: intent.kind,
+      returnTo: "series",
+      seriesIdentity: intent.identity,
+    });
+  };
+
   const openProgress = async (item: MediaProgress) => {
     if (item.playbackRef.type === "stalker-vod") {
       historyPlaybackAbortRef.current?.abort();
@@ -304,26 +325,7 @@ export default function StalkerMainPage() {
     }
   };
 
-  if (view === "player") {
-    return (
-      <View style={s.fullPlayer}>
-        {playable ? (
-          <NativeVideoPlayer
-            source={playable.url}
-            title={playable.title}
-            subtitle={playable.subtitle}
-            mediaKind={playable.kind}
-            liveIdentity={playable.liveIdentity}
-            vodIdentity={playable.vodIdentity}
-            progressRef={playable.progressRef}
-            autoFullscreen
-            allowDownload={playable.kind === "movie" || playable.kind === "episode"}
-            onFullscreenExit={() => setView(playable.returnTo)}
-          />
-        ) : null}
-      </View>
-    );
-  }
+  const presentedView = view === "player" ? playable?.returnTo ?? "home" : view;
 
   const nav = [
     { key: "home" as const, label: t("home"), icon: "home" as const },
@@ -352,7 +354,7 @@ export default function StalkerMainPage() {
         style={[
           s.header,
           { borderColor: colors.border },
-          view === "home" ? s.homeHeaderPremium : null,
+          presentedView === "home" ? s.homeHeaderPremium : null,
         ]}
       >
         <View style={s.headerTop}>
@@ -367,7 +369,7 @@ export default function StalkerMainPage() {
               key={item.key}
               label={item.label}
               icon={item.icon}
-              variant={view === item.key ? "secondary" : "ghost"}
+              variant={presentedView === item.key ? "secondary" : "ghost"}
               onPress={() => navigate(item.key)}
             />
           ))}
@@ -385,7 +387,7 @@ export default function StalkerMainPage() {
         </View>
       ) : null}
 
-      {view === "live" ? (
+      {presentedView === "live" ? (
         <PagedLiveCatalog
           provider={provider}
           snapshotCount={{ totalCount: null, countKnown: false }}
@@ -401,7 +403,7 @@ export default function StalkerMainPage() {
         />
       ) : null}
 
-      {view === "movies" ? (
+      {presentedView === "movies" ? (
         <StalkerProductErrorBoundary product="movies" providerId={provider.id} onBack={() => navigate("home")}>
           <StalkerGoldenMoviesCatalog
             provider={provider}
@@ -412,13 +414,13 @@ export default function StalkerMainPage() {
         </StalkerProductErrorBoundary>
       ) : null}
 
-      {view === "series" ? (
+      {presentedView === "series" ? (
         <StalkerProductErrorBoundary product="series" providerId={provider.id} onBack={() => navigate("home")}>
-          <StalkerSeriesProductSurface provider={provider} />
+          <StalkerSeriesProductSurface provider={provider} onPlayable={openSeriesEpisode} />
         </StalkerProductErrorBoundary>
       ) : null}
 
-      {view === "history" ? (
+      {presentedView === "history" ? (
         <HistoryView
           providerId={provider.id}
           channels={playerLiveChannels}
@@ -429,7 +431,7 @@ export default function StalkerMainPage() {
         />
       ) : null}
 
-      {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? (
+      {presentedView !== "live" && presentedView !== "movies" && presentedView !== "series" && presentedView !== "history" ? (
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={s.content}
@@ -437,7 +439,7 @@ export default function StalkerMainPage() {
           showsVerticalScrollIndicator={false}
           scrollEnabled={!catalogDrawerOpen}
         >
-          {view === "home" ? (
+          {presentedView === "home" ? (
             <HomeDiscovery
               provider={provider}
               live={playerLiveChannels.length}
@@ -461,8 +463,8 @@ export default function StalkerMainPage() {
               onRemoveLive={(id) => void removeWatched(id)}
             />
           ) : null}
-          {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
-          {view === "settings" ? (
+          {presentedView === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
+          {presentedView === "settings" ? (
             <Settings
               provider={provider}
               providers={providers}
@@ -474,6 +476,26 @@ export default function StalkerMainPage() {
             />
           ) : null}
         </ScrollView>
+      ) : null}
+
+      {view === "player" && playable ? (
+        <View style={s.fullPlayer}>
+          <NativeVideoPlayer
+            source={playable.url}
+            title={playable.title}
+            subtitle={playable.subtitle}
+            mediaKind={playable.kind}
+            liveIdentity={playable.liveIdentity}
+            vodIdentity={playable.vodIdentity}
+            progressRef={playable.progressRef}
+            autoFullscreen
+            allowDownload={playable.kind === "movie" || playable.kind === "episode"}
+            onFullscreenExit={() => {
+              setView(playable.returnTo);
+              setPlayable(null);
+            }}
+          />
+        </View>
       ) : null}
     </View>
   );
@@ -628,7 +650,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onSwitch, on
 
 const s = StyleSheet.create({
   screen: { flex: 1 },
-  fullPlayer: { flex: 1, backgroundColor: "#000" },
+  fullPlayer: { ...StyleSheet.absoluteFillObject, zIndex: 100, backgroundColor: "#000" },
   content: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
   header: { borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingBottom: 8 },
   homeHeaderPremium: { paddingHorizontal: 18, paddingTop: 6, paddingBottom: 10 },
