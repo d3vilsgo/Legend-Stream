@@ -82,6 +82,7 @@ async function main() {
 
   await scenario("golden Xtream M3U main-page source remains byte-for-byte frozen", () => {
     assert.equal(gitBlobSha(goldenSource), "b51c5a09d203e02baa0e716c60749e419679fd1c");
+    assert.equal(gitBlobSha(goldenCatalogSource), "f0f17f575470e1db991e9314156232733e97c926");
   });
 
   await scenario("clone freezes golden navigation order and category identity seam", () => {
@@ -102,6 +103,35 @@ async function main() {
     }
     assert.match(stalkerMoviesSource, /const columns = width >= 900 \? 5 : width >= 650 \? 4 : width >= 420 \? 3 : 2/);
     assert.match(stalkerMoviesSource, /onEndReachedThreshold=\{0\.55\}/);
+    assert.match(stalkerMoviesSource, /ListEmptyComponent=\{<View style=\{s\.emptyGrid\}><Text>—<\/Text><\/View>\}/);
+  });
+
+  await scenario("Stalker Movies locks golden card geometry and removes provider-only pending decoration", () => {
+    const cardSource = stalkerMoviesSource.slice(
+      stalkerMoviesSource.indexOf("function GridCard"),
+      stalkerMoviesSource.indexOf("function PageFooter"),
+    );
+    assert.match(cardSource, /function GridCard\(\{ title, image, onPress \}/);
+    assert.match(cardSource, /<Pressable onPress=\{onPress\} style=\{s\.card\}>/);
+    assert.match(cardSource, /fontWeight: "700", padding: 9/);
+    assert.doesNotMatch(cardSource, /loading|disabled=|ActivityIndicator|cardTitleRow|minHeight/);
+    assert.doesNotMatch(stalkerMoviesSource, /cardTitleRow|resolvingItemId ===/);
+  });
+
+  await scenario("Stalker Movies locks golden drawer gestures and page-level error presentation", () => {
+    assert.match(stalkerMoviesSource, /gesture\.dx > 18 && Math\.abs\(gesture\.dx\) > Math\.abs\(gesture\.dy\) \* 1\.35/);
+    assert.match(stalkerMoviesSource, /gesture\.dx > 55\) onOpen\(\)/);
+    assert.match(stalkerMoviesSource, /onPanResponderTerminate: \(\) => undefined/);
+    assert.match(stalkerMoviesSource, /onStartShouldSetPanResponder: \(\) => false/);
+    assert.match(stalkerMoviesSource, /gesture\.dx < -18 && Math\.abs\(gesture\.dx\) > Math\.abs\(gesture\.dy\) \* 1\.5/);
+    assert.match(stalkerMoviesSource, /gesture\.dx < -45\) closeAnimated\(\)/);
+    assert.match(stalkerMoviesSource, /onPanResponderTerminationRequest: \(\) => true/);
+    assert.match(stalkerMoviesSource, /duration: 190/);
+    assert.match(stalkerMoviesSource, /duration: 170/);
+    assert.match(stalkerMainSource, /onError=\{setCatalogError\}/);
+    assert.match(stalkerMoviesSource, /onError\(catalog\.error\)/);
+    assert.doesNotMatch(stalkerMoviesSource, /CatalogHeader[\s\S]*?error=\{catalog\.error\}/);
+    assert.doesNotMatch(stalkerMoviesSource, /s\.error|error: \{ borderWidth/);
   });
 
   await scenario("category labels and provider order remain separate from category ids", () => {
@@ -110,8 +140,8 @@ async function main() {
     assert.match(stalkerMoviesSource, /if \(sort === "default"\) return items;/);
   });
 
-  assert.equal(passed, 10);
-  process.stdout.write(`stalker R17-A main boundary scenarios: ${passed}/10 passed\n`);
+  assert.equal(passed, 12);
+  process.stdout.write(`stalker R17-A main boundary scenarios: ${passed}/12 passed\n`);
 }
 
 void main().catch((error: unknown) => {

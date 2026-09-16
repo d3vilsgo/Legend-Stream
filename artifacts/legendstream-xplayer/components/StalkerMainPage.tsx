@@ -354,6 +354,7 @@ export default function StalkerMainPage() {
           <StalkerGoldenMoviesCatalog
             provider={provider}
             onPlayable={openMovie}
+            onError={setCatalogError}
             onDrawerVisibilityChange={setCatalogDrawerOpen}
           />
         </StalkerProductErrorBoundary>

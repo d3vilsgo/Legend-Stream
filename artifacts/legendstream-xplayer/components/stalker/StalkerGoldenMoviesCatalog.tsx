@@ -34,13 +34,14 @@ type CategoryOption = { id: string; name: string; order: number };
 export function StalkerGoldenMoviesCatalog({
   provider,
   onPlayable,
+  onError,
   onDrawerVisibilityChange,
 }: {
   provider: StalkerProductProviderIdentity;
   onPlayable: (playable: StalkerMoviePlayable) => void;
+  onError: (error: string | null) => void;
   onDrawerVisibilityChange: (visible: boolean) => void;
 }) {
-  const colors = useColors();
   const { t } = useI18n();
   const { width } = useWindowDimensions();
   const [sort, setSort] = useState<CatalogSortMode>("default");
@@ -51,6 +52,11 @@ export function StalkerGoldenMoviesCatalog({
     onDrawerVisibilityChange(drawerOpen);
     return () => onDrawerVisibilityChange(false);
   }, [drawerOpen, onDrawerVisibilityChange]);
+
+  useEffect(() => {
+    onError(catalog.error);
+    return () => onError(null);
+  }, [catalog.error, onError]);
 
   const categoryOptions = useMemo<CategoryOption[]>(
     () => catalog.categories.map((category, order) => ({
@@ -82,20 +88,18 @@ export function StalkerGoldenMoviesCatalog({
         search={catalog.search}
         onSearch={catalog.setSearch}
         loading={catalog.loadingInitial || catalog.searching}
-        error={catalog.error}
         onRefresh={() => void catalog.refresh()}
       >
         <SortControl selected={sort} onSelect={setSort} />
       </CatalogHeader>}
       ListFooterComponent={<PageFooter loading={catalog.loadingMore} />}
-      ListEmptyComponent={<View style={s.emptyGrid}><Text style={{ color: colors.mutedForeground }}>—</Text></View>}
+      ListEmptyComponent={<View style={s.emptyGrid}><Text>—</Text></View>}
       onEndReached={catalog.loadMore}
       onEndReachedThreshold={0.55}
       renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
         <GridCard
           title={item.title}
           image={item.posterUrl}
-          loading={catalog.resolvingItemId === item.portalId}
           onPress={() => void catalog.openMovie(item)}
         />
       </View>}
@@ -140,13 +144,12 @@ function CatalogLoadingSkeleton({ text }: { text: string }) {
   </View>;
 }
 
-function CatalogHeader({ title, detail, search, onSearch, loading, error, onRefresh, children }: {
+function CatalogHeader({ title, detail, search, onSearch, loading, onRefresh, children }: {
   title: string;
   detail: string;
   search: string;
   onSearch: (value: string) => void;
   loading: boolean;
-  error: string | null;
   onRefresh: () => void;
   children?: React.ReactNode;
 }) {
@@ -170,9 +173,6 @@ function CatalogHeader({ title, detail, search, onSearch, loading, error, onRefr
         style={{ flex: 1, color: colors.foreground, minHeight: 44 }}
       />
     </View>
-    {error ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}>
-      <Text style={{ color: colors.destructive, flex: 1 }}>{error}</Text>
-    </View> : null}
     {children}
   </View>;
 }
@@ -210,14 +210,18 @@ function SortControl({ selected, onSelect }: { selected: CatalogSortMode; onSele
   </View>;
 }
 
-function useCategoryDrawerSwipe(onOpen: () => void, disabled: boolean) {
-  return useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) =>
-      !disabled && gesture.dx > 18 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.35,
-    onPanResponderRelease: (_event, gesture) => {
-      if (!disabled && gesture.dx > 55) onOpen();
-    },
-  }), [disabled, onOpen]);
+function useCategoryDrawerSwipe(onOpen: () => void, disabled = false) {
+  return useMemo(
+    () => PanResponder.create({
+      onMoveShouldSetPanResponder: (_event, gesture) =>
+        !disabled && gesture.dx > 18 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.35,
+      onPanResponderRelease: (_event, gesture) => {
+        if (!disabled && gesture.dx > 55) onOpen();
+      },
+      onPanResponderTerminate: () => undefined,
+    }),
+    [disabled, onOpen],
+  );
 }
 
 function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
@@ -249,12 +253,17 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
       onClose();
     });
   };
-  const closeSwipe = useMemo(() => PanResponder.create({
-    onMoveShouldSetPanResponder: (_event, gesture) => gesture.dx < -18 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
-    onPanResponderRelease: (_event, gesture) => {
-      if (gesture.dx < -45) closeAnimated();
-    },
-  }), [drawerWidth, translateX]);
+  const closeSwipe = useMemo(
+    () => PanResponder.create({
+      onStartShouldSetPanResponder: () => false,
+      onMoveShouldSetPanResponder: (_event, gesture) => gesture.dx < -18 && Math.abs(gesture.dx) > Math.abs(gesture.dy) * 1.5,
+      onPanResponderRelease: (_event, gesture) => {
+        if (gesture.dx < -45) closeAnimated();
+      },
+      onPanResponderTerminationRequest: () => true,
+    }),
+    [drawerWidth, translateX],
+  );
 
   return <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={closeAnimated}>
     <View style={s.drawerBackdrop}>
@@ -296,17 +305,14 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
   </Modal>;
 }
 
-function GridCard({ title, image, loading, onPress }: { title: string; image?: string; loading: boolean; onPress: () => void }) {
+function GridCard({ title, image, onPress }: { title: string; image?: string; onPress: () => void }) {
   const colors = useColors();
-  return <Pressable disabled={loading} onPress={onPress} style={s.card}>
+  return <Pressable onPress={onPress} style={s.card}>
     <View style={[s.media, { borderColor: colors.border, backgroundColor: colors.card }]}>
       {image
         ? <Image source={{ uri: image }} style={s.posterBig} resizeMode="cover" />
         : <View style={[s.posterBig, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}><Feather name="play-circle" size={30} color={colors.primary} /></View>}
-      <View style={s.cardTitleRow}>
-        <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", flex: 1 }}>{title}</Text>
-        {loading ? <ActivityIndicator size="small" color={colors.primary} /> : null}
-      </View>
+      <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", padding: 9 }}>{title}</Text>
     </View>
   </Pressable>;
 }
@@ -323,7 +329,6 @@ const s = StyleSheet.create({
   catalogHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 12 },
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },
   search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
-  error: { borderWidth: 1, borderRadius: 12, padding: 10, marginTop: 10, flexDirection: "row", gap: 8 },
   sortDropdownWrap: { paddingTop: 10, paddingBottom: 10, alignSelf: "stretch" },
   sortDropdownButton: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
   sortDropdownMenu: { marginTop: 6, borderWidth: 1, borderRadius: 12, padding: 6, gap: 3 },
@@ -332,7 +337,6 @@ const s = StyleSheet.create({
   card: { padding: 6 },
   media: { borderWidth: 1, borderRadius: 14, overflow: "hidden" },
   posterBig: { width: "100%", aspectRatio: 2 / 3 },
-  cardTitleRow: { minHeight: 54, padding: 9, flexDirection: "row", alignItems: "center", gap: 8 },
   pageFooter: { height: 64, alignItems: "center", justifyContent: "center" },
   pageFooterSpacer: { height: 20 },
   skeletonRoot: { flex: 1, minHeight: 220, alignItems: "center", justifyContent: "center", gap: 10, padding: 24 },
