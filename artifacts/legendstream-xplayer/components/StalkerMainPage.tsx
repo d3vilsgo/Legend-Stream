@@ -39,6 +39,8 @@ import type { MediaProgress } from "@/context/MediaLibraryContext";
 import type { MediaPlaybackRef } from "@/lib/mediaProgress";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
+import { useStalkerLiveCatalogSync } from "@/hooks/useStalkerLiveCatalogSync";
+import { useStalkerProductCounts } from "@/hooks/useStalkerProductCounts";
 import type { DownloadedMedia } from "@/lib/downloads";
 import {
   indexLiveChannelsByProviderAndId,
@@ -132,7 +134,7 @@ export default function StalkerMainPage() {
     isLoading,
     isEpgLoading,
     error,
-    refreshProvider,
+    scopedError,
     toggleFavorite,
     recordWatched,
     removeWatched,
@@ -141,6 +143,7 @@ export default function StalkerMainPage() {
     removeProvider,
     disconnectProvider,
     clearError,
+    clearScopedError,
   } = usePlayer();
   useCredentialDiagnosticsStartup();
 
@@ -152,6 +155,8 @@ export default function StalkerMainPage() {
   const switchingProviderRef = useRef<string | null>(null);
   const historyPlaybackAbortRef = useRef<AbortController | null>(null);
   const historyPlaybackSequenceRef = useRef(0);
+  const liveCatalog = useStalkerLiveCatalogSync(provider);
+  const productCounts = useStalkerProductCounts(provider?.type === "stalker" ? provider.id : undefined);
 
   const playerLiveChannels = useMemo(
     () => provider
@@ -173,10 +178,12 @@ export default function StalkerMainPage() {
 
   const navigate = (target: StalkerContentView) => {
     setCatalogError(null);
+    if (target !== "live") clearScopedError("live-history");
     setView(target);
   };
 
   const openResolvedPlayable = (next: Playable) => {
+    if (next.kind !== "live") clearScopedError("live-history");
     setPlayable(next);
     setView("player");
   };
@@ -379,6 +386,9 @@ export default function StalkerMainPage() {
   ];
   const top = Math.max(insets.top, Platform.OS === "web" ? 20 : 0);
   const providerSwitchBusy = isLoading || switchingProviderId !== null;
+  const visibleScopedError = presentedView === "live" && scopedError?.domain === "live-history" && scopedError.providerId === provider.id
+    ? t(scopedError.messageKey)
+    : null;
 
   return (
     <View
@@ -417,12 +427,12 @@ export default function StalkerMainPage() {
         </ScrollView>
       </View>
 
-      {error || catalogError ? (
+      {error || catalogError || visibleScopedError ? (
         <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}>
           <Text style={{ color: colors.destructive, flex: 1 }}>
-            {visibleErrorText(error || catalogError)}
+            {visibleErrorText(error || catalogError || visibleScopedError)}
           </Text>
-          <Pressable onPress={() => { clearError(); setCatalogError(null); }}>
+          <Pressable onPress={() => { clearError(); clearScopedError(); setCatalogError(null); }}>
             <Feather name="x" size={20} color={colors.mutedForeground} />
           </Pressable>
         </View>
@@ -431,13 +441,13 @@ export default function StalkerMainPage() {
       {presentedView === "live" ? (
         <PagedLiveCatalog
           provider={provider}
-          snapshotCount={{ totalCount: null, countKnown: false }}
+          snapshotCount={{ totalCount: liveCatalog.totalCount, countKnown: liveCatalog.countKnown }}
           hasMeaningfulM3ULiveGroups={null}
           epgByChannel={epgByChannel}
           favorites={favorites}
           epgLoading={isEpgLoading}
-          refreshing={isLoading}
-          onRefresh={refreshProvider}
+          refreshing={isLoading || liveCatalog.syncing}
+          onRefresh={liveCatalog.refresh}
           onOpen={openLive}
           onFavorite={(id) => void toggleFavorite(id)}
           onDrawerVisibilityChange={setCatalogDrawerOpen}
@@ -483,12 +493,12 @@ export default function StalkerMainPage() {
           {presentedView === "home" ? (
             <HomeDiscovery
               provider={provider}
-              live={playerLiveChannels.length}
-              vod={null}
-              series={null}
+              live={liveCatalog.countKnown ? liveCatalog.totalCount : null}
+              vod={productCounts.vod}
+              series={productCounts.series}
               vodCategories={0}
               seriesCategories={0}
-              catalogLoading={false}
+              catalogLoading={liveCatalog.syncing && !liveCatalog.countKnown}
               channels={playerLiveChannels}
               history={history}
               movies={[]}

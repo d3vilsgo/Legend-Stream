@@ -381,13 +381,17 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
       const payload = await boundedRequest(session, { type: "series", action: "get_categories" }, signal);
       const seen = new Set<string>();
       const categories: StalkerSeriesProductCategory[] = [];
+      let hasGlobalCategory = false;
       for (const raw of rowsFromEnvelope(payload)) {
         const row = objectValue(raw);
         if (!row) continue;
         const id = exactScalarIdentifier(row.id ?? row.category_id ?? row.genre_id);
         const title = displayText(row.title) || displayText(row.name);
         if (!id || !title || seen.has(id)) continue;
+        const global = isStalkerSeriesGlobalCategory({ id, title });
+        if (global && hasGlobalCategory) continue;
         seen.add(id);
+        if (global) hasGlobalCategory = true;
         categories.push({ id, title });
       }
       return categories;
@@ -564,10 +568,12 @@ export async function resolveStalkerSeriesHistoryEpisode(
 }
 
 export function findStalkerSeriesGlobalCategory(categories: readonly StalkerSeriesProductCategory[]) {
-  return categories.find((category) => {
-    const title = normalizedSearchText(category.title);
-    return category.id.trim() === "*" || title === "all" || title === "tumu" || title === "tum";
-  }) ?? null;
+  return categories.find(isStalkerSeriesGlobalCategory) ?? null;
+}
+
+export function isStalkerSeriesGlobalCategory(category: StalkerSeriesProductCategory) {
+  const title = normalizedSearchText(category.title);
+  return category.id.trim() === "*" || title === "all" || title === "tumu" || title === "tum";
 }
 
 export async function searchStalkerSeriesCatalog(

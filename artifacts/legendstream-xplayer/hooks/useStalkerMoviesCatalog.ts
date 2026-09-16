@@ -7,6 +7,7 @@ import {
 } from "@/lib/stalkerProductSession";
 import {
   findStalkerVodGlobalCategory,
+  isStalkerVodGlobalCategory,
   loadStalkerVodCategories,
   loadStalkerVodPage,
   mergeStalkerVodItems,
@@ -15,6 +16,7 @@ import {
   type StalkerVodCategory,
   type StalkerVodItem,
 } from "@/lib/stalkerVod";
+import { writeStalkerProductCount } from "@/lib/stalkerProductCounts";
 
 export type StalkerMoviePlayable = {
   title: string;
@@ -82,6 +84,9 @@ export function useStalkerMoviesCatalog({
       setCurrentPage(Math.max(page, result.currentPage));
       setTotalItems(result.totalItems ?? null);
       setHasNextPage(result.hasNextPage);
+      if (page === 1 && isStalkerVodGlobalCategory(category) && result.totalItems != null) {
+        void writeStalkerProductCount(provider.id, "vod", result.totalItems).catch(() => undefined);
+      }
     } catch (caught) {
       if (abort.signal.aborted || sequence !== pageSequenceRef.current || !sessionStillCurrent()) return;
       setError(safeError(caught, "Filmler yüklenemedi."));

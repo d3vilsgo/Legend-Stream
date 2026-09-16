@@ -6,6 +6,9 @@ import {
   createStalkerSeriesProductController,
   sortStalkerSeriesItems,
 } from "../lib/stalkerSeriesProduct";
+import { normalizeStalkerVodCategories } from "../lib/stalkerVod";
+import { historySecondaryText, visibleProgressRatio } from "../lib/historyPresentation";
+import { parseStalkerProductCounts, writeStalkerProductCount } from "../lib/stalkerProductCounts";
 
 const testsDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(testsDir, "..");
@@ -17,6 +20,12 @@ const stalkerMoviesControllerSource = source("hooks/useStalkerMoviesCatalog.ts")
 const stalkerSeriesSource = source("components/stalker/StalkerSeriesProductSurface.tsx");
 const goldenSource = source("components/OptimizedHomeScreenPaged.tsx");
 const goldenCatalogSource = source("components/catalog/PagedCatalogViews.tsx");
+const playerContextSource = source("context/PlayerContext.tsx");
+const mediaLibrarySource = source("context/MediaLibraryContext.tsx");
+const homeSource = source("components/home/HomeDiscovery.tsx");
+const historySource = source("components/ContinueWatchingView.tsx");
+const vlcSource = source("components/player/VlcPlaybackSurface.tsx");
+const bridgeSource = source("components/catalog/StalkerPostActivationCatalogBridge.tsx");
 
 let passed = 0;
 async function scenario(name: string, run: () => void | Promise<void>) {
@@ -182,8 +191,86 @@ async function main() {
     assert.match(stalkerMainSource, /onDrawerVisibilityChange=\{setCatalogDrawerOpen\}/);
   });
 
-  assert.equal(passed, 15);
-  process.stdout.write(`stalker R17-A main boundary scenarios: ${passed}/15 passed\n`);
+  await scenario("Live history failures use a provider-scoped domain and never reuse product resolver errors", () => {
+    assert.match(playerContextSource, /domain: "live-history";[\s\S]*?providerId: string;[\s\S]*?messageKey: "historySaveFailed"/);
+    assert.match(playerContextSource, /setScopedError\(\{ domain: "live-history", providerId, messageKey: "historySaveFailed" \}\)/);
+    assert.doesNotMatch(playerContextSource, /setError\("Live TV history could not be saved\."\)/);
+    assert.match(stalkerMainSource, /presentedView === "live" && scopedError\?\.domain === "live-history"/);
+    assert.match(stalkerMainSource, /if \(target !== "live"\) clearScopedError\("live-history"\)/);
+    assert.doesNotMatch(mediaLibrarySource, /setScopedError|setError\("Live TV history/);
+  });
+
+  await scenario("A later successful Live history write clears only the matching scoped error", () => {
+    assert.match(playerContextSource, /setScopedError\(\(current\) => current\?\.domain === "live-history" && current\.providerId === providerId \? null : current\)/);
+    assert.match(stalkerMainSource, /clearScopedError\(\); setCatalogError\(null\)/);
+  });
+
+  await scenario("Stalker Home count contract distinguishes unknown verified empty and persisted totals", async () => {
+    assert.deepEqual(parseStalkerProductCounts(null), { vod: null, series: null });
+    assert.deepEqual(parseStalkerProductCounts('{"vod":0,"series":12004}'), { vod: 0, series: 12004 });
+    const values = new Map<string, string>();
+    const storage = {
+      async getItem(key: string) { return values.get(key) ?? null; },
+      async setItem(key: string, value: string) { values.set(key, value); },
+    };
+    await Promise.all([
+      writeStalkerProductCount("provider-A", "vod", 58079, storage as any),
+      writeStalkerProductCount("provider-A", "series", 12004, storage as any),
+    ]);
+    const persisted = [...values.values()].map((value) => JSON.parse(value))[0];
+    assert.deepEqual(persisted, { vod: 58079, series: 12004 });
+    assert.match(stalkerMainSource, /live=\{liveCatalog\.countKnown \? liveCatalog\.totalCount : null\}/);
+    assert.match(stalkerMainSource, /vod=\{productCounts\.vod\}[\s\S]*?series=\{productCounts\.series\}/);
+    assert.match(homeSource, /live === null \? "—" : live\.toLocaleString\(\)/);
+  });
+
+  await scenario("History cards preserve episode context and clamp only meaningful progress", () => {
+    assert.equal(historySecondaryText("episode", "Sezon 2 · Bölüm 4", "Filmler", "Bölüm"), "Sezon 2 · Bölüm 4");
+    assert.equal(historySecondaryText("movie", undefined, "Filmler", "Bölüm"), "Filmler");
+    assert.equal(visibleProgressRatio(2, 100), null);
+    assert.equal(visibleProgressRatio(50, 100), 0.5);
+    assert.equal(visibleProgressRatio(120, 100), 1);
+    assert.match(historySource, /historySecondaryText\(item\.kind, item\.subtitle/);
+    assert.match(homeSource, /homeProgressTrack: \{ height: 5/);
+    assert.match(historySource, /track: \{ height: 6/);
+  });
+
+  await scenario("Player startup feedback is layered above the native surface and clears on readiness", () => {
+    assert.match(vlcSource, /const \[firstFramePending, setFirstFramePending\] = useState\(true\)/);
+    assert.match(vlcSource, /firstFramePending \? <View style=\{styles\.loadingOverlay\}/);
+    assert.match(vlcSource, /Akış hazırlanıyor…/);
+    assert.match(vlcSource, /loadingOverlay: \{[\s\S]*?zIndex: 30,[\s\S]*?elevation: 30/);
+    assert.match(vlcSource, /handlePlaying[\s\S]*?setFirstFramePending\(false\)/);
+  });
+
+  await scenario("Foreground Live preparation notice stops once a usable snapshot exists", () => {
+    assert.match(bridgeSource, /const usableLiveCatalog = snapshot\.providerId === provider\.id/);
+    assert.match(bridgeSource, /\(phase === "preparing" \|\| phase === "syncing"\) && !usableLiveCatalog/);
+  });
+
+  await scenario("Equivalent provider global categories collapse to one canonical visible option", async () => {
+    const vod = normalizeStalkerVodCategories({ data: [
+      { id: "*", title: "ALL" },
+      { id: "0", title: "Tümü" },
+      { id: "9", title: "Drama" },
+    ] });
+    assert.deepEqual(vod.map((item) => item.id), ["*", "9"]);
+    const series = await createStalkerSeriesProductController({ async request() {
+      return { data: [{ id: "*", title: "ALL" }, { id: "0", title: "Tümü" }, { id: "5", title: "Komedi" }] };
+    } } as any, "provider-A").loadCategories();
+    assert.deepEqual(series.map((item) => item.id), ["*", "5"]);
+    assert.match(goldenCatalogSource, /filter\(\(item, index\) => index === 0 \|\| !\/\^\(\?:all\|tümü\|tum\)\$\/i\.test\(item\.name\.trim\(\)\)\)/);
+  });
+
+  await scenario("Filtered Stalker Movies and Series retain a provider-visible active category label", () => {
+    assert.match(stalkerMoviesSource, /activeCategoryLabel=\{activeCategoryLabel\}/);
+    assert.match(stalkerSeriesSource, /activeCategoryLabel=\{selectedCategory && selectedCategory\.id !== globalCategory\?\.id \? selectedCategory\.title : undefined\}/);
+    assert.match(goldenCatalogSource, /activeCategoryChip/);
+    assert.doesNotMatch(stalkerMoviesSource, /activeCategoryLabel=\{catalog\.selectedCategoryId\}/);
+  });
+
+  assert.equal(passed, 23);
+  process.stdout.write(`stalker R17-A main boundary scenarios: ${passed}/23 passed\n`);
 }
 
 void main().catch((error: unknown) => {

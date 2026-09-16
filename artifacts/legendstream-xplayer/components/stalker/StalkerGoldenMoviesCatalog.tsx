@@ -24,7 +24,7 @@ import {
   type StalkerMoviePlayable,
 } from "@/hooks/useStalkerMoviesCatalog";
 import type { StalkerProductProviderIdentity } from "@/lib/stalkerProductSession";
-import type { StalkerVodItem } from "@/lib/stalkerVod";
+import { isStalkerVodGlobalCategory, type StalkerVodItem } from "@/lib/stalkerVod";
 
 export type { StalkerMoviePlayable } from "@/hooks/useStalkerMoviesCatalog";
 
@@ -67,6 +67,10 @@ export function StalkerGoldenMoviesCatalog({
     [catalog.categories, t],
   );
   const sortedItems = useMemo(() => sortMovies(catalog.visibleItems, sort), [catalog.visibleItems, sort]);
+  const globalCategoryId = catalog.categories.find(isStalkerVodGlobalCategory)?.id;
+  const activeCategoryLabel = catalog.categories.find((category) =>
+    category.id === catalog.selectedCategoryId && category.id !== globalCategoryId,
+  )?.title;
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
   const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
 
@@ -89,6 +93,7 @@ export function StalkerGoldenMoviesCatalog({
         onSearch={catalog.setSearch}
         loading={catalog.loadingInitial || catalog.searching}
         onRefresh={() => void catalog.refresh()}
+        activeCategoryLabel={activeCategoryLabel}
       >
         <SortControl selected={sort} onSelect={setSort} />
       </CatalogHeader>}
@@ -144,7 +149,7 @@ function CatalogLoadingSkeleton({ text }: { text: string }) {
   </View>;
 }
 
-function CatalogHeader({ title, detail, search, onSearch, loading, onRefresh, children }: {
+function CatalogHeader({ title, detail, search, onSearch, loading, onRefresh, children, activeCategoryLabel }: {
   title: string;
   detail: string;
   search: string;
@@ -152,6 +157,7 @@ function CatalogHeader({ title, detail, search, onSearch, loading, onRefresh, ch
   loading: boolean;
   onRefresh: () => void;
   children?: React.ReactNode;
+  activeCategoryLabel?: string;
 }) {
   const colors = useColors();
   const { t } = useI18n();
@@ -173,6 +179,10 @@ function CatalogHeader({ title, detail, search, onSearch, loading, onRefresh, ch
         style={{ flex: 1, color: colors.foreground, minHeight: 44 }}
       />
     </View>
+    {activeCategoryLabel ? <View style={[s.activeCategoryChip, { borderColor: colors.border, backgroundColor: colors.card }]}>
+      <Feather name="tag" size={14} color={colors.primary} />
+      <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700", flex: 1 }}>{activeCategoryLabel}</Text>
+    </View> : null}
     {children}
   </View>;
 }
@@ -329,6 +339,7 @@ const s = StyleSheet.create({
   catalogHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 12 },
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },
   search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
+  activeCategoryChip: { alignSelf: "flex-start", maxWidth: "100%", borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, flexDirection: "row", alignItems: "center", gap: 7 },
   sortDropdownWrap: { paddingTop: 10, paddingBottom: 10, alignSelf: "stretch" },
   sortDropdownButton: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
   sortDropdownMenu: { marginTop: 6, borderWidth: 1, borderRadius: 12, padding: 6, gap: 3 },

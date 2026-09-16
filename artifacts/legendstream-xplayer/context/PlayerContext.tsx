@@ -159,6 +159,12 @@ interface PlayerState {
   activeProviderId?: string;
 }
 
+export type PlayerScopedError = {
+  domain: "live-history";
+  providerId: string;
+  messageKey: "historySaveFailed";
+};
+
 interface ProviderInput extends Omit<
   ProviderConfig,
   "id" | "connectedAt" | "createdAt" | "url" | "channelCount" | "needsCredentials"
@@ -176,6 +182,7 @@ interface PlayerContextValue extends PlayerState {
   isLoading: boolean;
   isEpgLoading: boolean;
   error: string | null;
+  scopedError: PlayerScopedError | null;
   m3uCatalogCommit: CatalogSyncOwnership & { sequence: number } | null;
   connectProvider: (config: ProviderInput) => Promise<boolean>;
   cancelProviderConnect: () => void;
@@ -192,6 +199,7 @@ interface PlayerContextValue extends PlayerState {
   removeWatched: (channelId: string) => Promise<void>;
   clearHistory: () => Promise<void>;
   clearError: () => void;
+  clearScopedError: (domain?: PlayerScopedError["domain"]) => void;
 }
 
 const emptyState: PlayerState = {
@@ -837,6 +845,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(false);
   const [isEpgLoading, setIsEpgLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [scopedError, setScopedError] = useState<PlayerScopedError | null>(null);
   const [m3uCatalogCommit, setM3UCatalogCommit] = useState<
     (CatalogSyncOwnership & { sequence: number }) | null
   >(null);
@@ -1034,7 +1043,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const persistLiveHistory = async (providerId: string, mutate: LiveHistoryMutation) => {
     try {
-      return await liveHistoryMutationQueueRef.current.run({
+      const committed = await liveHistoryMutationQueueRef.current.run({
         storage: liveHistoryStorage,
         current: () => liveHistoryRef.current,
         mutate,
@@ -1048,12 +1057,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           });
         },
       });
+      setScopedError((current) => current?.domain === "live-history" && current.providerId === providerId ? null : current);
+      return committed;
     } catch (caught) {
       const diagnostic = caught instanceof Error && "cause" in caught
         ? (caught as Error & { cause?: unknown }).cause ?? caught
         : caught;
       safeLog.error("LS_LIVE_HISTORY_PERSIST_FAILED", diagnostic);
-      setError("Live TV history could not be saved.");
+      setScopedError({ domain: "live-history", providerId, messageKey: "historySaveFailed" });
       return null;
     }
   };
@@ -1813,6 +1824,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       isLoading,
       isEpgLoading,
       error,
+      scopedError,
       m3uCatalogCommit,
       connectProvider,
       cancelProviderConnect,
@@ -1829,6 +1841,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       removeWatched,
       clearHistory,
       clearError: () => setError(null),
+      clearScopedError: (domain) => setScopedError((current) => !domain || current?.domain === domain ? null : current),
     }),
     [
       state,
@@ -1837,6 +1850,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       isLoading,
       isEpgLoading,
       error,
+      scopedError,
       m3uCatalogCommit,
       refreshEpg,
     ],

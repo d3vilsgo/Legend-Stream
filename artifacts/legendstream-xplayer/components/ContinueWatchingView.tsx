@@ -4,6 +4,7 @@ import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useMediaLibrary, MediaProgress } from "@/context/MediaLibraryContext";
 import { useColors } from "@/hooks/useColors";
 import { useI18n } from "@/context/I18nContext";
+import { historySecondaryText, visibleProgressRatio } from "@/lib/historyPresentation";
 
 const time = (seconds: number) => {
   const value = Math.max(0, Math.floor(seconds));
@@ -23,15 +24,16 @@ export function ContinueWatchingView({ onOpen }: { onOpen: (item: MediaProgress)
     : "Legacy progress · Account could not be matched";
 
   const row = (item: MediaProgress, playable: boolean) => {
-    const pct = item.duration > 0 ? Math.min(1, item.position / item.duration) : 0;
+    const pct = visibleProgressRatio(item.position, item.duration);
+    const identity = historySecondaryText(item.kind, item.subtitle, t("movies"), t("episode"));
     const content = <>
       <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "800" }}>{item.title}</Text>
       <Text style={{ color: colors.mutedForeground, fontSize: 12 }}>
         {playable
-          ? `${item.kind === "episode" ? t("episode") : t("movies")} · ${time(item.position)}${item.duration > 0 ? ` / ${time(item.duration)}` : ""}`
+          ? `${identity} · ${time(item.position)}${item.duration > 0 ? ` / ${time(item.duration)}` : ""}`
           : `${legacyNote} · ${time(item.position)}${item.duration > 0 ? ` / ${time(item.duration)}` : ""}`}
       </Text>
-      {item.duration > 0 ? <View style={[s.track, { backgroundColor: colors.muted }]}><View style={[s.progress, { width: `${pct * 100}%`, backgroundColor: colors.primary }]} /></View> : null}
+      {pct !== null ? <View style={[s.track, { backgroundColor: colors.muted }]}><View style={[s.progress, { width: `${pct * 100}%`, backgroundColor: colors.primary }]} /></View> : null}
     </>;
     return <View key={item.id} style={[s.row, { borderColor: colors.border, backgroundColor: colors.card }]}>
       {playable
@@ -62,8 +64,8 @@ const s = StyleSheet.create({
   clear: { paddingHorizontal: 10, paddingVertical: 8 },
   row: { borderWidth: 1, borderRadius: 14, padding: 14, flexDirection: "row", alignItems: "center", gap: 10 },
   remove: { padding: 8 },
-  track: { height: 4, borderRadius: 3, overflow: "hidden" },
-  progress: { height: 4, borderRadius: 3 },
+  track: { height: 6, borderRadius: 4, overflow: "hidden" },
+  progress: { height: 6, borderRadius: 4 },
   legacySection: { marginTop: 26, gap: 12 },
   legacyTitle: { fontSize: 18, fontWeight: "800" },
 });

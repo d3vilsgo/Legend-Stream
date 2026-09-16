@@ -516,6 +516,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 10,
     backgroundColor: "rgba(0,0,0,0.72)",
+    zIndex: 30,
+    elevation: 30,
   },
   loadingText: {
     color: "#ffffff",

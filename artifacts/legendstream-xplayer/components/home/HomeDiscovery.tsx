@@ -9,6 +9,7 @@ import { useMediaLibrary } from "@/context/MediaLibraryContext";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { normalizeImageUrl } from "@/lib/imageUrl";
+import { visibleProgressRatio } from "@/lib/historyPresentation";
 import type { Channel } from "@/lib/iptv";
 import type { XtreamSeriesItem, XtreamVodItem } from "@/lib/xtreamCatalog";
 
@@ -29,6 +30,7 @@ type HomeShelfEntry = {
   subtitle?: string;
   image?: string;
   progress?: number;
+  progressLabel?: string;
   onPress: () => void;
   onRemove?: () => void;
 };
@@ -167,15 +169,19 @@ export function HomeDiscovery({
     ? (seriesCategories > 0 ? t("categoryCount", { count: seriesCategories.toLocaleString() }) : "—")
     : series.toLocaleString();
 
-  const continueShelf = continueEntries.map<HomeShelfEntry>((item) => ({
-    id: item.id,
-    title: item.title,
-    subtitle: item.subtitle,
-    image: artworkForProgress(item),
-    progress: item.duration > 0 ? Math.max(0, Math.min(1, item.position / item.duration)) : undefined,
-    onPress: () => onOpenMedia(item),
-    onRemove: () => void removeProgress(item.source),
-  }));
+  const continueShelf = continueEntries.map<HomeShelfEntry>((item) => {
+    const progress = visibleProgressRatio(item.position, item.duration);
+    return {
+      id: item.id,
+      title: item.title,
+      subtitle: item.subtitle,
+      image: artworkForProgress(item),
+      progress: progress ?? undefined,
+      progressLabel: progress !== null ? `${Math.round(progress * 100)}%` : undefined,
+      onPress: () => onOpenMedia(item),
+      onRemove: () => void removeProgress(item.source),
+    };
+  });
   const recentShelf = recentChannels.map<HomeShelfEntry>((channel) => ({
     id: channel.id,
     title: channel.name,
@@ -437,7 +443,10 @@ function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel
         </View>
         <Text numberOfLines={1} style={[s.homeShelfCardTitle, { color: colors.foreground }]}>{item.title}</Text>
         {item.subtitle ? <Text numberOfLines={1} style={[s.homeShelfCardMeta, { color: colors.mutedForeground }]}>{item.subtitle}</Text> : null}
-        {item.progress !== undefined ? <View style={[s.homeProgressTrack, { backgroundColor: colors.muted }]}><View style={[s.homeProgressFill, { width: `${Math.round(item.progress * 100)}%`, backgroundColor: colors.primary }]} /></View> : null}
+        {item.progress !== undefined ? <>
+          <View style={[s.homeProgressTrack, { backgroundColor: colors.muted }]}><View style={[s.homeProgressFill, { width: `${Math.round(item.progress * 100)}%`, backgroundColor: colors.primary }]} /></View>
+          {item.progressLabel ? <Text style={[s.homeProgressLabel, { color: colors.mutedForeground }]}>{item.progressLabel}</Text> : null}
+        </> : null}
       </TvFocusPressable>}
     /> : loading ? <View style={s.homeShelfSkeletonRow}>{[0, 1, 2].map((itemIndex) => <View key={itemIndex} style={[s.homeShelfSkeletonCard, { borderColor: colors.border, backgroundColor: colors.card }]}><View style={[s.homeShelfSkeletonImage, { backgroundColor: colors.muted }]} /><View style={[s.homeSkeletonLine, { width: "72%", backgroundColor: colors.muted }]} /></View>)}</View> : <TvFocusPressable onPress={onSeeAll} style={[s.homeShelfEmpty, { borderColor: colors.border }]}><Text style={{ color: colors.mutedForeground }}>{emptyLabel || "—"}</Text><Feather name="arrow-right" size={17} color={colors.primary} /></TvFocusPressable>}
   </View>;
@@ -473,8 +482,9 @@ const s = StyleSheet.create({
   homeShelfRemove: { position: "absolute", top: 6, right: 6, width: 25, height: 25, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.70)" },
   homeShelfCardTitle: { fontSize: 13, lineHeight: 18, fontWeight: "700", marginTop: 7 },
   homeShelfCardMeta: { fontSize: 11, lineHeight: 15, marginTop: 1 },
-  homeProgressTrack: { height: 3, borderRadius: 3, overflow: "hidden", marginTop: 7 },
+  homeProgressTrack: { height: 5, borderRadius: 4, overflow: "hidden", marginTop: 7 },
   homeProgressFill: { height: "100%", borderRadius: 3 },
+  homeProgressLabel: { fontSize: 10, lineHeight: 13, fontWeight: "700", marginTop: 3, textAlign: "right" },
   homeShelfEmpty: { minHeight: 58, borderWidth: 1, borderRadius: 14, borderStyle: "dashed", paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
   homeSkeletonLine: { height: 12, borderRadius: 8, opacity: 0.72 },
   homeShelfSkeletonRow: { flexDirection: "row", gap: 11, paddingVertical: 3 },

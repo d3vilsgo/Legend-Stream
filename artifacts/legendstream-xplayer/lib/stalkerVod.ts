@@ -61,16 +61,25 @@ export function normalizeStalkerVodYear(value: unknown) {
 export function normalizeStalkerVodCategories(payload: unknown): StalkerVodCategory[] {
   const seen = new Set<string>();
   const categories: StalkerVodCategory[] = [];
+  let hasGlobalCategory = false;
   for (const raw of arrayRows(payload)) {
     const row = asObject(raw);
     if (!row) continue;
     const id = textField(row, "id");
     const title = textField(row, "title");
     if (!id || !title || seen.has(id)) continue;
+    const global = isStalkerVodGlobalCategory({ id, title });
+    if (global && hasGlobalCategory) continue;
     seen.add(id);
+    if (global) hasGlobalCategory = true;
     categories.push({ id, title });
   }
   return categories;
+}
+
+export function isStalkerVodGlobalCategory(category: StalkerVodCategory) {
+  const title = normalizedSearchText(category.title);
+  return category.id.trim() === "*" || title === "all" || title === "tumu" || title === "tum";
 }
 
 export function normalizeStalkerVodPage(payload: unknown, requestedPage: number): StalkerVodPage {
@@ -122,10 +131,7 @@ export function mergeStalkerVodItems(existing: readonly StalkerVodItem[], incomi
 }
 
 export function findStalkerVodGlobalCategory(categories: readonly StalkerVodCategory[]) {
-  return categories.find((category) => {
-    const title = normalizedSearchText(category.title);
-    return category.id.trim() === "*" || title === "all" || title === "tumu" || title === "tum";
-  }) ?? null;
+  return categories.find(isStalkerVodGlobalCategory) ?? null;
 }
 
 export async function loadStalkerVodCategories(session: StalkerVodSession, input: { signal?: AbortSignal } = {}): Promise<StalkerVodCategory[]> {

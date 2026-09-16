@@ -118,8 +118,8 @@ export default function OptimizedHomeScreenPaged() {
   const { t } = useI18n();
   const {
     provider, providers, channels, epgByChannel, favorites, history, isHydrating, isLoading, isEpgLoading,
-    error, connectProvider, cancelProviderConnect, refreshProvider, recoverLegacyCatalogFallback, toggleFavorite, recordWatched,
-    removeWatched, resolveProviderForSwitch, setActiveProvider, removeProvider, disconnectProvider, clearError,
+    error, scopedError, connectProvider, cancelProviderConnect, refreshProvider, recoverLegacyCatalogFallback, toggleFavorite, recordWatched,
+    removeWatched, resolveProviderForSwitch, setActiveProvider, removeProvider, disconnectProvider, clearError, clearScopedError,
   } = usePlayer();
   const { snapshot, hasUsableCache, isSyncing, isRefreshing, refreshSnapshot, refreshCatalog } = useCatalogSync();
   useCredentialDiagnosticsStartup();
@@ -244,6 +244,7 @@ export default function OptimizedHomeScreenPaged() {
   };
 
   const navigate = (target: ContentView) => {
+    if (target !== "live") clearScopedError("live-history");
     setView(target);
     if (target !== "series") { seriesRequestGenerationRef.current += 1; setSelectedSeries(null); setSeriesInfo(null); }
   };
@@ -320,6 +321,9 @@ export default function OptimizedHomeScreenPaged() {
   ];
   const top = Math.max(insets.top, Platform.OS === "web" ? 20 : 0);
   const countKnown = snapshot.providerId === provider.id && (hasUsableCache || snapshot.ready || snapshot.counts.live + snapshot.counts.vod + snapshot.counts.series > 0);
+  const visibleScopedError = view === "live" && scopedError?.domain === "live-history" && scopedError.providerId === provider.id
+    ? t(scopedError.messageKey)
+    : null;
 
   return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
     <View style={[s.header, { borderColor: colors.border }, view === "home" ? s.homeHeaderPremium : null]}>
@@ -327,7 +331,7 @@ export default function OptimizedHomeScreenPaged() {
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.nav}>{nav.map((item) => <FocusButton key={item.key} label={item.label} icon={item.icon} variant={view === item.key ? "secondary" : "ghost"} onPress={() => navigate(item.key)} />)}</ScrollView>
     </View>
 
-    {error || catalogError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}><Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError)}</Text><Pressable onPress={() => { clearError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable></View> : null}
+    {error || catalogError || visibleScopedError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}><Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError || visibleScopedError)}</Text><Pressable onPress={() => { clearError(); clearScopedError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable></View> : null}
 
     {view === "live" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedLiveCatalog provider={provider} snapshotCount={liveCount} hasMeaningfulM3ULiveGroups={categoryMetadata?.providerId === provider.id ? categoryMetadata.hasMeaningfulM3ULiveGroups : null} epgByChannel={epgByChannel} favorites={favorites} epgLoading={isEpgLoading} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
     {view === "live" && provider.type === "stalker" ? <StalkerLiveCatalog providerId={provider.id} channels={playerLiveChannels} epgByChannel={epgByChannel} favorites={favorites} epgLoading={isEpgLoading} refreshing={isLoading} onRefresh={refreshPagedCatalog} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} /> : null}

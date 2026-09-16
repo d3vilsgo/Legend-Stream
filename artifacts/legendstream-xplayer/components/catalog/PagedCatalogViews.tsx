@@ -158,6 +158,7 @@ function CatalogHeader({
   loading,
   onRefresh,
   children,
+  activeCategoryLabel,
 }: {
   title: string;
   detail: string;
@@ -166,6 +167,7 @@ function CatalogHeader({
   loading: boolean;
   onRefresh: () => void;
   children?: React.ReactNode;
+  activeCategoryLabel?: string;
 }) {
   const colors = useColors();
   const { t } = useI18n();
@@ -193,6 +195,10 @@ function CatalogHeader({
         style={{ flex: 1, color: colors.foreground, minHeight: 44 }}
       />
     </View>
+    {activeCategoryLabel ? <View style={[s.activeCategoryChip, { borderColor: colors.border, backgroundColor: colors.card }]}>
+      <Feather name="tag" size={14} color={colors.primary} />
+      <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700", flex: 1 }}>{activeCategoryLabel}</Text>
+    </View> : null}
     {children}
   </View>;
 }
@@ -375,7 +381,7 @@ function categoryOptions(categories: XtreamCategory[], allLabel: string): Catego
       id: String(item.category_id),
       name: item.category_name || String(item.category_id),
     })),
-  ];
+  ].filter((item, index) => index === 0 || !/^(?:all|tümü|tum)$/i.test(item.name.trim()));
 }
 
 function Poster({ uri, title }: { uri?: string; title: string }) {
@@ -652,6 +658,7 @@ export function GoldenSeriesCatalog({
   onBack,
   onEpisode,
   onDrawerVisibilityChange,
+  activeCategoryLabel,
 }: {
   categories: CategoryOption[];
   selectedCategory: string;
@@ -679,6 +686,7 @@ export function GoldenSeriesCatalog({
   onBack: () => void;
   onEpisode: (seasonId: string, episodeId: string) => void;
   onDrawerVisibilityChange: (visible: boolean) => void;
+  activeCategoryLabel?: string;
 }) {
   const colors = useColors();
   const { t } = useI18n();
@@ -730,6 +738,7 @@ export function GoldenSeriesCatalog({
         onSearch={onSearch}
         loading={refreshing || loadingInitial}
         onRefresh={onRefresh}
+        activeCategoryLabel={activeCategoryLabel}
       >
         <SortControl selected={sortMode} supportsAdded={supportsAdded} onSelect={onSort} />
       </CatalogHeader>}
@@ -862,6 +871,7 @@ const s = StyleSheet.create({
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },
   section: { fontSize: 20, fontWeight: "800" },
   search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
+  activeCategoryChip: { alignSelf: "flex-start", maxWidth: "100%", borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, flexDirection: "row", alignItems: "center", gap: 7 },
   sortDropdownWrap: { paddingTop: 10, paddingBottom: 10, alignSelf: "stretch" },
   sortDropdownButton: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
   sortDropdownMenu: { marginTop: 6, borderWidth: 1, borderRadius: 12, padding: 6, gap: 3 },

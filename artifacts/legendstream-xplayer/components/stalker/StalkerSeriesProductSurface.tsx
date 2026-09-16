@@ -26,6 +26,7 @@ import {
   type StalkerSeriesProductDetail,
   type StalkerSeriesProductItem,
 } from "@/lib/stalkerSeriesProduct";
+import { writeStalkerProductCount } from "@/lib/stalkerProductCounts";
 
 const visibleError = (caught: unknown, fallback: string) =>
   redactSensitiveText(caught instanceof Error ? caught.message : fallback);
@@ -181,6 +182,9 @@ export function StalkerSeriesProductSurface({
       setTotalItems(result.totalItems);
       setMaxPageItems(result.maxPageItems);
       setHasNextPage(result.hasNextPage);
+      if (page === 1 && globalCategory?.id === category.id && result.totalItems != null) {
+        void writeStalkerProductCount(provider.id, "series", result.totalItems).catch(() => undefined);
+      }
     } catch (caught) {
       if (!currentRequest(request.sequence)) return;
       if (append) {
@@ -369,5 +373,6 @@ export function StalkerSeriesProductSurface({
       void playEpisode(seasonId, episodeId);
     }}
     onDrawerVisibilityChange={onDrawerVisibilityChange}
+    activeCategoryLabel={selectedCategory && selectedCategory.id !== globalCategory?.id ? selectedCategory.title : undefined}
   />;
 }
