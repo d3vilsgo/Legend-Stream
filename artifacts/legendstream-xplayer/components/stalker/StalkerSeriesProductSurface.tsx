@@ -98,6 +98,7 @@ export function StalkerSeriesProductSurface({
   })), [categories, globalCategory?.id, t]);
   const goldenDetail = useMemo<GoldenSeriesDetailModel | null>(() => {
     if (detail) return {
+      id: `${providerScopeId}:${detail.seriesId}`,
       title: detail.title,
       seasons: detail.seasons.map((season) => ({
         id: season.id,
@@ -109,9 +110,9 @@ export function StalkerSeriesProductSurface({
         })),
       })),
     };
-    if (screen === "detail" && selectedSeriesItem) return { title: selectedSeriesItem.title, seasons: [] };
+    if (screen === "detail" && selectedSeriesItem) return { id: `${providerScopeId}:${selectedSeriesItem.id}`, title: selectedSeriesItem.title, seasons: [] };
     return null;
-  }, [detail, screen, selectedSeriesItem]);
+  }, [detail, providerScopeId, screen, selectedSeriesItem]);
 
   const beginRequest = () => {
     requestAbort.current?.abort();

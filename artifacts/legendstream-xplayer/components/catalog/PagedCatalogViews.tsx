@@ -36,6 +36,16 @@ import {
 import type { CatalogPageProviderType, CatalogPageSort } from "@/lib/catalogPaging";
 import type { Channel } from "@/lib/iptv";
 import {
+  goldenSeriesBackTarget,
+  initialGoldenSeriesSeasonId,
+  orderGoldenSeriesSeasons,
+  selectedGoldenSeriesSeason,
+  type GoldenSeriesCardModel,
+  type GoldenSeriesDetailModel,
+  type GoldenSeriesEpisodeModel,
+  type GoldenSeriesSeasonModel,
+} from "@/lib/goldenSeriesDetail";
+import {
   findStalkerLiveProviderGlobalCategory,
   isStalkerLiveGlobalCategory,
 } from "@/lib/stalkerLiveCategoryIntent";
@@ -51,10 +61,12 @@ export type CatalogSortMode = CatalogPageSort;
 export type CategoryOption = { id: string; name: string };
 type SnapshotCount = { totalCount: number | null; countKnown: boolean };
 
-export type GoldenSeriesCardModel = { id: string; title: string; image?: string };
-export type GoldenSeriesEpisodeModel = { id: string; title: string; seasonId: string };
-export type GoldenSeriesSeasonModel = { id: string; label: string; episodes: GoldenSeriesEpisodeModel[] };
-export type GoldenSeriesDetailModel = { title: string; seasons: GoldenSeriesSeasonModel[] };
+export type {
+  GoldenSeriesCardModel,
+  GoldenSeriesDetailModel,
+  GoldenSeriesEpisodeModel,
+  GoldenSeriesSeasonModel,
+} from "@/lib/goldenSeriesDetail";
 
 function pagedProviderType(type: ProviderType): CatalogPageProviderType | null {
   return type === "m3u" || type === "xtream" ? type : null;
@@ -784,33 +796,106 @@ export function GoldenSeriesCatalog({
   const { t } = useI18n();
   const { width } = useWindowDimensions();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
   const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const orderedSeasons = useMemo(
+    () => orderGoldenSeriesSeasons(detail?.seasons ?? []),
+    [detail],
+  );
+  const selectedSeason = useMemo(
+    () => selectedGoldenSeriesSeason(orderedSeasons, selectedSeasonId),
+    [orderedSeasons, selectedSeasonId],
+  );
 
   useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
+  useEffect(() => {
+    setSelectedSeasonId(initialGoldenSeriesSeasonId(orderedSeasons));
+  }, [detail?.id, orderedSeasons.length]);
 
   if (detail || detailLoading) {
-    return <View style={s.seriesDetail}>
-      <FocusButton label={t("back")} icon="arrow-left" variant="ghost" onPress={onBack} />
+    const leaveDetailLevel = () => {
+      if (goldenSeriesBackTarget(selectedSeasonId, orderedSeasons.length) === "seasons") {
+        setSelectedSeasonId(null);
+      } else {
+        onBack();
+      }
+    };
+    const seasonSelector = <FlatList
+      horizontal
+      data={orderedSeasons}
+      keyExtractor={(season) => season.id}
+      extraData={selectedSeasonId}
+      contentContainerStyle={s.seasonSelectorContent}
+      showsHorizontalScrollIndicator={false}
+      initialNumToRender={8}
+      maxToRenderPerBatch={8}
+      windowSize={5}
+      renderItem={({ item: season }) => {
+        const selected = season.id === selectedSeasonId;
+        return <Pressable
+          onPress={() => setSelectedSeasonId(season.id)}
+          style={[
+            s.seasonChip,
+            {
+              borderColor: selected ? colors.primary : colors.border,
+              backgroundColor: selected ? colors.primary : colors.card,
+            },
+          ]}
+        >
+          <Text style={{ color: selected ? colors.primaryForeground : colors.foreground, fontWeight: "800" }}>
+            {season.label}
+          </Text>
+        </Pressable>;
+      }}
+    />;
+    const detailHeader = <View>
+      <FocusButton label={t("back")} icon="arrow-left" variant="ghost" onPress={leaveDetailLevel} />
       <Text style={[s.title, { color: colors.foreground, marginTop: 14 }]}>{detail?.title ?? t("series")}</Text>
       {error ? <CatalogErrorState message={error} onRetry={onRetry} /> : null}
-      {detailLoading
-        ? <CatalogLoadingSkeleton text={t("loadingEpisodes")} />
-        : detail && detail.seasons.length
-          ? detail.seasons.map((season) => <View key={season.id} style={{ marginTop: 18 }}>
-              <Text style={[s.section, { color: colors.foreground }]}>{season.label}</Text>
-              <View style={s.list}>{season.episodes.map((episode) => <Pressable
-                key={episode.id}
-                onPress={() => onEpisode(season.id, episode.id)}
-                style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}
-              >
-                <Text style={{ color: colors.foreground, flex: 1 }}>{episode.title}</Text>
-                <Feather name="play-circle" size={24} color={colors.primary} />
-              </Pressable>)}</View>
-            </View>)
-          : <Text style={{ color: colors.mutedForeground }}>{t("noEpisodes")}</Text>}
+      {orderedSeasons.length ? <>
+        <Text style={[s.section, { color: colors.foreground, marginTop: 12 }]}>{t("season")}</Text>
+        {seasonSelector}
+      </> : null}
     </View>;
+
+    if (detailLoading) return <View style={s.seriesDetail}>
+      {detailHeader}
+      <CatalogLoadingSkeleton text={t("loadingEpisodes")} />
+    </View>;
+
+    if (!orderedSeasons.length) return <View style={s.seriesDetail}>
+      {detailHeader}
+      <Text style={[s.seriesDetailMessage, { color: colors.mutedForeground }]}>{t("noEpisodes")}</Text>
+    </View>;
+
+    if (!selectedSeason) return <View style={s.seriesDetail}>
+      {detailHeader}
+      <Text style={[s.seriesDetailMessage, { color: colors.mutedForeground }]}>{t("selectSeason")}</Text>
+    </View>;
+
+    return <FlatList
+      style={s.seriesDetailList}
+      contentContainerStyle={s.seriesEpisodeListContent}
+      data={selectedSeason.episodes}
+      keyExtractor={(episode) => episode.id}
+      ListHeaderComponent={detailHeader}
+      ListEmptyComponent={<Text style={[s.seriesDetailMessage, { color: colors.mutedForeground }]}>{t("seasonHasNoEpisodes")}</Text>}
+      renderItem={({ item: episode }) => <Pressable
+        onPress={() => onEpisode(selectedSeason.id, episode.id)}
+        style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}
+      >
+        <Text style={{ color: colors.foreground, flex: 1 }}>{episode.title}</Text>
+        <Feather name="play-circle" size={24} color={colors.primary} />
+      </Pressable>}
+      initialNumToRender={8}
+      maxToRenderPerBatch={10}
+      windowSize={7}
+      removeClippedSubviews={Platform.OS !== "web"}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator
+    />;
   }
 
   if (loadingInitial && items.length === 0) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
@@ -910,6 +995,7 @@ export function PagedSeriesCatalog({
   });
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
   const detail = selected ? {
+    id: `${provider.id}:${String(selected.series_id)}`,
     title: selected.name,
     seasons: Object.entries(info?.episodes || {}).map(([season, episodes]) => ({
       id: season,
@@ -986,6 +1072,11 @@ const s = StyleSheet.create({
   emptyGrid: { padding: 30, alignItems: "center" },
   catalogError: { margin: 18, borderWidth: 1, borderRadius: 12, padding: 14, flexDirection: "row", alignItems: "center", gap: 10 },
   seriesDetail: { flex: 1, padding: 18, maxWidth: 1500, width: "100%", alignSelf: "center" },
+  seriesDetailList: { flex: 1, maxWidth: 1500, width: "100%", alignSelf: "center" },
+  seriesEpisodeListContent: { padding: 18, paddingBottom: 40 },
+  seriesDetailMessage: { paddingVertical: 32, textAlign: "center", fontSize: 16 },
+  seasonSelectorContent: { gap: 8, paddingVertical: 10, paddingRight: 18 },
+  seasonChip: { minHeight: 42, borderWidth: 1, borderRadius: 999, paddingHorizontal: 16, alignItems: "center", justifyContent: "center" },
   list: { gap: 8 },
   episode: { borderWidth: 1, borderRadius: 12, padding: 14, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
   drawerBackdrop: { flex: 1, flexDirection: "row", backgroundColor: "rgba(0,0,0,0.52)" },

@@ -126,8 +126,9 @@ async function main() {
   // UI/source contracts: the Stalker adapter feeds the shared virtualized Golden Series surface.
   assert.match(seriesCatalog, /FlatList/);
   assert.match(seriesCatalog, /export function GoldenSeriesCatalog/);
-  assert.match(seriesCatalog, /detail\.seasons\.map/);
-  assert.match(seriesCatalog, /season\.episodes\.map/);
+  assert.match(seriesCatalog, /orderGoldenSeriesSeasons\(detail\?\.seasons \?\? \[\]\)/);
+  assert.match(seriesCatalog, /data=\{selectedSeason\.episodes\}/);
+  assert.doesNotMatch(seriesCatalog, /detail\.seasons\.map|selectedSeason\.episodes\.map/);
   assert.match(seriesCatalog, /onEndReached/);
   assert.match(seriesSurface, /mergeStalkerSeriesItems/);
   assert.match(seriesSurface, /AbortController/);
