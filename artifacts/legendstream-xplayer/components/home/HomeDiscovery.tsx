@@ -93,6 +93,9 @@ export function HomeDiscovery({
         newMovies: "Yeni Filmler",
         newSeries: "Yeni Diziler",
         newChannels: "Yeni Kanallar",
+        noLive: "Canlı yayın bulunamadı",
+        noMovies: "Film bulunamadı",
+        noSeries: "Dizi bulunamadı",
       }
     : {
         continue: "Continue Watching",
@@ -103,6 +106,9 @@ export function HomeDiscovery({
         newMovies: "New Movies",
         newSeries: "New Series",
         newChannels: "New Channels",
+        noLive: "No live channels found",
+        noMovies: "No movies found",
+        noSeries: "No series found",
       };
 
   const homeMovies = useMemo(() => movies.slice(0, 48), [movies]);
@@ -161,13 +167,9 @@ export function HomeDiscovery({
     return [...movieRows, ...seriesRows].slice(0, 6);
   }, [homeMovies, homeSeries, t]);
 
-  const liveValue = live === null ? "—" : live.toLocaleString();
-  const movieValue = vod === null
-    ? (vodCategories > 0 ? t("categoryCount", { count: vodCategories.toLocaleString() }) : "—")
-    : vod.toLocaleString();
-  const seriesValue = series === null
-    ? (seriesCategories > 0 ? t("categoryCount", { count: seriesCategories.toLocaleString() }) : "—")
-    : series.toLocaleString();
+  const liveValue = live === null ? null : live.toLocaleString();
+  const movieValue = vod === null ? null : vod.toLocaleString();
+  const seriesValue = series === null ? null : series.toLocaleString();
 
   const continueShelf = continueEntries.map<HomeShelfEntry>((item) => {
     const progress = visibleProgressRatio(item.position, item.duration);
@@ -190,21 +192,21 @@ export function HomeDiscovery({
     onPress: () => onOpenLive(channel),
     onRemove: () => onRemoveLive(channel.id),
   }));
-  const liveShelf = homeChannels.slice(0, 18).map<HomeShelfEntry>((channel) => ({
+  const liveShelf = homeChannels.slice(0, 6).map<HomeShelfEntry>((channel) => ({
     id: `live-${channel.id}`,
     title: channel.name,
     subtitle: channel.category,
     image: channel.logoUrl,
     onPress: () => onOpenLive(channel),
   }));
-  const movieShelf = homeMovies.slice(0, 18).map<HomeShelfEntry>((item) => ({
+  const movieShelf = homeMovies.slice(0, 6).map<HomeShelfEntry>((item) => ({
     id: `movie-${item.stream_id}`,
     title: item.name,
     subtitle: item.genre || t("movies"),
     image: item.stream_icon,
     onPress: () => onOpenMovie(item),
   }));
-  const seriesShelf = homeSeries.slice(0, 18).map<HomeShelfEntry>((item) => ({
+  const seriesShelf = homeSeries.slice(0, 6).map<HomeShelfEntry>((item) => ({
     id: `series-${item.series_id}`,
     title: item.name,
     subtitle: t("series"),
@@ -232,7 +234,9 @@ export function HomeDiscovery({
     image: channel.logoUrl,
     onPress: () => onOpenLive(channel),
   }));
-  const effectiveLoading = catalogLoading && !homeMovies.length && !homeSeries.length && !homeChannels.length;
+  const effectiveLoading = !homeMovies.length && !homeSeries.length && !homeChannels.length && (
+    catalogLoading || live === null || vod === null || series === null
+  );
 
   return <View style={s.homeDiscoveryShell}>
     <HomeHeroCarousel
@@ -251,9 +255,9 @@ export function HomeDiscovery({
     </View>
     {continueShelf.length || !mediaLibraryLoaded ? <HomeShelf title={copy.continue} seeAll={copy.seeAll} items={continueShelf} onSeeAll={() => onNavigate("history")} loading={!mediaLibraryLoaded} /> : null}
     {recentShelf.length ? <HomeShelf title={copy.recent} seeAll={copy.seeAll} items={recentShelf} onSeeAll={() => onNavigate("history")} compact /> : null}
-    <HomeShelf title={t("liveTv")} seeAll={copy.seeAll} items={liveShelf} onSeeAll={() => onNavigate("live")} compact />
-    <HomeShelf title={t("movies")} seeAll={copy.seeAll} items={movieShelf} onSeeAll={() => onNavigate("movies")} emptyLabel={copy.discover} loading={effectiveLoading} />
-    <HomeShelf title={t("series")} seeAll={copy.seeAll} items={seriesShelf} onSeeAll={() => onNavigate("series")} emptyLabel={copy.discover} loading={effectiveLoading} />
+    <HomeShelf title={t("liveTv")} seeAll={copy.seeAll} items={liveShelf} onSeeAll={() => onNavigate("live")} compact emptyLabel={live === 0 ? copy.noLive : copy.discover} loading={live === null} />
+    <HomeShelf title={t("movies")} seeAll={copy.seeAll} items={movieShelf} onSeeAll={() => onNavigate("movies")} emptyLabel={vod === 0 ? copy.noMovies : copy.discover} loading={vod === null} />
+    <HomeShelf title={t("series")} seeAll={copy.seeAll} items={seriesShelf} onSeeAll={() => onNavigate("series")} emptyLabel={series === 0 ? copy.noSeries : copy.discover} loading={series === null} />
     {newMovieShelf.length ? <HomeShelf title={copy.newMovies} seeAll={copy.seeAll} items={newMovieShelf} onSeeAll={() => onNavigate("movies")} /> : null}
     {newSeriesShelf.length ? <HomeShelf title={copy.newSeries} seeAll={copy.seeAll} items={newSeriesShelf} onSeeAll={() => onNavigate("series")} /> : null}
     {newChannelShelf.length ? <HomeShelf title={copy.newChannels} seeAll={copy.seeAll} items={newChannelShelf} onSeeAll={() => onNavigate("live")} compact /> : null}
@@ -386,7 +390,7 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
 function HomeCountCard({ icon, label, value, accent, onPress, preferredFocus = false }: {
   icon: keyof typeof Feather.glyphMap;
   label: string;
-  value: string;
+  value: string | null;
   accent: string;
   onPress: () => void;
   preferredFocus?: boolean;
@@ -397,7 +401,9 @@ function HomeCountCard({ icon, label, value, accent, onPress, preferredFocus = f
     <View style={[s.homeCompactStatIcon, { backgroundColor: `${accent}18` }]}><Feather name={icon} size={18} color={accent} /></View>
     <View style={{ flex: 1, minWidth: 0 }}>
       <Text style={[s.homeCompactStatLabel, { color: colors.mutedForeground }]}>{label}</Text>
-      <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.45} style={[s.homeCompactStatValue, { color: colors.foreground }]}>{value}</Text>
+      {value === null
+        ? <View style={[s.homeSkeletonLine, { width: "58%", backgroundColor: colors.muted, marginTop: 4 }]} />
+        : <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.45} style={[s.homeCompactStatValue, { color: colors.foreground }]}>{value}</Text>}
     </View>
   </TvFocusPressable>;
 }

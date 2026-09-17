@@ -221,7 +221,7 @@ async function main() {
     assert.deepEqual(persisted, { vod: 58079, series: 12004 });
     assert.match(stalkerMainSource, /live=\{liveCatalog\.countKnown \? liveCatalog\.totalCount : null\}/);
     assert.match(stalkerMainSource, /vod=\{productCounts\.vod\}[\s\S]*?series=\{productCounts\.series\}/);
-    assert.match(homeSource, /live === null \? "—" : live\.toLocaleString\(\)/);
+    assert.match(homeSource, /live === null \? null : live\.toLocaleString\(\)/);
   });
 
   await scenario("History cards preserve episode context and clamp only meaningful progress", () => {

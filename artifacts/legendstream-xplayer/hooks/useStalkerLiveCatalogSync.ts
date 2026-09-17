@@ -19,6 +19,7 @@ export function useStalkerLiveCatalogSync(provider: ProviderConfig | null) {
         countKnown: false,
         syncing: false,
         categoriesReady: false,
+        channels: [],
         refresh: refreshCatalog,
       };
     }
@@ -49,6 +50,7 @@ export function useStalkerLiveCatalogSync(provider: ProviderConfig | null) {
       countKnown,
       syncing: isSyncing || isRefreshing,
       categoriesReady,
+      channels: matches ? snapshot.live.slice(0, 8) : [],
       refresh: refreshCatalog,
     };
   }, [
@@ -58,6 +60,7 @@ export function useStalkerLiveCatalogSync(provider: ProviderConfig | null) {
     provider,
     refreshCatalog,
     snapshot.counts.live,
+    snapshot.live,
     snapshot.providerId,
     snapshot.ready,
     syncState?.phase,

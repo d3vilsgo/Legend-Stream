@@ -41,6 +41,7 @@ import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { useStalkerLiveCatalogSync } from "@/hooks/useStalkerLiveCatalogSync";
 import { useStalkerProductCounts } from "@/hooks/useStalkerProductCounts";
+import { useStalkerHomeSummary } from "@/hooks/useStalkerHomeSummary";
 import type { DownloadedMedia } from "@/lib/downloads";
 import {
   indexLiveChannelsByProviderAndId,
@@ -157,6 +158,7 @@ export default function StalkerMainPage() {
   const historyPlaybackSequenceRef = useRef(0);
   const liveCatalog = useStalkerLiveCatalogSync(provider);
   const productCounts = useStalkerProductCounts(provider?.type === "stalker" ? provider.id : undefined);
+  const homeSummary = useStalkerHomeSummary(provider?.type === "stalker" ? provider.id : undefined);
 
   const playerLiveChannels = useMemo(
     () => provider
@@ -499,10 +501,10 @@ export default function StalkerMainPage() {
               vodCategories={0}
               seriesCategories={0}
               catalogLoading={liveCatalog.syncing && !liveCatalog.countKnown}
-              channels={playerLiveChannels}
+              channels={liveCatalog.channels}
               history={history}
-              movies={[]}
-              seriesItems={[]}
+              movies={homeSummary.movies}
+              seriesItems={homeSummary.series}
               newChannels={[]}
               newMovies={[]}
               newSeries={[]}

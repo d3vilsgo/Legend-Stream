@@ -17,6 +17,7 @@ import {
   type StalkerVodItem,
 } from "@/lib/stalkerVod";
 import { writeStalkerProductCount } from "@/lib/stalkerProductCounts";
+import { writeStalkerMovieHomePreview } from "@/lib/stalkerHomeSummary";
 
 export type StalkerMoviePlayable = {
   title: string;
@@ -86,6 +87,10 @@ export function useStalkerMoviesCatalog({
       setHasNextPage(result.hasNextPage);
       if (page === 1 && isStalkerVodGlobalCategory(category) && result.totalItems != null) {
         void writeStalkerProductCount(provider.id, "vod", result.totalItems).catch(() => undefined);
+      }
+      const previewCategory = categories[0] ?? category;
+      if (page === 1 && (isStalkerVodGlobalCategory(category) || previewCategory.id === category.id)) {
+        void writeStalkerMovieHomePreview(provider.id, result.items).catch(() => undefined);
       }
     } catch (caught) {
       if (abort.signal.aborted || sequence !== pageSequenceRef.current || !sessionStillCurrent()) return;

@@ -27,6 +27,7 @@ import {
   type StalkerSeriesProductItem,
 } from "@/lib/stalkerSeriesProduct";
 import { writeStalkerProductCount } from "@/lib/stalkerProductCounts";
+import { writeStalkerSeriesHomePreview } from "@/lib/stalkerHomeSummary";
 
 const visibleError = (caught: unknown, fallback: string) =>
   redactSensitiveText(caught instanceof Error ? caught.message : fallback);
@@ -184,6 +185,10 @@ export function StalkerSeriesProductSurface({
       setHasNextPage(result.hasNextPage);
       if (page === 1 && globalCategory?.id === category.id && result.totalItems != null) {
         void writeStalkerProductCount(provider.id, "series", result.totalItems).catch(() => undefined);
+      }
+      const previewCategory = categories[0];
+      if (page === 1 && (globalCategory?.id === category.id || previewCategory?.id === category.id)) {
+        void writeStalkerSeriesHomePreview(provider.id, result.items).catch(() => undefined);
       }
     } catch (caught) {
       if (!currentRequest(request.sequence)) return;
