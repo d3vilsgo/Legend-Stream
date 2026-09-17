@@ -91,6 +91,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
   const generationRef = useRef(0);
   const stalkerRequestRef = useRef<AbortController | null>(null);
   const observedStalkerLivePublishRevisionRef = useRef(0);
+  const activeQueryKeyRef = useRef<string | null>(null);
   const pendingCommitRef = useRef<{
     startedAt: number;
     request: Pick<CatalogPageRequest, "providerType" | "kind" | "limit">;
@@ -118,6 +119,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
     () => baseRequest ? catalogPageQueryKey(baseRequest) : null,
     [baseRequest],
   );
+  activeQueryKeyRef.current = effectiveEnabled ? queryKey : null;
 
   const resolvedSnapshotTotal = resolveCatalogTotalCount({
     persistedTotal: null,
@@ -148,6 +150,8 @@ export function useCatalogPage<K extends CatalogPageKind>({
     generation: number,
   ) => {
     if (!provider || !baseRequest || !queryKey || !effectiveEnabled) return;
+    const requestQueryKey = queryKey;
+    if (activeQueryKeyRef.current !== requestQueryKey) return;
     const request: CatalogPageRequest & { kind: K } = {
       ...baseRequest,
       kind,
@@ -178,7 +182,11 @@ export function useCatalogPage<K extends CatalogPageKind>({
             signal: stalkerController?.signal,
           })
         : await getCachedCatalogPage(provider, request);
-      if (generationRef.current !== generation || stalkerController?.signal.aborted) return;
+      if (
+        generationRef.current !== generation ||
+        stalkerController?.signal.aborted ||
+        activeQueryKeyRef.current !== requestQueryKey
+      ) return;
       pendingCommitRef.current = {
         startedAt: Date.now(),
         request,
@@ -292,6 +300,9 @@ export function useCatalogPage<K extends CatalogPageKind>({
   const loadMore = useCallback(() => {
     if (
       !effectiveEnabled ||
+      !queryKey ||
+      state.queryKey !== queryKey ||
+      activeQueryKeyRef.current !== queryKey ||
       !state.hasMore ||
       state.loadingInitial ||
       state.loadingMore ||
@@ -300,10 +311,10 @@ export function useCatalogPage<K extends CatalogPageKind>({
       return;
     }
     void loadPage(state.nextCursor, "more", generationRef.current);
-  }, [effectiveEnabled, state.hasMore, state.loadingInitial, state.loadingMore, state.nextCursor, loadPage]);
+  }, [effectiveEnabled, queryKey, state.queryKey, state.hasMore, state.loadingInitial, state.loadingMore, state.nextCursor, loadPage]);
 
   const reload = useCallback(() => {
-    if (!effectiveEnabled || !provider || !baseRequest || !queryKey) return;
+    if (!effectiveEnabled || !provider || !baseRequest || !queryKey || activeQueryKeyRef.current !== queryKey) return;
     generationRef.current += 1;
     const generation = generationRef.current;
     stalkerRequestRef.current?.abort();
