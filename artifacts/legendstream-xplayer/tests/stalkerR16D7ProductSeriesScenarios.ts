@@ -121,7 +121,7 @@ async function main() {
 
   assert.equal(STALKER_SERIES_PRODUCT_LIMITS.page, 1);
   assert.equal(STALKER_SERIES_PRODUCT_LIMITS.maxCreateLinksPerSelection, 1);
-  assert.equal(STALKER_SERIES_PRODUCT_LIMITS.fallbackDialects, 0);
+  assert.equal(STALKER_SERIES_PRODUCT_LIMITS.fallbackDialects, 1);
 
   console.log("R16-D7 product Series scenarios: PASS");
 }

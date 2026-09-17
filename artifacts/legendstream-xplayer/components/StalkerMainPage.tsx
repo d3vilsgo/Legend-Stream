@@ -35,13 +35,14 @@ import {
   type ProviderConfig,
   usePlayer,
 } from "@/context/PlayerContext";
-import type { MediaProgress } from "@/context/MediaLibraryContext";
+import { useMediaLibrary, type MediaProgress } from "@/context/MediaLibraryContext";
 import type { MediaPlaybackRef } from "@/lib/mediaProgress";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { useStalkerLiveCatalogSync } from "@/hooks/useStalkerLiveCatalogSync";
 import { useStalkerProductCounts } from "@/hooks/useStalkerProductCounts";
 import { useStalkerHomeSummary } from "@/hooks/useStalkerHomeSummary";
+import { useResolvedLiveIdentityChannels } from "@/hooks/useResolvedLiveIdentityChannels";
 import type { DownloadedMedia } from "@/lib/downloads";
 import {
   indexLiveChannelsByProviderAndId,
@@ -169,6 +170,15 @@ export default function StalkerMainPage() {
         )
       : [],
     [channels, provider?.id],
+  );
+  const historyIdentityIds = useMemo(
+    () => view === "history" ? [...history, ...favorites] : [],
+    [favorites, history, view],
+  );
+  const resolvedHistoryChannels = useResolvedLiveIdentityChannels(
+    provider,
+    historyIdentityIds,
+    playerLiveChannels,
   );
 
   useEffect(() => () => {
@@ -476,7 +486,7 @@ export default function StalkerMainPage() {
       {presentedView === "history" ? (
         <HistoryView
           providerId={provider.id}
-          channels={playerLiveChannels}
+          channels={resolvedHistoryChannels}
           favorites={favorites}
           history={history}
           onOpen={openLive}
@@ -566,6 +576,7 @@ function HistoryView({ providerId, channels, favorites, history, onOpen, onOpenM
 }) {
   const colors = useColors();
   const { t } = useI18n();
+  const { entries, unscopedEntries } = useMediaLibrary();
   const channelIndex = useMemo(() => indexLiveChannelsByProviderAndId(channels), [channels]);
   const recent = useMemo(
     () => resolveLiveIdentityPresentationRows(providerId, history, channelIndex).map((channel, index) => ({ key: `history:${index}:${channel.id}`, channel })),
@@ -579,7 +590,7 @@ function HistoryView({ providerId, channels, favorites, history, onOpen, onOpenM
     () => [
       { title: t("recentlyWatched"), data: recent },
       { title: t("favorites"), data: favs },
-    ],
+    ].filter((section) => section.data.length > 0),
     [recent, favs, t],
   );
   return (
@@ -591,7 +602,7 @@ function HistoryView({ providerId, channels, favorites, history, onOpen, onOpenM
       ListHeaderComponent={
         <View>
           <Text style={[s.title, { color: colors.foreground }]}>{t("history")}</Text>
-          <View style={{ marginBottom: 30 }}><ContinueWatchingView onOpen={onOpenMedia} /></View>
+          <View style={{ marginBottom: 30 }}><ContinueWatchingView onOpen={onOpenMedia} showHeading={false} showEmpty={false} /></View>
         </View>
       }
       renderSectionHeader={({ section }) => (
@@ -606,7 +617,9 @@ function HistoryView({ providerId, channels, favorites, history, onOpen, onOpenM
           <Feather name="play" size={20} color={colors.primary} />
         </Pressable>
       )}
-      ListEmptyComponent={<Text style={{ color: colors.mutedForeground }}>{t("nothingYet")}</Text>}
+      ListEmptyComponent={entries.length || unscopedEntries.length
+        ? null
+        : <Text style={{ color: colors.mutedForeground }}>{t("nothingYet")}</Text>}
       initialNumToRender={24}
       maxToRenderPerBatch={24}
       windowSize={9}

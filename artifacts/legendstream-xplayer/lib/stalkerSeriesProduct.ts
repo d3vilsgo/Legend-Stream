@@ -123,12 +123,14 @@ const MAX_PAGE = 10_000;
 const MAX_EPISODES_PER_SEASON = 10_000;
 const MAX_TOTAL_EPISODES = 50_000;
 const SEASON_KEYS = ["season_id", "season", "season_number", "season_num"] as const;
+const EPISODE_KEYS = ["episode_id", "episode", "episode_number", "episode_num"] as const;
 
 type Params = Record<string, string | number | boolean | undefined>;
 
 type OpaqueSeasonPlaybackRef = {
   seriesId: string;
   seasonId: string;
+  episodeId: string;
   cmd: string;
 };
 
@@ -215,18 +217,62 @@ function seasonIdentity(row: Record<string, unknown>): string | null {
     const id = exactScalarIdentifier(row[key]);
     if (id) return id;
   }
+  const seasonName = displayText(row.season_name);
+  const seasonNameMatch = /^(?:season|sezon)\s+([^\s]+)$/i.exec(seasonName);
+  if (seasonNameMatch?.[1]) return seasonNameMatch[1];
+  if (seasonName) return seasonName;
   const label = displayText(row.name) || displayText(row.title);
   const match = /^(?:season|sezon)\s+([^\s]+)$/i.exec(label);
   return match?.[1] ?? null;
 }
 
 function seasonLabel(row: Record<string, unknown>, id: string) {
-  const providerLabel = displayText(row.name) || displayText(row.title);
+  const providerLabel = displayText(row.name) || displayText(row.title) || displayText(row.season_name);
   const numeric = /^\d+$/.test(id) ? Number(id) : undefined;
   if (numeric != null && Number.isFinite(numeric)) return numeric === 0 ? "Özel Bölümler" : `Sezon ${numeric}`;
   const match = /^(?:season|sezon)\s+(\d+)$/i.exec(providerLabel);
   if (match) return Number(match[1]) === 0 ? "Özel Bölümler" : `Sezon ${Number(match[1])}`;
   return providerLabel || `Sezon ${redactSensitiveText(id).slice(0, 40)}`;
+}
+
+function episodeIdentity(value: unknown): string | null {
+  const row = objectValue(value);
+  if (!row) return exactScalarIdentifier(value);
+  for (const key of EPISODE_KEYS) {
+    const id = exactScalarIdentifier(row[key]);
+    if (id) return id;
+  }
+  return exactScalarIdentifier(row.id);
+}
+
+function episodeLabel(value: unknown, id: string) {
+  const row = objectValue(value);
+  return row
+    ? displayText(row.name) || displayText(row.title) || `Bölüm ${redactSensitiveText(id).slice(0, 40)}`
+    : `Bölüm ${redactSensitiveText(id).slice(0, 40)}`;
+}
+
+function hierarchyRows(payload: unknown) {
+  const rows: Record<string, unknown>[] = [];
+  const seen = new Set<object>();
+  const append = (value: unknown, depth: number) => {
+    if (depth > 4 || rows.length >= MAX_ROWS) return;
+    if (Array.isArray(value)) {
+      for (const item of value) append(item, depth + 1);
+      return;
+    }
+    const row = objectValue(value);
+    if (!row || seen.has(row)) return;
+    seen.add(row);
+    if (seasonIdentity(row)) rows.push(row);
+    for (const [key, nested] of Object.entries(row)) {
+      if (key === "series" || key === "episodes") continue;
+      if (nested && typeof nested === "object") append(nested, depth + 1);
+    }
+  };
+  for (const row of rowsFromEnvelope(payload)) append(row, 0);
+  if (!rows.length) append(payload, 0);
+  return rows;
 }
 
 function seasonOrdinal(season: StalkerSeriesProductSeason) {
@@ -343,8 +389,8 @@ function playableUrlFromCreateLink(payload: unknown) {
   throw new StalkerPortalError("INVALID_RESPONSE", "Stalker portal did not return a playable Series link.");
 }
 
-function playbackRefKey(seriesId: string, seasonId: string) {
-  return JSON.stringify([seriesId, seasonId]);
+function episodePlaybackRefKey(seriesId: string, seasonId: string, episodeId: string) {
+  return JSON.stringify([seriesId, seasonId, episodeId]);
 }
 
 export class StalkerSeriesPlaybackOwnership {
@@ -375,6 +421,88 @@ export class StalkerSeriesPlaybackOwnership {
 
 export function createStalkerSeriesProductController(session: StalkerIsolatedSession, providerId: string) {
   const playbackRefs = new Map<string, OpaqueSeasonPlaybackRef>();
+
+  const normalizeDetail = (payload: unknown, item: StalkerSeriesProductItem) => {
+    const rowObjects = hierarchyRows(payload);
+    const seasonsById = new Map<string, {
+      row: Record<string, unknown>;
+      episodes: Map<string, StalkerSeriesProductEpisode>;
+      commands: Map<string, string>;
+    }>();
+    let totalEpisodes = 0;
+    let hierarchyTruncated = false;
+
+    for (const row of rowObjects) {
+      if (totalEpisodes >= MAX_TOTAL_EPISODES) {
+        hierarchyTruncated = true;
+        break;
+      }
+      const seasonId = seasonIdentity(row);
+      if (!seasonId) continue;
+      const bucket = seasonsById.get(seasonId) ?? {
+        row,
+        episodes: new Map<string, StalkerSeriesProductEpisode>(),
+        commands: new Map<string, string>(),
+      };
+      const seasonCmd = rawText(row.cmd);
+      const embedded = [
+        ...(Array.isArray(row.series) ? row.series : []),
+        ...(Array.isArray(row.episodes) ? row.episodes : []),
+      ];
+      const hasExplicitEpisodeIdentity = EPISODE_KEYS.some((key) => exactScalarIdentifier(row[key]) !== null);
+      const candidates = hasExplicitEpisodeIdentity ? [row, ...embedded] : embedded;
+      const remainingTotal = MAX_TOTAL_EPISODES - totalEpisodes;
+      const materializeLimit = Math.min(candidates.length, MAX_EPISODES_PER_SEASON, remainingTotal);
+      if (candidates.length > materializeLimit) hierarchyTruncated = true;
+      for (const candidate of candidates.slice(0, materializeLimit)) {
+        const episodeId = episodeIdentity(candidate);
+        if (!episodeId || bucket.episodes.has(episodeId)) continue;
+        const identity = stalkerSeriesEpisodeIdentity(providerId, item.id, seasonId, episodeId);
+        bucket.episodes.set(episodeId, {
+          key: stalkerSeriesEpisodeIdentityKey(identity),
+          id: episodeId,
+          label: episodeLabel(candidate, episodeId),
+          seasonId,
+        });
+        const episodeCmd = rawText(objectValue(candidate)?.cmd) ?? seasonCmd;
+        if (episodeCmd) bucket.commands.set(episodeId, episodeCmd);
+        totalEpisodes += 1;
+      }
+      seasonsById.set(seasonId, bucket);
+    }
+
+    const refs = new Map<string, OpaqueSeasonPlaybackRef>();
+    const seasons = sortStalkerSeriesSeasons([...seasonsById.entries()].map(([seasonId, bucket]) => {
+      const episodes = [...bucket.episodes.values()];
+      for (const episode of episodes) {
+        const cmd = bucket.commands.get(episode.id) ?? rawText(bucket.row.cmd);
+        if (cmd) refs.set(episodePlaybackRefKey(item.id, seasonId, episode.id), {
+          seriesId: item.id,
+          seasonId,
+          episodeId: episode.id,
+          cmd,
+        });
+      }
+      return {
+        id: seasonId,
+        label: seasonLabel(bucket.row, seasonId),
+        episodeCount: episodes.length,
+        episodes,
+      };
+    }));
+
+    return {
+      detail: {
+        seriesId: item.id,
+        title: item.title,
+        ...mergeMetadata(item, rowObjects),
+        seasons,
+        hierarchyTruncated,
+      } satisfies StalkerSeriesProductDetail,
+      refs,
+      episodeCount: totalEpisodes,
+    };
+  };
 
   return {
     async loadCategories(signal?: AbortSignal): Promise<StalkerSeriesProductCategory[]> {
@@ -455,51 +583,28 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
         movie_id: item.id,
         p: 1,
       }, signal);
-      const rows = rowsFromEnvelope(payload).slice(0, MAX_ROWS);
-      const rowObjects = rows.map(objectValue).filter((row): row is Record<string, unknown> => Boolean(row));
-      const seasons: StalkerSeriesProductSeason[] = [];
-      let totalEpisodes = 0;
-      let hierarchyTruncated = false;
-      playbackRefs.clear();
-
-      for (const row of rowObjects) {
-        if (totalEpisodes >= MAX_TOTAL_EPISODES) {
-          hierarchyTruncated = true;
-          break;
+      let normalized = normalizeDetail(payload, item);
+      if (normalized.episodeCount === 0 && !signal?.aborted) {
+        try {
+          const fallbackPayload = await boundedRequest(session, {
+            type: "vod",
+            action: "get_ordered_list",
+            movie_id: item.id,
+            season_id: 0,
+            episode_id: 0,
+            p: 1,
+          }, signal);
+          const fallback = normalizeDetail(fallbackPayload, item);
+          if (fallback.episodeCount > 0) normalized = fallback;
+        } catch (caught) {
+          if (signal?.aborted) throw caught;
+          // The primary hierarchy remains authoritative when the compatibility
+          // candidate is unsupported or temporarily unavailable.
         }
-        const id = seasonIdentity(row);
-        if (!id) continue;
-        const cmd = typeof row.cmd === "string" && row.cmd.trim().length ? row.cmd : null;
-        const embedded = Array.isArray(row.series) ? row.series : [];
-        const seenEpisodes = new Set<string>();
-        const episodes: StalkerSeriesProductEpisode[] = [];
-        const remainingTotal = MAX_TOTAL_EPISODES - totalEpisodes;
-        const materializeLimit = Math.min(embedded.length, MAX_EPISODES_PER_SEASON, remainingTotal);
-        if (embedded.length > materializeLimit) hierarchyTruncated = true;
-        for (const rawEpisodeId of embedded.slice(0, materializeLimit)) {
-          const episodeId = exactScalarIdentifier(rawEpisodeId);
-          if (!episodeId || seenEpisodes.has(episodeId)) continue;
-          seenEpisodes.add(episodeId);
-          const identity = stalkerSeriesEpisodeIdentity(providerId, item.id, id, episodeId);
-          episodes.push({
-            key: stalkerSeriesEpisodeIdentityKey(identity),
-            id: episodeId,
-            label: `Bölüm ${redactSensitiveText(episodeId).slice(0, 40)}`,
-            seasonId: id,
-          });
-          totalEpisodes += 1;
-        }
-        if (cmd) playbackRefs.set(playbackRefKey(item.id, id), { seriesId: item.id, seasonId: id, cmd });
-        seasons.push({ id, label: seasonLabel(row, id), episodeCount: episodes.length, episodes });
       }
-
-      return {
-        seriesId: item.id,
-        title: item.title,
-        ...mergeMetadata(item, rowObjects),
-        seasons: sortStalkerSeriesSeasons(seasons),
-        hierarchyTruncated,
-      };
+      playbackRefs.clear();
+      for (const [key, ref] of normalized.refs) playbackRefs.set(key, ref);
+      return normalized.detail;
     },
 
     async resolveEpisode(
@@ -508,7 +613,7 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
       episodeId: string,
       signal?: AbortSignal,
     ): Promise<string> {
-      const ref = playbackRefs.get(playbackRefKey(seriesId, seasonId));
+      const ref = playbackRefs.get(episodePlaybackRefKey(seriesId, seasonId, episodeId));
       if (!ref || !ref.cmd) throw new StalkerPortalError("INVALID_RESPONSE", "Series season playback reference is unavailable.");
       const payload = await boundedRequest(session, {
         type: "vod",
@@ -614,6 +719,6 @@ export const STALKER_SERIES_PRODUCT_LIMITS = {
   maxEpisodesPerSeason: MAX_EPISODES_PER_SEASON,
   maxTotalEpisodes: MAX_TOTAL_EPISODES,
   maxCreateLinksPerSelection: 1,
-  fallbackDialects: 0,
+  fallbackDialects: 1,
   timeoutMs: REQUEST_TIMEOUT_MS,
 } as const;

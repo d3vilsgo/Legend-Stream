@@ -83,7 +83,7 @@ async function main() {
   });
   assert.equal(calls.filter((call) => call.action === "create_link").length, 1);
   assert.equal(STALKER_SERIES_PRODUCT_LIMITS.maxCreateLinksPerSelection, 1);
-  assert.equal(STALKER_SERIES_PRODUCT_LIMITS.fallbackDialects, 0);
+  assert.equal(STALKER_SERIES_PRODUCT_LIMITS.fallbackDialects, 1);
   assert.ok(STALKER_SERIES_PRODUCT_LIMITS.maxEpisodesPerSeason >= 34);
   assert.ok(STALKER_SERIES_PRODUCT_LIMITS.maxTotalEpisodes >= 160);
 

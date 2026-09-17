@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppState, BackHandler, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, BackHandler, StyleSheet, Text, View } from "react-native";
 import { useMediaLibrary } from "@/context/MediaLibraryContext";
 import type { MediaPlaybackRef } from "@/lib/mediaProgress";
 import { selectChannelEpg, usePlayer } from "@/context/PlayerContext";
@@ -176,6 +176,7 @@ export function CompatibilityVideoPlayer({
   const [downloadState, setDownloadState] = useState<PlayerDownloadState>("idle");
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [startupPending, setStartupPending] = useState(true);
   const [pipSupported, setPipSupported] = useState(false);
   const [pipActive, setPipActive] = useState(false);
 
@@ -198,6 +199,10 @@ export function CompatibilityVideoPlayer({
       ? runtimeSource.replace(/\.m3u8(?=$|\?)/i, ".ts")
       : runtimeSource;
   }, [resolvedSource]);
+
+  useEffect(() => {
+    setStartupPending(true);
+  }, [currentSource, codecMode]);
 
   const clearControlsTimer = useCallback(() => {
     if (controlsTimer.current) {
@@ -516,6 +521,7 @@ export function CompatibilityVideoPlayer({
     setTextTracks([]);
     setAudioTrack(undefined);
     setTextTrack(undefined);
+    setStartupPending(true);
     resumedSource.current = null;
     if (item.isLive) void recordWatched(item.id);
     revealControls();
@@ -674,6 +680,7 @@ export function CompatibilityVideoPlayer({
   }, []);
 
   const handlePlaying = useCallback(() => {
+    setStartupPending(false);
     setPaused(false);
   }, []);
 
@@ -682,6 +689,7 @@ export function CompatibilityVideoPlayer({
   }, []);
 
   const handleError = useCallback(() => {
+    setStartupPending(false);
     setErrorText(
       codecMode === "auto"
         ? "Oynatma başarısız. AUTO modu hem donanım hem yazılım çözümlemeyi denedi."
@@ -802,6 +810,12 @@ export function CompatibilityVideoPlayer({
           onEnterPip={() => void enterPip()}
         />
       ) : null}
+      {!pipActive && startupPending && !errorText ? (
+        <View pointerEvents="none" style={styles.startupOverlay}>
+          <ActivityIndicator size="large" color="#ffffff" />
+          <Text style={styles.startupText}>Akış hazırlanıyor…</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -820,6 +834,20 @@ const styles = StyleSheet.create({
   preparing: {
     color: "#8d99a9",
     fontSize: 13,
+    fontWeight: "700",
+  },
+  startupOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 200,
+    elevation: 200,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    backgroundColor: "rgba(0,0,0,0.72)",
+  },
+  startupText: {
+    color: "#ffffff",
+    fontSize: 14,
     fontWeight: "700",
   },
 });

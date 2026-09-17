@@ -103,7 +103,7 @@ async function main() {
   assert.match(boundarySource, /Ana ekrana dön/);
 
   assert.equal(STALKER_SERIES_PRODUCT_LIMITS.maxCreateLinksPerSelection, 1);
-  assert.equal(STALKER_SERIES_PRODUCT_LIMITS.fallbackDialects, 0);
+  assert.equal(STALKER_SERIES_PRODUCT_LIMITS.fallbackDialects, 1);
 
   console.log("R16-D8 Series catalog + metadata + VOD-parity scenarios: PASS");
 }

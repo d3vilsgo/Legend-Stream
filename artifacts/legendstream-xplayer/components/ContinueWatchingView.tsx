@@ -14,7 +14,11 @@ const time = (seconds: number) => {
   return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}` : `${m}:${String(s).padStart(2, "0")}`;
 };
 
-export function ContinueWatchingView({ onOpen }: { onOpen: (item: MediaProgress) => void }) {
+export function ContinueWatchingView({ onOpen, showHeading = true, showEmpty = true }: {
+  onOpen: (item: MediaProgress) => void;
+  showHeading?: boolean;
+  showEmpty?: boolean;
+}) {
   const colors = useColors();
   const { t, language } = useI18n();
   const { entries, unscopedEntries, clearProgress, removeProgress } = useMediaLibrary();
@@ -44,11 +48,11 @@ export function ContinueWatchingView({ onOpen }: { onOpen: (item: MediaProgress)
   };
 
   return <View>
-    <View style={s.header}>
+    {showHeading ? <View style={s.header}>
       <Text style={[s.title, { color: colors.foreground }]}>{t("recentlyWatched")}</Text>
       {entries.length ? <Pressable accessibilityLabel={t("remove")} onPress={() => void clearProgress()} style={s.clear}><Feather name="trash-2" size={19} color={colors.mutedForeground} /></Pressable> : null}
-    </View>
-    {!entries.length ? <Text style={{ color: colors.mutedForeground }}>{t("nothingYet")}</Text> : null}
+    </View> : null}
+    {showEmpty && !entries.length ? <Text style={{ color: colors.mutedForeground }}>{t("nothingYet")}</Text> : null}
     <View style={{ gap: 9 }}>{entries.map((item) => row(item, true))}</View>
 
     {unscopedEntries.length ? <View style={s.legacySection}>
