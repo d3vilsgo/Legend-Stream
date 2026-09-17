@@ -270,7 +270,8 @@ async function main() {
     assert.match(LIVE_CATEGORY_FIRST_SEEN_SQL, /MIN\(rowid\)[\s\S]*GROUP BY category_id/i);
     assert.doesNotMatch(LIVE_CATEGORY_FIRST_SEEN_SQL, /COLLATE NOCASE/i);
     assert.match(repositorySource, /LIVE_CATEGORY_FIRST_SEEN_SQL/);
-    assert.match(viewsSource, /\{ id: "__all__", name: allLabel \}[\s\S]*\.\.\.categories\.map/);
+    assert.match(viewsSource, /providerGlobal \? String\(providerGlobal\.category_id\) : "__all__"/);
+    assert.match(viewsSource, /return options\.filter\(\(item, index\) => index === 0 \|\| !isStalkerLiveGlobalCategory/);
 
     const providerB = fixtureDb()
       .prepare(LIVE_CATEGORY_FIRST_SEEN_SQL)
@@ -317,7 +318,7 @@ async function main() {
     assert.match(repositorySource, /persisted\.playbackRef\.type === "stalker-live"/);
     assert.match(repositorySource, /if \(!stalkerLive\)[\s\S]*LIVE_CATEGORY_FIRST_SEEN_SQL/);
     assert.match(repositorySource, /category_name: resolveLiveCategoryDisplayName\(row\.category_id, row\.category_name\)/);
-    assert.match(viewsSource, /\{ id: "__all__", name: allLabel \}/);
+    assert.match(viewsSource, /providerGlobal \? String\(providerGlobal\.category_id\) : "__all__"/);
   });
 
   await scenario("search is SQL-paged and stale pre-search cursor is rejected", () => {

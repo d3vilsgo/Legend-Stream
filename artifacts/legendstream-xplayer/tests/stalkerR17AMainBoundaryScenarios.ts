@@ -259,7 +259,7 @@ async function main() {
       return { data: [{ id: "*", title: "ALL" }, { id: "0", title: "Tümü" }, { id: "5", title: "Komedi" }] };
     } } as any, "provider-A").loadCategories();
     assert.deepEqual(series.map((item) => item.id), ["*", "5"]);
-    assert.match(goldenCatalogSource, /filter\(\(item, index\) => index === 0 \|\| !\/\^\(\?:all\|tümü\|tum\)\$\/i\.test\(item\.name\.trim\(\)\)\)/);
+    assert.match(goldenCatalogSource, /return options\.filter\(\(item, index\) => index === 0 \|\| !isStalkerLiveGlobalCategory/);
   });
 
   await scenario("Filtered Stalker Movies and Series retain a provider-visible active category label", () => {

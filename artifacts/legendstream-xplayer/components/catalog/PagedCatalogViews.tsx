@@ -35,6 +35,10 @@ import {
 } from "@/lib/catalogCategoryMemory";
 import type { CatalogPageProviderType, CatalogPageSort } from "@/lib/catalogPaging";
 import type { Channel } from "@/lib/iptv";
+import {
+  findStalkerLiveProviderGlobalCategory,
+  isStalkerLiveGlobalCategory,
+} from "@/lib/stalkerLiveCategoryIntent";
 import type {
   XtreamCategory,
   XtreamEpisode,
@@ -130,6 +134,49 @@ function useRememberedCategory(
   return [category, setCategory] as const;
 }
 
+function useLiveCategorySelection(
+  providerId: string,
+  categories: XtreamCategory[],
+  categoriesReady: boolean,
+  explicitSelectionRequired: boolean,
+  providerGlobalCategoryId: string | null,
+) {
+  const read = () => explicitSelectionRequired
+    ? readCatalogCategorySelection(providerId, "live", null)
+    : readCatalogCategorySelection(providerId, "live");
+  const [category, setCategoryState] = useState<string | null>(read);
+
+  useEffect(() => {
+    setCategoryState(read());
+  }, [providerId, explicitSelectionRequired]);
+
+  useEffect(() => {
+    if (!categoriesReady) return;
+    const remembered = read();
+    const valid = explicitSelectionRequired && remembered === "__all__" && providerGlobalCategoryId
+      ? rememberCatalogCategorySelection(providerId, "live", providerGlobalCategoryId)
+      : explicitSelectionRequired
+        ? validateCatalogCategorySelection(
+            providerId,
+            "live",
+            categories.map((item) => String(item.category_id)),
+            null,
+          )
+        : validateCatalogCategorySelection(
+            providerId,
+            "live",
+            categories.map((item) => String(item.category_id)),
+          );
+    setCategoryState((current) => current === valid ? current : valid);
+  }, [providerId, categories, categoriesReady, explicitSelectionRequired, providerGlobalCategoryId]);
+
+  const setCategory = useCallback((categoryId: string) => {
+    setCategoryState(rememberCatalogCategorySelection(providerId, "live", categoryId));
+  }, [providerId]);
+
+  return [category, setCategory] as const;
+}
+
 function countText(totalCount: number | null, countKnown: boolean) {
   return countKnown && totalCount !== null ? totalCount.toLocaleString() : "—";
 }
@@ -159,6 +206,7 @@ function CatalogHeader({
   onRefresh,
   children,
   activeCategoryLabel,
+  searchEnabled = true,
 }: {
   title: string;
   detail: string;
@@ -168,6 +216,7 @@ function CatalogHeader({
   onRefresh: () => void;
   children?: React.ReactNode;
   activeCategoryLabel?: string;
+  searchEnabled?: boolean;
 }) {
   const colors = useColors();
   const { t } = useI18n();
@@ -190,9 +239,10 @@ function CatalogHeader({
       <TextInput
         value={search}
         onChangeText={onSearch}
+        editable={searchEnabled}
         placeholder={`${t("search")} ${title.toLowerCase()}`}
         placeholderTextColor={colors.mutedForeground}
-        style={{ flex: 1, color: colors.foreground, minHeight: 44 }}
+        style={{ flex: 1, color: colors.foreground, minHeight: 44, opacity: searchEnabled ? 1 : 0.55 }}
       />
     </View>
     {activeCategoryLabel ? <View style={[s.activeCategoryChip, { borderColor: colors.border, backgroundColor: colors.card }]}>
@@ -280,7 +330,7 @@ function useCategoryDrawerSwipe(onOpen: () => void, disabled = false) {
 function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
   visible: boolean;
   items: CategoryOption[];
-  selected: string;
+  selected: string | null;
   onSelect: (id: string) => void;
   onClose: () => void;
 }) {
@@ -374,14 +424,26 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
   </Modal>;
 }
 
-function categoryOptions(categories: XtreamCategory[], allLabel: string): CategoryOption[] {
-  return [
-    { id: "__all__", name: allLabel },
+function categoryOptions(
+  categories: XtreamCategory[],
+  allLabel: string,
+  preserveProviderGlobal = false,
+): CategoryOption[] {
+  const providerGlobal = preserveProviderGlobal ? findStalkerLiveProviderGlobalCategory(categories) : null;
+  const options = [
+    { id: providerGlobal ? String(providerGlobal.category_id) : "__all__", name: allLabel },
     ...categories.map((item) => ({
       id: String(item.category_id),
       name: item.category_name || String(item.category_id),
     })),
-  ].filter((item, index) => index === 0 || !/^(?:all|tümü|tum)$/i.test(item.name.trim()));
+  ];
+  if (!preserveProviderGlobal) {
+    return options.filter((item, index) => index === 0 || !/^(?:all|tümü|tum)$/i.test(item.name.trim()));
+  }
+  return options.filter((item, index) => index === 0 || !isStalkerLiveGlobalCategory({
+    category_id: item.id,
+    category_name: item.name,
+  }));
 }
 
 function Poster({ uri, title }: { uri?: string; title: string }) {
@@ -439,19 +501,38 @@ export function PagedLiveCatalog({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [epgClock, setEpgClock] = useState(() => Date.now());
   const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "live");
-  const [category, setCategory] = useRememberedCategory(provider.id, "live", categories, categoriesReady);
+  const stalkerLive = provider.type === "stalker";
+  const providerGlobal = stalkerLive ? findStalkerLiveProviderGlobalCategory(categories) : null;
+  const [category, setCategory] = useLiveCategorySelection(
+    provider.id,
+    categories,
+    categoriesReady,
+    stalkerLive,
+    providerGlobal ? String(providerGlobal.category_id) : null,
+  );
+  const requestCategory = category === "__all__" && providerGlobal
+    ? String(providerGlobal.category_id)
+    : category;
+  const requestReady = !stalkerLive || (categoriesReady && requestCategory !== null);
   const providerType = pagedProviderType(provider.type);
   const page = useCatalogPage({
     provider,
     providerType,
     kind: "live",
-    categoryId: category,
+    categoryId: requestCategory ?? undefined,
     search,
     sort: "default",
-    enabled: providerType !== null,
-    snapshotCount: allOnlySnapshotCount(category, search, snapshotCount),
+    enabled: stalkerLive ? requestReady : providerType !== null,
+    snapshotCount: requestCategory !== null
+      && requestCategory === (providerGlobal ? String(providerGlobal.category_id) : "__all__")
+      && search.trim() === ""
+        ? snapshotCount
+        : undefined,
   });
-  const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
+  const drawerItems = useMemo(
+    () => categoryOptions(categories, t("all"), stalkerLive),
+    [categories, stalkerLive, t],
+  );
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
   const epgSeedKey = useMemo(
     () => page.items.slice(0, EPG_PAGED_SEED_LIMIT).map((channel) => channel.id).join("|"),
@@ -467,6 +548,9 @@ export function PagedLiveCatalog({
     return () => clearInterval(timer);
   }, []);
   useEffect(() => setEpgClock(Date.now()), [category, search]);
+  useEffect(() => {
+    if (stalkerLive && category === null && search) setSearch("");
+  }, [stalkerLive, category, search]);
   useEffect(() => {
     if (!epgSeedKey) return;
     const seed = page.items.slice(0, EPG_PAGED_SEED_LIMIT);
@@ -487,9 +571,12 @@ export function PagedLiveCatalog({
       keyExtractor={(channel) => channel.id}
       ListHeaderComponent={<CatalogHeader
         title={t("liveTv")}
-        detail={`${t("channels", { count: countText(page.totalCount, page.countKnown) })}${epgLoading ? " · EPG…" : ""}`}
+        detail={stalkerLive && category === null
+          ? t("categoryNotSelected")
+          : `${t("channels", { count: countText(page.totalCount, page.countKnown) })}${epgLoading ? " · EPG…" : ""}`}
         search={search}
         onSearch={setSearch}
+        searchEnabled={!stalkerLive || category !== null}
         loading={refreshing || page.loadingInitial}
         onRefresh={() => {
           void Promise.resolve(onRefresh()).finally(() => {
@@ -502,7 +589,12 @@ export function PagedLiveCatalog({
           ? <Text style={[s.m3uHint, { color: colors.mutedForeground }]}>{t("m3uNoGroups")}</Text>
           : null}
       </CatalogHeader>}
-      ListEmptyComponent={<Text style={{ color: colors.mutedForeground, textAlign: "center", paddingVertical: 30 }}>—</Text>}
+      ListEmptyComponent={stalkerLive && category === null
+        ? <View style={s.intentionalEmptyState}>
+            <Text style={[s.intentionalEmptyTitle, { color: colors.foreground }]}>{t("selectCategory")}</Text>
+            <Text style={{ color: colors.mutedForeground, textAlign: "center" }}>{t("selectCategoryHint")}</Text>
+          </View>
+        : <Text style={{ color: colors.mutedForeground, textAlign: "center", paddingVertical: 30 }}>—</Text>}
       ListFooterComponent={<PageFooter loading={page.loadingMore} />}
       onEndReached={page.loadMore}
       onEndReachedThreshold={0.45}
@@ -881,6 +973,8 @@ const s = StyleSheet.create({
   liveRow: { borderWidth: 1, borderRadius: 14, padding: 8, flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   liveMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
   liveProgram: { fontSize: 12.5, marginTop: 3 },
+  intentionalEmptyState: { paddingHorizontal: 24, paddingVertical: 42, alignItems: "center", gap: 8 },
+  intentionalEmptyTitle: { fontSize: 18, fontWeight: "800", textAlign: "center" },
   logo: { width: 50, height: 50, borderRadius: 10 },
   iconButton: { padding: 10 },
   card: { padding: 6 },

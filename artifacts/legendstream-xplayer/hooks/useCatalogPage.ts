@@ -99,7 +99,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
   } | null>(null);
   const stalkerLive = provider?.type === "stalker" && kind === "live";
   const effectiveProviderType: CatalogPageProviderType | null = stalkerLive ? "stalker" : providerType;
-  const effectiveEnabled = stalkerLive ? true : enabled;
+  const effectiveEnabled = enabled;
 
   const baseRequest = useMemo<CatalogPageRequest | null>(() => {
     if (!provider || !effectiveProviderType) return null;

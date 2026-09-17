@@ -10,8 +10,18 @@ function selectionKey(providerId: string, kind: CatalogCategoryMemoryKind) {
 export function readCatalogCategorySelection(
   providerId: string,
   kind: CatalogCategoryMemoryKind,
+): string;
+export function readCatalogCategorySelection(
+  providerId: string,
+  kind: CatalogCategoryMemoryKind,
+  missingSelection: null,
+): string | null;
+export function readCatalogCategorySelection(
+  providerId: string,
+  kind: CatalogCategoryMemoryKind,
+  missingSelection: string | null = ALL_CATEGORY,
 ) {
-  return selections.get(selectionKey(providerId, kind)) ?? ALL_CATEGORY;
+  return selections.get(selectionKey(providerId, kind)) ?? missingSelection;
 }
 
 export function rememberCatalogCategorySelection(
@@ -28,10 +38,28 @@ export function validateCatalogCategorySelection(
   providerId: string,
   kind: CatalogCategoryMemoryKind,
   availableCategoryIds: readonly string[],
+): string;
+export function validateCatalogCategorySelection(
+  providerId: string,
+  kind: CatalogCategoryMemoryKind,
+  availableCategoryIds: readonly string[],
+  missingSelection: null,
+): string | null;
+export function validateCatalogCategorySelection(
+  providerId: string,
+  kind: CatalogCategoryMemoryKind,
+  availableCategoryIds: readonly string[],
+  missingSelection: string | null = ALL_CATEGORY,
 ) {
-  const selected = readCatalogCategorySelection(providerId, kind);
+  const key = selectionKey(providerId, kind);
+  const selected = selections.get(key) ?? missingSelection;
+  if (selected === null) return null;
   if (selected === ALL_CATEGORY || availableCategoryIds.includes(selected)) return selected;
-  return rememberCatalogCategorySelection(providerId, kind, ALL_CATEGORY);
+  if (missingSelection === null) {
+    selections.delete(key);
+    return null;
+  }
+  return rememberCatalogCategorySelection(providerId, kind, missingSelection);
 }
 
 export function clearCatalogCategoryMemoryForProvider(providerId: string) {
