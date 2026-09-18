@@ -30,10 +30,11 @@ async function scenario(name: string, run: () => void | Promise<void>) {
 }
 
 async function mainTest() {
-  await scenario("missing Stalker Live memory is NO_SELECTION instead of All", () => {
+  await scenario("missing Stalker Live memory remains null at the memory layer before H8 defaulting", () => {
     clearCatalogCategoryMemoryForProvider("missing");
     assert.equal(readCatalogCategorySelection("missing", "live", null), null);
     assert.match(views, /explicitSelectionRequired[\s\S]*readCatalogCategorySelection\(providerId, "live", null\)/);
+    assert.match(views, /validated === null[\s\S]*providerGlobalCategoryId \?\? "__all__"/);
   });
 
   await scenario("initial Stalker Live request is gated on validated explicit intent", () => {
@@ -69,11 +70,12 @@ async function mainTest() {
     assert.match(intent, /isStalkerLiveGlobalCategoryId\(id\) \|\| \/\^\(\?:all\|tümü\|tum\)\$\/i\.test\(name\)/);
   });
 
-  await scenario("stale remembered category becomes NO_SELECTION", () => {
+  await scenario("stale remembered category clears at the memory layer before H8 global fallback", () => {
     clearCatalogCategoryMemoryForProvider("stale");
     rememberCatalogCategorySelection("stale", "live", "123");
     assert.equal(validateCatalogCategorySelection("stale", "live", ["7", "8"], null), null);
     assert.equal(readCatalogCategorySelection("stale", "live", null), null);
+    assert.match(views, /validated === null[\s\S]*rememberCatalogCategorySelection\(providerId, "live", providerGlobalCategoryId \?\? "__all__"\)/);
   });
 
   await scenario("valid remembered category restores exactly", () => {
@@ -103,12 +105,10 @@ async function mainTest() {
     assert.match(pageHook, /mode === "more"[\s\S]*mergeCatalogPageItems[\s\S]*: incomingItems/);
   });
 
-  await scenario("NO_SELECTION renders deliberate guidance without a global count", () => {
-    assert.match(views, /category === null[\s\S]*t\("categoryNotSelected"\)/);
-    assert.match(views, /t\("selectCategory"\)/);
-    assert.match(views, /t\("selectCategoryHint"\)/);
+  await scenario("H8 replaces steady-state NO_SELECTION with provider-global All after categories are ready", () => {
+    assert.match(views, /stalkerLive && !categoriesReady[\s\S]*CatalogLoadingSkeleton/);
+    assert.match(views, /validated === null[\s\S]*providerGlobalCategoryId \?\? "__all__"/);
     assert.match(i18n, /categoryNotSelected: "Kategori seçilmedi"/);
-    assert.match(i18n, /selectCategory: "Bir kategori seçin"/);
   });
 
   await scenario("search remains inactive until a category is selected", () => {
