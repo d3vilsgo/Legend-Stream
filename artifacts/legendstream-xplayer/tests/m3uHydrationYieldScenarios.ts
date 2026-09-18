@@ -11,6 +11,7 @@ const repositorySource = source("lib/catalogPageRepository.ts");
 const iptvSource = source("lib/iptv.ts");
 const m3uCacheSource = source("lib/m3uCatalogCache.ts");
 const projectionSource = source("lib/m3uCacheWriteProjection.ts");
+const persistenceSource = source("lib/catalogPersistence.ts");
 
 let passed = 0;
 let failed = 0;
@@ -92,11 +93,15 @@ async function main() {
     assert.equal(yieldCount, 158);
   });
 
-  await scenario("post-first-paint M3U ingest and cache projection remain cooperative", () => {
+  await scenario("post-first-paint M3U ingest and every cache projection pass remain cooperative", () => {
     assert.match(iptvSource, /async function buildM3UCatalogCooperatively\(/);
     assert.match(iptvSource, /await buildM3UCatalogCooperatively\(entries, providerId,[\s\S]*batchSize:\s*200[\s\S]*yieldFn:\s*yieldToUi/);
     assert.match(projectionSource, /export async function buildM3UCacheWriteProjectionCooperatively\(/);
     assert.match(m3uCacheSource, /await buildM3UCacheWriteProjectionCooperatively\(provider, loaded,[\s\S]*batchSize:\s*200[\s\S]*yieldFn:\s*yieldToUi/);
+    assert.match(persistenceSource, /export async function projectCatalogItemsCooperatively\(/);
+    assert.equal((m3uCacheSource.match(/projectCatalogItemsCooperatively\(stagingProviderId,/g) ?? []).length, 3);
+    assert.doesNotMatch(m3uCacheSource, /\bprojectCatalogItems\(provider\.id/);
+    assert.doesNotMatch(m3uCacheSource, /const staged(?:Live|Vod|Series) = persisted(?:Live|Vod|Series)\.map/);
   });
 
   await scenario("catalog first-open pages persisted rows instead of hydrating a full M3U kind", () => {
@@ -109,9 +114,29 @@ async function main() {
     assert.doesNotMatch(screenSource, /hydrateM3UProviderKindCache|applyLocalVod|applyLocalSeries|applyLocalLive/);
   });
 
+  await scenario("M3U Home navigation stays provider-independent while background persistence is running", () => {
+    const navigateStart = screenSource.indexOf("const navigate = (target: ContentView) => {");
+    const navigateEnd = screenSource.indexOf("\n  };", navigateStart);
+    assert.ok(navigateStart >= 0 && navigateEnd > navigateStart);
+    const navigateBlock = screenSource.slice(navigateStart, navigateEnd);
+    assert.match(navigateBlock, /setView\(target\)/);
+    assert.doesNotMatch(navigateBlock, /provider\.type|isLoading|isSyncing|isRefreshing|busy|disabled/);
+    assert.match(screenSource, /nav\.map\(\(item\) => <FocusButton[\s\S]*onPress=\{\(\) => navigate\(item\.key\)\}/);
+    assert.doesNotMatch(screenSource, /nav\.map\(\(item\) => <FocusButton[^>]*disabled=/);
+    for (const target of ["live", "movies", "series", "history", "downloads", "settings"]) {
+      assert.match(screenSource, new RegExp(`key: "${target}" as const`));
+    }
+    assert.match(screenSource, /view === "live" && \(provider\.type === "m3u" \|\| provider\.type === "xtream"\)/);
+    assert.match(screenSource, /view === "movies" && \(provider\.type === "m3u" \|\| provider\.type === "xtream"\)/);
+    assert.match(screenSource, /view === "series" && \(provider\.type === "m3u" \|\| provider\.type === "xtream"\)/);
+    assert.match(screenSource, /view === "history" \? <HistoryView/);
+    assert.match(screenSource, /view === "downloads" \? <DownloadsView/);
+    assert.match(screenSource, /view === "settings" \? <Settings/);
+  });
+
   if (failed > 0) throw new Error("m3u hydration yield scenarios failed");
-  assert.equal(passed, 4);
-  console.log("m3u hydration yield scenarios: 4/4 passed");
+  assert.equal(passed, 5);
+  console.log("m3u hydration yield scenarios: 5/5 passed");
 }
 
 void main().catch((error) => {
