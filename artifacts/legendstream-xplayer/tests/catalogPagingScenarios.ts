@@ -544,7 +544,7 @@ async function main() {
     assert.equal((await searchStalkerVodCatalog(session, categories, "bulunmayan", { categoryId: "7" })).length, 0);
     const selectStart = moviesSearchSource.indexOf("const selectCategory =");
     const selectEnd = moviesSearchSource.indexOf("const loadMore =", selectStart);
-    assert.doesNotMatch(moviesSearchSource.slice(selectStart, selectEnd), /setSearch\("")/);
+    assert.doesNotMatch(moviesSearchSource.slice(selectStart, selectEnd), /setSearch\(""\)/);
     assert.match(moviesSearchSource, /categoryId: selected\.id/);
     assert.match(moviesSearchSource, /searchWasActiveRef/);
     assert.match(moviesSearchSource, /sequence !== searchSequenceRef\.current/);
@@ -576,7 +576,7 @@ async function main() {
     assert.equal((await searchStalkerSeriesCatalog(controller, categories, "bulunmayan", undefined, "7")).length, 0);
     const selectStart = seriesSearchSource.indexOf("const selectCategoryById =");
     const selectEnd = seriesSearchSource.indexOf("useEffect(() => {", selectStart);
-    assert.doesNotMatch(seriesSearchSource.slice(selectStart, selectEnd), /setSearchQuery\("")/);
+    assert.doesNotMatch(seriesSearchSource.slice(selectStart, selectEnd), /setSearchQuery\(""\)/);
     assert.match(seriesSearchSource, /searchStalkerSeriesCatalog\(controller, categories, query, abort\.signal, selectedCategory\.id\)/);
     assert.match(seriesSearchSource, /searchWasActiveRef/);
     assert.match(seriesSearchSource, /searchSequence\.current !== sequence/);
