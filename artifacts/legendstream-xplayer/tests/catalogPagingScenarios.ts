@@ -6,6 +6,7 @@ import { DatabaseSync } from "node:sqlite";
 import {
   buildCatalogPageSql,
   catalogPageCursorFromRow,
+  catalogPageQueryKey,
   CatalogPageFlightGuard,
   DEFAULT_CATALOG_PAGE_SIZE,
   LIVE_CATEGORIES_WITH_NAMES_SQL,
