@@ -31,6 +31,7 @@ import {
   shouldPreserveProviderSwitchSnapshot,
   tryBeginProviderSwitch,
 } from "../lib/providerSwitchUx";
+import { shouldUseWholeCatalogLoadingSkeleton } from "../lib/catalogSearchPresentation";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
@@ -137,7 +138,11 @@ async function main() {
     assert.equal(chooseProviderSwitchPath({ hasInMemoryChannels: false, hasUsableCatalogCache: false }), "network");
     assert.match(cacheSource, /if \(!cached\) return null;/);
     assert.match(playerSource, /const smart = await loadProviderSmart\(fromProvider\(existing\)\);/);
-    assert.match(viewsSource, /page\.loadingInitial && page\.items\.length === 0/);
+    assert.equal(shouldUseWholeCatalogLoadingSkeleton(true, 0, ""), true);
+    assert.equal(shouldUseWholeCatalogLoadingSkeleton(true, 0, "search"), false);
+    assert.equal(shouldUseWholeCatalogLoadingSkeleton(true, 1, ""), false);
+    assert.match(viewsSource, /shouldUseWholeCatalogLoadingSkeleton\(page\.loadingInitial, page\.items\.length, search\)/);
+    assert.match(viewsSource, /shouldUseWholeCatalogLoadingSkeleton\(loadingInitial, items\.length, search\)/);
   });
 
   await scenario("M3U catalog tabs use persisted pages and never invoke full-kind runtime loaders", () => {
