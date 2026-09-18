@@ -19,6 +19,7 @@ import {
   resolveCatalogTotalCountUpdate,
   type CatalogPageRequest,
 } from "../lib/catalogPaging";
+import { shouldUseWholeCatalogLoadingSkeleton } from "../lib/catalogSearchPresentation";
 import { searchStalkerVodCatalog } from "../lib/stalkerVod";
 import { createStalkerSeriesProductController, searchStalkerSeriesCatalog } from "../lib/stalkerSeriesProduct";
 
@@ -38,6 +39,7 @@ const videoPlayerSource = source("components/CompatibilityVideoPlayerV2.tsx");
 const playerSource = source("context/PlayerContext.tsx");
 const packageSource = source("package.json");
 const moviesSearchSource = source("hooks/useStalkerMoviesCatalog.ts");
+const goldenMoviesSource = source("components/stalker/StalkerGoldenMoviesCatalog.tsx");
 const seriesSearchSource = source("components/stalker/StalkerSeriesProductSurface.tsx");
 
 type SqlPlan = {
@@ -505,6 +507,20 @@ async function main() {
       );
     }
     assert.equal(normalizeCatalogSearchText("I İ Ğ Ü Ş Ö Ç"), "ı i ğ ü ş ö ç");
+    assert.equal(shouldUseWholeCatalogLoadingSkeleton(true, 0, ""), true);
+    assert.equal(shouldUseWholeCatalogLoadingSkeleton(true, 0, "show"), false);
+    assert.equal(shouldUseWholeCatalogLoadingSkeleton(true, 3, ""), false);
+    const liveStart = viewsSource.indexOf("export function PagedLiveCatalog");
+    const moviesStart = viewsSource.indexOf("export function PagedMoviesCatalog");
+    const goldenSeriesStart = viewsSource.indexOf("export function GoldenSeriesCatalog");
+    const pagedSeriesStart = viewsSource.indexOf("export function PagedSeriesCatalog");
+    const liveSource = viewsSource.slice(liveStart, moviesStart);
+    const moviesSource = viewsSource.slice(moviesStart, goldenSeriesStart);
+    const goldenSeriesSource = viewsSource.slice(goldenSeriesStart, pagedSeriesStart);
+    assert.match(liveSource, /shouldUseWholeCatalogLoadingSkeleton\(page\.loadingInitial, page\.items\.length, search\)/);
+    assert.match(moviesSource, /shouldUseWholeCatalogLoadingSkeleton\(page\.loadingInitial, page\.items\.length, search\)/);
+    assert.match(goldenSeriesSource, /shouldUseWholeCatalogLoadingSkeleton\(loadingInitial, items\.length, search\)/);
+    assert.match(goldenMoviesSource, /shouldUseWholeCatalogLoadingSkeleton\(catalog\.loadingInitial, catalog\.visibleItems\.length, catalog\.search\)/);
   });
 
   await scenario("Stalker Live search resolves from complete persisted catalog without changing normal lazy paging", () => {
@@ -539,10 +555,27 @@ async function main() {
       },
     };
     const categories = [{ id: "*", title: "All" }, { id: "7", title: "Spor" }, { id: "8", title: "Drama" }];
-    const result = await searchStalkerVodCatalog(session, categories, "izmir şampiyon", { categoryId: "7" });
+    const progress: string[][] = [];
+    const result = await searchStalkerVodCatalog(session, categories, "izmir şampiyon", {
+      categoryId: "7",
+      onProgress: (items) => progress.push(items.map((item) => item.portalId)),
+    });
     assert.deepEqual(result.map((item) => item.portalId), ["7-2"]);
+    assert.deepEqual(progress, [[], ["7-2"]]);
     assert.deepEqual(calls.map((call) => [call.category, call.p]), [["7", 1], ["7", 2]]);
     assert.equal((await searchStalkerVodCatalog(session, categories, "bulunmayan", { categoryId: "7" })).length, 0);
+    calls.length = 0;
+    const globalResult = await searchStalkerVodCatalog(session, categories, "izmir şampiyon");
+    assert.deepEqual(globalResult.map((item) => item.portalId), ["*-2"]);
+    assert.deepEqual(calls.map((call) => call.category), ["*", "*"]);
+    const staleAbort = new AbortController();
+    calls.length = 0;
+    await assert.rejects(() => searchStalkerVodCatalog(session, categories, "izmir", {
+      categoryId: "7",
+      signal: staleAbort.signal,
+      onProgress: () => staleAbort.abort(),
+    }), /aborted/i);
+    assert.deepEqual(calls.map((call) => call.p), [1]);
     const selectStart = moviesSearchSource.indexOf("const selectCategory =");
     const selectEnd = moviesSearchSource.indexOf("const loadMore =", selectStart);
     assert.doesNotMatch(moviesSearchSource.slice(selectStart, selectEnd), /setSearch\(""\)/);
@@ -550,6 +583,7 @@ async function main() {
     assert.match(moviesSearchSource, /searchWasActiveRef/);
     assert.match(moviesSearchSource, /sequence !== searchSequenceRef\.current/);
     assert.match(moviesSearchSource, /wasActive && selected[\s\S]*loadPage\(selected, 1, false\)/);
+    assert.match(moviesSearchSource, /onProgress:[\s\S]*sequence !== searchSequenceRef\.current/);
   });
 
   await scenario("Stalker Series search is category-scoped paged stale-safe and Turkish-aware", async () => {
@@ -571,10 +605,34 @@ async function main() {
     };
     const controller = createStalkerSeriesProductController(session, "provider-search");
     const categories = [{ id: "*", title: "All" }, { id: "7", title: "Spor" }, { id: "8", title: "Drama" }];
-    const result = await searchStalkerSeriesCatalog(controller, categories, "izmir şampiyon", undefined, "7");
+    const progress: string[][] = [];
+    const result = await searchStalkerSeriesCatalog(
+      controller,
+      categories,
+      "izmir şampiyon",
+      undefined,
+      "7",
+      (items) => progress.push(items.map((item) => item.id)),
+    );
     assert.deepEqual(result.map((item) => item.id), ["7-2"]);
+    assert.deepEqual(progress, [[], ["7-2"]]);
     assert.deepEqual(calls.map((call) => [call.category, call.p]), [["7", 1], ["7", 2]]);
     assert.equal((await searchStalkerSeriesCatalog(controller, categories, "bulunmayan", undefined, "7")).length, 0);
+    calls.length = 0;
+    const globalResult = await searchStalkerSeriesCatalog(controller, categories, "izmir şampiyon");
+    assert.deepEqual(globalResult.map((item) => item.id), ["*-2"]);
+    assert.deepEqual(calls.map((call) => call.category), ["*", "*"]);
+    const staleAbort = new AbortController();
+    calls.length = 0;
+    await assert.rejects(() => searchStalkerSeriesCatalog(
+      controller,
+      categories,
+      "izmir",
+      staleAbort.signal,
+      "7",
+      () => staleAbort.abort(),
+    ), /aborted/i);
+    assert.deepEqual(calls.map((call) => call.p), [1]);
     const selectStart = seriesSearchSource.indexOf("const selectCategoryById =");
     const selectEnd = seriesSearchSource.indexOf("useEffect(() => {", selectStart);
     assert.doesNotMatch(seriesSearchSource.slice(selectStart, selectEnd), /setSearchQuery\(""\)/);
@@ -582,6 +640,7 @@ async function main() {
     assert.match(seriesSearchSource, /searchWasActiveRef/);
     assert.match(seriesSearchSource, /searchSequence\.current !== sequence/);
     assert.match(seriesSearchSource, /wasActive && selectedCategory[\s\S]*loadPage\(selectedCategory, 1, false\)/);
+    assert.match(seriesSearchSource, /searchStalkerSeriesCatalog\([\s\S]*setSearchResults\(\[\.\.\.results\]\)/);
   });
 
   assert.equal(passed, 25);

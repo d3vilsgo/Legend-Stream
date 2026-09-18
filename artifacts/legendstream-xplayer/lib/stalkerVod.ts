@@ -148,7 +148,16 @@ export async function loadStalkerVodPage(session: StalkerVodSession, category: S
   return normalizeStalkerVodPage(payload, requestedPage);
 }
 
-export async function searchStalkerVodCatalog(session: StalkerVodSession, categories: readonly StalkerVodCategory[], query: string, input: { signal?: AbortSignal; categoryId?: string } = {}) {
+export async function searchStalkerVodCatalog(
+  session: StalkerVodSession,
+  categories: readonly StalkerVodCategory[],
+  query: string,
+  input: {
+    signal?: AbortSignal;
+    categoryId?: string;
+    onProgress?: (results: readonly StalkerVodItem[]) => void;
+  } = {},
+) {
   const needle = normalizedSearchText(query);
   if (!needle) return [];
   const requestedCategoryId = input.categoryId?.trim();
@@ -171,6 +180,7 @@ export async function searchStalkerVodCatalog(session: StalkerVodSession, catego
       seen.add(item.portalId);
       if (normalizedSearchText(item.title).includes(needle)) results.push(item);
     }
+    if (!input.signal?.aborted) input.onProgress?.([...results]);
     if (!result.hasNextPage) break;
     const nextPage = Math.max(page + 1, result.currentPage + 1);
     if (nextPage <= page) break;

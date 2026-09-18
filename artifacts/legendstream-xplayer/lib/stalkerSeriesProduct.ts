@@ -687,6 +687,7 @@ export async function searchStalkerSeriesCatalog(
   query: string,
   signal?: AbortSignal,
   categoryId?: string,
+  onProgress?: (results: readonly StalkerSeriesProductItem[]) => void,
 ) {
   const needle = normalizedSearchText(query);
   if (!needle) return [];
@@ -711,6 +712,7 @@ export async function searchStalkerSeriesCatalog(
       seen.add(item.id);
       if (normalizedSearchText(item.title).includes(needle)) results.push(item);
     }
+    if (!signal?.aborted) onProgress?.([...results]);
     if (!result.hasNextPage) break;
     const nextPage = Math.max(page + 1, result.currentPage + 1);
     if (nextPage <= page) break;

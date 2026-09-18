@@ -22,6 +22,7 @@ import { selectProgramsAt, usePlayer } from "@/context/PlayerContext";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { useCatalogPage } from "@/hooks/useCatalogPage";
+import { shouldUseWholeCatalogLoadingSkeleton } from "@/lib/catalogSearchPresentation";
 import { getCachedCatalogCategories } from "@/lib/catalogPageRepository";
 import {
   EPG_PAGED_SEED_LIMIT,
@@ -579,7 +580,7 @@ export function PagedLiveCatalog({
     }, 250);
     return () => clearTimeout(timer);
   }, [epgSeedKey, provider.id, refreshEpg]);
-  const initialEmpty = page.loadingInitial && page.items.length === 0;
+  const initialEmpty = shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search);
   if (stalkerLive && !categoriesReady) return <CatalogLoadingSkeleton text={t("loading")} />;
   if (initialEmpty) return <CatalogLoadingSkeleton text={t("loading")} />;
 
@@ -614,7 +615,9 @@ export function PagedLiveCatalog({
             <Text style={[s.intentionalEmptyTitle, { color: colors.foreground }]}>{t("selectCategory")}</Text>
             <Text style={{ color: colors.mutedForeground, textAlign: "center" }}>{t("selectCategoryHint")}</Text>
           </View>
-        : <Text style={{ color: colors.mutedForeground, textAlign: "center", paddingVertical: 30 }}>—</Text>}
+        : page.loadingInitial
+          ? <CatalogLoadingSkeleton text={t("loading")} />
+          : <Text style={{ color: colors.mutedForeground, textAlign: "center", paddingVertical: 30 }}>—</Text>}
       ListFooterComponent={<PageFooter loading={page.loadingMore} />}
       onScrollBeginDrag={() => {
         liveUserScrolledRef.current = true;
@@ -705,7 +708,7 @@ export function PagedMoviesCatalog({
 
   useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
-  if (page.loadingInitial && page.items.length === 0) return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
+  if (shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search)) return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
 
   return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
     <FlatList
@@ -731,7 +734,9 @@ export function PagedMoviesCatalog({
         <SortControl selected={effectiveSort} supportsAdded={provider.type === "xtream"} onSelect={onSort} />
       </CatalogHeader>}
       ListFooterComponent={<PageFooter loading={page.loadingMore} />}
-      ListEmptyComponent={<View style={s.emptyGrid}><Text>—</Text></View>}
+      ListEmptyComponent={page.loadingInitial
+        ? <CatalogLoadingSkeleton text={t("loadingMovies")} />
+        : <View style={s.emptyGrid}><Text>—</Text></View>}
       onEndReached={page.loadMore}
       onEndReachedThreshold={0.55}
       renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
@@ -911,7 +916,7 @@ export function GoldenSeriesCatalog({
     />;
   }
 
-  if (loadingInitial && items.length === 0) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
+  if (shouldUseWholeCatalogLoadingSkeleton(loadingInitial, items.length, search)) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
 
   return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
     <FlatList
@@ -935,9 +940,11 @@ export function GoldenSeriesCatalog({
       ListFooterComponent={footerError
         ? <CatalogErrorState message={footerError} onRetry={onRetryMore} />
         : <PageFooter loading={loadingMore} />}
-      ListEmptyComponent={error
-        ? <CatalogErrorState message={error} onRetry={onRetry} />
-        : <View style={s.emptyGrid}><Text>—</Text></View>}
+      ListEmptyComponent={loadingInitial
+        ? <CatalogLoadingSkeleton text={t("loadingSeries")} />
+        : error
+          ? <CatalogErrorState message={error} onRetry={onRetry} />
+          : <View style={s.emptyGrid}><Text>—</Text></View>}
       onEndReached={onLoadMore}
       onEndReachedThreshold={0.55}
       renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>

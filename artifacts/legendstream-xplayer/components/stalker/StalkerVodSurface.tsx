@@ -178,7 +178,14 @@ export function StalkerVodSurface({ provider, onBack, onPlayerActiveChange }: {
     setSearchResults([]);
     const timer = setTimeout(() => {
       const abort = new AbortController(); searchAbortRef.current = abort; setView("search"); setSearchLoading(true); setSearchError(null);
-      void searchStalkerVodCatalog(session, categories, query, { signal: abort.signal, categoryId: selectedCategory.id })
+      void searchStalkerVodCatalog(session, categories, query, {
+        signal: abort.signal,
+        categoryId: selectedCategory.id,
+        onProgress: (results) => {
+          if (searchSequenceRef.current !== sequence || abort.signal.aborted || !sessionStillCurrent()) return;
+          setSearchResults([...results]);
+        },
+      })
         .then((results) => { if (searchSequenceRef.current !== sequence || abort.signal.aborted || !sessionStillCurrent()) return; setSearchResults(results); })
         .catch((caught) => { if (searchSequenceRef.current !== sequence || abort.signal.aborted || !sessionStillCurrent()) return; setSearchError(safeError(caught, "Film araması tamamlanamadı.")); setSearchResults([]); })
         .finally(() => { if (searchSequenceRef.current === sequence && !abort.signal.aborted && sessionStillCurrent()) setSearchLoading(false); });

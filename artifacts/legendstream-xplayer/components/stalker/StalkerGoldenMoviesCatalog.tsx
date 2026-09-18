@@ -19,6 +19,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FocusButton } from "@/components/FocusButton";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
+import { shouldUseWholeCatalogLoadingSkeleton } from "@/lib/catalogSearchPresentation";
 import {
   useStalkerMoviesCatalog,
   type StalkerMoviePlayable,
@@ -74,7 +75,7 @@ export function StalkerGoldenMoviesCatalog({
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
   const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
 
-  if (catalog.loadingInitial && catalog.visibleItems.length === 0) {
+  if (shouldUseWholeCatalogLoadingSkeleton(catalog.loadingInitial, catalog.visibleItems.length, catalog.search)) {
     return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
   }
 
@@ -98,7 +99,9 @@ export function StalkerGoldenMoviesCatalog({
         <SortControl selected={sort} onSelect={setSort} />
       </CatalogHeader>}
       ListFooterComponent={<PageFooter loading={catalog.loadingMore} />}
-      ListEmptyComponent={<View style={s.emptyGrid}><Text>—</Text></View>}
+      ListEmptyComponent={catalog.loadingInitial || catalog.searching
+        ? <CatalogLoadingSkeleton text={t("loadingMovies")} />
+        : <View style={s.emptyGrid}><Text>—</Text></View>}
       onEndReached={catalog.loadMore}
       onEndReachedThreshold={0.55}
       renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>

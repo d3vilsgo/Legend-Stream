@@ -317,7 +317,17 @@ export function StalkerSeriesProductSurface({
       setScreen("search");
       setSearchLoading(true);
       setSearchError(null);
-      void searchStalkerSeriesCatalog(controller, categories, query, abort.signal, selectedCategory.id)
+      void searchStalkerSeriesCatalog(
+        controller,
+        categories,
+        query,
+        abort.signal,
+        selectedCategory.id,
+        (results) => {
+          if (searchSequence.current !== sequence || abort.signal.aborted || !isCurrentStalkerProductSession(provider, session)) return;
+          setSearchResults([...results]);
+        },
+      )
         .then((results) => {
           if (searchSequence.current !== sequence || abort.signal.aborted || !isCurrentStalkerProductSession(provider, session)) return;
           setSearchResults(results);

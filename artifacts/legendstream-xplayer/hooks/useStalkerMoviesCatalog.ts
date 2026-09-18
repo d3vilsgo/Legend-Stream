@@ -164,7 +164,14 @@ export function useStalkerMoviesCatalog({
       searchAbortRef.current = abort;
       setSearching(true);
       setError(null);
-      void searchStalkerVodCatalog(session, categories, query, { signal: abort.signal, categoryId: selected.id })
+      void searchStalkerVodCatalog(session, categories, query, {
+        signal: abort.signal,
+        categoryId: selected.id,
+        onProgress: (results) => {
+          if (abort.signal.aborted || sequence !== searchSequenceRef.current || !sessionStillCurrent()) return;
+          setSearchResults([...results]);
+        },
+      })
         .then((results) => {
           if (abort.signal.aborted || sequence !== searchSequenceRef.current || !sessionStillCurrent()) return;
           setSearchResults(results);
