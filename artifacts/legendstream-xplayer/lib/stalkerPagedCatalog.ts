@@ -105,10 +105,12 @@ export function clearStalkerCategoryDialect(providerId?: string) {
   else dialectByProvider.clear();
 }
 
-function dialectCandidates(providerId: string): StalkerCategoryDialect[] {
+function dialectCandidates(providerId: string, categoryId: string): StalkerCategoryDialect[] {
   const cached = dialectByProvider.get(providerId);
-  const ordered: StalkerCategoryDialect[] = ["genre_id", "genre", "dual"];
-  if (!cached) return ordered;
+  const ordered: StalkerCategoryDialect[] = categoryId === "*"
+    ? ["genre", "dual"]
+    : ["genre_id", "genre", "dual"];
+  if (!cached || !ordered.includes(cached)) return ordered;
   return [cached, ...ordered.filter((candidate) => candidate !== cached)];
 }
 
@@ -170,7 +172,7 @@ export async function fetchStalkerOrderedPage(options: FetchOrderedPageOptions):
   }
 
   let lastProbeError: unknown = null;
-  for (const dialect of dialectCandidates(options.providerId)) {
+  for (const dialect of dialectCandidates(options.providerId, categoryId)) {
     try {
       const payload = await options.session.request({
         type: options.kind,
