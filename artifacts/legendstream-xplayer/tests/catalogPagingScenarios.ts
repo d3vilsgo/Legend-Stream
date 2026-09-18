@@ -428,7 +428,8 @@ async function main() {
     const goldenSeriesSource = viewsSource.slice(goldenSeriesStart, pagedSeriesStart);
     const pagedSeriesSource = viewsSource.slice(pagedSeriesStart);
 
-    assert.match(liveSource, /onEndReached=\{page\.loadMore\}/);
+    assert.match(liveSource, /onScrollBeginDrag=\{\(\) => \{[\s\S]*liveUserScrolledRef\.current = true/);
+    assert.match(liveSource, /onEndReached=\{\(\) => \{[\s\S]*if \(liveUserScrolledRef\.current\) page\.loadMore\(\)/);
     assert.match(moviesSource, /onEndReached=\{page\.loadMore\}/);
     assert.match(pagedSeriesSource, /onLoadMore=\{page\.loadMore\}/);
     assert.match(goldenSeriesSource, /onEndReached=\{onLoadMore\}/);
