@@ -165,7 +165,7 @@ function useLiveCategorySelection(
   useEffect(() => {
     if (!categoriesReady) return;
     const remembered = read();
-    const valid = explicitSelectionRequired && remembered === "__all__" && providerGlobalCategoryId
+    const validated = explicitSelectionRequired && remembered === "__all__" && providerGlobalCategoryId
       ? rememberCatalogCategorySelection(providerId, "live", providerGlobalCategoryId)
       : explicitSelectionRequired
         ? validateCatalogCategorySelection(
@@ -179,6 +179,9 @@ function useLiveCategorySelection(
             "live",
             categories.map((item) => String(item.category_id)),
           );
+    const valid = explicitSelectionRequired && validated === null
+      ? rememberCatalogCategorySelection(providerId, "live", providerGlobalCategoryId ?? "__all__")
+      : validated;
     setCategoryState((current) => current === valid ? current : valid);
   }, [providerId, categories, categoriesReady, explicitSelectionRequired, providerGlobalCategoryId]);
 
@@ -512,6 +515,7 @@ export function PagedLiveCatalog({
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [epgClock, setEpgClock] = useState(() => Date.now());
+  const liveUserScrolledRef = useRef(false);
   const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "live");
   const stalkerLive = provider.type === "stalker";
   const providerGlobal = stalkerLive ? findStalkerLiveProviderGlobalCategory(categories) : null;
@@ -559,7 +563,10 @@ export function PagedLiveCatalog({
     const timer = setInterval(() => setEpgClock(Date.now()), 60_000);
     return () => clearInterval(timer);
   }, []);
-  useEffect(() => setEpgClock(Date.now()), [category, search]);
+  useEffect(() => {
+    liveUserScrolledRef.current = false;
+    setEpgClock(Date.now());
+  }, [category, search]);
   useEffect(() => {
     if (stalkerLive && category === null && search) setSearch("");
   }, [stalkerLive, category, search]);
@@ -573,6 +580,7 @@ export function PagedLiveCatalog({
     return () => clearTimeout(timer);
   }, [epgSeedKey, provider.id, refreshEpg]);
   const initialEmpty = page.loadingInitial && page.items.length === 0;
+  if (stalkerLive && !categoriesReady) return <CatalogLoadingSkeleton text={t("loading")} />;
   if (initialEmpty) return <CatalogLoadingSkeleton text={t("loading")} />;
 
   return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
@@ -608,7 +616,12 @@ export function PagedLiveCatalog({
           </View>
         : <Text style={{ color: colors.mutedForeground, textAlign: "center", paddingVertical: 30 }}>—</Text>}
       ListFooterComponent={<PageFooter loading={page.loadingMore} />}
-      onEndReached={page.loadMore}
+      onScrollBeginDrag={() => {
+        liveUserScrolledRef.current = true;
+      }}
+      onEndReached={() => {
+        if (liveUserScrolledRef.current) page.loadMore();
+      }}
       onEndReachedThreshold={0.45}
       renderItem={({ item: channel }) => {
         const current = selectProgramsAt(epgByChannel.get(channel.id), epgClock).now;
