@@ -121,7 +121,8 @@ async function main() {
     }
     assert.match(stalkerMoviesSource, /const columns = width >= 900 \? 5 : width >= 650 \? 4 : width >= 420 \? 3 : 2/);
     assert.match(stalkerMoviesSource, /onEndReachedThreshold=\{0\.55\}/);
-    assert.match(stalkerMoviesSource, /ListEmptyComponent=\{<View style=\{s\.emptyGrid\}><Text>—<\/Text><\/View>\}/);
+    assert.match(stalkerMoviesSource, /shouldUseWholeCatalogLoadingSkeleton\(catalog\.loadingInitial, catalog\.visibleItems\.length, catalog\.search\)/);
+    assert.match(stalkerMoviesSource, /ListEmptyComponent=\{catalog\.loadingInitial \|\| catalog\.searching[\s\S]*?<CatalogLoadingSkeleton text=\{t\("loadingMovies"\)\} \/>[\s\S]*?: <View style=\{s\.emptyGrid\}><Text>—<\/Text><\/View>\}/);
   });
 
   await scenario("Stalker Movies locks golden card geometry and removes provider-only pending decoration", () => {
