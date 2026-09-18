@@ -21,6 +21,7 @@ import {
   subscribeStalkerLivePublishRevision,
 } from "@/lib/stalkerLivePublishRevision";
 import type { CatalogRuntimeProvider } from "@/lib/catalogRuntime";
+import { isStalkerLiveGlobalCategoryId } from "@/lib/stalkerLiveCategoryIntent";
 
 type ItemForKind<K extends CatalogPageKind> = CatalogPageItem<K>;
 
@@ -104,16 +105,22 @@ export function useCatalogPage<K extends CatalogPageKind>({
 
   const baseRequest = useMemo<CatalogPageRequest | null>(() => {
     if (!provider || !effectiveProviderType) return null;
+    const normalizedSearch = search?.trim() ?? "";
+    const effectiveCategoryId = stalkerLive
+      && normalizedSearch
+      && isStalkerLiveGlobalCategoryId(categoryId)
+      ? undefined
+      : categoryId;
     return {
       providerId: provider.id,
       providerType: effectiveProviderType,
       kind,
-      categoryId,
+      categoryId: effectiveCategoryId,
       search,
       sort,
       limit: 100,
     };
-  }, [provider?.id, effectiveProviderType, kind, categoryId, search, sort]);
+  }, [provider?.id, effectiveProviderType, kind, categoryId, search, sort, stalkerLive]);
 
   const queryKey = useMemo(
     () => baseRequest ? catalogPageQueryKey(baseRequest) : null,
@@ -174,7 +181,8 @@ export function useCatalogPage<K extends CatalogPageKind>({
     }));
 
     try {
-      const result = stalkerLive
+      const stalkerPersistedSearch = stalkerLive && Boolean(request.search?.trim());
+      const result = stalkerLive && !stalkerPersistedSearch
         ? await getStalkerLazyLivePage({
             provider,
             categoryId: request.categoryId,

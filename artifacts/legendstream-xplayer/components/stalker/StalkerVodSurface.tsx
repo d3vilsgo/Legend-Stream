@@ -74,6 +74,7 @@ export function StalkerVodSurface({ provider, onBack, onPlayerActiveChange }: {
   const playbackRequestRef = useRef<{ key: string | null; sequence: number }>({ key: null, sequence: 0 });
   const playbackAbortRef = useRef<AbortController | null>(null);
   const searchSequenceRef = useRef(0);
+  const searchWasActiveRef = useRef(false);
   const searchAbortRef = useRef<AbortController | null>(null);
   const initialCategoryOpenedRef = useRef(false);
 
@@ -145,7 +146,7 @@ export function StalkerVodSurface({ provider, onBack, onPlayerActiveChange }: {
       pageAbortRef.current?.abort(); pageRequestRef.current = { key: null, sequence: pageRequestRef.current.sequence + 1 }; activeCategoryRef.current = category.id;
       setItems([]); setCurrentPage(1); setTotalItems(undefined); setMaxPageItems(undefined); setHasNextPage(false); setPagingError(null); setFailedPage(null); setListError(null);
     }
-    searchAbortRef.current?.abort(); setSearchQuery(""); setSearchResults([]); void loadPage(category, 1);
+    searchAbortRef.current?.abort(); setSearchResults([]); void loadPage(category, 1);
   };
   useEffect(() => {
     if (categoryStatus === "VOD_CATEGORIES_READY" && categories.length && !selectedCategoryId && !initialCategoryOpenedRef.current) {
@@ -171,18 +172,19 @@ export function StalkerVodSurface({ provider, onBack, onPlayerActiveChange }: {
   };
 
   useEffect(() => {
-    const query = searchQuery.trim(); searchAbortRef.current?.abort(); const sequence = ++searchSequenceRef.current;
-    if (!query) { setSearchLoading(false); setSearchError(null); setSearchResults([]); if (view === "search") setView(searchReturnView); return; }
-    if (!categories.length) return;
+    const query = searchQuery.trim(); searchAbortRef.current?.abort(); const wasActive = searchWasActiveRef.current; searchWasActiveRef.current = Boolean(query); const sequence = ++searchSequenceRef.current;
+    if (!query) { setSearchLoading(false); setSearchError(null); setSearchResults([]); if (wasActive && selectedCategory) void loadPage(selectedCategory, 1, false, true); else if (view === "search") setView(searchReturnView); return; }
+    if (!selectedCategory) return;
+    setSearchResults([]);
     const timer = setTimeout(() => {
       const abort = new AbortController(); searchAbortRef.current = abort; setView("search"); setSearchLoading(true); setSearchError(null);
-      void searchStalkerVodCatalog(session, categories, query, { signal: abort.signal })
+      void searchStalkerVodCatalog(session, categories, query, { signal: abort.signal, categoryId: selectedCategory.id })
         .then((results) => { if (searchSequenceRef.current !== sequence || abort.signal.aborted || !sessionStillCurrent()) return; setSearchResults(results); })
         .catch((caught) => { if (searchSequenceRef.current !== sequence || abort.signal.aborted || !sessionStillCurrent()) return; setSearchError(safeError(caught, "Film araması tamamlanamadı.")); setSearchResults([]); })
         .finally(() => { if (searchSequenceRef.current === sequence && !abort.signal.aborted && sessionStillCurrent()) setSearchLoading(false); });
     }, 300);
     return () => clearTimeout(timer);
-  }, [categories, provider, searchQuery, searchReturnView, session, view]);
+  }, [categories, provider, searchQuery, searchReturnView, selectedCategoryId, session]);
 
   const setQuery = (value: string) => { if (!searchQuery.trim() && value.trim()) setSearchReturnView(view === "list" ? "list" : "categories"); setSearchQuery(value); };
 

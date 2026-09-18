@@ -61,6 +61,7 @@ export function useStalkerMoviesCatalog({
   const categorySequenceRef = useRef(0);
   const pageSequenceRef = useRef(0);
   const searchSequenceRef = useRef(0);
+  const searchWasActiveRef = useRef(false);
   const playbackSequenceRef = useRef(0);
 
   const sessionStillCurrent = () => isCurrentStalkerProductSession(provider, session);
@@ -146,19 +147,24 @@ export function useStalkerMoviesCatalog({
   useEffect(() => {
     searchAbortRef.current?.abort();
     const query = search.trim();
+    const wasActive = searchWasActiveRef.current;
+    searchWasActiveRef.current = Boolean(query);
     const sequence = ++searchSequenceRef.current;
+    const selected = categories.find((category) => category.id === selectedCategoryId) ?? null;
     if (!query) {
       setSearching(false);
       setSearchResults([]);
+      if (wasActive && selected) void loadPage(selected, 1, false);
       return;
     }
-    if (!categories.length) return;
+    if (!selected) return;
+    setSearchResults([]);
     const timer = setTimeout(() => {
       const abort = new AbortController();
       searchAbortRef.current = abort;
       setSearching(true);
       setError(null);
-      void searchStalkerVodCatalog(session, categories, query, { signal: abort.signal })
+      void searchStalkerVodCatalog(session, categories, query, { signal: abort.signal, categoryId: selected.id })
         .then((results) => {
           if (abort.signal.aborted || sequence !== searchSequenceRef.current || !sessionStillCurrent()) return;
           setSearchResults(results);
@@ -173,13 +179,12 @@ export function useStalkerMoviesCatalog({
         });
     }, 300);
     return () => clearTimeout(timer);
-  }, [categories, search, session]);
+  }, [categories, search, selectedCategoryId, session]);
 
   const selectCategory = (id: string) => {
     const category = categories.find((item) => item.id === id);
     if (!category || category.id === selectedCategoryId) return;
     searchAbortRef.current?.abort();
-    setSearch("");
     setSearchResults([]);
     setSelectedCategoryId(category.id);
     setCurrentPage(1);

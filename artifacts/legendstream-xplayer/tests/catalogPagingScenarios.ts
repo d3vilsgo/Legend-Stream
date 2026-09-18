@@ -12,11 +12,14 @@ import {
   LIVE_CATEGORY_FIRST_SEEN_SQL,
   MAX_CATALOG_PAGE_SIZE,
   normalizeCatalogPageLimit,
+  normalizeCatalogSearchText,
   resolveLiveCategoryDisplayName,
   resolveCatalogTotalCount,
   resolveCatalogTotalCountUpdate,
   type CatalogPageRequest,
 } from "../lib/catalogPaging";
+import { searchStalkerVodCatalog } from "../lib/stalkerVod";
+import { createStalkerSeriesProductController, searchStalkerSeriesCatalog } from "../lib/stalkerSeriesProduct";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
@@ -33,6 +36,8 @@ const xtreamClientSource = source("lib/xtream/client.ts");
 const videoPlayerSource = source("components/CompatibilityVideoPlayerV2.tsx");
 const playerSource = source("context/PlayerContext.tsx");
 const packageSource = source("package.json");
+const moviesSearchSource = source("hooks/useStalkerMoviesCatalog.ts");
+const seriesSearchSource = source("components/stalker/StalkerSeriesProductSurface.tsx");
 
 type SqlPlan = {
   countSql: string;
@@ -442,8 +447,144 @@ async function main() {
     assert.doesNotMatch(screenSource, /setHomeVodCount|setHomeSeriesCount/);
   });
 
-  assert.equal(passed, 21);
-  console.log("catalog paging scenarios: 21/21 passed");
+  await scenario("cross-provider persisted search covers M3U and Xtream Live Movies and Series", () => {
+    const configs = [
+      { providerType: "m3u" as const, kind: "live" as const, prefix: "Live", categoryId: "Sports", targetId: "1001" },
+      { providerType: "m3u" as const, kind: "vod" as const, prefix: "Movie", categoryId: "cat-b", targetId: "1001" },
+      { providerType: "m3u" as const, kind: "series" as const, prefix: "Series", categoryId: "cat-b", targetId: "1001" },
+      { providerType: "xtream" as const, kind: "live" as const, prefix: "Live", categoryId: "Sports", targetId: "1001" },
+      { providerType: "xtream" as const, kind: "vod" as const, prefix: "Movie", categoryId: "cat-b", targetId: "1001" },
+      { providerType: "xtream" as const, kind: "series" as const, prefix: "Series", categoryId: "cat-b", targetId: "1001" },
+    ];
+    for (const config of configs) {
+      const searchedRequest = request(config.kind, {
+        providerType: config.providerType,
+        categoryId: config.categoryId,
+        search: `${config.prefix} 01001`,
+      });
+      const searched = runPlan(buildCatalogPageSql(searchedRequest));
+      assert.equal(searched.count, 1, `${config.providerType}/${config.kind} should search beyond page one`);
+      assert.equal(String(searched.rows[0]?.item_id), config.targetId);
+      assert.ok(searched.rows.every((row) => row.category_id === config.categoryId));
+
+      const broad = request(config.kind, {
+        providerType: config.providerType,
+        categoryId: config.categoryId,
+        search: `${config.prefix} 0`,
+      });
+      const first = runPlan(buildCatalogPageSql(broad));
+      assert.equal(first.rows.length, 100);
+      const cursor = cursorAfter(broad, first.rows);
+      const second = runPlan(buildCatalogPageSql({ ...broad, cursor }));
+      assert.ok(second.rows.length > 0);
+      assert.ok(second.rows.every((row) => row.category_id === config.categoryId));
+      assert.equal(new Set([...first.rows, ...second.rows].map((row) => row.item_id)).size, first.rows.length + second.rows.length);
+
+      const unfilteredRequest = request(config.kind, {
+        providerType: config.providerType,
+        categoryId: config.categoryId,
+      });
+      const unfiltered = runPlan(buildCatalogPageSql(unfilteredRequest));
+      assert.equal(unfiltered.rows.length, 100, `${config.providerType}/${config.kind} clear-search should restore category page one`);
+      assert.equal(runPlan(buildCatalogPageSql(request(config.kind, {
+        providerType: config.providerType,
+        categoryId: config.categoryId,
+        search: "__no_such_title__",
+      }))).count, 0);
+
+      const staleCursor = cursorAfter(unfilteredRequest, unfiltered.rows);
+      assert.throws(() => buildCatalogPageSql({ ...searchedRequest, cursor: staleCursor }), /cursor/i);
+      assert.notEqual(
+        catalogPageQueryKey({ ...searchedRequest, search: "show" }),
+        catalogPageQueryKey({ ...searchedRequest, search: "show tv" }),
+      );
+      assert.notEqual(
+        catalogPageQueryKey({ ...searchedRequest, search: "show tv" }),
+        catalogPageQueryKey({ ...searchedRequest, search: "" }),
+      );
+    }
+    assert.equal(normalizeCatalogSearchText("I İ Ğ Ü Ş Ö Ç"), "ı i ğ ü ş ö ç");
+  });
+
+  await scenario("Stalker Live search resolves from complete persisted catalog without changing normal lazy paging", () => {
+    const searched = runPlan(buildCatalogPageSql(request("live", {
+      providerType: "stalker",
+      categoryId: "Sports",
+      search: "Live 01001",
+    })));
+    assert.equal(searched.count, 1);
+    assert.equal(String(searched.rows[0]?.item_id), "1001");
+    assert.match(hookSource, /stalkerPersistedSearch = stalkerLive && Boolean\(request\.search\?\.trim\(\)\)/);
+    assert.match(hookSource, /stalkerLive && !stalkerPersistedSearch[\s\S]*getStalkerLazyLivePage[\s\S]*getCachedCatalogPage/);
+    assert.match(hookSource, /isStalkerLiveGlobalCategoryId\(categoryId\)[\s\S]*\? undefined/);
+    assert.match(repositorySource, /provider\.type === "stalker" && request\.kind === "live"/);
+    assert.match(hookSource, /activeQueryKeyRef\.current !== requestQueryKey/);
+  });
+
+  await scenario("Stalker Movies search is category-scoped paged stale-safe and Turkish-aware", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const session = {
+      async request(params: Record<string, unknown>) {
+        calls.push({ ...params });
+        const page = Number(params.p);
+        const category = String(params.category);
+        const title = page === 2 ? "İZMİR ŞAMPİYON" : "Başka Film";
+        return {
+          total_items: 2,
+          max_page_items: 1,
+          cur_page: page,
+          data: [{ id: `${category}-${page}`, name: title, cmd: `ffmpeg http://example.invalid/${category}/${page}`, category_id: category }],
+        };
+      },
+    };
+    const categories = [{ id: "*", title: "All" }, { id: "7", title: "Spor" }, { id: "8", title: "Drama" }];
+    const result = await searchStalkerVodCatalog(session, categories, "izmir şampiyon", { categoryId: "7" });
+    assert.deepEqual(result.map((item) => item.portalId), ["7-2"]);
+    assert.deepEqual(calls.map((call) => [call.category, call.p]), [["7", 1], ["7", 2]]);
+    assert.equal((await searchStalkerVodCatalog(session, categories, "bulunmayan", { categoryId: "7" })).length, 0);
+    const selectStart = moviesSearchSource.indexOf("const selectCategory =");
+    const selectEnd = moviesSearchSource.indexOf("const loadMore =", selectStart);
+    assert.doesNotMatch(moviesSearchSource.slice(selectStart, selectEnd), /setSearch\("")/);
+    assert.match(moviesSearchSource, /categoryId: selected\.id/);
+    assert.match(moviesSearchSource, /searchWasActiveRef/);
+    assert.match(moviesSearchSource, /sequence !== searchSequenceRef\.current/);
+    assert.match(moviesSearchSource, /wasActive && selected[\s\S]*loadPage\(selected, 1, false\)/);
+  });
+
+  await scenario("Stalker Series search is category-scoped paged stale-safe and Turkish-aware", async () => {
+    const calls: Array<Record<string, unknown>> = [];
+    const session = {
+      async handshake() { return { authenticated: true as const }; },
+      async request(params: Record<string, unknown>) {
+        calls.push({ ...params });
+        if (params.action !== "get_ordered_list") return [];
+        const page = Number(params.p);
+        const category = String(params.category);
+        return {
+          total_items: 2,
+          max_page_items: 1,
+          cur_page: page,
+          data: [{ id: `${category}-${page}`, name: page === 2 ? "İZMİR ŞAMPİYON" : "Başka Dizi", category_id: category }],
+        };
+      },
+    };
+    const controller = createStalkerSeriesProductController(session, "provider-search");
+    const categories = [{ id: "*", title: "All" }, { id: "7", title: "Spor" }, { id: "8", title: "Drama" }];
+    const result = await searchStalkerSeriesCatalog(controller, categories, "izmir şampiyon", undefined, "7");
+    assert.deepEqual(result.map((item) => item.id), ["7-2"]);
+    assert.deepEqual(calls.map((call) => [call.category, call.p]), [["7", 1], ["7", 2]]);
+    assert.equal((await searchStalkerSeriesCatalog(controller, categories, "bulunmayan", undefined, "7")).length, 0);
+    const selectStart = seriesSearchSource.indexOf("const selectCategoryById =");
+    const selectEnd = seriesSearchSource.indexOf("useEffect(() => {", selectStart);
+    assert.doesNotMatch(seriesSearchSource.slice(selectStart, selectEnd), /setSearchQuery\("")/);
+    assert.match(seriesSearchSource, /searchStalkerSeriesCatalog\(controller, categories, query, abort\.signal, selectedCategory\.id\)/);
+    assert.match(seriesSearchSource, /searchWasActiveRef/);
+    assert.match(seriesSearchSource, /searchSequence\.current !== sequence/);
+    assert.match(seriesSearchSource, /wasActive && selectedCategory[\s\S]*loadPage\(selectedCategory, 1, false\)/);
+  });
+
+  assert.equal(passed, 25);
+  console.log("catalog paging scenarios: 25/25 passed");
 }
 
 void main().catch((error) => {

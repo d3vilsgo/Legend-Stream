@@ -159,8 +159,12 @@ function mapRows(
 function compatibleProvider(provider: CatalogRuntimeProvider, request: CatalogPageRequest) {
   return (
     provider.id === request.providerId &&
-    (provider.type === "m3u" || provider.type === "xtream") &&
-    provider.type === request.providerType
+    provider.type === request.providerType &&
+    (
+      provider.type === "m3u" ||
+      provider.type === "xtream" ||
+      (provider.type === "stalker" && request.kind === "live")
+    )
   );
 }
 

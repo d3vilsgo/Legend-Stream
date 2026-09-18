@@ -337,7 +337,7 @@ export function sortStalkerSeriesItems(
 }
 
 function normalizedSearchText(value: string) {
-  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("tr-TR").trim();
+  return value.toLocaleLowerCase("tr-TR").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim();
 }
 
 function linkedTimeoutSignal(external?: AbortSignal) {
@@ -686,18 +686,26 @@ export async function searchStalkerSeriesCatalog(
   categories: readonly StalkerSeriesProductCategory[],
   query: string,
   signal?: AbortSignal,
+  categoryId?: string,
 ) {
   const needle = normalizedSearchText(query);
   if (!needle) return [];
-  const globalCategory = findStalkerSeriesGlobalCategory(categories);
-  if (!globalCategory) throw new Error("Global Series search requires the provider All category.");
+  const requestedCategoryId = categoryId?.trim();
+  const searchCategory = requestedCategoryId
+    ? categories.find((category) => category.id === requestedCategoryId) ?? null
+    : findStalkerSeriesGlobalCategory(categories);
+  if (!searchCategory) {
+    throw new Error(requestedCategoryId
+      ? "Selected Series search category is unavailable."
+      : "Global Series search requires the provider All category.");
+  }
 
   const results: StalkerSeriesProductItem[] = [];
   const seen = new Set<string>();
   let page = 1;
   while (page <= MAX_PAGE) {
     if (signal?.aborted) throw new Error("Series search aborted.");
-    const result = await controller.loadPage(globalCategory, page, signal);
+    const result = await controller.loadPage(searchCategory, page, signal);
     for (const item of result.items) {
       if (seen.has(item.id)) continue;
       seen.add(item.id);

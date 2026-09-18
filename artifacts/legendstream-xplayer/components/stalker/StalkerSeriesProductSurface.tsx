@@ -81,6 +81,7 @@ export function StalkerSeriesProductSurface({
   const requestSequence = useRef(0);
   const requestAbort = useRef<AbortController | null>(null);
   const searchSequence = useRef(0);
+  const searchWasActiveRef = useRef(false);
   const searchAbort = useRef<AbortController | null>(null);
   const pageInFlight = useRef<string | null>(null);
   const initialCategoryOpenedRef = useRef(false);
@@ -214,7 +215,6 @@ export function StalkerSeriesProductSurface({
     searchAbort.current?.abort();
     requestAbort.current?.abort();
     requestSequence.current += 1;
-    setSearchQuery("");
     setSearchResults([]);
     setItems([]);
     setDetail(null);
@@ -293,22 +293,31 @@ export function StalkerSeriesProductSurface({
   useEffect(() => {
     const query = searchQuery.trim();
     searchAbort.current?.abort();
+    const wasActive = searchWasActiveRef.current;
+    searchWasActiveRef.current = Boolean(query);
     const sequence = ++searchSequence.current;
     if (!query) {
       setSearchLoading(false);
       setSearchError(null);
       setSearchResults([]);
-      if (screen === "search") setScreen(searchReturnScreen);
+      if (wasActive && selectedCategory) {
+        setItems([]);
+        resetPaging();
+        void loadPage(selectedCategory, 1, false);
+      } else if (screen === "search") {
+        setScreen(searchReturnScreen);
+      }
       return;
     }
-    if (!categories.length) return;
+    if (!selectedCategory) return;
+    setSearchResults([]);
     const timer = setTimeout(() => {
       const abort = new AbortController();
       searchAbort.current = abort;
       setScreen("search");
       setSearchLoading(true);
       setSearchError(null);
-      void searchStalkerSeriesCatalog(controller, categories, query, abort.signal)
+      void searchStalkerSeriesCatalog(controller, categories, query, abort.signal, selectedCategory.id)
         .then((results) => {
           if (searchSequence.current !== sequence || abort.signal.aborted || !isCurrentStalkerProductSession(provider, session)) return;
           setSearchResults(results);
@@ -323,7 +332,7 @@ export function StalkerSeriesProductSurface({
         });
     }, 300);
     return () => clearTimeout(timer);
-  }, [categories, controller, provider, searchQuery, searchReturnScreen, screen, session]);
+  }, [categories, controller, provider, searchQuery, searchReturnScreen, selectedCategoryId, session]);
 
   const retry = () => {
     if (screen === "categories") void loadCategories();
