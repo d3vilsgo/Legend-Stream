@@ -1,4 +1,5 @@
 import { StalkerPortalError, type StalkerPortalDiagnosticsContext, type StalkerPortalSession } from "./stalkerPortal";
+import { isStalkerLiveGlobalCategoryId } from "./stalkerLiveCategoryIntent";
 
 export type StalkerCatalogKind = "itv" | "vod" | "series";
 export type StalkerCategoryDialect = "genre_id" | "genre" | "dual";
@@ -125,7 +126,7 @@ function rowCategoryId(row: Record<string, unknown>) {
 }
 
 function assertOrderedPageCategory(rows: readonly Record<string, unknown>[], categoryId: string) {
-  if (categoryId === "0" || rows.length === 0) return;
+  if (isStalkerLiveGlobalCategoryId(categoryId) || rows.length === 0) return;
   const explicit = rows.map(rowCategoryId).filter(Boolean);
   if (explicit.length === 0) return;
   if (explicit.some((value) => value !== categoryId)) {
