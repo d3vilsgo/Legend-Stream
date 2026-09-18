@@ -110,7 +110,7 @@ async function main() {
   const initialCategoryEffectStart = surfaceSource.indexOf("useEffect(() => {", selectCategoryStart);
   const selectCategorySource = surfaceSource.slice(selectCategoryStart, initialCategoryEffectStart);
   const activeSearchStart = selectCategorySource.indexOf("if (activeSearch)");
-  const inactiveSearchStart = selectCategorySource.indexOf("searchAbort.current?.abort();", activeSearchStart + 1);
+  const inactiveSearchStart = selectCategorySource.lastIndexOf("searchAbort.current?.abort();");
   const activeSearchSource = selectCategorySource.slice(activeSearchStart, inactiveSearchStart);
   const inactiveSearchSource = selectCategorySource.slice(inactiveSearchStart);
 
