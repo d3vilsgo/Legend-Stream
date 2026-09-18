@@ -90,8 +90,8 @@ async function mainTest() {
     assert.equal(readCatalogCategorySelection("provider-b", "live", null), null);
   });
 
-  await scenario("get_all_channels fallback is reachable only for explicit category zero", () => {
-    assert.match(repository, /compatibilityFallback: page === 1 && categoryId === "0"/);
+  await scenario("get_all_channels fallback is reachable only for an explicit global category", () => {
+    assert.match(repository, /compatibilityFallback: page === 1 && isStalkerLiveGlobalCategoryId\(categoryId\)/);
     assert.match(repository, /action: "get_all_channels"/);
     assert.ok(repository.indexOf("normalizeStalkerLiveCategoryIntent(options.categoryId)") < repository.indexOf("const session = getOrCreateStalkerPortalSession"));
   });
