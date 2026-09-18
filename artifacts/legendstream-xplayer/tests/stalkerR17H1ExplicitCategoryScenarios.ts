@@ -66,7 +66,7 @@ async function mainTest() {
   await scenario("provider-native global category keeps its own request id", () => {
     assert.match(views, /providerGlobal \? String\(providerGlobal\.category_id\) : "__all__"/);
     assert.match(views, /category === "__all__" && providerGlobal[\s\S]*String\(providerGlobal\.category_id\)/);
-    assert.match(intent, /id === "0" \|\| \/\^\(\?:all\|tümü\|tum\)\$\/i\.test\(name\)/);
+    assert.match(intent, /isStalkerLiveGlobalCategoryId\(id\) \|\| \/\^\(\?:all\|tümü\|tum\)\$\/i\.test\(name\)/);
   });
 
   await scenario("stale remembered category becomes NO_SELECTION", () => {
