@@ -636,7 +636,7 @@ async function main() {
     const selectStart = seriesSearchSource.indexOf("const selectCategoryById =");
     const selectEnd = seriesSearchSource.indexOf("useEffect(() => {", selectStart);
     assert.doesNotMatch(seriesSearchSource.slice(selectStart, selectEnd), /setSearchQuery\(""\)/);
-    assert.match(seriesSearchSource, /searchStalkerSeriesCatalog\(controller, categories, query, abort\.signal, selectedCategory\.id\)/);
+    assert.match(seriesSearchSource, /searchStalkerSeriesCatalog\(\s*controller,\s*categories,\s*query,\s*abort\.signal,\s*selectedCategory\.id,/);
     assert.match(seriesSearchSource, /searchWasActiveRef/);
     assert.match(seriesSearchSource, /searchSequence\.current !== sequence/);
     assert.match(seriesSearchSource, /wasActive && selectedCategory[\s\S]*loadPage\(selectedCategory, 1, false\)/);
