@@ -84,7 +84,7 @@ export function StalkerSeriesProductSurface({
   const searchWasActiveRef = useRef(false);
   const searchAbort = useRef<AbortController | null>(null);
   const pageInFlight = useRef<string | null>(null);
-  const initialCategoryOpenedRef = useRef(false);
+  const pendingInitialCategoryIdRef = useRef<string | null>(null);
 
   const selectedCategory = categories.find((item) => item.id === selectedCategoryId) ?? null;
   const visibleItems = screen === "search" ? searchResults : items;
@@ -144,6 +144,14 @@ export function StalkerSeriesProductSurface({
     try {
       const next = await controller.loadCategories(request.abort.signal);
       if (!currentRequest(request.sequence)) return;
+      const preservedCategory = selectedCategoryId
+        ? next.find((category) => category.id === selectedCategoryId) ?? null
+        : null;
+      const initialCategory = preservedCategory
+        ?? findStalkerSeriesGlobalCategory(next)
+        ?? next[0]
+        ?? null;
+      pendingInitialCategoryIdRef.current = initialCategory?.id ?? null;
       setCategories(next);
       setItems([]);
       setDetail(null);
@@ -224,10 +232,17 @@ export function StalkerSeriesProductSurface({
   };
 
   useEffect(() => {
-    if (categories.length && screen === "categories" && !selectedCategoryId && !initialCategoryOpenedRef.current) {
-      initialCategoryOpenedRef.current = true;
-      selectCategoryById(categories[0]!.id);
-    }
+    if (!categories.length || screen !== "categories" || selectedCategoryId) return;
+    const pendingCategory = pendingInitialCategoryIdRef.current
+      ? categories.find((category) => category.id === pendingInitialCategoryIdRef.current) ?? null
+      : null;
+    const initialCategory = pendingCategory
+      ?? findStalkerSeriesGlobalCategory(categories)
+      ?? categories[0]
+      ?? null;
+    if (!initialCategory) return;
+    pendingInitialCategoryIdRef.current = null;
+    selectCategoryById(initialCategory.id);
   }, [categories, screen, selectedCategoryId]);
 
   const loadDetail = async (item: StalkerSeriesProductItem) => {
@@ -278,7 +293,7 @@ export function StalkerSeriesProductSurface({
   };
 
   useEffect(() => {
-    initialCategoryOpenedRef.current = false;
+    pendingInitialCategoryIdRef.current = null;
     void loadCategories();
     return () => {
       requestAbort.current?.abort();

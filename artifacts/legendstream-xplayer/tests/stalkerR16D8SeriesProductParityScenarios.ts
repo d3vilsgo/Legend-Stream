@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import {
   createStalkerSeriesProductController,
+  findStalkerSeriesGlobalCategory,
   STALKER_SERIES_PRODUCT_LIMITS,
 } from "../lib/stalkerSeriesProduct";
 
@@ -37,6 +38,20 @@ async function main() {
   });
 
   const controller = createStalkerSeriesProductController(h.session, "provider-a");
+
+  const reorderedCategories = [
+    { id: "12", title: "Drama" },
+    { id: "*", title: "All" },
+    { id: "15", title: "Comedy" },
+  ];
+  assert.equal(findStalkerSeriesGlobalCategory(reorderedCategories)?.id, "*");
+  const noGlobalCategories = [
+    { id: "12", title: "Drama" },
+    { id: "15", title: "Comedy" },
+  ];
+  assert.equal((findStalkerSeriesGlobalCategory(noGlobalCategories) ?? noGlobalCategories[0] ?? null)?.id, "12");
+  assert.equal(findStalkerSeriesGlobalCategory([{ id: "99", title: "Tümü" }])?.id, "99");
+
   const categories = await controller.loadCategories();
   assert.deepEqual(categories, [{ id: "10", title: "Drama" }]);
 
@@ -85,6 +100,11 @@ async function main() {
   assert.match(catalogSource, /<CategoryDrawer visible=\{drawerOpen\}/);
   assert.match(surfaceSource, /currentPage \+ 1/);
   assert.match(surfaceSource, /loadPage\(selectedCategory, failedPage, true\)/);
+  assert.match(surfaceSource, /const preservedCategory = selectedCategoryId[\s\S]*next\.find\(\(category\) => category\.id === selectedCategoryId\)[\s\S]*findStalkerSeriesGlobalCategory\(next\)[\s\S]*next\[0\]/);
+  assert.match(surfaceSource, /pendingInitialCategoryIdRef\.current = initialCategory\?\.id \?\? null/);
+  assert.match(surfaceSource, /const pendingCategory = pendingInitialCategoryIdRef\.current[\s\S]*findStalkerSeriesGlobalCategory\(categories\)[\s\S]*categories\[0\]/);
+  assert.match(surfaceSource, /selectCategoryById\(initialCategory\.id\)/);
+  assert.doesNotMatch(surfaceSource, /selectCategoryById\(categories\[0\]!\.id\)/);
   assert.match(surfaceSource, /return <GoldenSeriesCatalog/);
   assert.doesNotMatch(surfaceSource, /StalkerSeriesProductCatalog|StalkerCategoryPager/);
   assert.doesNotMatch(surfaceSource, /NativeVideoPlayer|CompatibilityVideoPlayer/);
