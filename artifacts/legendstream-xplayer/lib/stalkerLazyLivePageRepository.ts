@@ -8,7 +8,7 @@ import {
 import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
 import { fetchStalkerOrderedPage, type StalkerOrderedPage } from "./stalkerPagedCatalog";
 import { StalkerPortalError } from "./stalkerPortal";
-import { normalizeStalkerLiveCategoryIntent } from "./stalkerLiveCategoryIntent";
+import { isStalkerLiveGlobalCategoryId, normalizeStalkerLiveCategoryIntent } from "./stalkerLiveCategoryIntent";
 
 function pageFromCursor(cursor?: string) {
   if (!cursor) return 1;
@@ -70,7 +70,7 @@ export async function getStalkerLazyLivePage(options: {
     page,
     signal,
     diagnostics: { providerId: provider.id },
-    compatibilityFallback: page === 1 && categoryId === "0"
+    compatibilityFallback: page === 1 && isStalkerLiveGlobalCategoryId(categoryId)
       ? async (fallbackSignal) => fallbackOrderedPage(
           await session.request(
             { type: "itv", action: "get_all_channels" },
