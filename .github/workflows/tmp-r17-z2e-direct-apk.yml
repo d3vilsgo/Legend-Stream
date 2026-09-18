@@ -1,0 +1,454 @@
+name: Temp R17-Z2E Direct APK
+
+on:
+  push:
+    branches:
+      - tmp/r17gq-apk-build
+    paths:
+      - .github/workflows/tmp-r17-z2e-direct-apk.yml
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: android-apk-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    name: APK build + artifact verification (authoritative)
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Checkout exact R17-Z2E source
+        uses: actions/checkout@v4
+        with:
+          ref: bf4f951dc53fffa9f4fd888ad4292df1594c5d6e
+
+      - name: Free runner disk space
+        shell: bash
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /usr/local/share/boost /usr/share/swift || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL /opt/hostedtoolcache/Ruby /opt/hostedtoolcache/go || true
+          docker system prune -af --volumes || true
+          sudo apt-get clean || true
+          df -h /
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install required Android NDK (retry + verify)
+        env:
+          REQUIRED_NDK_VERSION: "27.1.12297006"
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -path '*/bin/sdkmanager' | sort -V | tail -n 1)"
+          [ -x "$SDKMANAGER" ] || { echo "::error::sdkmanager not found under $ANDROID_HOME/cmdline-tools"; exit 1; }
+          NDK_DIR="$ANDROID_HOME/ndk/$REQUIRED_NDK_VERSION"
+          VERIFIED=0
+
+          for attempt in 1 2 3; do
+            echo "NDK install attempt $attempt/3: $REQUIRED_NDK_VERSION"
+            rm -rf "$NDK_DIR" "$ANDROID_HOME/.temp" "$HOME/.android/cache"
+            mkdir -p "$HOME/.android"
+            if "$SDKMANAGER" --sdk_root="$ANDROID_HOME" "ndk;$REQUIRED_NDK_VERSION"; then
+              if [ -f "$NDK_DIR/source.properties" ] && grep -Eq "^Pkg\.Revision[[:space:]]*=[[:space:]]*$REQUIRED_NDK_VERSION$" "$NDK_DIR/source.properties"; then
+                VERIFIED=1
+                break
+              fi
+            fi
+            rm -rf "$NDK_DIR" "$ANDROID_HOME/.temp" "$HOME/.android/cache"
+            sleep "$((attempt * 5))"
+          done
+
+          if [ "$VERIFIED" -ne 1 ]; then
+            echo "::error::Required Android NDK $REQUIRED_NDK_VERSION could not be installed and verified after 3 attempts"
+            exit 1
+          fi
+          grep '^Pkg.Revision' "$NDK_DIR/source.properties"
+          echo "Android NDK verified: $NDK_DIR"
+
+      - name: Install mobile dependencies from committed lockfile
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm --filter @workspace/legendstream-xplayer... install --frozen-lockfile 2>&1 | tee "$GITHUB_WORKSPACE/dependency-install.log"
+
+      - name: Patch VLC for Android compatibility and runtime metrics
+        shell: bash
+        run: |
+          set -o pipefail
+          VLC_DIR="$(cd artifacts/legendstream-xplayer && node -p "require('path').dirname(require.resolve('react-native-vlc-media-player/package.json'))")"
+          python3 artifacts/legendstream-xplayer/scripts/patch-vlc-android.py "$VLC_DIR" 2>&1 | tee "$GITHUB_WORKSPACE/vlc-patch.log"
+          python3 artifacts/legendstream-xplayer/scripts/patch-vlc-progress-metrics.py "$VLC_DIR" 2>&1 | tee -a "$GITHUB_WORKSPACE/vlc-patch.log"
+
+      - name: Generate Android project
+        working-directory: artifacts/legendstream-xplayer
+        env:
+          EXPO_NO_DOCTOR: "1"
+          NODE_ENV: production
+          EXPO_PUBLIC_ENABLE_CATALOG_BENCHMARK: "0"
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm exec expo prebuild --platform android --clean --no-install 2>&1 | tee "$GITHUB_WORKSPACE/expo-prebuild.log"
+          grep '^reactNativeArchitectures=' android/gradle.properties || true
+          sed -n '/@legendstream abi-splits:start/,/@legendstream abi-splits:end/p' android/app/build.gradle
+
+      - name: Select package mode
+        id: mode
+        env:
+          DISPATCH_DUAL_ABI: "false"
+          DISPATCH_CATALOG_BENCHMARK: "false"
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message || '' }}
+        shell: bash
+        run: |
+          if [[ "$DISPATCH_CATALOG_BENCHMARK" == "true" && ( "$GITHUB_EVENT_NAME" != "workflow_dispatch" || "$DISPATCH_DUAL_ABI" == "true" ) ]]; then
+            echo "::error::Catalog benchmark builds must be manual arm64-only test builds"
+            exit 1
+          fi
+          echo "catalog_benchmark=$DISPATCH_CATALOG_BENCHMARK" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "full_release=true" >> "$GITHUB_OUTPUT"
+            echo "dual_abi=true" >> "$GITHUB_OUTPUT"
+            echo "Full release: arm64 + armv7 + AAB"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$DISPATCH_DUAL_ABI" == "true" ]] || [[ "$GITHUB_EVENT_NAME" == "push" && "$HEAD_COMMIT_MESSAGE" == *"[dual-abi]"* ]]; then
+            echo "full_release=false" >> "$GITHUB_OUTPUT"
+            echo "dual_abi=true" >> "$GITHUB_OUTPUT"
+            echo "Dual-ABI test build: arm64 + armv7 APKs"
+          else
+            echo "full_release=false" >> "$GITHUB_OUTPUT"
+            echo "dual_abi=false" >> "$GITHUB_OUTPUT"
+            echo "Test build: arm64-v8a APK only"
+          fi
+
+      - name: Build and stage production AAB
+        if: steps.mode.outputs.full_release == 'true'
+        working-directory: artifacts/legendstream-xplayer/android
+        env:
+          NODE_ENV: production
+          EXPO_PUBLIC_ENABLE_CATALOG_BENCHMARK: "0"
+          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew bundleRelease --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/aab-release-build.log"
+          STAGE_DIR="$GITHUB_WORKSPACE/release-staging"
+          rm -rf "$STAGE_DIR"
+          mkdir -p "$STAGE_DIR"
+          mapfile -t AABS < <(find app/build/outputs/bundle/release -type f -name '*.aab' | sort)
+          [ "${#AABS[@]}" -eq 1 ] || { echo "::error::Expected exactly 1 production AAB; found ${#AABS[@]}"; exit 1; }
+          cp "${AABS[0]}" "$STAGE_DIR/LegendStream-XPlayer-production.aab"
+
+      - name: Prepare staging
+        if: steps.mode.outputs.full_release != 'true'
+        shell: bash
+        run: |
+          rm -rf "$GITHUB_WORKSPACE/release-staging"
+          mkdir -p "$GITHUB_WORKSPACE/release-staging"
+
+      - name: Clean before split APK build
+        if: steps.mode.outputs.full_release == 'true'
+        working-directory: artifacts/legendstream-xplayer/android
+        shell: bash
+        run: ./gradlew clean --no-daemon --console=plain
+
+      - name: Build release APKs
+        working-directory: artifacts/legendstream-xplayer/android
+        env:
+          NODE_ENV: production
+          GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
+          FULL_RELEASE: ${{ steps.mode.outputs.full_release }}
+          DUAL_ABI: ${{ steps.mode.outputs.dual_abi }}
+          EXPO_PUBLIC_ENABLE_CATALOG_BENCHMARK: ${{ steps.mode.outputs.catalog_benchmark == 'true' && '1' || '0' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
+            ./gradlew assembleRelease -PabiSplit --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
+          else
+            ./gradlew assembleRelease -PabiSplit -PabiOnly=arm64-v8a -PreactNativeArchitectures=arm64-v8a --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
+          fi
+
+      - name: Verify and stage outputs (fail-closed)
+        id: package_android
+        env:
+          FULL_RELEASE: ${{ steps.mode.outputs.full_release }}
+          DUAL_ABI: ${{ steps.mode.outputs.dual_abi }}
+          EXPECTED_PACKAGE: com.legendstream.xplayer
+          EXPECTED_CERT_SHA256: FAC61745DC0903786FB9EDE62A962B399F7348F0BB6F899B8332667591033B9C
+          MIN_VERSION_CODE_EXCLUSIVE: "45002"
+          CATALOG_BENCHMARK: ${{ steps.mode.outputs.catalog_benchmark }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK_DIR="artifacts/legendstream-xplayer/android/app/build/outputs/apk/release"
+          STAGE_DIR="$GITHUB_WORKSPACE/release-staging"
+          [ -d "$APK_DIR" ] || { echo "::error::APK output directory not found: $APK_DIR"; exit 1; }
+          mapfile -t APKS < <(find "$APK_DIR" -type f -name '*.apk' | sort)
+          echo "APK outputs:"
+          printf '%s\n' "${APKS[@]}"
+
+          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
+            [ "${#APKS[@]}" -eq 2 ] || { echo "::error::Expected exactly 2 split APKs for dual-ABI build; found ${#APKS[@]}"; exit 1; }
+          else
+            [ "${#APKS[@]}" -eq 1 ] || { echo "::error::Expected exactly 1 APK for arm64-only build; found ${#APKS[@]}"; exit 1; }
+          fi
+
+          ARM64_APK=""
+          ARMV7_APK=""
+          for apk in "${APKS[@]}"; do
+            if ! entries="$(unzip -Z1 "$apk")"; then
+              echo "::error::Unable to list APK entries: $apk"
+              exit 1
+            fi
+            if grep -Eq '^lib/(x86|x86_64)/' <<<"$entries"; then
+              echo "::error::Unexpected x86/x86_64 native library in $apk"
+              exit 1
+            fi
+
+            HAS_ARM64=0
+            HAS_ARMV7=0
+            if grep -q '^lib/arm64-v8a/' <<<"$entries"; then HAS_ARM64=1; fi
+            if grep -q '^lib/armeabi-v7a/' <<<"$entries"; then HAS_ARMV7=1; fi
+            echo "$apk arm64=$HAS_ARM64 armv7=$HAS_ARMV7"
+
+            if [ "$HAS_ARM64" -eq 1 ] && [ "$HAS_ARMV7" -eq 1 ]; then
+              echo "::error::Split APK unexpectedly contains both ARM ABIs: $apk"
+              exit 1
+            fi
+            if [ "$HAS_ARM64" -eq 0 ] && [ "$HAS_ARMV7" -eq 0 ]; then
+              echo "::error::APK contains neither expected ARM ABI: $apk"
+              exit 1
+            fi
+            if [ "$HAS_ARM64" -eq 1 ]; then ARM64_APK="$apk"; fi
+            if [ "$HAS_ARMV7" -eq 1 ]; then ARMV7_APK="$apk"; fi
+          done
+
+          [ -n "$ARM64_APK" ] || { echo "::error::arm64-v8a-only APK not identified"; exit 1; }
+          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
+            [ -n "$ARMV7_APK" ] || { echo "::error::armeabi-v7a-only APK not identified"; exit 1; }
+          fi
+
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt2 | sort -V | tail -n 1)"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          [ -x "$AAPT" ] || { echo "::error::aapt2 not found under $ANDROID_HOME/build-tools"; exit 1; }
+          [ -x "$APKSIGNER" ] || { echo "::error::apksigner not found under $ANDROID_HOME/build-tools"; exit 1; }
+
+          if ! BASE_CODE="$(node -p "require('./artifacts/legendstream-xplayer/app.json').expo.android.versionCode")"; then
+            echo "::error::Unable to read Android base versionCode from app.json"
+            exit 1
+          fi
+          [[ "$BASE_CODE" =~ ^[0-9]+$ ]] || { echo "::error::Android base versionCode is not numeric: $BASE_CODE"; exit 1; }
+          [ "$BASE_CODE" -gt 0 ] || { echo "::error::Android base versionCode must be > 0; got $BASE_CODE"; exit 1; }
+          EXPECTED_ARM64_CODE="$((BASE_CODE * 1000 + 2))"
+          EXPECTED_ARMV7_CODE="$((BASE_CODE * 1000 + 1))"
+
+          verify_apk() {
+            local apk="$1"
+            local expected_code="$2"
+            local label="$3"
+            local badging package_name version_code cert_output cert_sha
+
+            if ! badging="$("$AAPT" dump badging "$apk")"; then
+              echo "::error::$label aapt2 dump badging failed: $apk"
+              exit 1
+            fi
+            package_name="$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" <<<"$badging")"
+            version_code="$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<<"$badging")"
+            [ -n "$package_name" ] || { echo "::error::$label package name not found by aapt2"; exit 1; }
+            [ -n "$version_code" ] || { echo "::error::$label versionCode not found by aapt2"; exit 1; }
+            [[ "$version_code" =~ ^[0-9]+$ ]] || { echo "::error::$label versionCode is not numeric: $version_code"; exit 1; }
+
+            if [ "$package_name" != "$EXPECTED_PACKAGE" ]; then
+              echo "::error::$label package mismatch: $package_name"
+              exit 1
+            fi
+            if [ "$version_code" -ne "$expected_code" ]; then
+              echo "::error::$label versionCode mismatch: got=$version_code expected=$expected_code"
+              exit 1
+            fi
+            if [ "$version_code" -le "$MIN_VERSION_CODE_EXCLUSIVE" ]; then
+              echo "::error::$label versionCode must be > $MIN_VERSION_CODE_EXCLUSIVE, got $version_code"
+              exit 1
+            fi
+
+            if ! cert_output="$("$APKSIGNER" verify --verbose --print-certs "$apk")"; then
+              echo "::error::$label APK signature verification failed: $apk"
+              exit 1
+            fi
+            echo "=== apksigner output ($label) ==="
+            printf '%s\n' "$cert_output"
+            echo "=== end ==="
+            cert_sha="$(awk -F'certificate SHA-256 digest:' \
+              '/certificate SHA-256 digest:/ {gsub(/[[:space:]:]/,"",$2); print toupper($2); exit}' \
+              <<<"$cert_output")"
+            [ -n "$cert_sha" ] || { echo "::error::$label certificate SHA-256 digest not found"; exit 1; }
+            if [ "$cert_sha" != "$EXPECTED_CERT_SHA256" ]; then
+              echo "::error::$label signing certificate mismatch: $cert_sha"
+              exit 1
+            fi
+
+            echo "$label package=$package_name versionCode=$version_code certSHA256=$cert_sha"
+          }
+
+          verify_apk "$ARM64_APK" "$EXPECTED_ARM64_CODE" "arm64-v8a"
+          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
+            verify_apk "$ARMV7_APK" "$EXPECTED_ARMV7_CODE" "armeabi-v7a"
+          fi
+
+          ARM64_CODE="$EXPECTED_ARM64_CODE"
+          echo "arm64-v8a versionCode=$ARM64_CODE"
+          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
+            ARMV7_CODE="$EXPECTED_ARMV7_CODE"
+            echo "armeabi-v7a versionCode=$ARMV7_CODE"
+            [ "$ARM64_CODE" != "$ARMV7_CODE" ] || { echo "::error::ABI-specific versionCodes must differ"; exit 1; }
+          fi
+
+          if ! APP_VERSION="$(node -p "require('./artifacts/legendstream-xplayer/app.json').expo.version")"; then
+            echo "::error::Unable to read app version from app.json"
+            exit 1
+          fi
+          [ -n "$APP_VERSION" ] || { echo "::error::App version is empty in app.json"; exit 1; }
+          if [ "$CATALOG_BENCHMARK" = "true" ]; then
+            ARM64_NAME="LegendStream-XPlayer-v${APP_VERSION}-benchmark-arm64-v8a.apk"
+            ARM64_ARTIFACT_NAME="LegendStream-XPlayer-v${APP_VERSION}-benchmark-arm64-v8a"
+          else
+            ARM64_NAME="LegendStream-XPlayer-v${APP_VERSION}-arm64-v8a.apk"
+            ARM64_ARTIFACT_NAME="LegendStream-XPlayer-v${APP_VERSION}-arm64-v8a"
+          fi
+          cp "$ARM64_APK" "$STAGE_DIR/$ARM64_NAME"
+          ARM64_BYTES="$(stat -c%s "$STAGE_DIR/$ARM64_NAME")"
+          echo "arm64 APK bytes=$ARM64_BYTES"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "arm64_bytes=$ARM64_BYTES" >> "$GITHUB_OUTPUT"
+          echo "arm64_version_code=$ARM64_CODE" >> "$GITHUB_OUTPUT"
+          echo "arm64_artifact_name=$ARM64_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+
+          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
+            ARMV7_NAME="LegendStream-XPlayer-v${APP_VERSION}-armeabi-v7a.apk"
+            cp "$ARMV7_APK" "$STAGE_DIR/$ARMV7_NAME"
+            echo "armv7_version_code=$ARMV7_CODE" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "$FULL_RELEASE" = "true" ]; then
+            AAB_NAME="LegendStream-XPlayer-v${APP_VERSION}-production.aab"
+            mv "$STAGE_DIR/LegendStream-XPlayer-production.aab" "$STAGE_DIR/$AAB_NAME"
+            unzip -Z1 "$STAGE_DIR/$AAB_NAME" | awk -F/ '/^base\/lib\// {print $3}' | sort -u
+          fi
+
+      - name: Upload arm64 APK artifact
+        id: upload_arm64
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package_android.outputs.arm64_artifact_name }}
+          path: release-staging/*-arm64-v8a.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish optional arm64 artifact notification
+        if: steps.mode.outputs.full_release != 'true'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          ARTIFACT_URL: ${{ steps.upload_arm64.outputs.artifact-url }}
+          ARM64_BYTES: ${{ steps.package_android.outputs.arm64_bytes }}
+          ARM64_VERSION_CODE: ${{ steps.package_android.outputs.arm64_version_code }}
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 12,
+              body: `ARM64_APK_READY\nrun_id=${context.runId}\nsha=${context.sha}\nversionCode=${process.env.ARM64_VERSION_CODE}\nbytes=${process.env.ARM64_BYTES}\nartifact=${process.env.ARTIFACT_URL}`,
+            });
+
+      - name: Upload armeabi-v7a APK artifact
+        id: upload_armv7
+        if: steps.mode.outputs.dual_abi == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: LegendStream-XPlayer-v${{ steps.package_android.outputs.app_version }}-armeabi-v7a
+          path: release-staging/*-armeabi-v7a.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload production AAB artifact
+        if: steps.mode.outputs.full_release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: LegendStream-XPlayer-v${{ steps.package_android.outputs.app_version }}-production-aab
+          path: release-staging/*.aab
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: LegendStream-XPlayer-Release-Build-Logs
+          path: |
+            dependency-install.log
+            vlc-patch.log
+            expo-prebuild.log
+            aab-release-build.log
+            apk-release-build.log
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Record R17-Z2E direct APK result
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_SOURCE_SHA: bf4f951dc53fffa9f4fd888ad4292df1594c5d6e
+          ARTIFACT_ID: ${{ steps.upload_arm64.outputs.artifact-id }}
+          ARTIFACT_URL: ${{ steps.upload_arm64.outputs.artifact-url }}
+          ARM64_BYTES: ${{ steps.package_android.outputs.arm64_bytes }}
+          ARM64_VERSION_CODE: ${{ steps.package_android.outputs.arm64_version_code }}
+          APP_VERSION: ${{ steps.package_android.outputs.app_version }}
+          JOB_STATUS: ${{ job.status }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker=$(printf 'EXPECTED_SOURCE_SHA=%s\nRUN_ID=%s\nJOB_STATUS=%s\nARTIFACT_ID=%s\nARTIFACT_URL=%s\nAPP_VERSION=%s\nVERSION_CODE=%s\nAPK_SIZE=%s\n' \
+            "$EXPECTED_SOURCE_SHA" "$GITHUB_RUN_ID" "$JOB_STATUS" "$ARTIFACT_ID" "$ARTIFACT_URL" "$APP_VERSION" "$ARM64_VERSION_CODE" "$ARM64_BYTES")
+          encoded=$(printf '%s' "$marker" | base64 -w0)
+          existing_sha=$(curl -sS \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/contents/.tmp/r17-z2e-direct-apk-result.txt?ref=tmp%2Fr17gq-apk-build" | jq -r '.sha // empty')
+          payload=$(jq -n \
+            --arg message 'chore(ci): record R17-Z2E direct APK result' \
+            --arg content "$encoded" \
+            --arg branch 'tmp/r17gq-apk-build' \
+            --arg sha "$existing_sha" \
+            'if $sha == "" then {message:$message,content:$content,branch:$branch} else {message:$message,content:$content,branch:$branch,sha:$sha} end')
+          curl --fail-with-body -X PUT \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/contents/.tmp/r17-z2e-direct-apk-result.txt" \
+            -d "$payload"
