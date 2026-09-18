@@ -437,7 +437,7 @@ async function main() {
     await fetchStalkerOrderedPage({
       session: portal((params) => {
         calls.push(params);
-        return { data: [channel(229)], total_items: 1, max_page_items: 1 };
+        return { data: [channel(229, { tv_genre_id: "229" })], total_items: 1, max_page_items: 1 };
       }),
       providerId: "provider-category-selection",
       kind: "itv",
