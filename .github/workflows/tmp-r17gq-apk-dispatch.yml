@@ -4,10 +4,12 @@ on:
   push:
     branches:
       - tmp/r17gq-apk-build
+    paths:
+      - .github/workflows/tmp-r17gq-apk-dispatch.yml
 
 permissions:
   actions: write
-  contents: read
+  contents: write
 
 jobs:
   dispatch:
@@ -16,6 +18,7 @@ jobs:
       - name: Dispatch Android APK from verified PR branch
         env:
           GH_TOKEN: ${{ github.token }}
+          EXPECTED_SHA: bf4f951dc53fffa9f4fd888ad4292df1594c5d6e
         run: |
           set -euo pipefail
           curl --fail-with-body \
@@ -25,3 +28,48 @@ jobs:
             -H "X-GitHub-Api-Version: 2022-11-28" \
             https://api.github.com/repos/${{ github.repository }}/actions/workflows/android-apk.yml/dispatches \
             -d '{"ref":"fix/stalker-r17b-physical-gaps","inputs":{"dual_abi":"false","catalog_benchmark":"false"}}'
+
+          run_id=""
+          conclusion=""
+          for i in $(seq 1 90); do
+            json=$(curl --fail-with-body \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "https://api.github.com/repos/${{ github.repository }}/actions/workflows/android-apk.yml/runs?branch=fix%2Fstalker-r17b-physical-gaps&event=workflow_dispatch&per_page=20")
+            run_id=$(echo "$json" | jq -r --arg sha "$EXPECTED_SHA" '.workflow_runs[] | select(.head_sha == $sha) | .id' | head -n1)
+            if [ -n "$run_id" ]; then
+              status=$(echo "$json" | jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .status')
+              conclusion=$(echo "$json" | jq -r --argjson id "$run_id" '.workflow_runs[] | select(.id == $id) | .conclusion // ""')
+              if [ "$status" = "completed" ]; then break; fi
+            fi
+            sleep 10
+          done
+
+          if [ -z "$run_id" ]; then
+            echo "No Android APK run found for $EXPECTED_SHA" >&2
+            exit 1
+          fi
+
+          artifacts=$(curl --fail-with-body \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/runs/$run_id/artifacts?per_page=100")
+          artifact_id=$(echo "$artifacts" | jq -r '.artifacts[] | select(.name=="LegendStream-XPlayer-v1.4.43-arm64-v8a") | .id' | head -n1)
+          artifact_name=$(echo "$artifacts" | jq -r '.artifacts[] | select(.name=="LegendStream-XPlayer-v1.4.43-arm64-v8a") | .name' | head -n1)
+
+          mkdir -p .tmp
+          cat > .tmp/r17-z2e-apk-result.txt <<EOF
+EXPECTED_SHA=$EXPECTED_SHA
+RUN_ID=$run_id
+CONCLUSION=$conclusion
+ARTIFACT_ID=$artifact_id
+ARTIFACT_NAME=$artifact_name
+EOF
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add .tmp/r17-z2e-apk-result.txt
+          git commit -m "chore(ci): record R17-Z2E APK result"
+          git push
