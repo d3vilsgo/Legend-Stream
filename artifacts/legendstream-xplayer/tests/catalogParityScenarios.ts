@@ -170,8 +170,8 @@ async function main() {
   await scenario("existing fail-closed and bounded hydration gates remain exact", () => {
     assert.match(providerSwitchTests, /assert\.equal\(passed, 24\)/);
     assert.match(providerSwitchTests, /provider switch UX scenarios: 24\/24 passed/);
-    assert.match(catalogPagingTests, /assert\.equal\(passed, 21\)/);
-    assert.match(catalogPagingTests, /catalog paging scenarios: 21\/21 passed/);
+    assert.match(catalogPagingTests, /assert\.equal\(passed, 25\)/);
+    assert.match(catalogPagingTests, /catalog paging scenarios: 25\/25 passed/);
     assert.match(providerSwitchSource, /HOME_SAMPLE_LIMIT = 48/);
     assert.match(m3uCacheSource, /M3U_HOME_PREVIEW_LIMIT = 48/);
   });
