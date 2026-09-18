@@ -105,6 +105,24 @@ async function main() {
   assert.match(surfaceSource, /const pendingCategory = pendingInitialCategoryIdRef\.current[\s\S]*findStalkerSeriesGlobalCategory\(categories\)[\s\S]*categories\[0\]/);
   assert.match(surfaceSource, /selectCategoryById\(initialCategory\.id\)/);
   assert.doesNotMatch(surfaceSource, /selectCategoryById\(categories\[0\]!\.id\)/);
+
+  const selectCategoryStart = surfaceSource.indexOf("const selectCategoryById =");
+  const initialCategoryEffectStart = surfaceSource.indexOf("useEffect(() => {", selectCategoryStart);
+  const selectCategorySource = surfaceSource.slice(selectCategoryStart, initialCategoryEffectStart);
+  const activeSearchStart = selectCategorySource.indexOf("if (activeSearch)");
+  const inactiveSearchStart = selectCategorySource.indexOf("searchAbort.current?.abort();", activeSearchStart + 1);
+  const activeSearchSource = selectCategorySource.slice(activeSearchStart, inactiveSearchStart);
+  const inactiveSearchSource = selectCategorySource.slice(inactiveSearchStart);
+
+  assert.match(selectCategorySource, /const activeSearch = searchQuery\.trim\(\) !== ""/);
+  assert.match(activeSearchSource, /category\.id === selectedCategoryId[\s\S]*setScreen\("search"\)[\s\S]*return/);
+  assert.match(activeSearchSource, /searchAbort\.current\?\.abort\(\)[\s\S]*searchSequence\.current \+= 1/);
+  assert.match(activeSearchSource, /setSearchResults\(\[\]\)[\s\S]*setSelectedCategoryId\(category\.id\)[\s\S]*setScreen\("search"\)[\s\S]*return/);
+  assert.doesNotMatch(activeSearchSource, /loadPage\(/);
+  assert.match(inactiveSearchSource, /void loadPage\(category, 1, false\)/);
+  assert.match(surfaceSource, /\[categories, controller, provider, searchQuery, searchReturnScreen, selectedCategoryId, session\]/);
+  assert.match(surfaceSource, /searchSequence\.current !== sequence \|\| abort\.signal\.aborted/);
+  assert.match(surfaceSource, /wasActive && selectedCategory[\s\S]*loadPage\(selectedCategory, 1, false\)/);
   assert.match(surfaceSource, /return <GoldenSeriesCatalog/);
   assert.doesNotMatch(surfaceSource, /StalkerSeriesProductCatalog|StalkerCategoryPager/);
   assert.doesNotMatch(surfaceSource, /NativeVideoPlayer|CompatibilityVideoPlayer/);

@@ -220,6 +220,25 @@ export function StalkerSeriesProductSurface({
   const selectCategoryById = (id: string) => {
     const category = categories.find((item) => item.id === id);
     if (!category) return;
+    const activeSearch = searchQuery.trim() !== "";
+    if (activeSearch) {
+      if (category.id === selectedCategoryId) {
+        setScreen("search");
+        return;
+      }
+      searchAbort.current?.abort();
+      searchSequence.current += 1;
+      requestAbort.current?.abort();
+      requestSequence.current += 1;
+      setSearchResults([]);
+      setItems([]);
+      setDetail(null);
+      setSelectedSeriesItem(null);
+      resetPaging();
+      setSelectedCategoryId(category.id);
+      setScreen("search");
+      return;
+    }
     searchAbort.current?.abort();
     requestAbort.current?.abort();
     requestSequence.current += 1;
