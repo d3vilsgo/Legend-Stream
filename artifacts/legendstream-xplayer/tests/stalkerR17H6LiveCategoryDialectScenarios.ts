@@ -44,9 +44,9 @@ async function mainTest() {
     assert.ok(validation >= 0 && cache > validation);
   });
 
-  await scenario("global category zero keeps compatibility behavior", () => {
-    assert.match(paged, /if \(categoryId === "0" \|\| rows\.length === 0\) return/);
-    assert.match(lazy, /compatibilityFallback: page === 1 && categoryId === "0"/);
+  await scenario("global category semantics keep compatibility behavior", () => {
+    assert.match(paged, /if \(isStalkerLiveGlobalCategoryId\(categoryId\) \|\| rows\.length === 0\) return/);
+    assert.match(lazy, /compatibilityFallback: page === 1 && isStalkerLiveGlobalCategoryId\(categoryId\)/);
   });
 
   await scenario("explicit category request identity remains unchanged", () => {
