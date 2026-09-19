@@ -126,7 +126,12 @@ async function main() {
   if (!hasUsableChannelEpg(cachedPrograms, "c1", now)) cacheMissCalls += 1;
   assert.equal(cacheMissCalls, 0);
   assert.match(playerContextSource, /if \(programs\.length\) \{\s*setState/);
-  assert.doesNotMatch(playerContextSource, /epg:\s*\[\]/);
+  const bulkRefreshStart = playerContextSource.indexOf("if (!channelId) {");
+  const bulkRefreshEnd = playerContextSource.indexOf("const inFlight = bulkEpgPromiseRef.current.get", bulkRefreshStart);
+  const bulkRefreshSource = playerContextSource.slice(bulkRefreshStart, bulkRefreshEnd);
+  assert.ok(bulkRefreshStart >= 0 && bulkRefreshEnd > bulkRefreshStart);
+  assert.doesNotMatch(bulkRefreshSource, /epg:\s*\[\]/);
+  assert.match(bulkRefreshSource, /if \(programs\.length\) \{[\s\S]*mergeEpgPrograms\(previous\.epg, ids, programs\)/);
   passed += 1;
 
   // E. FAILURE RECOVERY: rejected single-flight entries are released and can be retried.
