@@ -20,6 +20,7 @@ import { DownloadsView } from "@/components/DownloadsView";
 import { FocusButton } from "@/components/FocusButton";
 import { HomeDiscovery, type HomeContentView } from "@/components/home/HomeDiscovery";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
+import { M3UDiagnosticPanel } from "@/components/M3UDiagnosticPanel";
 import {
   PagedLiveCatalog,
   PagedMoviesCatalog,
@@ -66,6 +67,15 @@ import {
   tryBeginProviderSwitch,
 } from "@/lib/providerSwitchUx";
 import { redactSensitiveText, safeLog } from "@/lib/safeLog";
+import {
+  recordM3UBusyState as recordM3UBusyDiagnosticState,
+  recordM3UHeartbeat,
+  recordM3UNavigate,
+  recordM3UNavPress,
+  recordM3UTouchSentinel,
+  recordM3UViewCommit,
+  setM3UDiagnosticSession,
+} from "@/lib/m3uInAppDiagnostics";
 import type { StalkerProductProviderIdentity } from "@/lib/stalkerProductSession";
 import {
   buildEpisodeStreamUrl,
@@ -166,7 +176,7 @@ export default function OptimizedHomeScreenPaged() {
       return () => { cancelled = true; };
     }
     const providerId = provider.id;
-    void getCachedCatalogCategoryMetadata(providerId).then((metadata) => {
+    void getCachedCatalogCategoryMetadata(providerId, provider.type === "m3u").then((metadata) => {
       if (!cancelled && activeProviderIdRef.current === providerId) setCategoryMetadata({ providerId, ...metadata });
     }).catch(() => {
       if (!cancelled && activeProviderIdRef.current === providerId) setCategoryMetadata(null);
@@ -244,26 +254,43 @@ export default function OptimizedHomeScreenPaged() {
   };
 
   const m3uDiagnosticEnabled = provider?.type === "m3u";
+
+  React.useEffect(() => {
+    if (!m3uDiagnosticEnabled || !provider) return;
+    setM3UDiagnosticSession(provider.id, view);
+  }, [m3uDiagnosticEnabled, provider?.id, view]);
+
   const logM3UBusyState = (currentView: ViewName) => {
     if (!m3uDiagnosticEnabled) return;
+    const busySnapshot = {
+      isLoading,
+      isSyncing,
+      isRefreshing,
+      isHydrating,
+      catalogDrawerOpen,
+      switchingProviderPresent: switchingProviderId !== null,
+    };
+    recordM3UBusyDiagnosticState(busySnapshot);
     safeLog.info("M3U_BUSY_STATE", {
       view: currentView,
-      loading: isLoading,
-      syncing: isSyncing,
-      refreshing: isRefreshing,
-      hydrating: isHydrating,
-      drawer: catalogDrawerOpen,
-      switching: switchingProviderId !== null,
+      loading: busySnapshot.isLoading,
+      syncing: busySnapshot.isSyncing,
+      refreshing: busySnapshot.isRefreshing,
+      hydrating: busySnapshot.isHydrating,
+      drawer: busySnapshot.catalogDrawerOpen,
+      switching: busySnapshot.switchingProviderPresent,
       timestamp: Date.now(),
     });
   };
   const logM3UNavPress = (target: ContentView) => {
     if (!m3uDiagnosticEnabled) return;
+    recordM3UNavPress(target, view);
     safeLog.info("M3U_NAV_PRESS", { target, current: view, timestamp: Date.now() });
     logM3UBusyState(view);
   };
   const logM3UNavigate = (target: ContentView) => {
     if (!m3uDiagnosticEnabled) return;
+    recordM3UNavigate(target);
     safeLog.info("M3U_NAVIGATE", { from: view, to: target, timestamp: Date.now() });
   };
 
@@ -277,6 +304,7 @@ export default function OptimizedHomeScreenPaged() {
 
   React.useEffect(() => {
     if (!m3uDiagnosticEnabled || view === "player") return;
+    recordM3UViewCommit(view);
     safeLog.info("M3U_VIEW_COMMIT", { view, timestamp: Date.now() });
     if (view !== "home") {
       safeLog.info("M3U_TARGET_MOUNT", { target: view, timestamp: Date.now() });
@@ -302,6 +330,7 @@ export default function OptimizedHomeScreenPaged() {
       const now = Date.now();
       const driftMs = Math.max(0, now - expectedAt);
       expectedAt = now + intervalMs;
+      recordM3UHeartbeat(driftMs, now);
       if (driftMs >= 150 || now - lastCompactLogAt >= 1000) {
         lastCompactLogAt = now;
         safeLog.info("M3U_JS_HEARTBEAT", { driftMs, timestamp: now });
@@ -394,11 +423,15 @@ export default function OptimizedHomeScreenPaged() {
     {m3uDiagnosticEnabled ? <Pressable
       accessibilityRole="button"
       accessibilityLabel="M3U diagnostic touch sentinel"
-      onPress={() => safeLog.info("M3U_TOUCH_SENTINEL", { timestamp: Date.now() })}
+      onPress={() => {
+        recordM3UTouchSentinel();
+        safeLog.info("M3U_TOUCH_SENTINEL", { timestamp: Date.now() });
+      }}
       style={[s.diagnosticSentinel, { borderColor: colors.border, backgroundColor: colors.card }]}
     >
-      <Text style={{ color: colors.mutedForeground, fontSize: 10, fontWeight: "800" }}>DIAG</Text>
+      <Text style={{ color: colors.mutedForeground, fontSize: 10, fontWeight: "800" }}>TOUCH</Text>
     </Pressable> : null}
+    {m3uDiagnosticEnabled ? <M3UDiagnosticPanel providerId={provider.id} /> : null}
 
     {error || catalogError || visibleScopedError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}><Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError || visibleScopedError)}</Text><Pressable onPress={() => { clearError(); clearScopedError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable></View> : null}
 
