@@ -70,6 +70,10 @@ import { redactSensitiveText, safeLog } from "@/lib/safeLog";
 import {
   recordM3UBusyState as recordM3UBusyDiagnosticState,
   recordM3UHeartbeat,
+  recordM3UOpenLiveEnter,
+  recordM3UOpenLiveSetPlayable,
+  recordM3UOpenLiveSetPlayerView,
+  recordM3UPlayerViewCommit,
   recordM3UNavigate,
   recordM3UNavPress,
   recordM3UTouchSentinel,
@@ -303,8 +307,12 @@ export default function OptimizedHomeScreenPaged() {
   };
 
   React.useEffect(() => {
-    if (!m3uDiagnosticEnabled || view === "player") return;
+    if (!m3uDiagnosticEnabled) return;
     recordM3UViewCommit(view);
+    if (view === "player") {
+      recordM3UPlayerViewCommit();
+      return;
+    }
     safeLog.info("M3U_VIEW_COMMIT", { view, timestamp: Date.now() });
     if (view !== "home") {
       safeLog.info("M3U_TARGET_MOUNT", { target: view, timestamp: Date.now() });
@@ -355,10 +363,13 @@ export default function OptimizedHomeScreenPaged() {
   }
 
   const openLive = (channel: Channel) => {
+    if (m3uDiagnosticEnabled) recordM3UOpenLiveEnter();
     if (!channel.streamUrl) { setCatalogError("The cached playback address is unavailable. Refresh Live TV and try again."); return; }
     setPlayable({ title: channel.name, subtitle: channel.category, url: channel.streamUrl, kind: "live", returnTo: "live", liveIdentity: { providerId: channel.providerId, channelId: channel.id } });
+    if (m3uDiagnosticEnabled) recordM3UOpenLiveSetPlayable();
     void recordWatched(channel.id);
     setView("player");
+    if (m3uDiagnosticEnabled) recordM3UOpenLiveSetPlayerView();
   };
 
   const openMovie = (item: XtreamVodItem) => {
@@ -398,7 +409,10 @@ export default function OptimizedHomeScreenPaged() {
   const openDownload = (item: DownloadedMedia) => { setPlayable({ title: item.title, subtitle: item.subtitle, url: item.uri, kind: "download", returnTo: "downloads" }); setView("player"); };
   const openProgress = (item: MediaProgress) => { setPlayable({ title: item.title, subtitle: item.subtitle, url: item.source, kind: item.kind, returnTo: "history" }); setView("player"); };
 
-  if (view === "player") return <View style={s.fullPlayer}>{playable ? <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => setView(playable.returnTo)} /> : null}</View>;
+  if (view === "player") return <View style={s.fullPlayer}>
+    {playable ? <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => setView(playable.returnTo)} /> : null}
+    {m3uDiagnosticEnabled && provider ? <M3UDiagnosticPanel providerId={provider.id} /> : null}
+  </View>;
 
   const nav = [
     { key: "home" as const, label: t("home"), icon: "home" as const },
