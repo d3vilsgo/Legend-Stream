@@ -63,7 +63,7 @@ import {
   noteM3UNetworkCatalogCounts,
 } from "./m3uSwitchMetrics";
 import { safeLog } from "./safeLog";
-import { recordM3UCacheBatch } from "./m3uInAppDiagnostics";
+import { recordM3UCacheBatch, recordM3USourceInputFacts } from "./m3uInAppDiagnostics";
 import { yieldToUi } from "./cooperative";
 import type { XtreamCategory } from "./xtreamCatalog";
 
@@ -413,6 +413,8 @@ export async function persistM3UProviderCache(
     });
     return false;
   }
+
+  recordM3USourceInputFacts(projection.inputCounts, projection.duplicateItemIdCount);
 
   if (projection.unsafeOutcome) {
     return failClosedWrite({
