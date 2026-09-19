@@ -68,7 +68,23 @@ import type { XtreamCategory } from "./xtreamCatalog";
 
 const M3U_CACHE_STAGE_TOTAL = 3;
 export const M3U_HOME_PREVIEW_LIMIT = 48;
+const M3U_DIAGNOSTIC_CACHE_BATCH_SIZE = 200;
 const activationProviders = new Set<string>();
+
+function shouldLogDiagnosticCacheBatch(batchIndex: number, totalRows: number) {
+  const totalBatches = Math.max(1, Math.ceil(totalRows / M3U_DIAGNOSTIC_CACHE_BATCH_SIZE));
+  return batchIndex === 1 || batchIndex === totalBatches || batchIndex % 25 === 0;
+}
+
+function logDiagnosticCacheBatch(
+  marker: "M3U_CACHE_BATCH_BEGIN" | "M3U_CACHE_BATCH_END",
+  kind: "live" | "vod" | "series",
+  batchIndex: number,
+  totalRows: number,
+) {
+  if (!shouldLogDiagnosticCacheBatch(batchIndex, totalRows)) return;
+  safeLog.info(marker, { kind, batch: batchIndex, timestamp: Date.now() });
+}
 
 export type M3UCatalogCacheProvider = Omit<Pick<
   Provider,
@@ -451,6 +467,10 @@ export async function persistM3UProviderCache(
       markNew: true,
       onBatchStarted: (batchIndex) => {
         noteM3USqliteBatchStarted(batchProgress, "live", batchIndex);
+        logDiagnosticCacheBatch("M3U_CACHE_BATCH_BEGIN", "live", batchIndex, stagedLive.length);
+      },
+      onBatchCommitted: (observation) => {
+        logDiagnosticCacheBatch("M3U_CACHE_BATCH_END", "live", observation.batchIndex, stagedLive.length);
       },
       onSqliteStage: (stage) => {
         sqliteStage = stage;
@@ -461,6 +481,10 @@ export async function persistM3UProviderCache(
       markNew: true,
       onBatchStarted: (batchIndex) => {
         noteM3USqliteBatchStarted(batchProgress, "vod", batchIndex);
+        logDiagnosticCacheBatch("M3U_CACHE_BATCH_BEGIN", "vod", batchIndex, stagedVod.length);
+      },
+      onBatchCommitted: (observation) => {
+        logDiagnosticCacheBatch("M3U_CACHE_BATCH_END", "vod", observation.batchIndex, stagedVod.length);
       },
       onSqliteStage: (stage) => {
         sqliteStage = stage;
@@ -471,6 +495,10 @@ export async function persistM3UProviderCache(
       markNew: true,
       onBatchStarted: (batchIndex) => {
         noteM3USqliteBatchStarted(batchProgress, "series", batchIndex);
+        logDiagnosticCacheBatch("M3U_CACHE_BATCH_BEGIN", "series", batchIndex, stagedSeries.length);
+      },
+      onBatchCommitted: (observation) => {
+        logDiagnosticCacheBatch("M3U_CACHE_BATCH_END", "series", observation.batchIndex, stagedSeries.length);
       },
       onSqliteStage: (stage) => {
         sqliteStage = stage;
