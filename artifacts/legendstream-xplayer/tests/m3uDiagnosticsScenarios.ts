@@ -476,7 +476,7 @@ function main() {
     assert.doesNotMatch(iptvSource.slice(xtreamStart, providerStart), /recordM3U(?:Fetch|Response|Split|ParseLines|CatalogBuild)/);
   });
 
-  scenario("Z2Q report is privacy-safe and DBG remains reachable on M3U Home and Dedicated Live", () => {
+  scenario("Z2Q report remains privacy-safe after reachability hardening", () => {
     const report = buildM3UDiagnosticReport(getM3UDiagnosticSnapshot());
     assert.match(report, /m3uFetchWaitMs=500/);
     assert.match(report, /m3uResponseTextMs=100/);
@@ -485,21 +485,38 @@ function main() {
     assert.match(report, /m3uCatalogBuildMs=400/);
     assert.match(report, /m3uTotalIngestMs=1500/);
     assert.doesNotMatch(report, /playlistUrl|streamUrl|epgUrl|username|password|token|cookie|mac=/i);
-    assert.match(panelSource, /<View pointerEvents="box-none" style=\{styles\.overlay\}>/);
-    const mainPanel = homeSource.indexOf('{m3uDiagnosticEnabled ? <M3UDiagnosticPanel providerId={provider.id} /> : null}');
-    const liveSurface = homeSource.indexOf('{view === "live" && \(provider.type === "m3u" || provider.type === "xtream"\)');
-    const homeSurface = homeSource.indexOf('{view === "home" ? <HomeDiscovery');
-    assert.ok(mainPanel >= 0, "M3U diagnostic panel must remain mounted on the normal app shell");
-    assert.ok(liveSurface > mainPanel, "Dedicated Live must render under the already-mounted M3U diagnostic panel");
-    assert.ok(homeSurface > mainPanel, "Home must render under the already-mounted M3U diagnostic panel");
   });
 
-  assert.equal(passed, 19);
+  scenario("Z2QA M3U DBG is the top shell sibling and Android-safe without consuming unrelated touches", () => {
+    assert.match(homeSource, /const m3uDiagnosticEnabled = provider\?\.type === "m3u";/);
+    assert.match(panelSource, /<View pointerEvents="box-none" style=\{styles\.overlay\}>/);
+    assert.match(panelSource, /useSafeAreaInsets\(\)/);
+    assert.match(panelSource, /top: Math\.max\(insets\.top \+ 8, 112\)/);
+    assert.match(panelSource, /overlay:\s*\{[\s\S]*zIndex: 1000,[\s\S]*elevation: 40,/);
+    assert.match(panelSource, /floatingButton:\s*\{[\s\S]*elevation: 41,/);
+    assert.match(panelSource, /panel:\s*\{[\s\S]*elevation: 42,/);
+
+    const liveSurface = homeSource.indexOf('{view === "live" && (provider.type === "m3u" || provider.type === "xtream")');
+    const moviesSurface = homeSource.indexOf('{view === "movies" && (provider.type === "m3u" || provider.type === "xtream")');
+    const seriesSurface = homeSource.indexOf('{view === "series" && (provider.type === "m3u" || provider.type === "xtream")');
+    const homeSurface = homeSource.indexOf('{view === "home" ? <HomeDiscovery');
+    const nonPlayerPanel = homeSource.lastIndexOf('{m3uDiagnosticEnabled ? <M3UDiagnosticPanel providerId={provider.id} /> : null}');
+    assert.ok(liveSurface >= 0 && moviesSurface >= 0 && seriesSurface >= 0 && homeSurface >= 0);
+    assert.ok(nonPlayerPanel > liveSurface, "M3U DBG must mount after Dedicated Live");
+    assert.ok(nonPlayerPanel > moviesSurface, "M3U DBG must mount after Movies");
+    assert.ok(nonPlayerPanel > seriesSurface, "M3U DBG must mount after Series");
+    assert.ok(nonPlayerPanel > homeSurface, "M3U DBG must mount after Home");
+    assert.match(homeSource, /m3uDiagnosticEnabled \? <M3UDiagnosticPanel/);
+    assert.doesNotMatch(homeSource, /provider\.type !== "m3u"[\s\S]{0,120}<M3UDiagnosticPanel/);
+  });
+
+  assert.equal(passed, 20);
   console.log("m3u shape diagnostics scenarios: 8/8 passed");
   console.log("m3u Z2M handoff diagnostics scenarios: 3/3 passed");
   console.log("m3u Z2O targeted correlation diagnostics scenarios: 4/4 passed");
   console.log("m3u Z2Q ingest phase diagnostics scenarios: 4/4 passed");
-  console.log("m3u shape + Z2M + Z2O + Z2Q diagnostics scenarios: 19/19 passed");
+  console.log("m3u Z2QA diagnostic reachability scenarios: 1/1 passed");
+  console.log("m3u shape + Z2M + Z2O + Z2Q + Z2QA diagnostics scenarios: 20/20 passed");
 }
 
 main();
