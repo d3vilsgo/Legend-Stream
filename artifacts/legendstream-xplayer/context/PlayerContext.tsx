@@ -44,6 +44,13 @@ import {
 } from "@/lib/m3uTransportRouting";
 import { safeLog } from "@/lib/safeLog";
 import {
+  recordM3UBackgroundRefreshBegin,
+  recordM3UBackgroundRefreshEnd,
+  recordM3UBackgroundRefreshLoadEnd,
+  recordM3UEpgBegin,
+  recordM3UEpgEnd,
+} from "@/lib/m3uInAppDiagnostics";
+import {
   ProviderConnectAttemptGate,
   withProviderConnectDeadline,
   type ProviderConnectAttempt,
@@ -1424,8 +1431,12 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const ownership = providerLoadGateRef.current.beginBackground(providerId);
     if (!ownership) return;
     let persistenceOwnsRequest = false;
+    const diagnosticStartedAt = globalThis.performance?.now?.() ?? Date.now();
+    recordM3UBackgroundRefreshBegin();
     try {
       const smart = await loadProviderSmart(fromProvider(existing), { persistM3U: false });
+      const diagnosticLoadEndedAt = globalThis.performance?.now?.() ?? Date.now();
+      recordM3UBackgroundRefreshLoadEnd(diagnosticLoadEndedAt - diagnosticStartedAt);
       if (!isCurrentProviderLoad(ownership)) return;
       const updated = toProvider({
         ...smart.provider,
@@ -1459,6 +1470,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     } catch {
       // A background refresh failure must never hide or invalidate usable cached rows.
     } finally {
+      const diagnosticEndedAt = globalThis.performance?.now?.() ?? Date.now();
+      recordM3UBackgroundRefreshEnd(diagnosticEndedAt - diagnosticStartedAt);
       if (!persistenceOwnsRequest) providerLoadGateRef.current.finish(ownership);
     }
   };
@@ -1657,6 +1670,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
         setIsEpgLoading(true);
         let succeeded = false;
+        const m3uEpgStartedAt = provider.type === "m3u"
+          ? (globalThis.performance?.now?.() ?? Date.now())
+          : null;
+        if (m3uEpgStartedAt !== null) recordM3UEpgBegin();
         const promise = (async () => {
           try {
             const programs = await loadBulkProviderEpg(provider, providerChannels);
@@ -1680,6 +1697,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
                 channelCount: providerChannels.length,
                 inputKey,
               });
+            }
+            if (m3uEpgStartedAt !== null) {
+              const m3uEpgEndedAt = globalThis.performance?.now?.() ?? Date.now();
+              recordM3UEpgEnd(m3uEpgEndedAt - m3uEpgStartedAt);
             }
             bulkEpgPromiseRef.current.delete(resolvedProviderId);
             setIsEpgLoading(false);
