@@ -385,7 +385,8 @@ function main() {
     assert.match(pagedSource, /if \(provider\.type === "m3u"\) recordM3ULivePressIn\(\)/);
     assert.match(pagedSource, /if \(provider\.type === "m3u"\) recordM3ULivePressOut\(\)/);
     assert.doesNotMatch(pagedSource, /disabled=\{provider\.type === "m3u"/);
-    assert.doesNotMatch(playerSource, /M3U_BACKGROUND_REFRESH_DELAY_MS\s*=\s*(?!1_250)/);
+    const backgroundDelay = playerSource.match(/const M3U_BACKGROUND_REFRESH_DELAY_MS = ([0-9_]+);/);
+    assert.equal(backgroundDelay?.[1], "1_250");
   });
 
   assert.equal(passed, 15);
