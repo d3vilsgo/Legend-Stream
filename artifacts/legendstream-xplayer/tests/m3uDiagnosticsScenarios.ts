@@ -7,7 +7,15 @@ import {
   buildM3UDiagnosticReport,
   describeM3UPlaybackUri,
   getM3UDiagnosticSnapshot,
+  recordM3UBackgroundRefreshBegin,
+  recordM3UBackgroundRefreshEnd,
+  recordM3UBackgroundRefreshLoadEnd,
+  recordM3UEpgBegin,
+  recordM3UEpgEnd,
   recordM3ULivePress,
+  recordM3ULivePressIn,
+  recordM3ULivePressOut,
+  recordM3UPagedLiveState,
   recordM3UOpenLiveEnter,
   recordM3UOpenLiveSetPlayable,
   recordM3UOpenLiveSetPlayerView,
@@ -32,6 +40,7 @@ const orientationSource = readFileSync(resolve(ROOT, "hooks/usePlayerOrientation
 const vlcSource = readFileSync(resolve(ROOT, "components/player/VlcPlaybackSurface.tsx"), "utf8");
 const panelSource = readFileSync(resolve(ROOT, "components/M3UDiagnosticPanel.tsx"), "utf8");
 const pageRepoSource = readFileSync(resolve(ROOT, "lib/catalogPageRepository.ts"), "utf8");
+const playerSource = readFileSync(resolve(ROOT, "context/PlayerContext.tsx"), "utf8");
 
 let passed = 0;
 const scenario = (name: string, run: () => void) => {
@@ -304,10 +313,86 @@ function main() {
     assert.doesNotMatch(panelSource, /streamUrl|playlistUrl|username|password|token|mac/i);
   });
 
-  assert.equal(passed, 11);
+  scenario("Z2O Paged Live report uses the mounted page state rather than inferred busy flags", () => {
+    setM3UDiagnosticSession("provider-z2o", "live");
+    resetM3UDiagnosticCounters();
+    recordM3UPagedLiveState({
+      pageLoadingInitial: true,
+      pageLoadingMore: true,
+      pageItemsCount: 641,
+      parentRefreshing: false,
+      isEpgLoading: true,
+      categoriesReady: true,
+      selectedCategory: "__all__",
+    });
+    const snapshot = getM3UDiagnosticSnapshot();
+    assert.equal(snapshot.pageLoadingInitial, true);
+    assert.equal(snapshot.pageLoadingMore, true);
+    assert.equal(snapshot.pageItemsCount, 641);
+    assert.equal(snapshot.parentRefreshing, false);
+    assert.equal(snapshot.isEpgLoading, true);
+    assert.equal(snapshot.categoriesReady, true);
+    assert.equal(snapshot.selectedCategory, "__all__");
+    assert.match(pagedSource, /recordM3UPagedLiveState\(\{[\s\S]*pageLoadingInitial: page\.loadingInitial,[\s\S]*pageLoadingMore: page\.loadingMore,[\s\S]*pageItemsCount: page\.items\.length,[\s\S]*parentRefreshing: refreshing,[\s\S]*isEpgLoading: epgLoading,[\s\S]*categoriesReady,[\s\S]*selectedCategory: category/);
+  });
+
+  scenario("Z2O responder counters are independent and onPress keeps its existing semantic order", () => {
+    resetM3UDiagnosticCounters();
+    recordM3ULivePressIn();
+    recordM3ULivePressOut();
+    let snapshot = getM3UDiagnosticSnapshot();
+    assert.equal(snapshot.pressInCount, 1);
+    assert.equal(snapshot.pressCount, 0);
+    assert.equal(snapshot.pressOutCount, 1);
+    recordM3ULivePress();
+    snapshot = getM3UDiagnosticSnapshot();
+    assert.equal(snapshot.pressInCount, 1);
+    assert.equal(snapshot.pressCount, 1);
+    assert.equal(snapshot.pressOutCount, 1);
+    assert.match(pagedSource, /onPressIn=\{\(\) => \{[\s\S]*recordM3ULivePressIn\(\)[\s\S]*onPress=\{\(\) => \{\s*if \(provider\.type === "m3u"\) recordM3ULivePress\(\);\s*onOpen\(channel\);[\s\S]*onPressOut=\{\(\) => \{[\s\S]*recordM3ULivePressOut\(\)/);
+  });
+
+  scenario("Z2O background refresh and EPG markers preserve existing scheduling and dedupe semantics", () => {
+    assert.match(playerSource, /const M3U_BACKGROUND_REFRESH_DELAY_MS = 1_250/);
+    assert.match(playerSource, /setTimeout\(\(\) => \{\s*if \(!cancelled\) void refreshProviderInBackground\(providerId\);\s*\}, M3U_BACKGROUND_REFRESH_DELAY_MS\)/);
+    assert.match(playerSource, /recordM3UBackgroundRefreshBegin\(\);[\s\S]*await loadProviderSmart\(fromProvider\(existing\), \{ persistM3U: false \}\);[\s\S]*recordM3UBackgroundRefreshLoadEnd/);
+    assert.match(playerSource, /recordM3UBackgroundRefreshEnd\([\s\S]*if \(!persistenceOwnsRequest\) providerLoadGateRef\.current\.finish\(ownership\)/);
+    assert.match(playerSource, /const EPG_START_DELAY_MS = 1_200/);
+    assert.match(playerSource, /const existingPromise = bulkEpgPromiseRef\.current\.get\(resolvedProviderId\);[\s\S]*if \(existingPromise\) \{\s*await existingPromise/);
+    assert.match(playerSource, /if \(m3uEpgStartedAt !== null\) recordM3UEpgBegin\(\);[\s\S]*await loadBulkProviderEpg\(provider, providerChannels\)/);
+    assert.match(playerSource, /recordM3UEpgEnd\([\s\S]*bulkEpgPromiseRef\.current\.delete\(resolvedProviderId\);\s*setIsEpgLoading\(false\)/);
+    assert.match(playerSource, /provider\.type !== "xtream"\) return;/);
+  });
+
+  scenario("Z2O correlation report is bounded privacy-safe and diagnostic-only", () => {
+    resetM3UDiagnosticCounters();
+    recordM3UBackgroundRefreshBegin();
+    recordM3UBackgroundRefreshLoadEnd(25);
+    recordM3UEpgBegin();
+    recordM3ULivePressIn();
+    recordM3ULivePressOut();
+    recordM3UEpgEnd(50);
+    recordM3UBackgroundRefreshEnd(75);
+    const report = buildM3UDiagnosticReport(getM3UDiagnosticSnapshot());
+    assert.match(report, /M3U_BG_REFRESH_BEGIN/);
+    assert.match(report, /M3U_BG_REFRESH_LOAD_END/);
+    assert.match(report, /M3U_EPG_BEGIN/);
+    assert.match(report, /M3U_LIVE_PRESS_IN/);
+    assert.match(report, /M3U_LIVE_PRESS_OUT/);
+    assert.match(report, /m3uBgRefreshActive=false/);
+    assert.match(report, /m3uEpgActive=false/);
+    assert.doesNotMatch(report, /playlistUrl|streamUrl|epgUrl|username|password|token|mac=/i);
+    assert.match(pagedSource, /if \(provider\.type === "m3u"\) recordM3ULivePressIn\(\)/);
+    assert.match(pagedSource, /if \(provider\.type === "m3u"\) recordM3ULivePressOut\(\)/);
+    assert.doesNotMatch(pagedSource, /disabled=\{provider\.type === "m3u"/);
+    assert.doesNotMatch(playerSource, /M3U_BACKGROUND_REFRESH_DELAY_MS\s*=\s*(?!1_250)/);
+  });
+
+  assert.equal(passed, 15);
   console.log("m3u shape diagnostics scenarios: 8/8 passed");
   console.log("m3u Z2M handoff diagnostics scenarios: 3/3 passed");
-  console.log("m3u shape + Z2M handoff diagnostics scenarios: 11/11 passed");
+  console.log("m3u Z2O targeted correlation diagnostics scenarios: 4/4 passed");
+  console.log("m3u shape + Z2M + Z2O diagnostics scenarios: 15/15 passed");
 }
 
 main();
