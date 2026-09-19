@@ -1695,7 +1695,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             channelCount: providerChannels.length,
           });
         }
-        const promise = (async () => {
+        let promise!: Promise<void>;
+        promise = (async () => {
           try {
             const attempt = boundedProvider
               ? await runEpgBackgroundAttempt(
