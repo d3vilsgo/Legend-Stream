@@ -737,18 +737,24 @@ const parseXmlDate = (value: string) => {
 const stripTags = (value: string) =>
   decodeEpgText(value.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
 
-const decodeResponseText = async (response: Response) => {
+const decodeResponseText = async (response: Response, signal?: AbortSignal) => {
   try {
     const bytes = new Uint8Array(await response.arrayBuffer());
+    if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+    await yieldToUi();
     const head = Array.from(bytes.slice(0, 256), (byte) => String.fromCharCode(byte)).join("");
     const declared = head.match(/<\?xml[^>]*encoding=["']\s*([^"']+)\s*["']/i)?.[1]?.toLowerCase();
     const encoding = declared || "utf-8";
     const Decoder = (globalThis as any).TextDecoder;
     if (typeof Decoder === "function") {
       try {
-        return new Decoder(encoding).decode(bytes);
+        const decoded = new Decoder(encoding).decode(bytes);
+        if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+        return decoded;
       } catch {
-        return new Decoder("utf-8").decode(bytes);
+        const decoded = new Decoder("utf-8").decode(bytes);
+        if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+        return decoded;
       }
     }
     const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
@@ -804,6 +810,7 @@ export async function parseXmltvAsync(
   content: string,
   channels: Channel[],
   nowMs = Date.now(),
+  signal?: AbortSignal,
 ): Promise<EpgProgram[]> {
   const channelIds = channelIdMap(channels);
   const programs: EpgProgram[] = [];
@@ -843,21 +850,33 @@ export async function parseXmltvAsync(
     }
 
     scanned += 1;
-    if (scanned % 120 === 0) await yieldToUi();
+    if (scanned % 120 === 0) {
+      if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+      await yieldToUi();
+    }
   }
 
+  if (signal?.aborted) throw new Error("EPG background attempt aborted.");
   await yieldToUi();
   return programs.sort((a, b) => a.start - b.start);
 }
 
-export async function loadEpg(provider: Provider, channels: Channel[]): Promise<EpgProgram[]> {
+type EpgLoadOptions = {
+  signal?: AbortSignal;
+};
+
+export async function loadEpg(
+  provider: Provider,
+  channels: Channel[],
+  options: EpgLoadOptions = {},
+): Promise<EpgProgram[]> {
   if (provider.epgUrl) {
     const response = await fetch(provider.epgUrl, {
       headers: { Accept: "application/xml,text/xml,*/*" },
-      signal: AbortSignal.timeout(30_000),
+      signal: options.signal ?? AbortSignal.timeout(30_000),
     });
     if (!response.ok) throw new Error(`EPG request failed with ${response.status}.`);
-    return parseXmltvAsync(await decodeResponseText(response), channels);
+    return parseXmltvAsync(await decodeResponseText(response, options.signal), channels, Date.now(), options.signal);
   }
 
   if (provider.type === "xtream" && provider.username && provider.password) {
@@ -870,7 +889,7 @@ export async function loadEpg(provider: Provider, channels: Channel[]): Promise<
         if (!streamId) return [] as EpgProgram[];
         try {
           const response = await fetch(`${baseUrl}/player_api.php?${query}&action=get_short_epg&stream_id=${encodeURIComponent(streamId)}&limit=8`, {
-            signal: AbortSignal.timeout(12_000),
+            signal: options.signal ?? AbortSignal.timeout(12_000),
           });
           if (!response.ok) return [] as EpgProgram[];
           const data = await asJson(response);
