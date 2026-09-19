@@ -445,9 +445,7 @@ export function parseM3U(
   providerId: string,
   providerSource?: string,
 ): ProviderLoadResult {
-  recordM3USplitBegin();
   const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
-  recordM3USplitEnd();
   const entries: Channel[] = [];
   const state: M3UParseState = { pending: null };
   const diagnostics = createM3UShapeDiagnosticsObserver(providerSource);
@@ -472,7 +470,9 @@ async function parseM3UCooperatively(
   providerId: string,
   providerSource?: string,
 ): Promise<ProviderLoadResult> {
+  recordM3USplitBegin();
   const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
+  recordM3USplitEnd();
   const entries: Channel[] = [];
   const state: M3UParseState = { pending: null };
   const diagnostics = createM3UShapeDiagnosticsObserver(providerSource);
