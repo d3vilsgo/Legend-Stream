@@ -40,6 +40,8 @@ export type M3UDiagnosticState = {
   pageQueryMs: number | null;
   categoryQueryMs: number | null;
   sourceShape: M3USourceShape | null;
+  sourceInputCounts: { live: number; vod: number; series: number } | null;
+  sourceDuplicateIds: number | null;
   currentCacheBatchKind: "live" | "vod" | "series" | null;
   currentCacheBatchNumber: number | null;
   cacheWriterActive: boolean;
@@ -69,6 +71,8 @@ const initialState = (): M3UDiagnosticState => ({
   pageQueryMs: null,
   categoryQueryMs: null,
   sourceShape: null,
+  sourceInputCounts: null,
+  sourceDuplicateIds: null,
   currentCacheBatchKind: null,
   currentCacheBatchNumber: null,
   cacheWriterActive: false,
@@ -176,6 +180,21 @@ export function recordM3USourceShape(sourceShape: M3USourceShape) {
   publish({ ...state, sourceShape });
 }
 
+export function recordM3USourceInputFacts(
+  sourceInputCounts: { live: number; vod: number; series: number },
+  sourceDuplicateIds: number,
+) {
+  publish({
+    ...state,
+    sourceInputCounts: {
+      live: Math.max(0, Math.trunc(sourceInputCounts.live)),
+      vod: Math.max(0, Math.trunc(sourceInputCounts.vod)),
+      series: Math.max(0, Math.trunc(sourceInputCounts.series)),
+    },
+    sourceDuplicateIds: Math.max(0, Math.trunc(sourceDuplicateIds)),
+  });
+}
+
 export function recordM3UCacheBatch(
   phase: "begin" | "end",
   kind: "live" | "vod" | "series",
@@ -241,14 +260,14 @@ export function buildM3UDiagnosticReport(snapshot: M3UDiagnosticState) {
     `countQueryMs=${value(snapshot.countQueryMs)}`,
     `pageQueryMs=${value(snapshot.pageQueryMs)}`,
     `categoryQueryMs=${value(snapshot.categoryQueryMs)}`,
-    `liveItems=${value(shape?.liveItems)}`,
-    `vodItems=${value(shape?.vodItems)}`,
-    `seriesItems=${value(shape?.seriesItems)}`,
+    `liveItems=${value(snapshot.sourceInputCounts?.live ?? shape?.liveItems)}`,
+    `vodItems=${value(snapshot.sourceInputCounts?.vod ?? shape?.vodItems)}`,
+    `seriesItems=${value(snapshot.sourceInputCounts?.series ?? shape?.seriesItems)}`,
     `liveCategories=${value(shape?.liveCategories)}`,
     `vodCategories=${value(shape?.vodCategories)}`,
     `seriesCategories=${value(shape?.seriesCategories)}`,
     `maxCategoryItems=${value(shape?.maxCategoryItems)}`,
-    `duplicateIds=${value(shape?.duplicateIds)}`,
+    `duplicateIds=${value(snapshot.sourceDuplicateIds ?? shape?.duplicateIds)}`,
     `emptyCategories=${value(shape?.emptyCategories)}`,
     `avgPayloadLen=${value(shape?.avgPayloadLen)}`,
     `maxPayloadLen=${value(shape?.maxPayloadLen)}`,
