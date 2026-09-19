@@ -8,6 +8,10 @@ import {
   updatePlayerRuntimeInfo,
 } from "@/lib/playerRuntimeInfo";
 import { setPlayerKeepAwake } from "@/modules/legendstream-pip";
+import {
+  recordM3UVlcPlaying,
+  recordM3UVlcSurfaceMount,
+} from "@/lib/m3uInAppDiagnostics";
 
 const PLAYER_KEEP_AWAKE_TAG = "legendstream-active-playback";
 const FALLBACK_VIDEO_SIZE = { width: 16, height: 9 } as const;
@@ -56,6 +60,7 @@ type Props = {
   onPaused: () => void;
   onEnd: () => void;
   onError: () => void;
+  diagnosticM3ULive?: boolean;
 };
 
 const validVideoSize = (value?: PlayerVideoSize) =>
@@ -151,6 +156,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     onPaused,
     onEnd,
     onError,
+    diagnosticM3ULive = false,
   },
   forwardedRef,
 ) {
@@ -209,6 +215,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [paused, playbackReady]);
 
   useEffect(() => {
+    if (diagnosticM3ULive) recordM3UVlcSurfaceMount();
     applyGeneration.current += 1;
     lastLoadEvent.current = undefined;
     lastMetricKey.current = "";
@@ -228,7 +235,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
         effectiveCodec: runtimeCodecMode,
       });
     };
-  }, [codecMode, runtimeCodecMode, uri]);
+  }, [codecMode, diagnosticM3ULive, runtimeCodecMode, uri]);
 
   const isLikelyWindowSurface = useCallback((size?: PlayerVideoSize) => {
     if (!validVideoSize(size)) return false;
@@ -410,13 +417,14 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   const handlePlaying = useCallback(() => {
     setFirstFramePending(false);
     setPlaybackReady(true);
+    if (diagnosticM3ULive) recordM3UVlcPlaying();
     void logPlayerDiagnostic("vlc_playing", {
       codec: codecMode,
       effectiveCodec: runtimeCodecMode,
       fit,
     });
     onPlaying();
-  }, [codecMode, fit, onPlaying, runtimeCodecMode]);
+  }, [codecMode, diagnosticM3ULive, fit, onPlaying, runtimeCodecMode]);
 
   const handlePaused = useCallback(() => {
     setPlaybackReady(false);
