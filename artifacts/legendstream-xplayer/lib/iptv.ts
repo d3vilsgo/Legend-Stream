@@ -761,6 +761,7 @@ const decodeResponseText = async (response: Response, signal?: AbortSignal) => {
     if (/^(?:utf-?8)$/i.test(encoding)) return binaryStringToUtf8(binary);
     return binary;
   } catch {
+    if (signal?.aborted) throw new Error("EPG background attempt aborted.");
     return response.text();
   }
 };
