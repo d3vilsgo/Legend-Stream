@@ -84,7 +84,9 @@ function publish(next: M3UDiagnosticState) {
 
 export function subscribeM3UDiagnostics(listener: () => void) {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  return () => {
+    listeners.delete(listener);
+  };
 }
 
 export function getM3UDiagnosticSnapshot() {
