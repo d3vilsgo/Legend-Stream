@@ -65,7 +65,7 @@ import {
   safeProviderSwitchError,
   tryBeginProviderSwitch,
 } from "@/lib/providerSwitchUx";
-import { redactSensitiveText } from "@/lib/safeLog";
+import { redactSensitiveText, safeLog } from "@/lib/safeLog";
 import type { StalkerProductProviderIdentity } from "@/lib/stalkerProductSession";
 import {
   buildEpisodeStreamUrl,
@@ -243,11 +243,72 @@ export default function OptimizedHomeScreenPaged() {
     }
   };
 
+  const m3uDiagnosticEnabled = provider?.type === "m3u";
+  const logM3UBusyState = (currentView: ViewName) => {
+    if (!m3uDiagnosticEnabled) return;
+    safeLog.info("M3U_BUSY_STATE", {
+      view: currentView,
+      loading: isLoading,
+      syncing: isSyncing,
+      refreshing: isRefreshing,
+      hydrating: isHydrating,
+      drawer: catalogDrawerOpen,
+      switching: switchingProviderId !== null,
+      timestamp: Date.now(),
+    });
+  };
+  const logM3UNavPress = (target: ContentView) => {
+    if (!m3uDiagnosticEnabled) return;
+    safeLog.info("M3U_NAV_PRESS", { target, current: view, timestamp: Date.now() });
+    logM3UBusyState(view);
+  };
+  const logM3UNavigate = (target: ContentView) => {
+    if (!m3uDiagnosticEnabled) return;
+    safeLog.info("M3U_NAVIGATE", { from: view, to: target, timestamp: Date.now() });
+  };
+
   const navigate = (target: ContentView) => {
+    logM3UNavPress(target);
     if (target !== "live") clearScopedError("live-history");
+    logM3UNavigate(target);
     setView(target);
     if (target !== "series") { seriesRequestGenerationRef.current += 1; setSelectedSeries(null); setSeriesInfo(null); }
   };
+
+  React.useEffect(() => {
+    if (!m3uDiagnosticEnabled || view === "player") return;
+    safeLog.info("M3U_VIEW_COMMIT", { view, timestamp: Date.now() });
+    if (view !== "home") {
+      safeLog.info("M3U_TARGET_MOUNT", { target: view, timestamp: Date.now() });
+    }
+    logM3UBusyState(view);
+  }, [
+    view,
+    m3uDiagnosticEnabled,
+    isLoading,
+    isSyncing,
+    isRefreshing,
+    isHydrating,
+    catalogDrawerOpen,
+    switchingProviderId,
+  ]);
+
+  React.useEffect(() => {
+    if (!m3uDiagnosticEnabled) return;
+    const intervalMs = 250;
+    let expectedAt = Date.now() + intervalMs;
+    let lastCompactLogAt = 0;
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const driftMs = Math.max(0, now - expectedAt);
+      expectedAt = now + intervalMs;
+      if (driftMs >= 150 || now - lastCompactLogAt >= 1000) {
+        lastCompactLogAt = now;
+        safeLog.info("M3U_JS_HEARTBEAT", { driftMs, timestamp: now });
+      }
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }, [m3uDiagnosticEnabled]);
 
   if (isHydrating) return <View style={[s.centered, { backgroundColor: colors.background }]}><Text style={{ color: colors.foreground }}>{t("loading")}</Text></View>;
 
@@ -330,6 +391,14 @@ export default function OptimizedHomeScreenPaged() {
       <View style={s.headerTop}><Text style={[s.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text><ProviderSubscriptionChip provider={provider} /></View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.nav}>{nav.map((item) => <FocusButton key={item.key} label={item.label} icon={item.icon} variant={view === item.key ? "secondary" : "ghost"} onPress={() => navigate(item.key)} />)}</ScrollView>
     </View>
+    {m3uDiagnosticEnabled ? <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="M3U diagnostic touch sentinel"
+      onPress={() => safeLog.info("M3U_TOUCH_SENTINEL", { timestamp: Date.now() })}
+      style={[s.diagnosticSentinel, { borderColor: colors.border, backgroundColor: colors.card }]}
+    >
+      <Text style={{ color: colors.mutedForeground, fontSize: 10, fontWeight: "800" }}>DIAG</Text>
+    </Pressable> : null}
 
     {error || catalogError || visibleScopedError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}><Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError || visibleScopedError)}</Text><Pressable onPress={() => { clearError(); clearScopedError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable></View> : null}
 
@@ -531,7 +600,7 @@ const s = StyleSheet.create({
   nav: { gap: 6, paddingVertical: 4 },
   brand: { fontSize: 18, fontWeight: "900", letterSpacing: 1 },
   brandLarge: { fontSize: 28, fontWeight: "900", letterSpacing: 1 },
-  error: { margin: 12, borderWidth: 1, borderRadius: 12, padding: 10, flexDirection: "row", gap: 8, alignItems: "center" },
+  error: { margin: 12, borderWidth: 1, borderRadius: 12, padding: 10, flexDirection: "row", gap: 8, alignItems: "center" },\n  diagnosticSentinel: { position: "absolute", right: 8, top: 76, zIndex: 50, minWidth: 42, minHeight: 30, borderWidth: 1, borderRadius: 8, alignItems: "center", justifyContent: "center", opacity: 0.82 },
   setup: { width: "100%", maxWidth: 720, alignSelf: "center", paddingHorizontal: 20, gap: 14 },
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },
   section: { fontSize: 20, fontWeight: "800" },
