@@ -86,6 +86,7 @@ async function main() {
   assert.equal(EPG_BACKGROUND_BUDGET_MS, 5_000);
   assert.equal(EPG_RETRY_BACKOFF_MS, 30_000);
   assert.match(playerContextSource, /Math\.max\(channels\.length, provider\.channelCount \?\? 0\)/);
+  assert.match(playerContextSource, /boundedProvider\s*\? fallbackChannels\.slice\(0, EPG_PAGED_SEED_LIMIT\)\s*:\s*fallbackChannels/);
   passed += 1;
 
   // B + C. ACTIVE XTREAM + NO REQUEST STORM: same provider/channel has one in-flight task.
@@ -198,6 +199,10 @@ async function main() {
   assert.match(iptvSource, /channelIds\.get\(decodeEpgText\(attributes\.channel \|\| ""\)\)/);
   assert.match(iptvSource, /signal: options\.signal \?\? AbortSignal\.timeout\(30_000\)/);
   assert.match(iptvSource, /if \(signal\?\.aborted\) throw new Error\("EPG background attempt aborted\."\)/);
+  assert.match(iptvSource, /const EPG_DECODE_CHUNK_BYTES = 256 \* 1024/);
+  assert.match(iptvSource, /decodeBytesCooperatively/);
+  assert.match(iptvSource, /bytes\.subarray\(offset, end\)/);
+  assert.match(iptvSource, /if \(end < bytes\.length\) await yieldToUi\(\)/);
   const bgStart = playerContextSource.indexOf("const refreshProviderInBackground");
   const bgEnd = playerContextSource.indexOf("useEffect(() => {", bgStart);
   const bgSource = playerContextSource.slice(bgStart, bgEnd);
@@ -250,8 +255,40 @@ async function main() {
   assert.match(playerContextSource, /: \{\s*classification: "success" as const,\s*value: await loadBulkProviderEpg\(provider, providerChannels\),\s*elapsedMs: 0,/);
   passed += 1;
 
-  assert.equal(passed, 12);
-  process.stdout.write(`epg runtime scenarios: ${passed}/12 passed\n`);
+  // M. PHYSICAL BUG CONTRACT: unresolved EPG cannot serialize channel selection.
+  const unresolvedEpg = deferred<void>();
+  let playerOpened = false;
+  const openChannel = () => { playerOpened = true; };
+  void unresolvedEpg.promise;
+  openChannel();
+  assert.equal(playerOpened, true);
+  assert.equal(await Promise.race([
+    unresolvedEpg.promise.then(() => "epg"),
+    Promise.resolve("interaction"),
+  ]), "interaction");
+  assert.doesNotMatch(liveRowSource, /isEpgLoading|epgLoading|await/);
+  assert.doesNotMatch(openLiveSource, /isEpgLoading|epgByChannel|refreshEpg|await/);
+  const navigateStart = homeSource.indexOf("const navigate =");
+  const navigateEnd = homeSource.indexOf("React.useEffect(() => {", navigateStart);
+  const navigateSource = homeSource.slice(navigateStart, navigateEnd);
+  assert.ok(navigateStart >= 0 && navigateEnd > navigateStart);
+  assert.doesNotMatch(navigateSource, /isEpgLoading|refreshEpg|await/);
+  passed += 1;
+
+  // N. TIMEOUT/LATE COMPLETION: the bounded attempt result remains timeout after abandoned work finishes.
+  const late = deferred<string>();
+  const lateAttempt = runEpgBackgroundAttempt(() => late.promise, 5);
+  const timeoutResult = await lateAttempt;
+  assert.equal(timeoutResult.classification, "timeout");
+  late.resolve("late-epg");
+  await Promise.resolve();
+  assert.equal(timeoutResult.classification, "timeout");
+  assert.match(playerContextSource, /EPG_RESULT_IGNORED_STALE/);
+  assert.match(playerContextSource, /Date\.now\(\) \+ EPG_RETRY_BACKOFF_MS/);
+  passed += 1;
+
+  assert.equal(passed, 14);
+  process.stdout.write(`epg runtime scenarios: ${passed}/14 passed\n`);
 }
 
 void main().catch((error) => {
