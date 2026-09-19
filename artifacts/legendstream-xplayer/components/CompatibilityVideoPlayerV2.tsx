@@ -21,7 +21,6 @@ import {
   recordM3UCompatPlayerMount,
   recordM3ULiveQueueBegin,
   recordM3ULiveQueueEnd,
-  recordM3UVlcUriHandoff,
 } from "@/lib/m3uInAppDiagnostics";
 import {
   getCachedLivePlaybackWindow,
@@ -212,10 +211,12 @@ export function CompatibilityVideoPlayer({
       : runtimeSource;
   }, [resolvedSource]);
 
-  useEffect(() => {
-    if (!m3uLiveDiagnostic || !resolvedSource || !effectiveUri) return;
-    recordM3UVlcUriHandoff(describeM3UPlaybackUri(resolvedSource, effectiveUri));
-  }, [effectiveUri, m3uLiveDiagnostic, resolvedSource]);
+  const m3uUriMetadata = useMemo(
+    () => m3uLiveDiagnostic && resolvedSource && effectiveUri
+      ? describeM3UPlaybackUri(resolvedSource, effectiveUri)
+      : undefined,
+    [effectiveUri, m3uLiveDiagnostic, resolvedSource],
+  );
 
   useEffect(() => {
     setStartupPending(true);
@@ -777,6 +778,7 @@ export function CompatibilityVideoPlayer({
         onEnd={handleEnd}
         onError={handleError}
         diagnosticM3ULive={m3uLiveDiagnostic}
+        diagnosticM3UUriMetadata={m3uUriMetadata}
       /> : null}
 
       {!pipActive ? (
