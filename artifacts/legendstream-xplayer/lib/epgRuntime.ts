@@ -1,4 +1,68 @@
 export const EPG_PAGED_SEED_LIMIT = 48;
+export const EPG_BACKGROUND_BUDGET_MS = 5_000;
+
+export type EpgAttemptClassification = "success" | "timeout" | "failure";
+
+export type EpgBackgroundAttemptResult<T> = {
+  classification: EpgAttemptClassification;
+  value?: T;
+  elapsedMs: number;
+};
+
+const monotonicNow = () => globalThis.performance?.now?.() ?? Date.now();
+
+export async function runEpgBackgroundAttempt<T>(
+  task: (signal: AbortSignal) => Promise<T>,
+  budgetMs = EPG_BACKGROUND_BUDGET_MS,
+): Promise<EpgBackgroundAttemptResult<T>> {
+  const controller = new AbortController();
+  const startedAt = monotonicNow();
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeout = new Promise<EpgBackgroundAttemptResult<T>>((resolve) => {
+    timeoutHandle = setTimeout(() => {
+      controller.abort();
+      resolve({
+        classification: "timeout",
+        elapsedMs: Math.max(0, Math.round(monotonicNow() - startedAt)),
+      });
+    }, Math.max(1, budgetMs));
+  });
+  const work = Promise.resolve()
+    .then(() => task(controller.signal))
+    .then((value): EpgBackgroundAttemptResult<T> => ({
+      classification: "success",
+      value,
+      elapsedMs: Math.max(0, Math.round(monotonicNow() - startedAt)),
+    }))
+    .catch((): EpgBackgroundAttemptResult<T> => ({
+      classification: controller.signal.aborted ? "timeout" : "failure",
+      elapsedMs: Math.max(0, Math.round(monotonicNow() - startedAt)),
+    }));
+
+  try {
+    return await Promise.race([work, timeout]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+}
+
+export class EpgAttemptGeneration {
+  private readonly generations = new Map<string, number>();
+
+  begin(providerId: string) {
+    const generation = (this.generations.get(providerId) ?? 0) + 1;
+    this.generations.set(providerId, generation);
+    return generation;
+  }
+
+  invalidate(providerId: string) {
+    this.begin(providerId);
+  }
+
+  isCurrent(providerId: string, generation: number) {
+    return this.generations.get(providerId) === generation;
+  }
+}
 
 export type EpgProgramLike = {
   channelId: string;
