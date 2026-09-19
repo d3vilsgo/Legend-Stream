@@ -3,6 +3,18 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hasUsableM3UCacheSnapshot } from "../lib/m3uCacheAvailability";
+import {
+  buildM3UDiagnosticReport,
+  describeM3UPlaybackUri,
+  getM3UDiagnosticSnapshot,
+  recordM3ULivePress,
+  recordM3UOpenLiveEnter,
+  recordM3UOpenLiveSetPlayable,
+  recordM3UOpenLiveSetPlayerView,
+  recordM3UPlayerViewCommit,
+  resetM3UDiagnosticCounters,
+  setM3UDiagnosticSession,
+} from "../lib/m3uInAppDiagnostics";
 import { buildM3UCacheWriteProjection } from "../lib/m3uCacheWriteProjection";
 import {
   classifyM3UContentTypeWithSource,
@@ -13,6 +25,13 @@ import {
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const iptvSource = readFileSync(resolve(ROOT, "lib/iptv.ts"), "utf8");
 const cacheSource = readFileSync(resolve(ROOT, "lib/m3uCatalogCache.ts"), "utf8");
+const homeSource = readFileSync(resolve(ROOT, "components/OptimizedHomeScreenPaged.tsx"), "utf8");
+const pagedSource = readFileSync(resolve(ROOT, "components/catalog/PagedCatalogViews.tsx"), "utf8");
+const compatSource = readFileSync(resolve(ROOT, "components/CompatibilityVideoPlayerV2.tsx"), "utf8");
+const orientationSource = readFileSync(resolve(ROOT, "hooks/usePlayerOrientation.ts"), "utf8");
+const vlcSource = readFileSync(resolve(ROOT, "components/player/VlcPlaybackSurface.tsx"), "utf8");
+const panelSource = readFileSync(resolve(ROOT, "components/M3UDiagnosticPanel.tsx"), "utf8");
+const pageRepoSource = readFileSync(resolve(ROOT, "lib/catalogPageRepository.ts"), "utf8");
 
 let passed = 0;
 const scenario = (name: string, run: () => void) => {
@@ -216,8 +235,77 @@ function main() {
     assert.match(output, /m3u\.classification\.byGroupMovie=1/);
   });
 
-  assert.equal(passed, 8);
-  console.log("m3u shape diagnostics scenarios: 8/8 passed");
+  scenario("Z2M player handoff commit is observable and chronological", () => {
+    setM3UDiagnosticSession("provider-z2m", "live");
+    resetM3UDiagnosticCounters();
+    recordM3ULivePress();
+    recordM3UOpenLiveEnter();
+    recordM3UOpenLiveSetPlayable();
+    recordM3UOpenLiveSetPlayerView();
+    recordM3UPlayerViewCommit();
+    const snapshot = getM3UDiagnosticSnapshot();
+    assert.equal(snapshot.lastChannelPressCount, 1);
+    assert.ok(snapshot.lastLivePressAt);
+    assert.ok(snapshot.openLiveEnterAt);
+    assert.ok(snapshot.setPlayableAt);
+    assert.ok(snapshot.setPlayerViewAt);
+    assert.ok(snapshot.playerViewCommitAt);
+    assert.deepEqual(
+      snapshot.playbackSequence.map((entry) => entry.marker),
+      [
+        "M3U_LIVE_PRESS",
+        "M3U_OPEN_LIVE_ENTER",
+        "M3U_OPEN_LIVE_SET_PLAYABLE",
+        "M3U_OPEN_LIVE_SET_PLAYER_VIEW",
+        "M3U_PLAYER_VIEW_COMMIT",
+      ],
+    );
+  });
+
+  scenario("Z2M URI diagnostics report rewrite metadata without raw URL or credentials", () => {
+    const raw = "https://panel.example/live/alice/secret/12345.m3u8?token=private";
+    const effective = "https://panel.example/live/alice/secret/12345.ts?token=private";
+    const metadata = describeM3UPlaybackUri(raw, effective);
+    assert.deepEqual(metadata, {
+      scheme: "https",
+      inputExtension: "m3u8",
+      effectiveExtension: "ts",
+      rewriteApplied: true,
+      hasLivePath: true,
+      sourceLength: raw.length,
+    });
+    const report = buildM3UDiagnosticReport({
+      ...getM3UDiagnosticSnapshot(),
+      uriMetadata: metadata,
+    });
+    assert.match(report, /uriScheme=https/);
+    assert.match(report, /inputExtension=m3u8/);
+    assert.match(report, /effectiveExtension=ts/);
+    assert.match(report, /rewriteApplied=true/);
+    assert.doesNotMatch(report, /panel\.example|alice|secret|12345|private|token=/);
+  });
+
+  scenario("Z2M instrumentation preserves playback orientation queue and touch semantics", () => {
+    assert.match(pagedSource, /provider\.type === "m3u"\) recordM3ULivePress\(\)/);
+    assert.match(homeSource, /recordM3UOpenLiveEnter\(\)/);
+    assert.match(homeSource, /setPlayable\(\{ title: channel\.name,[\s\S]*url: channel\.streamUrl,[\s\S]*kind: "live"/);
+    assert.match(homeSource, /setView\("player"\);[\s\S]*recordM3UOpenLiveSetPlayerView\(\)/);
+    assert.match(homeSource, /view === "player"[\s\S]*M3UDiagnosticPanel/);
+    assert.doesNotMatch(homeSource, /m3uDiagnosticEnabled \|\| view === "player"/);
+    assert.match(compatSource, /\/live\\\/\/i\.test\(runtimeSource\)[\s\S]*\.m3u8[\s\S]*replace\([\s\S]*"\.ts"\)/);
+    assert.match(compatSource, /getCachedLivePlaybackWindow\(provider,/);
+    assert.match(pageRepoSource, /const LIVE_PLAYBACK_WINDOW_MAX = 500/);
+    assert.match(orientationSource, /await ScreenOrientation\.getOrientationAsync\(\)/);
+    assert.match(orientationSource, /await ScreenOrientation\.unlockAsync\(\)/);
+    assert.match(orientationSource, /recordM3UOrientationReady/);
+    assert.match(vlcSource, /source=\{\{ uri, initType: 2, initOptions \}\}/);
+    assert.match(vlcSource, /onPlaying=\{handlePlaying\}/);
+    assert.match(panelSource, /pointerEvents="box-none"/);
+    assert.doesNotMatch(panelSource, /streamUrl|playlistUrl|username|password|token|mac/i);
+  });
+
+  assert.equal(passed, 11);
+  console.log("m3u shape + Z2M handoff diagnostics scenarios: 11/11 passed");
 }
 
 main();
