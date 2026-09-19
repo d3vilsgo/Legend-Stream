@@ -34,6 +34,12 @@ type M3UPlaybackSequenceEntry = {
   elapsedMs: number | null;
 };
 
+type M3UCorrelationEvent = {
+  marker: string;
+  at: number;
+  elapsedMs: number | null;
+};
+
 export type M3UDiagnosticState = {
   providerType: "m3u" | null;
   providerHash: string | null;
@@ -86,6 +92,28 @@ export type M3UDiagnosticState = {
   liveQueueElapsedMs: number | null;
   liveQueueRowCount: number | null;
   playbackSequence: M3UPlaybackSequenceEntry[];
+  pageLoadingInitial: boolean;
+  pageLoadingMore: boolean;
+  pageItemsCount: number;
+  parentRefreshing: boolean;
+  isEpgLoading: boolean;
+  categoriesReady: boolean;
+  selectedCategory: string | null;
+  pressInCount: number;
+  pressCount: number;
+  pressOutCount: number;
+  lastLivePressInAt: number | null;
+  lastLivePressOutAt: number | null;
+  m3uBgRefreshActive: boolean;
+  lastM3uBgRefreshBegin: number | null;
+  lastM3uBgRefreshLoadEnd: number | null;
+  lastM3uBgRefreshEnd: number | null;
+  lastM3uBgRefreshElapsedMs: number | null;
+  m3uEpgActive: boolean;
+  lastM3uEpgBegin: number | null;
+  lastM3uEpgEnd: number | null;
+  lastM3uEpgElapsedMs: number | null;
+  correlationSequence: M3UCorrelationEvent[];
 };
 
 const initialState = (): M3UDiagnosticState => ({
@@ -140,6 +168,28 @@ const initialState = (): M3UDiagnosticState => ({
   liveQueueElapsedMs: null,
   liveQueueRowCount: null,
   playbackSequence: [],
+  pageLoadingInitial: false,
+  pageLoadingMore: false,
+  pageItemsCount: 0,
+  parentRefreshing: false,
+  isEpgLoading: false,
+  categoriesReady: false,
+  selectedCategory: null,
+  pressInCount: 0,
+  pressCount: 0,
+  pressOutCount: 0,
+  lastLivePressInAt: null,
+  lastLivePressOutAt: null,
+  m3uBgRefreshActive: false,
+  lastM3uBgRefreshBegin: null,
+  lastM3uBgRefreshLoadEnd: null,
+  lastM3uBgRefreshEnd: null,
+  lastM3uBgRefreshElapsedMs: null,
+  m3uEpgActive: false,
+  lastM3uEpgBegin: null,
+  lastM3uEpgEnd: null,
+  lastM3uEpgElapsedMs: null,
+  correlationSequence: [],
 });
 
 let playbackPressStartedAt: number | null = null;
@@ -153,6 +203,14 @@ const sequenceEntry = (marker: string): M3UPlaybackSequenceEntry => ({
   at: wallNow(),
   elapsedMs: elapsedFromPress(),
 });
+const appendCorrelation = (
+  current: M3UDiagnosticState,
+  marker: string,
+  elapsedMs: number | null = null,
+) => [
+  ...current.correlationSequence.slice(-31),
+  { marker, at: wallNow(), elapsedMs },
+];
 let state = initialState();
 const listeners = new Set<() => void>();
 
@@ -230,6 +288,116 @@ export function recordM3UBusyState(input: {
   switchingProviderPresent: boolean;
 }) {
   publish({ ...state, ...input });
+}
+
+export function recordM3UPagedLiveState(input: {
+  pageLoadingInitial: boolean;
+  pageLoadingMore: boolean;
+  pageItemsCount: number;
+  parentRefreshing: boolean;
+  isEpgLoading: boolean;
+  categoriesReady: boolean;
+  selectedCategory: string | null;
+}) {
+  if (state.providerType !== "m3u") return;
+  publish({
+    ...state,
+    ...input,
+    pageItemsCount: Math.max(0, Math.trunc(input.pageItemsCount)),
+  });
+}
+
+export function recordM3ULivePressIn() {
+  if (state.providerType !== "m3u") return;
+  const at = wallNow();
+  publish({
+    ...state,
+    pressInCount: state.pressInCount + 1,
+    lastLivePressInAt: at,
+    correlationSequence: [...state.correlationSequence.slice(-31), { marker: "M3U_LIVE_PRESS_IN", at, elapsedMs: null }],
+  });
+  safeLog.info("M3U_LIVE_PRESS_IN", { timestamp: at });
+}
+
+export function recordM3ULivePressOut() {
+  if (state.providerType !== "m3u") return;
+  const at = wallNow();
+  publish({
+    ...state,
+    pressOutCount: state.pressOutCount + 1,
+    lastLivePressOutAt: at,
+    correlationSequence: [...state.correlationSequence.slice(-31), { marker: "M3U_LIVE_PRESS_OUT", at, elapsedMs: null }],
+  });
+  safeLog.info("M3U_LIVE_PRESS_OUT", { timestamp: at });
+}
+
+export function recordM3UBackgroundRefreshBegin() {
+  if (state.providerType !== "m3u") return;
+  const at = wallNow();
+  publish({
+    ...state,
+    m3uBgRefreshActive: true,
+    lastM3uBgRefreshBegin: at,
+    lastM3uBgRefreshLoadEnd: null,
+    lastM3uBgRefreshEnd: null,
+    lastM3uBgRefreshElapsedMs: null,
+    correlationSequence: [...state.correlationSequence.slice(-31), { marker: "M3U_BG_REFRESH_BEGIN", at, elapsedMs: null }],
+  });
+  safeLog.info("M3U_BG_REFRESH_BEGIN", { timestamp: at });
+}
+
+export function recordM3UBackgroundRefreshLoadEnd(elapsedMs: number) {
+  if (state.providerType !== "m3u") return;
+  const safeElapsed = Math.max(0, Math.round(elapsedMs));
+  const at = wallNow();
+  publish({
+    ...state,
+    lastM3uBgRefreshLoadEnd: at,
+    correlationSequence: [...state.correlationSequence.slice(-31), { marker: "M3U_BG_REFRESH_LOAD_END", at, elapsedMs: safeElapsed }],
+  });
+  safeLog.info("M3U_BG_REFRESH_LOAD_END", { timestamp: at, elapsedMs: safeElapsed });
+}
+
+export function recordM3UBackgroundRefreshEnd(elapsedMs: number) {
+  if (state.providerType !== "m3u") return;
+  const safeElapsed = Math.max(0, Math.round(elapsedMs));
+  const at = wallNow();
+  publish({
+    ...state,
+    m3uBgRefreshActive: false,
+    lastM3uBgRefreshEnd: at,
+    lastM3uBgRefreshElapsedMs: safeElapsed,
+    correlationSequence: [...state.correlationSequence.slice(-31), { marker: "M3U_BG_REFRESH_END", at, elapsedMs: safeElapsed }],
+  });
+  safeLog.info("M3U_BG_REFRESH_END", { timestamp: at, elapsedMs: safeElapsed });
+}
+
+export function recordM3UEpgBegin() {
+  if (state.providerType !== "m3u") return;
+  const at = wallNow();
+  publish({
+    ...state,
+    m3uEpgActive: true,
+    lastM3uEpgBegin: at,
+    lastM3uEpgEnd: null,
+    lastM3uEpgElapsedMs: null,
+    correlationSequence: [...state.correlationSequence.slice(-31), { marker: "M3U_EPG_BEGIN", at, elapsedMs: null }],
+  });
+  safeLog.info("M3U_EPG_BEGIN", { timestamp: at });
+}
+
+export function recordM3UEpgEnd(elapsedMs: number) {
+  if (state.providerType !== "m3u") return;
+  const safeElapsed = Math.max(0, Math.round(elapsedMs));
+  const at = wallNow();
+  publish({
+    ...state,
+    m3uEpgActive: false,
+    lastM3uEpgEnd: at,
+    lastM3uEpgElapsedMs: safeElapsed,
+    correlationSequence: [...state.correlationSequence.slice(-31), { marker: "M3U_EPG_END", at, elapsedMs: safeElapsed }],
+  });
+  safeLog.info("M3U_EPG_END", { timestamp: at, elapsedMs: safeElapsed });
 }
 
 export function recordM3UPageDbOpen(elapsedMs: number) {
@@ -329,6 +497,7 @@ export function recordM3ULivePress() {
     ...state,
     lastLivePressAt: at,
     lastChannelPressCount: state.lastChannelPressCount + 1,
+    pressCount: state.pressCount + 1,
     openLiveEnterAt: null,
     setPlayableAt: null,
     setPlayerViewAt: null,
@@ -350,6 +519,7 @@ export function recordM3ULivePress() {
     liveQueueElapsedMs: null,
     liveQueueRowCount: null,
     playbackSequence: [{ marker: "M3U_LIVE_PRESS", at, elapsedMs: 0 }],
+    correlationSequence: [...state.correlationSequence.slice(-31), { marker: "M3U_LIVE_PRESS", at, elapsedMs: 0 }],
   };
   publish(next);
   safeLog.info("M3U_LIVE_PRESS", { timestamp: at, elapsedMs: 0 });
@@ -472,6 +642,28 @@ export function resetM3UDiagnosticCounters() {
     liveQueueElapsedMs: null,
     liveQueueRowCount: null,
     playbackSequence: [],
+    pageLoadingInitial: false,
+    pageLoadingMore: false,
+    pageItemsCount: 0,
+    parentRefreshing: false,
+    isEpgLoading: false,
+    categoriesReady: false,
+    selectedCategory: null,
+    pressInCount: 0,
+    pressCount: 0,
+    pressOutCount: 0,
+    lastLivePressInAt: null,
+    lastLivePressOutAt: null,
+    m3uBgRefreshActive: false,
+    lastM3uBgRefreshBegin: null,
+    lastM3uBgRefreshLoadEnd: null,
+    lastM3uBgRefreshEnd: null,
+    lastM3uBgRefreshElapsedMs: null,
+    m3uEpgActive: false,
+    lastM3uEpgBegin: null,
+    lastM3uEpgEnd: null,
+    lastM3uEpgElapsedMs: null,
+    correlationSequence: [],
   });
   playbackPressStartedAt = null;
 }
@@ -501,6 +693,14 @@ export function buildM3UDiagnosticReport(snapshot: M3UDiagnosticState) {
     `isHydrating=${snapshot.isHydrating}`,
     `catalogDrawerOpen=${snapshot.catalogDrawerOpen}`,
     `switchingProviderPresent=${snapshot.switchingProviderPresent}`,
+    "PAGED_LIVE_STATE",
+    `pageLoadingInitial=${snapshot.pageLoadingInitial}`,
+    `pageLoadingMore=${snapshot.pageLoadingMore}`,
+    `pageItemsCount=${snapshot.pageItemsCount}`,
+    `parentRefreshing=${snapshot.parentRefreshing}`,
+    `isEpgLoading=${snapshot.isEpgLoading}`,
+    `categoriesReady=${snapshot.categoriesReady}`,
+    `selectedCategory=${value(snapshot.selectedCategory)}`,
     `pageDbOpenMs=${value(snapshot.pageDbOpenMs)}`,
     ...indexValues.map(([name, ms], index) => `index${index + 1}Ms=${ms} (${name})`),
     `countQueryMs=${value(snapshot.countQueryMs)}`,
@@ -525,6 +725,11 @@ export function buildM3UDiagnosticReport(snapshot: M3UDiagnosticState) {
     "PLAYBACK_HANDOFF",
     `lastLivePressAt=${value(snapshot.lastLivePressAt)}`,
     `lastChannelPressCount=${snapshot.lastChannelPressCount}`,
+    `pressInCount=${snapshot.pressInCount}`,
+    `pressCount=${snapshot.pressCount}`,
+    `pressOutCount=${snapshot.pressOutCount}`,
+    `lastLivePressInAt=${value(snapshot.lastLivePressInAt)}`,
+    `lastLivePressOutAt=${value(snapshot.lastLivePressOutAt)}`,
     `openLiveEnter=${value(snapshot.openLiveEnterAt)}`,
     `setPlayable=${value(snapshot.setPlayableAt)}`,
     `setPlayerView=${value(snapshot.setPlayerViewAt)}`,
@@ -550,6 +755,20 @@ export function buildM3UDiagnosticReport(snapshot: M3UDiagnosticState) {
     `liveQueueEnd=${value(snapshot.liveQueueEndAt)}`,
     `liveQueueElapsedMs=${value(snapshot.liveQueueElapsedMs)}`,
     `liveQueueRowCount=${value(snapshot.liveQueueRowCount)}`,
+    "RUNTIME_CORRELATION",
+    `m3uBgRefreshActive=${snapshot.m3uBgRefreshActive}`,
+    `lastM3uBgRefreshBegin=${value(snapshot.lastM3uBgRefreshBegin)}`,
+    `lastM3uBgRefreshLoadEnd=${value(snapshot.lastM3uBgRefreshLoadEnd)}`,
+    `lastM3uBgRefreshEnd=${value(snapshot.lastM3uBgRefreshEnd)}`,
+    `lastM3uBgRefreshElapsedMs=${value(snapshot.lastM3uBgRefreshElapsedMs)}`,
+    `m3uEpgActive=${snapshot.m3uEpgActive}`,
+    `lastM3uEpgBegin=${value(snapshot.lastM3uEpgBegin)}`,
+    `lastM3uEpgEnd=${value(snapshot.lastM3uEpgEnd)}`,
+    `lastM3uEpgElapsedMs=${value(snapshot.lastM3uEpgElapsedMs)}`,
+    "correlationSequence:",
+    ...snapshot.correlationSequence.map((entry, index) =>
+      `${index + 1}. ${entry.marker} at=${entry.at} elapsedMs=${value(entry.elapsedMs)}`
+    ),
     "playbackSequence:",
     ...snapshot.playbackSequence.map((entry, index) =>
       `${index + 1}. ${entry.marker} at=${entry.at} elapsedMs=${value(entry.elapsedMs)}`
