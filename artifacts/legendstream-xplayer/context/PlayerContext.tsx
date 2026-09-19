@@ -1692,17 +1692,17 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           });
         }
         const promise = (async () => {
-          const attempt = boundedProvider
-            ? await runEpgBackgroundAttempt(
-                (signal) => loadBulkProviderEpg(provider, providerChannels, signal),
-                EPG_BACKGROUND_BUDGET_MS,
-              )
-            : {
-                classification: "success" as const,
-                value: await loadBulkProviderEpg(provider, providerChannels),
-                elapsedMs: 0,
-              };
           try {
+            const attempt = boundedProvider
+              ? await runEpgBackgroundAttempt(
+                  (signal) => loadBulkProviderEpg(provider, providerChannels, signal),
+                  EPG_BACKGROUND_BUDGET_MS,
+                )
+              : {
+                  classification: "success" as const,
+                  value: await loadBulkProviderEpg(provider, providerChannels),
+                  elapsedMs: 0,
+                };
             if (attempt.classification !== "success") {
               if (boundedProvider) {
                 epgRetryNotBeforeRef.current.set(
@@ -1776,6 +1776,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               channelCount: providerChannels.length,
               result: programs.length ? "success" : "empty",
             });
+          } catch {
+            // EPG remains optional for Stalker and bounded providers alike.
           } finally {
             if (m3uEpgStartedAt !== null) {
               const m3uEpgEndedAt = globalThis.performance?.now?.() ?? Date.now();
