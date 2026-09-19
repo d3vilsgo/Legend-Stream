@@ -23,7 +23,12 @@ import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { useCatalogPage } from "@/hooks/useCatalogPage";
 import { shouldUseWholeCatalogLoadingSkeleton } from "@/lib/catalogSearchPresentation";
-import { recordM3ULivePress } from "@/lib/m3uInAppDiagnostics";
+import {
+  recordM3ULivePress,
+  recordM3ULivePressIn,
+  recordM3ULivePressOut,
+  recordM3UPagedLiveState,
+} from "@/lib/m3uInAppDiagnostics";
 import { getCachedCatalogCategories } from "@/lib/catalogPageRepository";
 import {
   EPG_PAGED_SEED_LIMIT,
@@ -560,6 +565,27 @@ export function PagedLiveCatalog({
   useEffect(() => {
     onDrawerVisibilityChange(drawerOpen);
   }, [drawerOpen, onDrawerVisibilityChange]);
+  useEffect(() => {
+    if (provider.type !== "m3u") return;
+    recordM3UPagedLiveState({
+      pageLoadingInitial: page.loadingInitial,
+      pageLoadingMore: page.loadingMore,
+      pageItemsCount: page.items.length,
+      parentRefreshing: refreshing,
+      isEpgLoading: epgLoading,
+      categoriesReady,
+      selectedCategory: category,
+    });
+  }, [
+    provider.type,
+    page.loadingInitial,
+    page.loadingMore,
+    page.items.length,
+    refreshing,
+    epgLoading,
+    categoriesReady,
+    category,
+  ]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
   useEffect(() => {
     const timer = setInterval(() => setEpgClock(Date.now()), 60_000);
@@ -633,10 +659,19 @@ export function PagedLiveCatalog({
           ? new Date(current.end).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })
           : undefined;
         return <View style={[s.liveRow, { borderColor: colors.border, backgroundColor: colors.card }]}> 
-          <Pressable style={s.liveMain} onPress={() => {
-            if (provider.type === "m3u") recordM3ULivePress();
-            onOpen(channel);
-          }}>
+          <Pressable
+            style={s.liveMain}
+            onPressIn={() => {
+              if (provider.type === "m3u") recordM3ULivePressIn();
+            }}
+            onPress={() => {
+              if (provider.type === "m3u") recordM3ULivePress();
+              onOpen(channel);
+            }}
+            onPressOut={() => {
+              if (provider.type === "m3u") recordM3ULivePressOut();
+            }}
+          >
             <Poster uri={channel.logoUrl} title={channel.name} />
             <View style={{ flex: 1 }}>
               <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700" }}>{channel.name}</Text>
