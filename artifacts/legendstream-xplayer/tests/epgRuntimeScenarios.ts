@@ -288,7 +288,8 @@ async function main() {
   passed += 1;
 
   assert.equal(passed, 14);
-  process.stdout.write(`epg runtime scenarios: ${passed}/14 passed\n`);
+  process.stdout.write("epg runtime scenarios: 12/12 passed\n");
+  process.stdout.write("epg Z2RA non-blocking contract scenarios: 2/2 passed\n");
 }
 
 void main().catch((error) => {
