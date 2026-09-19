@@ -113,6 +113,12 @@ export type M3UDiagnosticState = {
   lastM3uEpgBegin: number | null;
   lastM3uEpgEnd: number | null;
   lastM3uEpgElapsedMs: number | null;
+  m3uFetchWaitMs: number | null;
+  m3uResponseTextMs: number | null;
+  m3uSplitMs: number | null;
+  m3uParseLinesMs: number | null;
+  m3uCatalogBuildMs: number | null;
+  m3uTotalIngestMs: number | null;
   correlationSequence: M3UCorrelationEvent[];
 };
 
@@ -189,10 +195,33 @@ const initialState = (): M3UDiagnosticState => ({
   lastM3uEpgBegin: null,
   lastM3uEpgEnd: null,
   lastM3uEpgElapsedMs: null,
+  m3uFetchWaitMs: null,
+  m3uResponseTextMs: null,
+  m3uSplitMs: null,
+  m3uParseLinesMs: null,
+  m3uCatalogBuildMs: null,
+  m3uTotalIngestMs: null,
   correlationSequence: [],
 });
 
 let playbackPressStartedAt: number | null = null;
+type M3UIngestClock = {
+  fetchBegin: number | null;
+  fetchResponse: number | null;
+  responseTextEnd: number | null;
+  splitBegin: number | null;
+  splitEnd: number | null;
+  parseLinesEnd: number | null;
+};
+const emptyIngestClock = (): M3UIngestClock => ({
+  fetchBegin: null,
+  fetchResponse: null,
+  responseTextEnd: null,
+  splitBegin: null,
+  splitEnd: null,
+  parseLinesEnd: null,
+});
+let ingestClock = emptyIngestClock();
 const monotonicNow = () => globalThis.performance?.now?.() ?? Date.now();
 const wallNow = () => Date.now();
 const elapsedFromPress = () => playbackPressStartedAt === null
@@ -362,6 +391,95 @@ export function recordM3UBackgroundRefreshEnd(elapsedMs: number) {
     correlationSequence: [...state.correlationSequence.slice(-31), { marker: "M3U_BG_REFRESH_END", at, elapsedMs: safeElapsed }],
   });
   safeLog.info("M3U_BG_REFRESH_END", { timestamp: at, elapsedMs: safeElapsed });
+}
+
+function safePhaseDuration(start: number | null, end: number) {
+  return start === null ? null : Math.max(0, Math.round(end - start));
+}
+
+function publishM3UIngestMarker(
+  marker: string,
+  monotonicAt: number,
+  patch: Partial<M3UDiagnosticState>,
+) {
+  if (state.providerType !== "m3u") return;
+  const at = wallNow();
+  const elapsedMs = safePhaseDuration(ingestClock.fetchBegin, monotonicAt);
+  publish({
+    ...state,
+    ...patch,
+    correlationSequence: [
+      ...state.correlationSequence.slice(-31),
+      { marker, at, elapsedMs },
+    ],
+  });
+  safeLog.info(marker, { timestamp: at, elapsedMs });
+}
+
+export function recordM3UFetchBegin(monotonicAt = monotonicNow()) {
+  if (state.providerType !== "m3u") return;
+  ingestClock = {
+    fetchBegin: monotonicAt,
+    fetchResponse: null,
+    responseTextEnd: null,
+    splitBegin: null,
+    splitEnd: null,
+    parseLinesEnd: null,
+  };
+  publishM3UIngestMarker("M3U_FETCH_BEGIN", monotonicAt, {
+    m3uFetchWaitMs: null,
+    m3uResponseTextMs: null,
+    m3uSplitMs: null,
+    m3uParseLinesMs: null,
+    m3uCatalogBuildMs: null,
+    m3uTotalIngestMs: null,
+  });
+}
+
+export function recordM3UFetchResponse(monotonicAt = monotonicNow()) {
+  if (state.providerType !== "m3u") return;
+  ingestClock.fetchResponse = monotonicAt;
+  publishM3UIngestMarker("M3U_FETCH_RESPONSE", monotonicAt, {
+    m3uFetchWaitMs: safePhaseDuration(ingestClock.fetchBegin, monotonicAt),
+  });
+}
+
+export function recordM3UResponseTextEnd(monotonicAt = monotonicNow()) {
+  if (state.providerType !== "m3u") return;
+  ingestClock.responseTextEnd = monotonicAt;
+  publishM3UIngestMarker("M3U_RESPONSE_TEXT_END", monotonicAt, {
+    m3uResponseTextMs: safePhaseDuration(ingestClock.fetchResponse, monotonicAt),
+  });
+}
+
+export function recordM3USplitBegin(monotonicAt = monotonicNow()) {
+  if (state.providerType !== "m3u") return;
+  ingestClock.splitBegin = monotonicAt;
+  publishM3UIngestMarker("M3U_SPLIT_BEGIN", monotonicAt, {});
+}
+
+export function recordM3USplitEnd(monotonicAt = monotonicNow()) {
+  if (state.providerType !== "m3u") return;
+  ingestClock.splitEnd = monotonicAt;
+  publishM3UIngestMarker("M3U_SPLIT_END", monotonicAt, {
+    m3uSplitMs: safePhaseDuration(ingestClock.splitBegin, monotonicAt),
+  });
+}
+
+export function recordM3UParseLinesEnd(monotonicAt = monotonicNow()) {
+  if (state.providerType !== "m3u") return;
+  ingestClock.parseLinesEnd = monotonicAt;
+  publishM3UIngestMarker("M3U_PARSE_LINES_END", monotonicAt, {
+    m3uParseLinesMs: safePhaseDuration(ingestClock.splitEnd, monotonicAt),
+  });
+}
+
+export function recordM3UCatalogBuildEnd(monotonicAt = monotonicNow()) {
+  if (state.providerType !== "m3u") return;
+  publishM3UIngestMarker("M3U_CATALOG_BUILD_END", monotonicAt, {
+    m3uCatalogBuildMs: safePhaseDuration(ingestClock.parseLinesEnd, monotonicAt),
+    m3uTotalIngestMs: safePhaseDuration(ingestClock.fetchBegin, monotonicAt),
+  });
 }
 
 export function recordM3UEpgBegin() {
@@ -655,9 +773,16 @@ export function resetM3UDiagnosticCounters() {
     lastM3uEpgBegin: null,
     lastM3uEpgEnd: null,
     lastM3uEpgElapsedMs: null,
+    m3uFetchWaitMs: null,
+    m3uResponseTextMs: null,
+    m3uSplitMs: null,
+    m3uParseLinesMs: null,
+    m3uCatalogBuildMs: null,
+    m3uTotalIngestMs: null,
     correlationSequence: [],
   });
   playbackPressStartedAt = null;
+  ingestClock = emptyIngestClock();
 }
 
 const value = (input: string | number | boolean | null | undefined) =>
@@ -757,6 +882,13 @@ export function buildM3UDiagnosticReport(snapshot: M3UDiagnosticState) {
     `lastM3uEpgBegin=${value(snapshot.lastM3uEpgBegin)}`,
     `lastM3uEpgEnd=${value(snapshot.lastM3uEpgEnd)}`,
     `lastM3uEpgElapsedMs=${value(snapshot.lastM3uEpgElapsedMs)}`,
+    "M3U_INGEST_PHASES",
+    `m3uFetchWaitMs=${value(snapshot.m3uFetchWaitMs)}`,
+    `m3uResponseTextMs=${value(snapshot.m3uResponseTextMs)}`,
+    `m3uSplitMs=${value(snapshot.m3uSplitMs)}`,
+    `m3uParseLinesMs=${value(snapshot.m3uParseLinesMs)}`,
+    `m3uCatalogBuildMs=${value(snapshot.m3uCatalogBuildMs)}`,
+    `m3uTotalIngestMs=${value(snapshot.m3uTotalIngestMs)}`,
     "correlationSequence:",
     ...snapshot.correlationSequence.map((entry, index) =>
       `${index + 1}. ${entry.marker} at=${entry.at} elapsedMs=${value(entry.elapsedMs)}`
