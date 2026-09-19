@@ -203,14 +203,6 @@ const sequenceEntry = (marker: string): M3UPlaybackSequenceEntry => ({
   at: wallNow(),
   elapsedMs: elapsedFromPress(),
 });
-const appendCorrelation = (
-  current: M3UDiagnosticState,
-  marker: string,
-  elapsedMs: number | null = null,
-) => [
-  ...current.correlationSequence.slice(-31),
-  { marker, at: wallNow(), elapsedMs },
-];
 let state = initialState();
 const listeners = new Set<() => void>();
 
