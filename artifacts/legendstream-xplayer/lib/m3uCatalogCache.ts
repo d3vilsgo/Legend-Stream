@@ -63,6 +63,7 @@ import {
   noteM3UNetworkCatalogCounts,
 } from "./m3uSwitchMetrics";
 import { safeLog } from "./safeLog";
+import { recordM3UCacheBatch } from "./m3uInAppDiagnostics";
 import { yieldToUi } from "./cooperative";
 import type { XtreamCategory } from "./xtreamCatalog";
 
@@ -82,6 +83,7 @@ function logDiagnosticCacheBatch(
   batchIndex: number,
   totalRows: number,
 ) {
+  recordM3UCacheBatch(marker === "M3U_CACHE_BATCH_BEGIN" ? "begin" : "end", kind, batchIndex);
   if (!shouldLogDiagnosticCacheBatch(batchIndex, totalRows)) return;
   safeLog.info(marker, { kind, batch: batchIndex, timestamp: Date.now() });
 }
