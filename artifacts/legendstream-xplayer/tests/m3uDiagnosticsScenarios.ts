@@ -305,6 +305,8 @@ function main() {
   });
 
   assert.equal(passed, 11);
+  console.log("m3u shape diagnostics scenarios: 8/8 passed");
+  console.log("m3u Z2M handoff diagnostics scenarios: 3/3 passed");
   console.log("m3u shape + Z2M handoff diagnostics scenarios: 11/11 passed");
 }
 
