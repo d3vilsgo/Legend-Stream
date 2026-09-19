@@ -25,6 +25,13 @@ import {
 } from "./catalogPersistence";
 import { buildM3UDirectHydrationCooperatively } from "./m3uCatalogHydration";
 import { safeLog } from "./safeLog";
+import {
+  recordM3UFirstQueryTiming,
+  recordM3UIndexTiming,
+  recordM3UPageDbOpen,
+  recordM3USourceShape,
+  type M3USourceShape,
+} from "./m3uInAppDiagnostics";
 import { yieldToUi } from "./cooperative";
 import type { Channel } from "./iptv";
 import type {
@@ -127,20 +134,24 @@ async function pageDatabase(diagnosticM3U = false) {
       }
       await db.execAsync(index.sql);
       if (diagnosticM3U) {
+        const elapsedMs = Date.now() - indexStartedAt;
         safeLog.info("M3U_INDEX_CREATE_END", {
           index: index.name,
-          elapsedMs: Date.now() - indexStartedAt,
+          elapsedMs,
           timestamp: Date.now(),
         });
+        recordM3UIndexTiming(index.name, elapsedMs);
       }
     }
     pageIndexesReady = true;
   }
   if (diagnosticM3U) {
+    const elapsedMs = Date.now() - startedAt;
     safeLog.info("M3U_DB_PAGE_OPEN_END", {
-      elapsedMs: Date.now() - startedAt,
+      elapsedMs,
       timestamp: Date.now(),
     });
+    recordM3UPageDbOpen(elapsedMs);
   }
   return db;
 }
@@ -223,10 +234,12 @@ export async function getCachedCatalogPage<K extends CatalogPageKind>(
   const state = await getCatalogSyncState(request.providerId);
   const countKnown = rawTotal > 0 || state?.phase === "ready";
   const catalogCountMs = Date.now() - countStartedAt;
+  if (request.providerType === "m3u") recordM3UFirstQueryTiming("countQueryMs", catalogCountMs);
 
   const pageReadStartedAt = Date.now();
   const rows = await db.getAllAsync<CatalogPageSqlRow>(plan.pageSql, ...plan.pageArgs);
   const catalogPageReadMs = Date.now() - pageReadStartedAt;
+  if (request.providerType === "m3u") recordM3UFirstQueryTiming("pageQueryMs", catalogPageReadMs);
 
   const pageMapStartedAt = Date.now();
   const items = mapRows(provider, request, rows) as CatalogPageItem<K>[];
@@ -278,12 +291,87 @@ export function noteCatalogPageCommit(
   });
 }
 
+export async function getM3UDiagnosticSourceShape(providerId: string): Promise<M3USourceShape> {
+  const db = await pageDatabase(true);
+  const aggregate = await db.getFirstAsync<{
+    live_items: number | null;
+    vod_items: number | null;
+    series_items: number | null;
+    live_categories: number | null;
+    vod_categories: number | null;
+    series_categories: number | null;
+    empty_categories: number | null;
+    avg_payload_len: number | null;
+    max_payload_len: number | null;
+    avg_name_len: number | null;
+    max_name_len: number | null;
+  }>(
+    `SELECT
+      SUM(CASE WHEN kind = 'live' THEN 1 ELSE 0 END) AS live_items,
+      SUM(CASE WHEN kind = 'vod' THEN 1 ELSE 0 END) AS vod_items,
+      SUM(CASE WHEN kind = 'series' THEN 1 ELSE 0 END) AS series_items,
+      COUNT(DISTINCT CASE WHEN kind = 'live' AND COALESCE(category_id, '') <> '' THEN category_id END) AS live_categories,
+      COUNT(DISTINCT CASE WHEN kind = 'vod' AND COALESCE(category_id, '') <> '' THEN category_id END) AS vod_categories,
+      COUNT(DISTINCT CASE WHEN kind = 'series' AND COALESCE(category_id, '') <> '' THEN category_id END) AS series_categories,
+      SUM(CASE WHEN category_id IS NULL OR TRIM(category_id) = '' THEN 1 ELSE 0 END) AS empty_categories,
+      AVG(LENGTH(COALESCE(payload, ''))) AS avg_payload_len,
+      MAX(LENGTH(COALESCE(payload, ''))) AS max_payload_len,
+      AVG(LENGTH(COALESCE(name, ''))) AS avg_name_len,
+      MAX(LENGTH(COALESCE(name, ''))) AS max_name_len
+    FROM catalog_items
+    WHERE provider_id = ?`,
+    providerId,
+  );
+  const maxCategory = await db.getFirstAsync<{ max_items: number | null }>(
+    `SELECT MAX(item_count) AS max_items FROM (
+      SELECT kind, COALESCE(category_id, '') AS category_key, COUNT(*) AS item_count
+      FROM catalog_items
+      WHERE provider_id = ?
+      GROUP BY kind, COALESCE(category_id, '')
+    )`,
+    providerId,
+  );
+  const duplicates = await db.getFirstAsync<{ duplicate_count: number | null }>(
+    `SELECT COALESCE(SUM(item_count - 1), 0) AS duplicate_count FROM (
+      SELECT kind, item_id, COUNT(*) AS item_count
+      FROM catalog_items
+      WHERE provider_id = ?
+      GROUP BY kind, item_id
+      HAVING COUNT(*) > 1
+    )`,
+    providerId,
+  );
+  const shape: M3USourceShape = {
+    liveItems: Math.max(0, Number(aggregate?.live_items ?? 0)),
+    vodItems: Math.max(0, Number(aggregate?.vod_items ?? 0)),
+    seriesItems: Math.max(0, Number(aggregate?.series_items ?? 0)),
+    liveCategories: Math.max(0, Number(aggregate?.live_categories ?? 0)),
+    vodCategories: Math.max(0, Number(aggregate?.vod_categories ?? 0)),
+    seriesCategories: Math.max(0, Number(aggregate?.series_categories ?? 0)),
+    maxCategoryItems: Math.max(0, Number(maxCategory?.max_items ?? 0)),
+    duplicateIds: Math.max(0, Number(duplicates?.duplicate_count ?? 0)),
+    emptyCategories: Math.max(0, Number(aggregate?.empty_categories ?? 0)),
+    avgPayloadLen: Math.max(0, Math.round(Number(aggregate?.avg_payload_len ?? 0))),
+    maxPayloadLen: Math.max(0, Number(aggregate?.max_payload_len ?? 0)),
+    avgNameLen: Math.max(0, Math.round(Number(aggregate?.avg_name_len ?? 0))),
+    maxNameLen: Math.max(0, Number(aggregate?.max_name_len ?? 0)),
+  };
+  recordM3USourceShape(shape);
+  return shape;
+}
+
 export async function getCachedCatalogCategories(
   providerId: string,
   kind: CatalogPageKind,
+  diagnosticM3U = false,
 ): Promise<XtreamCategory[]> {
-  if (kind !== "live") return getCachedCategories(providerId, kind);
-  const db = await pageDatabase();
+  const categoryStartedAt = Date.now();
+  if (kind !== "live") {
+    const result = await getCachedCategories(providerId, kind);
+    if (diagnosticM3U) recordM3UFirstQueryTiming("categoryQueryMs", Date.now() - categoryStartedAt);
+    return result;
+  }
+  const db = await pageDatabase(diagnosticM3U);
   const sample = await db.getFirstAsync<{ payload: string | null }>(
     `SELECT payload FROM catalog_items
       WHERE provider_id = ? AND kind = 'live'
@@ -304,6 +392,7 @@ export async function getCachedCatalogCategories(
       LIVE_CATEGORY_FIRST_SEEN_SQL,
       providerId,
     );
+    if (diagnosticM3U) recordM3UFirstQueryTiming("categoryQueryMs", Date.now() - categoryStartedAt);
     return rows.map((row) => ({
       category_id: row.category_id,
       category_name: row.category_id,
@@ -314,6 +403,7 @@ export async function getCachedCatalogCategories(
     providerId,
     providerId,
   );
+  if (diagnosticM3U) recordM3UFirstQueryTiming("categoryQueryMs", Date.now() - categoryStartedAt);
   return rows.map((row) => ({
     category_id: row.category_id,
     category_name: resolveLiveCategoryDisplayName(row.category_id, row.category_name),
