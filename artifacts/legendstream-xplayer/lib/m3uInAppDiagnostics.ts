@@ -153,11 +153,6 @@ const sequenceEntry = (marker: string): M3UPlaybackSequenceEntry => ({
   at: wallNow(),
   elapsedMs: elapsedFromPress(),
 });
-const appendSequence = (snapshot: M3UDiagnosticState, marker: string) => [
-  ...snapshot.playbackSequence.slice(-23),
-  sequenceEntry(marker),
-];
-
 let state = initialState();
 const listeners = new Set<() => void>();
 
