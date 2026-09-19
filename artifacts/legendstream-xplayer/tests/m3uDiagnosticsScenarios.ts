@@ -365,9 +365,10 @@ function main() {
     assert.match(playerSource, /recordM3UBackgroundRefreshBegin\(\);[\s\S]*await loadProviderSmart\(fromProvider\(existing\), \{ persistM3U: false \}\);[\s\S]*recordM3UBackgroundRefreshLoadEnd/);
     assert.match(playerSource, /recordM3UBackgroundRefreshEnd\([\s\S]*if \(!persistenceOwnsRequest\) providerLoadGateRef\.current\.finish\(ownership\)/);
     assert.match(playerSource, /const EPG_START_DELAY_MS = 1_200/);
-    assert.match(playerSource, /const existingPromise = bulkEpgPromiseRef\.current\.get\(resolvedProviderId\);[\s\S]*if \(existingPromise\) \{\s*await existingPromise/);
-    assert.match(playerSource, /if \(m3uEpgStartedAt !== null\) recordM3UEpgBegin\(\);[\s\S]*await loadBulkProviderEpg\(provider, providerChannels\)/);
-    assert.match(playerSource, /recordM3UEpgEnd\([\s\S]*bulkEpgPromiseRef\.current\.delete\(resolvedProviderId\);\s*setIsEpgLoading\(false\)/);
+    assert.match(playerSource, /const boundedProvider = provider\.type === "m3u" \|\| provider\.type === "xtream"/);
+    assert.match(playerSource, /const existingPromise = bulkEpgPromiseRef\.current\.get\(resolvedProviderId\);[\s\S]*if \(existingPromise\) \{\s*if \(boundedProvider\) return/);
+    assert.match(playerSource, /if \(m3uEpgStartedAt !== null\) recordM3UEpgBegin\(\);[\s\S]*runEpgBackgroundAttempt/);
+    assert.match(playerSource, /recordM3UEpgEnd\([\s\S]*bulkEpgPromiseRef\.current\.delete\(resolvedProviderId\)[\s\S]*setIsEpgLoading\(false\)/);
     assert.match(playerSource, /provider\.type !== "xtream"\) return;/);
   });
 
