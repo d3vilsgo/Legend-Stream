@@ -5,6 +5,15 @@ import {
 } from "./m3uShapeDiagnostics";
 import { createStalkerPortalSession } from "./stalkerPortal";
 import {
+  recordM3UCatalogBuildEnd,
+  recordM3UFetchBegin,
+  recordM3UFetchResponse,
+  recordM3UParseLinesEnd,
+  recordM3UResponseTextEnd,
+  recordM3USplitBegin,
+  recordM3USplitEnd,
+} from "./m3uInAppDiagnostics";
+import {
   loadXtreamLiveCatalogFromPreparedRun,
   type XtreamCredentials,
 } from "./xtreamCatalog";
@@ -436,7 +445,9 @@ export function parseM3U(
   providerId: string,
   providerSource?: string,
 ): ProviderLoadResult {
+  recordM3USplitBegin();
   const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
+  recordM3USplitEnd();
   const entries: Channel[] = [];
   const state: M3UParseState = { pending: null };
   const diagnostics = createM3UShapeDiagnosticsObserver(providerSource);
@@ -476,6 +487,7 @@ async function parseM3UCooperatively(
     if (end < lines.length) await yieldToUi();
   }
 
+  recordM3UParseLinesEnd();
   if (!entries.length) {
     throw new Error("No playable channels were found in this M3U playlist.");
   }
@@ -484,6 +496,7 @@ async function parseM3UCooperatively(
     batchSize: 200,
     yieldFn: yieldToUi,
   });
+  recordM3UCatalogBuildEnd();
   return {
     ...catalog,
     epgUrl: state.epgUrl,
@@ -551,17 +564,21 @@ async function fetchProviderText(url: string, init?: RequestInit) {
   const timeout = setTimeout(() => controller.abort(), 20_000);
   let response: Response;
   try {
+    recordM3UFetchBegin();
     response = await fetch(url, {
       ...init,
       signal: init?.signal ?? controller.signal,
     });
+    recordM3UFetchResponse();
     if (!response.ok) {
       throw new ProviderLoadError(
         `The provider returned HTTP ${response.status}.`,
         "PROVIDER_HTTP_ERROR",
       );
     }
-    return await response.text();
+    const text = await response.text();
+    recordM3UResponseTextEnd();
+    return text;
   } catch (caught) {
     if (caught instanceof ProviderLoadError) throw caught;
     const name = caught instanceof Error ? caught.name : "";
