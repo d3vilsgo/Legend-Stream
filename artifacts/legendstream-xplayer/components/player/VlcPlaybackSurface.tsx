@@ -11,6 +11,8 @@ import { setPlayerKeepAwake } from "@/modules/legendstream-pip";
 import {
   recordM3UVlcPlaying,
   recordM3UVlcSurfaceMount,
+  recordM3UVlcUriHandoff,
+  type M3UPlaybackUriMetadata,
 } from "@/lib/m3uInAppDiagnostics";
 
 const PLAYER_KEEP_AWAKE_TAG = "legendstream-active-playback";
@@ -61,6 +63,7 @@ type Props = {
   onEnd: () => void;
   onError: () => void;
   diagnosticM3ULive?: boolean;
+  diagnosticM3UUriMetadata?: M3UPlaybackUriMetadata;
 };
 
 const validVideoSize = (value?: PlayerVideoSize) =>
@@ -157,6 +160,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     onEnd,
     onError,
     diagnosticM3ULive = false,
+    diagnosticM3UUriMetadata,
   },
   forwardedRef,
 ) {
@@ -215,7 +219,10 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [paused, playbackReady]);
 
   useEffect(() => {
-    if (diagnosticM3ULive) recordM3UVlcSurfaceMount();
+    if (diagnosticM3ULive) {
+      recordM3UVlcSurfaceMount();
+      if (diagnosticM3UUriMetadata) recordM3UVlcUriHandoff(diagnosticM3UUriMetadata);
+    }
     applyGeneration.current += 1;
     lastLoadEvent.current = undefined;
     lastMetricKey.current = "";
@@ -235,7 +242,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
         effectiveCodec: runtimeCodecMode,
       });
     };
-  }, [codecMode, diagnosticM3ULive, runtimeCodecMode, uri]);
+  }, [codecMode, diagnosticM3ULive, diagnosticM3UUriMetadata, runtimeCodecMode, uri]);
 
   const isLikelyWindowSurface = useCallback((size?: PlayerVideoSize) => {
     if (!validVideoSize(size)) return false;
