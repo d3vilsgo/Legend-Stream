@@ -1,5 +1,6 @@
 export const EPG_PAGED_SEED_LIMIT = 48;
 export const EPG_BACKGROUND_BUDGET_MS = 5_000;
+export const EPG_RETRY_BACKOFF_MS = 30_000;
 
 export type EpgAttemptClassification = "success" | "timeout" | "failure";
 
