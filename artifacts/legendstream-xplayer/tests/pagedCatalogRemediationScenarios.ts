@@ -54,9 +54,16 @@ function turkishSearchFixture() {
 async function main() {
   await scenario("M3U no-groups hint is bounded and provider-specific", () => {
     assert.match(repositorySource, /EXISTS\([\s\S]*kind = 'live'[\s\S]*LIMIT 1[\s\S]*meaningful_live_groups/);
-    assert.match(viewsSource, /provider\.type === "m3u" && page\.countKnown && hasMeaningfulM3ULiveGroups === false/);
-    assert.match(viewsSource, /t\("m3uNoGroups"\)/);
-    assert.doesNotMatch(viewsSource, /provider\.type !== "m3u"[\s\S]*m3uNoGroups/);
+    const liveStart = viewsSource.indexOf("export function PagedLiveCatalog");
+    const liveEnd = viewsSource.indexOf("export function PagedMoviesCatalog", liveStart);
+    assert.ok(liveStart >= 0 && liveEnd > liveStart, "PagedLiveCatalog source boundary must remain explicit");
+    const liveSource = viewsSource.slice(liveStart, liveEnd);
+    assert.match(liveSource, /provider\.type === "m3u" && page\.countKnown && hasMeaningfulM3ULiveGroups === false/);
+    const hintIndex = liveSource.indexOf('t("m3uNoGroups")');
+    assert.ok(hintIndex >= 0, "M3U no-groups hint must remain in PagedLiveCatalog");
+    const hintGuard = liveSource.slice(Math.max(0, hintIndex - 240), hintIndex + 80);
+    assert.match(hintGuard, /provider\.type === "m3u" && page\.countKnown && hasMeaningfulM3ULiveGroups === false/);
+    assert.doesNotMatch(hintGuard, /provider\.type !== "m3u"/);
   });
 
   await scenario("password visibility control restores baseline accessibility props", () => {
