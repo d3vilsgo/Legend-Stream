@@ -75,33 +75,72 @@ export type CatalogCategoryMetadata = {
   hasMeaningfulM3ULiveGroups: boolean;
 };
 
-async function pageDatabase() {
+async function pageDatabase(diagnosticM3U = false) {
+  const startedAt = Date.now();
+  if (diagnosticM3U) {
+    safeLog.info("M3U_DB_PAGE_OPEN_BEGIN", { timestamp: startedAt });
+  }
   await initCatalogCache();
   if (!pageDatabasePromise) pageDatabasePromise = SQLite.openDatabaseAsync(CATALOG_DB_NAME);
   const db = await pageDatabasePromise;
   if (!pageIndexesReady) {
-    await db.execAsync(`
-      CREATE INDEX IF NOT EXISTS idx_catalog_items_provider_kind_effective_name
-        ON catalog_items(
-          provider_id,
-          kind,
-          (CASE WHEN added_at > 0 THEN added_at ELSE first_seen_at END) DESC,
-          name COLLATE NOCASE,
-          item_id
-        );
-      CREATE INDEX IF NOT EXISTS idx_catalog_items_provider_kind_category_effective_name
-        ON catalog_items(
-          provider_id,
-          kind,
-          category_id,
-          (CASE WHEN added_at > 0 THEN added_at ELSE first_seen_at END) DESC,
-          name COLLATE NOCASE,
-          item_id
-        );
-      CREATE INDEX IF NOT EXISTS idx_catalog_items_provider_kind_name
-        ON catalog_items(provider_id, kind, name COLLATE NOCASE, item_id);
-    `);
+    const indexes = [
+      {
+        name: "provider_kind_effective_name",
+        sql: `
+          CREATE INDEX IF NOT EXISTS idx_catalog_items_provider_kind_effective_name
+            ON catalog_items(
+              provider_id,
+              kind,
+              (CASE WHEN added_at > 0 THEN added_at ELSE first_seen_at END) DESC,
+              name COLLATE NOCASE,
+              item_id
+            );
+        `,
+      },
+      {
+        name: "provider_kind_category_effective_name",
+        sql: `
+          CREATE INDEX IF NOT EXISTS idx_catalog_items_provider_kind_category_effective_name
+            ON catalog_items(
+              provider_id,
+              kind,
+              category_id,
+              (CASE WHEN added_at > 0 THEN added_at ELSE first_seen_at END) DESC,
+              name COLLATE NOCASE,
+              item_id
+            );
+        `,
+      },
+      {
+        name: "provider_kind_name",
+        sql: `
+          CREATE INDEX IF NOT EXISTS idx_catalog_items_provider_kind_name
+            ON catalog_items(provider_id, kind, name COLLATE NOCASE, item_id);
+        `,
+      },
+    ] as const;
+    for (const index of indexes) {
+      const indexStartedAt = Date.now();
+      if (diagnosticM3U) {
+        safeLog.info("M3U_INDEX_CREATE_BEGIN", { index: index.name, timestamp: indexStartedAt });
+      }
+      await db.execAsync(index.sql);
+      if (diagnosticM3U) {
+        safeLog.info("M3U_INDEX_CREATE_END", {
+          index: index.name,
+          elapsedMs: Date.now() - indexStartedAt,
+          timestamp: Date.now(),
+        });
+      }
+    }
     pageIndexesReady = true;
+  }
+  if (diagnosticM3U) {
+    safeLog.info("M3U_DB_PAGE_OPEN_END", {
+      elapsedMs: Date.now() - startedAt,
+      timestamp: Date.now(),
+    });
   }
   return db;
 }
@@ -175,7 +214,7 @@ export async function getCachedCatalogPage<K extends CatalogPageKind>(
   if (!compatibleProvider(provider, request)) {
     throw new Error("Catalog page provider does not match the active request.");
   }
-  const db = await pageDatabase();
+  const db = await pageDatabase(request.providerType === "m3u");
   const plan = buildCatalogPageSql(request);
 
   const countStartedAt = Date.now();
@@ -283,8 +322,9 @@ export async function getCachedCatalogCategories(
 
 export async function getCachedCatalogCategoryMetadata(
   providerId: string,
+  diagnosticM3U = false,
 ): Promise<CatalogCategoryMetadata> {
-  const db = await pageDatabase();
+  const db = await pageDatabase(diagnosticM3U);
   const row = await db.getFirstAsync<{
     vod_categories: number;
     series_categories: number;
