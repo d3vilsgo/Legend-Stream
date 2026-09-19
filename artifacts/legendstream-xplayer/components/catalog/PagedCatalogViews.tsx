@@ -23,6 +23,7 @@ import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { useCatalogPage } from "@/hooks/useCatalogPage";
 import { shouldUseWholeCatalogLoadingSkeleton } from "@/lib/catalogSearchPresentation";
+import { recordM3ULivePress } from "@/lib/m3uInAppDiagnostics";
 import { getCachedCatalogCategories } from "@/lib/catalogPageRepository";
 import {
   EPG_PAGED_SEED_LIMIT,
@@ -632,7 +633,10 @@ export function PagedLiveCatalog({
           ? new Date(current.end).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })
           : undefined;
         return <View style={[s.liveRow, { borderColor: colors.border, backgroundColor: colors.card }]}> 
-          <Pressable style={s.liveMain} onPress={() => onOpen(channel)}>
+          <Pressable style={s.liveMain} onPress={() => {
+            if (provider.type === "m3u") recordM3ULivePress();
+            onOpen(channel);
+          }}>
             <Poster uri={channel.logoUrl} title={channel.name} />
             <View style={{ flex: 1 }}>
               <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700" }}>{channel.name}</Text>
