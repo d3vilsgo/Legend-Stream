@@ -737,6 +737,28 @@ const parseXmlDate = (value: string) => {
 const stripTags = (value: string) =>
   decodeEpgText(value.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
 
+const EPG_DECODE_CHUNK_BYTES = 256 * 1024;
+
+const decodeBytesCooperatively = async (
+  bytes: Uint8Array,
+  encoding: string,
+  signal?: AbortSignal,
+) => {
+  const Decoder = (globalThis as any).TextDecoder;
+  if (typeof Decoder !== "function") return null;
+
+  const decoder = new Decoder(encoding);
+  const parts: string[] = [];
+  for (let offset = 0; offset < bytes.length; offset += EPG_DECODE_CHUNK_BYTES) {
+    if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+    const end = Math.min(bytes.length, offset + EPG_DECODE_CHUNK_BYTES);
+    parts.push(decoder.decode(bytes.subarray(offset, end), { stream: end < bytes.length }));
+    if (end < bytes.length) await yieldToUi();
+  }
+  parts.push(decoder.decode());
+  return parts.join("");
+};
+
 const decodeResponseText = async (response: Response, signal?: AbortSignal) => {
   try {
     const bytes = new Uint8Array(await response.arrayBuffer());
@@ -748,13 +770,12 @@ const decodeResponseText = async (response: Response, signal?: AbortSignal) => {
     const Decoder = (globalThis as any).TextDecoder;
     if (typeof Decoder === "function") {
       try {
-        const decoded = new Decoder(encoding).decode(bytes);
-        if (signal?.aborted) throw new Error("EPG background attempt aborted.");
-        return decoded;
+        const decoded = await decodeBytesCooperatively(bytes, encoding, signal);
+        if (decoded !== null) return decoded;
       } catch {
-        const decoded = new Decoder("utf-8").decode(bytes);
         if (signal?.aborted) throw new Error("EPG background attempt aborted.");
-        return decoded;
+        const decoded = await decodeBytesCooperatively(bytes, "utf-8", signal);
+        if (decoded !== null) return decoded;
       }
     }
     const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
