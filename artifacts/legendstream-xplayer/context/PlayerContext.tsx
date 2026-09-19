@@ -79,11 +79,14 @@ import {
   shouldFallbackLegacyXtreamCatalogToM3U,
 } from "@/lib/legacyCatalogFallback";
 import {
+  EPG_BACKGROUND_BUDGET_MS,
+  EpgAttemptGeneration,
   EpgSingleFlight,
   clearRegisteredEpgChannels,
   getRegisteredEpgChannels,
   hasUsableChannelEpg,
   mergeEpgPrograms,
+  runEpgBackgroundAttempt,
 } from "@/lib/epgRuntime";
 import {
   removeLegacyStalkerCatalogChannels,
@@ -796,12 +799,14 @@ async function normalizeProgramText(programs: EpgProgram[]) {
     }),
     250,
   );
+  await yieldToUi();
   return compactEpgPrograms(normalized);
 }
 
 async function loadBulkProviderEpg(
   provider: ProviderConfig,
   channels: Channel[],
+  signal?: AbortSignal,
 ): Promise<EpgProgram[]> {
   const xtreamProvider = toXtreamLoadProvider(fromProvider(provider));
 
@@ -817,6 +822,7 @@ async function loadBulkProviderEpg(
         epgUrl: undefined,
       },
       seedChannels,
+      { signal },
     );
     return normalizeProgramText(programs);
   }
@@ -842,6 +848,7 @@ async function loadBulkProviderEpg(
       epgUrl,
     },
     channels,
+    { signal },
   );
   return normalizeProgramText(programs);
 }
@@ -871,12 +878,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   );
   const bulkEpgPromiseRef = useRef(new Map<string, Promise<void>>());
   const activeEpgSingleFlightRef = useRef(new EpgSingleFlight());
+  const epgAttemptGenerationRef = useRef(new EpgAttemptGeneration());
+  const epgRetryNotBeforeRef = useRef(new Map<string, number>());
   const legacyCatalogFallbackGuardRef = useRef(new LegacyCatalogFallbackAttemptGuard());
 
   const clearEpgProviderCache = (providerId: string) => {
+    epgAttemptGenerationRef.current.invalidate(providerId);
     epgCacheRef.current.delete(providerId);
-    bulkEpgPromiseRef.current.delete(providerId);
     clearRegisteredEpgChannels(providerId);
+  };
+
+  const invalidateEpgFreshness = (providerId: string) => {
+    epgAttemptGenerationRef.current.invalidate(providerId);
+    epgCacheRef.current.delete(providerId);
   };
 
   const isCurrentProviderLoad = (ownership: ProviderLoadRequestOwnership) =>
@@ -1448,7 +1462,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (!isCurrentProviderLoad(ownership)) return;
       await saveProviderSecrets(updated);
       if (!isCurrentProviderLoad(ownership)) return;
-      clearEpgProviderCache(providerId);
+      if ((existing.epgUrl?.trim() || "") !== (updated.epgUrl?.trim() || "")) {
+        invalidateEpgFreshness(providerId);
+      }
       const latest = stateRef.current;
       const generation = await persist({
         ...latest,
@@ -1651,35 +1667,74 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           return;
         }
         const existingPromise = bulkEpgPromiseRef.current.get(resolvedProviderId);
-        if (existingPromise) {
-          await existingPromise;
-          const refreshed = epgCacheRef.current.get(resolvedProviderId);
-          if (
-            refreshed &&
-            Date.now() - refreshed.loadedAt < EPG_CACHE_TTL_MS &&
-            (
-              provider.type === "m3u" ||
-              (externalInput
-                ? refreshed.inputKey === inputKey
-                : refreshed.channelCount === providerChannels.length)
-            )
-          ) {
-            return;
-          }
-        }
+        if (existingPromise) return;
+        const retryNotBefore = epgRetryNotBeforeRef.current.get(resolvedProviderId) ?? 0;
+        if (Date.now() < retryNotBefore) return;
 
         setIsEpgLoading(true);
-        let succeeded = false;
+        const generation = epgAttemptGenerationRef.current.begin(resolvedProviderId);
         const m3uEpgStartedAt = provider.type === "m3u"
           ? (globalThis.performance?.now?.() ?? Date.now())
           : null;
         if (m3uEpgStartedAt !== null) recordM3UEpgBegin();
+        safeLog.info("EPG_ATTEMPT_BEGIN", {
+          providerType: provider.type,
+          channelCount: providerChannels.length,
+        });
         const promise = (async () => {
+          const attempt = provider.type === "m3u" || provider.type === "xtream"
+            ? await runEpgBackgroundAttempt(
+                (signal) => loadBulkProviderEpg(provider, providerChannels, signal),
+                EPG_BACKGROUND_BUDGET_MS,
+              )
+            : {
+                classification: "success" as const,
+                value: await loadBulkProviderEpg(provider, providerChannels),
+                elapsedMs: 0,
+              };
           try {
-            const programs = await loadBulkProviderEpg(provider, providerChannels);
+            if (attempt.classification !== "success") {
+              epgRetryNotBeforeRef.current.set(
+                resolvedProviderId,
+                Date.now() + EPG_BACKGROUND_BUDGET_MS,
+              );
+              safeLog.info(
+                attempt.classification === "timeout"
+                  ? "EPG_ATTEMPT_TIMEOUT"
+                  : "EPG_ATTEMPT_FAILURE",
+                {
+                  providerType: provider.type,
+                  elapsedMs: attempt.elapsedMs,
+                  channelCount: providerChannels.length,
+                  result: attempt.classification,
+                },
+              );
+              return;
+            }
+
+            if (
+              !epgAttemptGenerationRef.current.isCurrent(resolvedProviderId, generation) ||
+              stateRef.current.provider?.id !== resolvedProviderId
+            ) {
+              safeLog.info("EPG_RESULT_IGNORED_STALE", {
+                providerType: provider.type,
+                elapsedMs: attempt.elapsedMs,
+                channelCount: providerChannels.length,
+                result: "stale",
+              });
+              return;
+            }
+
             await yieldToUi();
             const ids = new Set(providerChannels.map((channel) => channel.id));
+            const programs = attempt.value ?? [];
             setState((previous) => {
+              if (
+                !epgAttemptGenerationRef.current.isCurrent(resolvedProviderId, generation) ||
+                previous.provider?.id !== resolvedProviderId
+              ) {
+                return previous;
+              }
               const next = {
                 ...previous,
                 epg: mergeEpgPrograms(previous.epg, ids, programs),
@@ -1687,22 +1742,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               stateRef.current = next;
               return next;
             });
-            succeeded = true;
-          } catch {
-            // EPG is optional; a timeout/parse problem must never block live TV.
+            epgCacheRef.current.set(resolvedProviderId, {
+              loadedAt: Date.now(),
+              channelCount: providerChannels.length,
+              inputKey,
+            });
+            epgRetryNotBeforeRef.current.delete(resolvedProviderId);
+            safeLog.info("EPG_ATTEMPT_SUCCESS", {
+              providerType: provider.type,
+              elapsedMs: attempt.elapsedMs,
+              channelCount: providerChannels.length,
+              result: programs.length ? "success" : "empty",
+            });
           } finally {
-            if (succeeded) {
-              epgCacheRef.current.set(resolvedProviderId, {
-                loadedAt: Date.now(),
-                channelCount: providerChannels.length,
-                inputKey,
-              });
-            }
             if (m3uEpgStartedAt !== null) {
               const m3uEpgEndedAt = globalThis.performance?.now?.() ?? Date.now();
               recordM3UEpgEnd(m3uEpgEndedAt - m3uEpgStartedAt);
             }
-            bulkEpgPromiseRef.current.delete(resolvedProviderId);
+            if (bulkEpgPromiseRef.current.get(resolvedProviderId) === promise) {
+              bulkEpgPromiseRef.current.delete(resolvedProviderId);
+            }
             setIsEpgLoading(false);
           }
         })();
@@ -1712,7 +1771,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       }
 
       const inFlight = bulkEpgPromiseRef.current.get(resolvedProviderId);
-      if (inFlight) await inFlight;
+      if (inFlight) return;
       const latest = stateRef.current;
       const latestRegistered = getRegisteredEpgChannels<Channel>(resolvedProviderId);
       const targetChannel = latest.channels.find(
@@ -1729,16 +1788,26 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (hasUsableChannelEpg(beforeRequest.epg, channelId)) return;
         setIsEpgLoading(true);
         try {
-          const programs = await normalizeProgramText(
-            await loadEpg(
-              {
-                ...toXtreamLoadProvider(fromProvider(provider)),
-                epgUrl: undefined,
-              },
-              [targetChannel],
+          const generation = epgAttemptGenerationRef.current.begin(resolvedProviderId);
+          const attempt = await runEpgBackgroundAttempt(
+            async (signal) => normalizeProgramText(
+              await loadEpg(
+                {
+                  ...toXtreamLoadProvider(fromProvider(provider)),
+                  epgUrl: undefined,
+                },
+                [targetChannel],
+                { signal },
+              ),
             ),
+            EPG_BACKGROUND_BUDGET_MS,
           );
-          if (!stateRef.current.providers.some((item) => item.id === resolvedProviderId)) return;
+          if (
+            attempt.classification !== "success" ||
+            !epgAttemptGenerationRef.current.isCurrent(resolvedProviderId, generation) ||
+            !stateRef.current.providers.some((item) => item.id === resolvedProviderId)
+          ) return;
+          const programs = attempt.value ?? [];
           setState((previous) => {
             if (!previous.providers.some((item) => item.id === resolvedProviderId)) return previous;
             const next = {
