@@ -2,6 +2,7 @@ import * as Clipboard from "expo-clipboard";
 import React, { useEffect, useState, useSyncExternalStore } from "react";
 import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useColors } from "@/hooks/useColors";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   buildM3UDiagnosticReport,
   getM3UDiagnosticSnapshot,
@@ -12,6 +13,7 @@ import { getM3UDiagnosticSourceShape } from "@/lib/catalogPageRepository";
 
 export function M3UDiagnosticPanel({ providerId }: { providerId: string }) {
   const colors = useColors();
+  const insets = useSafeAreaInsets();
   const snapshot = useSyncExternalStore(
     subscribeM3UDiagnostics,
     getM3UDiagnosticSnapshot,
@@ -40,6 +42,7 @@ export function M3UDiagnosticPanel({ providerId }: { providerId: string }) {
       style={({ pressed }) => [
         styles.floatingButton,
         {
+          top: Math.max(insets.top + 8, 112),
           borderColor: colors.border,
           backgroundColor: colors.card,
           opacity: pressed ? 0.7 : 0.92,
@@ -52,7 +55,11 @@ export function M3UDiagnosticPanel({ providerId }: { providerId: string }) {
     {open ? <View
       style={[
         styles.panel,
-        { borderColor: colors.border, backgroundColor: colors.card },
+        {
+          top: Math.max(insets.top + 48, 152),
+          borderColor: colors.border,
+          backgroundColor: colors.card,
+        },
       ]}
     >
       <Text style={[styles.title, { color: colors.foreground }]}>M3U Diagnostic</Text>
@@ -95,11 +102,11 @@ const styles = StyleSheet.create({
   overlay: {
     ...StyleSheet.absoluteFillObject,
     zIndex: 1000,
+    elevation: 40,
   },
   floatingButton: {
     position: "absolute",
     right: 8,
-    top: 112,
     minHeight: 34,
     minWidth: 62,
     paddingHorizontal: 8,
@@ -107,11 +114,11 @@ const styles = StyleSheet.create({
     borderRadius: 9,
     alignItems: "center",
     justifyContent: "center",
+    elevation: 41,
   },
   panel: {
     position: "absolute",
     right: 8,
-    top: 152,
     width: "88%",
     maxWidth: 560,
     maxHeight: "68%",
@@ -119,6 +126,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
     padding: 12,
     gap: 10,
+    elevation: 42,
   },
   title: {
     fontSize: 16,
