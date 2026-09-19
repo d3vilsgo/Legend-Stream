@@ -359,7 +359,7 @@ function main() {
     assert.match(pagedSource, /onPressIn=\{\(\) => \{[\s\S]*recordM3ULivePressIn\(\)[\s\S]*onPress=\{\(\) => \{\s*if \(provider\.type === "m3u"\) recordM3ULivePress\(\);\s*onOpen\(channel\);[\s\S]*onPressOut=\{\(\) => \{[\s\S]*recordM3ULivePressOut\(\)/);
   });
 
-  scenario("Z2O background refresh and EPG markers preserve existing scheduling and dedupe semantics", () => {
+  scenario("Z2O background refresh markers remain intact under Z2R non-blocking EPG ownership", () => {
     assert.match(playerSource, /const M3U_BACKGROUND_REFRESH_DELAY_MS = 1_250/);
     assert.match(playerSource, /setTimeout\(\(\) => \{\s*if \(!cancelled\) void refreshProviderInBackground\(providerId\);\s*\}, M3U_BACKGROUND_REFRESH_DELAY_MS\)/);
     assert.match(playerSource, /recordM3UBackgroundRefreshBegin\(\);[\s\S]*await loadProviderSmart\(fromProvider\(existing\), \{ persistM3U: false \}\);[\s\S]*recordM3UBackgroundRefreshLoadEnd/);
