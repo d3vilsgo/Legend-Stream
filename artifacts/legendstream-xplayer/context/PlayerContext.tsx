@@ -80,6 +80,7 @@ import {
 } from "@/lib/legacyCatalogFallback";
 import {
   EPG_BACKGROUND_BUDGET_MS,
+  EPG_PAGED_SEED_LIMIT,
   EPG_RETRY_BACKOFF_MS,
   EpgAttemptGeneration,
   EpgSingleFlight,
@@ -1641,11 +1642,15 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       );
       if (!provider) return;
       const registeredChannels = getRegisteredEpgChannels<Channel>(resolvedProviderId);
+      const boundedProvider = provider.type === "m3u" || provider.type === "xtream";
+      const fallbackChannels = snapshot.channels.filter(
+        (channel) => channel.providerId === resolvedProviderId,
+      );
       const providerChannels = registeredChannels.length
         ? registeredChannels
-        : snapshot.channels.filter(
-            (channel) => channel.providerId === resolvedProviderId,
-          );
+        : boundedProvider
+          ? fallbackChannels.slice(0, EPG_PAGED_SEED_LIMIT)
+          : fallbackChannels;
       if (!providerChannels.length) return;
 
       if (!channelId) {
@@ -1667,7 +1672,6 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         ) {
           return;
         }
-        const boundedProvider = provider.type === "m3u" || provider.type === "xtream";
         const existingPromise = bulkEpgPromiseRef.current.get(resolvedProviderId);
         if (existingPromise) {
           if (boundedProvider) return;
