@@ -81,7 +81,7 @@ function allOnlySnapshotCount(
   return category === "__all__" && search.trim() === "" ? snapshotCount : undefined;
 }
 
-function useCategories(providerId: string, kind: "live" | "vod" | "series") {
+function useCategories(providerId: string, kind: "live" | "vod" | "series", diagnosticM3U = false) {
   const [result, setResult] = useState<{
     providerId: string | null;
     categories: XtreamCategory[];
@@ -89,7 +89,7 @@ function useCategories(providerId: string, kind: "live" | "vod" | "series") {
   const generationRef = useRef(0);
   const reload = () => {
     const generation = ++generationRef.current;
-    void getCachedCatalogCategories(providerId, kind)
+    void getCachedCatalogCategories(providerId, kind, diagnosticM3U)
       .then((next) => {
         if (generationRef.current === generation) {
           setResult({ providerId, categories: next });
@@ -107,7 +107,7 @@ function useCategories(providerId: string, kind: "live" | "vod" | "series") {
     return () => {
       generationRef.current += 1;
     };
-  }, [providerId, kind]);
+  }, [providerId, kind, diagnosticM3U]);
   const ready = result.providerId === providerId;
   return {
     categories: ready ? result.categories : [],
@@ -517,7 +517,7 @@ export function PagedLiveCatalog({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [epgClock, setEpgClock] = useState(() => Date.now());
   const liveUserScrolledRef = useRef(false);
-  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "live");
+  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "live", provider.type === "m3u");
   const stalkerLive = provider.type === "stalker";
   const providerGlobal = stalkerLive ? findStalkerLiveProviderGlobalCategory(categories) : null;
   const [category, setCategory] = useLiveCategorySelection(
@@ -688,7 +688,7 @@ export function PagedMoviesCatalog({
   const { width } = useWindowDimensions();
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "vod");
+  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "vod", provider.type === "m3u");
   const [category, setCategory] = useRememberedCategory(provider.id, "vod", categories, categoriesReady);
   const providerType = pagedProviderType(provider.type);
   const effectiveSort: CatalogSortMode = provider.type === "m3u" && sortMode === "added" ? "default" : sortMode;
@@ -999,7 +999,7 @@ export function PagedSeriesCatalog({
 }) {
   const { t } = useI18n();
   const [search, setSearch] = useState("");
-  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "series");
+  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "series", provider.type === "m3u");
   const [category, setCategory] = useRememberedCategory(provider.id, "series", categories, categoriesReady);
   const providerType = pagedProviderType(provider.type);
   const effectiveSort: CatalogSortMode = provider.type === "m3u" && sortMode === "added" ? "default" : sortMode;
