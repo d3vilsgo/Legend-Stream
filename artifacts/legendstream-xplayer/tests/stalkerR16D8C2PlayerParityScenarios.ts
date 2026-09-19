@@ -73,7 +73,7 @@ assert.match(playerChromeV2, /props\.onSelectSubtitle\s*\(/);
 assert.match(playerChromeV2, /props\.onSelectAudio\s*\(/);
 
 // O + shell parity: shared orientation, chrome timing, background tap, error and exit lifecycle.
-assert.match(compatibilityPlayer, /usePlayerOrientation\(autoFullscreen\)/);
+assert.match(compatibilityPlayer, /usePlayerOrientation\(autoFullscreen, m3uLiveDiagnostic\)/);
 assert.match(compatibilityPlayer, /DEFAULT_PLAYER_CHROME_TIMEOUT_SECONDS/);
 assert.match(compatibilityPlayer, /onBackgroundPress=\{onBackgroundPress\}/);
 assert.match(compatibilityPlayer, /errorText=\{errorText\}/);
