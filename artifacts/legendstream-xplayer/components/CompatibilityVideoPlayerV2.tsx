@@ -1,7 +1,8 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { AppState, BackHandler, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, BackHandler, StyleSheet, Text, View } from "react-native";
 import { useMediaLibrary } from "@/context/MediaLibraryContext";
+import type { MediaPlaybackRef } from "@/lib/mediaProgress";
 import { selectChannelEpg, usePlayer } from "@/context/PlayerContext";
 import { downloadMedia } from "@/lib/downloads";
 import {
@@ -15,6 +16,12 @@ import {
 } from "@/lib/xtreamCatalog";
 import { isCatalogRuntimeSource } from "@/lib/catalogPersistence";
 import { resolveCatalogRuntimeSource } from "@/lib/catalogRuntime";
+import {
+  describeM3UPlaybackUri,
+  recordM3UCompatPlayerMount,
+  recordM3ULiveQueueBegin,
+  recordM3ULiveQueueEnd,
+} from "@/lib/m3uInAppDiagnostics";
 import {
   getCachedLivePlaybackWindow,
   getCachedVodPlaybackWindow,
@@ -80,9 +87,11 @@ const normalizeCurrentTime = (raw: unknown, rawDuration: unknown) => {
 type PlaybackSnapshot = {
   source: string;
   title: string;
+  subtitle?: string;
   kind: PlayerMediaKind;
   position: number;
   duration: number;
+  progressRef?: MediaPlaybackRef;
 };
 
 export function CompatibilityVideoPlayer({
@@ -92,6 +101,7 @@ export function CompatibilityVideoPlayer({
   mediaKind,
   liveIdentity,
   vodIdentity,
+  progressRef,
   autoFullscreen = true,
   onFullscreenExit,
   allowDownload = false,
@@ -102,6 +112,7 @@ export function CompatibilityVideoPlayer({
   mediaKind?: PlayerMediaKind;
   liveIdentity?: LiveChannelIdentity;
   vodIdentity?: CatalogPlaybackIdentity;
+  progressRef?: MediaPlaybackRef;
   autoFullscreen?: boolean;
   onFullscreenExit?: () => void;
   allowDownload?: boolean;
@@ -115,7 +126,9 @@ export function CompatibilityVideoPlayer({
     refreshEpg,
     recordWatched,
   } = usePlayer();
-  const orientation = usePlayerOrientation(autoFullscreen);
+  const initialKind = mediaKind ?? inferMediaKind(source);
+  const m3uLiveDiagnostic = provider?.type === "m3u" && initialKind === "live";
+  const orientation = usePlayerOrientation(autoFullscreen, m3uLiveDiagnostic);
 
   const vlcRef = useRef<any>(null);
   const controlsTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -125,13 +138,14 @@ export function CompatibilityVideoPlayer({
   const lastDownloadUiAt = useRef(0);
   const exitStarted = useRef(false);
 
-  const initialKind = mediaKind ?? inferMediaKind(source);
   const playbackRef = useRef<PlaybackSnapshot>({
     source,
     title,
+    subtitle,
     kind: initialKind,
     position: 0,
     duration: 0,
+    progressRef,
   });
 
   const [currentSource, setCurrentSource] = useState(source);
@@ -169,8 +183,13 @@ export function CompatibilityVideoPlayer({
   const [downloadState, setDownloadState] = useState<PlayerDownloadState>("idle");
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [errorText, setErrorText] = useState<string | null>(null);
+  const [startupPending, setStartupPending] = useState(true);
   const [pipSupported, setPipSupported] = useState(false);
   const [pipActive, setPipActive] = useState(false);
+
+  useEffect(() => {
+    if (m3uLiveDiagnostic) recordM3UCompatPlayerMount();
+  }, [m3uLiveDiagnostic]);
 
   useEffect(() => {
     AsyncStorage.getItem(CODEC_MODE_KEY)
@@ -191,6 +210,17 @@ export function CompatibilityVideoPlayer({
       ? runtimeSource.replace(/\.m3u8(?=$|\?)/i, ".ts")
       : runtimeSource;
   }, [resolvedSource]);
+
+  const m3uUriMetadata = useMemo(
+    () => m3uLiveDiagnostic && resolvedSource && effectiveUri
+      ? describeM3UPlaybackUri(resolvedSource, effectiveUri)
+      : undefined,
+    [effectiveUri, m3uLiveDiagnostic, resolvedSource],
+  );
+
+  useEffect(() => {
+    setStartupPending(true);
+  }, [currentSource, codecMode]);
 
   const clearControlsTimer = useCallback(() => {
     if (controlsTimer.current) {
@@ -322,9 +352,11 @@ export function CompatibilityVideoPlayer({
     await saveProgress({
       kind: snapshot.kind,
       title: snapshot.title,
+      subtitle: snapshot.subtitle,
       source: snapshot.source,
       position: snapshot.position,
       duration: snapshot.duration,
+      playbackRef: snapshot.progressRef,
     });
   }, [saveProgress]);
 
@@ -348,18 +380,28 @@ export function CompatibilityVideoPlayer({
       setCachedLiveChannels([]);
       return () => { cancelled = true; };
     }
+    const queueStartedAt = globalThis.performance?.now?.() ?? Date.now();
+    if (m3uLiveDiagnostic) recordM3ULiveQueueBegin();
     void getCachedLivePlaybackWindow(provider, {
       providerId: currentLiveIdentity.providerId,
       itemId: currentLiveIdentity.channelId,
     })
       .then((items) => {
         if (!cancelled) setCachedLiveChannels(items);
+        if (m3uLiveDiagnostic) {
+          const queueFinishedAt = globalThis.performance?.now?.() ?? Date.now();
+          recordM3ULiveQueueEnd(queueFinishedAt - queueStartedAt, items.length);
+        }
       })
       .catch(() => {
         if (!cancelled) setCachedLiveChannels([]);
+        if (m3uLiveDiagnostic) {
+          const queueFinishedAt = globalThis.performance?.now?.() ?? Date.now();
+          recordM3ULiveQueueEnd(queueFinishedAt - queueStartedAt, 0);
+        }
       });
     return () => { cancelled = true; };
-  }, [currentKind, currentLiveIdentity, provider]);
+  }, [currentKind, currentLiveIdentity, m3uLiveDiagnostic, provider]);
 
   useEffect(() => {
     let cancelled = false;
@@ -474,7 +516,14 @@ export function CompatibilityVideoPlayer({
   const switchTo = useCallback(async (item: PlayerSelectableItem) => {
     await persistProgress();
     const kind: PlayerMediaKind = item.isLive ? "live" : inferMediaKind(item.source);
-    playbackRef.current = { source: item.source, title: item.title, kind, position: 0, duration: 0 };
+    playbackRef.current = {
+      source: item.source,
+      title: item.title,
+      subtitle: item.subtitle,
+      kind,
+      position: 0,
+      duration: 0,
+    };
     setCurrentSource(item.source);
     setCurrentTitle(item.title);
     setCurrentSubtitle(item.subtitle);
@@ -500,6 +549,7 @@ export function CompatibilityVideoPlayer({
     setTextTracks([]);
     setAudioTrack(undefined);
     setTextTrack(undefined);
+    setStartupPending(true);
     resumedSource.current = null;
     if (item.isLive) void recordWatched(item.id);
     revealControls();
@@ -633,7 +683,7 @@ export function CompatibilityVideoPlayer({
       (snapshot.kind === "movie" || snapshot.kind === "episode") &&
       normalizedDuration > 0
     ) {
-      const saved = getProgress(snapshot.source);
+      const saved = getProgress(snapshot.source, snapshot.progressRef);
       if (saved?.position && saved.position > 5) {
         const ratio = Math.max(0, Math.min(1, saved.position / normalizedDuration));
         vlcRef.current?.seek?.(ratio);
@@ -658,6 +708,7 @@ export function CompatibilityVideoPlayer({
   }, []);
 
   const handlePlaying = useCallback(() => {
+    setStartupPending(false);
     setPaused(false);
   }, []);
 
@@ -666,6 +717,7 @@ export function CompatibilityVideoPlayer({
   }, []);
 
   const handleError = useCallback(() => {
+    setStartupPending(false);
     setErrorText(
       codecMode === "auto"
         ? "Oynatma başarısız. AUTO modu hem donanım hem yazılım çözümlemeyi denedi."
@@ -725,6 +777,8 @@ export function CompatibilityVideoPlayer({
         onPaused={handlePaused}
         onEnd={handleEnd}
         onError={handleError}
+        diagnosticM3ULive={m3uLiveDiagnostic}
+        diagnosticM3UUriMetadata={m3uUriMetadata}
       /> : null}
 
       {!pipActive ? (
@@ -786,6 +840,12 @@ export function CompatibilityVideoPlayer({
           onEnterPip={() => void enterPip()}
         />
       ) : null}
+      {!pipActive && startupPending && !errorText ? (
+        <View pointerEvents="none" style={styles.startupOverlay}>
+          <ActivityIndicator size="large" color="#ffffff" />
+          <Text style={styles.startupText}>Akış hazırlanıyor…</Text>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -804,6 +864,20 @@ const styles = StyleSheet.create({
   preparing: {
     color: "#8d99a9",
     fontSize: 13,
+    fontWeight: "700",
+  },
+  startupOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 200,
+    elevation: 200,
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 10,
+    backgroundColor: "rgba(0,0,0,0.72)",
+  },
+  startupText: {
+    color: "#ffffff",
+    fontSize: 14,
     fontWeight: "700",
   },
 });

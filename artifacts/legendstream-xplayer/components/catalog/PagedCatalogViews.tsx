@@ -22,6 +22,13 @@ import { selectProgramsAt, usePlayer } from "@/context/PlayerContext";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { useCatalogPage } from "@/hooks/useCatalogPage";
+import { shouldUseWholeCatalogLoadingSkeleton } from "@/lib/catalogSearchPresentation";
+import {
+  recordM3ULivePress,
+  recordM3ULivePressIn,
+  recordM3ULivePressOut,
+  recordM3UPagedLiveState,
+} from "@/lib/m3uInAppDiagnostics";
 import { getCachedCatalogCategories } from "@/lib/catalogPageRepository";
 import {
   EPG_PAGED_SEED_LIMIT,
@@ -35,6 +42,20 @@ import {
 } from "@/lib/catalogCategoryMemory";
 import type { CatalogPageProviderType, CatalogPageSort } from "@/lib/catalogPaging";
 import type { Channel } from "@/lib/iptv";
+import {
+  goldenSeriesBackTarget,
+  initialGoldenSeriesSeasonId,
+  orderGoldenSeriesSeasons,
+  selectedGoldenSeriesSeason,
+  type GoldenSeriesCardModel,
+  type GoldenSeriesDetailModel,
+  type GoldenSeriesEpisodeModel,
+  type GoldenSeriesSeasonModel,
+} from "@/lib/goldenSeriesDetail";
+import {
+  findStalkerLiveProviderGlobalCategory,
+  isStalkerLiveGlobalCategory,
+} from "@/lib/stalkerLiveCategoryIntent";
 import type {
   XtreamCategory,
   XtreamEpisode,
@@ -44,8 +65,15 @@ import type {
 } from "@/lib/xtreamCatalog";
 
 export type CatalogSortMode = CatalogPageSort;
-type CategoryOption = { id: string; name: string };
+export type CategoryOption = { id: string; name: string };
 type SnapshotCount = { totalCount: number | null; countKnown: boolean };
+
+export type {
+  GoldenSeriesCardModel,
+  GoldenSeriesDetailModel,
+  GoldenSeriesEpisodeModel,
+  GoldenSeriesSeasonModel,
+} from "@/lib/goldenSeriesDetail";
 
 function pagedProviderType(type: ProviderType): CatalogPageProviderType | null {
   return type === "m3u" || type === "xtream" ? type : null;
@@ -59,7 +87,7 @@ function allOnlySnapshotCount(
   return category === "__all__" && search.trim() === "" ? snapshotCount : undefined;
 }
 
-function useCategories(providerId: string, kind: "live" | "vod" | "series") {
+function useCategories(providerId: string, kind: "live" | "vod" | "series", diagnosticM3U = false) {
   const [result, setResult] = useState<{
     providerId: string | null;
     categories: XtreamCategory[];
@@ -67,7 +95,7 @@ function useCategories(providerId: string, kind: "live" | "vod" | "series") {
   const generationRef = useRef(0);
   const reload = () => {
     const generation = ++generationRef.current;
-    void getCachedCatalogCategories(providerId, kind)
+    void getCachedCatalogCategories(providerId, kind, diagnosticM3U)
       .then((next) => {
         if (generationRef.current === generation) {
           setResult({ providerId, categories: next });
@@ -85,7 +113,7 @@ function useCategories(providerId: string, kind: "live" | "vod" | "series") {
     return () => {
       generationRef.current += 1;
     };
-  }, [providerId, kind]);
+  }, [providerId, kind, diagnosticM3U]);
   const ready = result.providerId === providerId;
   return {
     categories: ready ? result.categories : [],
@@ -125,6 +153,52 @@ function useRememberedCategory(
   return [category, setCategory] as const;
 }
 
+function useLiveCategorySelection(
+  providerId: string,
+  categories: XtreamCategory[],
+  categoriesReady: boolean,
+  explicitSelectionRequired: boolean,
+  providerGlobalCategoryId: string | null,
+) {
+  const read = () => explicitSelectionRequired
+    ? readCatalogCategorySelection(providerId, "live", null)
+    : readCatalogCategorySelection(providerId, "live");
+  const [category, setCategoryState] = useState<string | null>(read);
+
+  useEffect(() => {
+    setCategoryState(read());
+  }, [providerId, explicitSelectionRequired]);
+
+  useEffect(() => {
+    if (!categoriesReady) return;
+    const remembered = read();
+    const validated = explicitSelectionRequired && remembered === "__all__" && providerGlobalCategoryId
+      ? rememberCatalogCategorySelection(providerId, "live", providerGlobalCategoryId)
+      : explicitSelectionRequired
+        ? validateCatalogCategorySelection(
+            providerId,
+            "live",
+            categories.map((item) => String(item.category_id)),
+            null,
+          )
+        : validateCatalogCategorySelection(
+            providerId,
+            "live",
+            categories.map((item) => String(item.category_id)),
+          );
+    const valid = explicitSelectionRequired && validated === null
+      ? rememberCatalogCategorySelection(providerId, "live", providerGlobalCategoryId ?? "__all__")
+      : validated;
+    setCategoryState((current) => current === valid ? current : valid);
+  }, [providerId, categories, categoriesReady, explicitSelectionRequired, providerGlobalCategoryId]);
+
+  const setCategory = useCallback((categoryId: string) => {
+    setCategoryState(rememberCatalogCategorySelection(providerId, "live", categoryId));
+  }, [providerId]);
+
+  return [category, setCategory] as const;
+}
+
 function countText(totalCount: number | null, countKnown: boolean) {
   return countKnown && totalCount !== null ? totalCount.toLocaleString() : "—";
 }
@@ -153,6 +227,8 @@ function CatalogHeader({
   loading,
   onRefresh,
   children,
+  activeCategoryLabel,
+  searchEnabled = true,
 }: {
   title: string;
   detail: string;
@@ -161,6 +237,8 @@ function CatalogHeader({
   loading: boolean;
   onRefresh: () => void;
   children?: React.ReactNode;
+  activeCategoryLabel?: string;
+  searchEnabled?: boolean;
 }) {
   const colors = useColors();
   const { t } = useI18n();
@@ -183,11 +261,16 @@ function CatalogHeader({
       <TextInput
         value={search}
         onChangeText={onSearch}
+        editable={searchEnabled}
         placeholder={`${t("search")} ${title.toLowerCase()}`}
         placeholderTextColor={colors.mutedForeground}
-        style={{ flex: 1, color: colors.foreground, minHeight: 44 }}
+        style={{ flex: 1, color: colors.foreground, minHeight: 44, opacity: searchEnabled ? 1 : 0.55 }}
       />
     </View>
+    {activeCategoryLabel ? <View style={[s.activeCategoryChip, { borderColor: colors.border, backgroundColor: colors.card }]}>
+      <Feather name="tag" size={14} color={colors.primary} />
+      <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700", flex: 1 }}>{activeCategoryLabel}</Text>
+    </View> : null}
     {children}
   </View>;
 }
@@ -269,7 +352,7 @@ function useCategoryDrawerSwipe(onOpen: () => void, disabled = false) {
 function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
   visible: boolean;
   items: CategoryOption[];
-  selected: string;
+  selected: string | null;
   onSelect: (id: string) => void;
   onClose: () => void;
 }) {
@@ -363,14 +446,26 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
   </Modal>;
 }
 
-function categoryOptions(categories: XtreamCategory[], allLabel: string): CategoryOption[] {
-  return [
-    { id: "__all__", name: allLabel },
+function categoryOptions(
+  categories: XtreamCategory[],
+  allLabel: string,
+  preserveProviderGlobal = false,
+): CategoryOption[] {
+  const providerGlobal = preserveProviderGlobal ? findStalkerLiveProviderGlobalCategory(categories) : null;
+  const options = [
+    { id: providerGlobal ? String(providerGlobal.category_id) : "__all__", name: allLabel },
     ...categories.map((item) => ({
       id: String(item.category_id),
       name: item.category_name || String(item.category_id),
     })),
   ];
+  if (!preserveProviderGlobal) {
+    return options.filter((item, index) => index === 0 || !/^(?:all|tümü|tum)$/i.test(item.name.trim()));
+  }
+  return options.filter((item, index) => index === 0 || !isStalkerLiveGlobalCategory({
+    category_id: item.id,
+    category_name: item.name,
+  }));
 }
 
 function Poster({ uri, title }: { uri?: string; title: string }) {
@@ -427,20 +522,40 @@ export function PagedLiveCatalog({
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [epgClock, setEpgClock] = useState(() => Date.now());
-  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "live");
-  const [category, setCategory] = useRememberedCategory(provider.id, "live", categories, categoriesReady);
+  const liveUserScrolledRef = useRef(false);
+  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "live", provider.type === "m3u");
+  const stalkerLive = provider.type === "stalker";
+  const providerGlobal = stalkerLive ? findStalkerLiveProviderGlobalCategory(categories) : null;
+  const [category, setCategory] = useLiveCategorySelection(
+    provider.id,
+    categories,
+    categoriesReady,
+    stalkerLive,
+    providerGlobal ? String(providerGlobal.category_id) : null,
+  );
+  const requestCategory = category === "__all__" && providerGlobal
+    ? String(providerGlobal.category_id)
+    : category;
+  const requestReady = !stalkerLive || (categoriesReady && requestCategory !== null);
   const providerType = pagedProviderType(provider.type);
   const page = useCatalogPage({
     provider,
     providerType,
     kind: "live",
-    categoryId: category,
+    categoryId: requestCategory ?? undefined,
     search,
     sort: "default",
-    enabled: providerType !== null,
-    snapshotCount: allOnlySnapshotCount(category, search, snapshotCount),
+    enabled: stalkerLive ? requestReady : providerType !== null,
+    snapshotCount: requestCategory !== null
+      && requestCategory === (providerGlobal ? String(providerGlobal.category_id) : "__all__")
+      && search.trim() === ""
+        ? snapshotCount
+        : undefined,
   });
-  const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
+  const drawerItems = useMemo(
+    () => categoryOptions(categories, t("all"), stalkerLive),
+    [categories, stalkerLive, t],
+  );
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
   const epgSeedKey = useMemo(
     () => page.items.slice(0, EPG_PAGED_SEED_LIMIT).map((channel) => channel.id).join("|"),
@@ -450,12 +565,39 @@ export function PagedLiveCatalog({
   useEffect(() => {
     onDrawerVisibilityChange(drawerOpen);
   }, [drawerOpen, onDrawerVisibilityChange]);
+  useEffect(() => {
+    if (provider.type !== "m3u") return;
+    recordM3UPagedLiveState({
+      pageLoadingInitial: page.loadingInitial,
+      pageLoadingMore: page.loadingMore,
+      pageItemsCount: page.items.length,
+      parentRefreshing: refreshing,
+      isEpgLoading: epgLoading,
+      categoriesReady,
+      selectedCategory: category,
+    });
+  }, [
+    provider.type,
+    page.loadingInitial,
+    page.loadingMore,
+    page.items.length,
+    refreshing,
+    epgLoading,
+    categoriesReady,
+    category,
+  ]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
   useEffect(() => {
     const timer = setInterval(() => setEpgClock(Date.now()), 60_000);
     return () => clearInterval(timer);
   }, []);
-  useEffect(() => setEpgClock(Date.now()), [category, search]);
+  useEffect(() => {
+    liveUserScrolledRef.current = false;
+    setEpgClock(Date.now());
+  }, [category, search]);
+  useEffect(() => {
+    if (stalkerLive && category === null && search) setSearch("");
+  }, [stalkerLive, category, search]);
   useEffect(() => {
     if (!epgSeedKey) return;
     const seed = page.items.slice(0, EPG_PAGED_SEED_LIMIT);
@@ -465,7 +607,8 @@ export function PagedLiveCatalog({
     }, 250);
     return () => clearTimeout(timer);
   }, [epgSeedKey, provider.id, refreshEpg]);
-  const initialEmpty = page.loadingInitial && page.items.length === 0;
+  const initialEmpty = shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search);
+  if (stalkerLive && !categoriesReady) return <CatalogLoadingSkeleton text={t("loading")} />;
   if (initialEmpty) return <CatalogLoadingSkeleton text={t("loading")} />;
 
   return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
@@ -476,9 +619,12 @@ export function PagedLiveCatalog({
       keyExtractor={(channel) => channel.id}
       ListHeaderComponent={<CatalogHeader
         title={t("liveTv")}
-        detail={`${t("channels", { count: countText(page.totalCount, page.countKnown) })}${epgLoading ? " · EPG…" : ""}`}
+        detail={stalkerLive && category === null
+          ? t("categoryNotSelected")
+          : `${t("channels", { count: countText(page.totalCount, page.countKnown) })}${epgLoading ? " · EPG…" : ""}`}
         search={search}
         onSearch={setSearch}
+        searchEnabled={!stalkerLive || category !== null}
         loading={refreshing || page.loadingInitial}
         onRefresh={() => {
           void Promise.resolve(onRefresh()).finally(() => {
@@ -491,9 +637,21 @@ export function PagedLiveCatalog({
           ? <Text style={[s.m3uHint, { color: colors.mutedForeground }]}>{t("m3uNoGroups")}</Text>
           : null}
       </CatalogHeader>}
-      ListEmptyComponent={<Text style={{ color: colors.mutedForeground, textAlign: "center", paddingVertical: 30 }}>—</Text>}
+      ListEmptyComponent={stalkerLive && category === null
+        ? <View style={s.intentionalEmptyState}>
+            <Text style={[s.intentionalEmptyTitle, { color: colors.foreground }]}>{t("selectCategory")}</Text>
+            <Text style={{ color: colors.mutedForeground, textAlign: "center" }}>{t("selectCategoryHint")}</Text>
+          </View>
+        : page.loadingInitial
+          ? <CatalogLoadingSkeleton text={t("loading")} />
+          : <Text style={{ color: colors.mutedForeground, textAlign: "center", paddingVertical: 30 }}>—</Text>}
       ListFooterComponent={<PageFooter loading={page.loadingMore} />}
-      onEndReached={page.loadMore}
+      onScrollBeginDrag={() => {
+        liveUserScrolledRef.current = true;
+      }}
+      onEndReached={() => {
+        if (liveUserScrolledRef.current) page.loadMore();
+      }}
       onEndReachedThreshold={0.45}
       renderItem={({ item: channel }) => {
         const current = selectProgramsAt(epgByChannel.get(channel.id), epgClock).now;
@@ -501,7 +659,19 @@ export function PagedLiveCatalog({
           ? new Date(current.end).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })
           : undefined;
         return <View style={[s.liveRow, { borderColor: colors.border, backgroundColor: colors.card }]}> 
-          <Pressable style={s.liveMain} onPress={() => onOpen(channel)}>
+          <Pressable
+            style={s.liveMain}
+            onPressIn={() => {
+              if (provider.type === "m3u") recordM3ULivePressIn();
+            }}
+            onPress={() => {
+              if (provider.type === "m3u") recordM3ULivePress();
+              onOpen(channel);
+            }}
+            onPressOut={() => {
+              if (provider.type === "m3u") recordM3ULivePressOut();
+            }}
+          >
             <Poster uri={channel.logoUrl} title={channel.name} />
             <View style={{ flex: 1 }}>
               <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700" }}>{channel.name}</Text>
@@ -557,7 +727,7 @@ export function PagedMoviesCatalog({
   const { width } = useWindowDimensions();
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "vod");
+  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "vod", provider.type === "m3u");
   const [category, setCategory] = useRememberedCategory(provider.id, "vod", categories, categoriesReady);
   const providerType = pagedProviderType(provider.type);
   const effectiveSort: CatalogSortMode = provider.type === "m3u" && sortMode === "added" ? "default" : sortMode;
@@ -577,7 +747,7 @@ export function PagedMoviesCatalog({
 
   useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
-  if (page.loadingInitial && page.items.length === 0) return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
+  if (shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search)) return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
 
   return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
     <FlatList
@@ -603,7 +773,9 @@ export function PagedMoviesCatalog({
         <SortControl selected={effectiveSort} supportsAdded={provider.type === "xtream"} onSelect={onSort} />
       </CatalogHeader>}
       ListFooterComponent={<PageFooter loading={page.loadingMore} />}
-      ListEmptyComponent={<View style={s.emptyGrid}><Text>—</Text></View>}
+      ListEmptyComponent={page.loadingInitial
+        ? <CatalogLoadingSkeleton text={t("loadingMovies")} />
+        : <View style={s.emptyGrid}><Text>—</Text></View>}
       onEndReached={page.loadMore}
       onEndReachedThreshold={0.55}
       renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
@@ -617,6 +789,223 @@ export function PagedMoviesCatalog({
       showsVerticalScrollIndicator={false}
     />
     <CategoryDrawer visible={drawerOpen} items={drawerItems} selected={category} onClose={() => setDrawerOpen(false)} onSelect={setCategory} />
+  </View>;
+}
+
+export function GoldenSeriesCatalog({
+  categories,
+  selectedCategory,
+  onSelectCategory,
+  search,
+  onSearch,
+  sortMode,
+  supportsAdded,
+  onSort,
+  refreshing,
+  onRefresh,
+  items,
+  totalCount,
+  countKnown,
+  loadingInitial,
+  loadingMore,
+  onLoadMore,
+  detail,
+  detailLoading,
+  error,
+  onRetry,
+  footerError,
+  onRetryMore,
+  onOpen,
+  onBack,
+  onEpisode,
+  onDrawerVisibilityChange,
+  activeCategoryLabel,
+}: {
+  categories: CategoryOption[];
+  selectedCategory: string;
+  onSelectCategory: (id: string) => void;
+  search: string;
+  onSearch: (value: string) => void;
+  sortMode: CatalogSortMode;
+  supportsAdded: boolean;
+  onSort: (mode: CatalogSortMode) => void;
+  refreshing: boolean;
+  onRefresh: () => void;
+  items: GoldenSeriesCardModel[];
+  totalCount: number | null;
+  countKnown: boolean;
+  loadingInitial: boolean;
+  loadingMore: boolean;
+  onLoadMore: () => void;
+  detail: GoldenSeriesDetailModel | null;
+  detailLoading: boolean;
+  error?: string | null;
+  onRetry?: () => void;
+  footerError?: string | null;
+  onRetryMore?: () => void;
+  onOpen: (id: string) => void;
+  onBack: () => void;
+  onEpisode: (seasonId: string, episodeId: string) => void;
+  onDrawerVisibilityChange: (visible: boolean) => void;
+  activeCategoryLabel?: string;
+}) {
+  const colors = useColors();
+  const { t } = useI18n();
+  const { width } = useWindowDimensions();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
+  const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
+  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const orderedSeasons = useMemo(
+    () => orderGoldenSeriesSeasons(detail?.seasons ?? []),
+    [detail],
+  );
+  const selectedSeason = useMemo(
+    () => selectedGoldenSeriesSeason(orderedSeasons, selectedSeasonId),
+    [orderedSeasons, selectedSeasonId],
+  );
+
+  useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
+  useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
+  useEffect(() => {
+    setSelectedSeasonId(initialGoldenSeriesSeasonId(orderedSeasons));
+  }, [detail?.id, orderedSeasons.length]);
+
+  if (detail || detailLoading) {
+    const leaveDetailLevel = () => {
+      if (goldenSeriesBackTarget(selectedSeasonId, orderedSeasons.length) === "seasons") {
+        setSelectedSeasonId(null);
+      } else {
+        onBack();
+      }
+    };
+    const seasonSelector = <FlatList
+      horizontal
+      data={orderedSeasons}
+      keyExtractor={(season) => season.id}
+      extraData={selectedSeasonId}
+      contentContainerStyle={s.seasonSelectorContent}
+      showsHorizontalScrollIndicator={false}
+      initialNumToRender={8}
+      maxToRenderPerBatch={8}
+      windowSize={5}
+      renderItem={({ item: season }) => {
+        const selected = season.id === selectedSeasonId;
+        return <Pressable
+          onPress={() => setSelectedSeasonId(season.id)}
+          style={[
+            s.seasonChip,
+            {
+              borderColor: selected ? colors.primary : colors.border,
+              backgroundColor: selected ? colors.primary : colors.card,
+            },
+          ]}
+        >
+          <Text style={{ color: selected ? colors.primaryForeground : colors.foreground, fontWeight: "800" }}>
+            {season.label}
+          </Text>
+        </Pressable>;
+      }}
+    />;
+    const detailHeader = <View>
+      <FocusButton label={t("back")} icon="arrow-left" variant="ghost" onPress={leaveDetailLevel} />
+      <Text style={[s.title, { color: colors.foreground, marginTop: 14 }]}>{detail?.title ?? t("series")}</Text>
+      {error ? <CatalogErrorState message={error} onRetry={onRetry} /> : null}
+      {orderedSeasons.length ? <>
+        <Text style={[s.section, { color: colors.foreground, marginTop: 12 }]}>{t("season")}</Text>
+        {seasonSelector}
+      </> : null}
+    </View>;
+
+    if (detailLoading) return <View style={s.seriesDetail}>
+      {detailHeader}
+      <CatalogLoadingSkeleton text={t("loadingEpisodes")} />
+    </View>;
+
+    if (!orderedSeasons.length) return <View style={s.seriesDetail}>
+      {detailHeader}
+      <Text style={[s.seriesDetailMessage, { color: colors.mutedForeground }]}>{t("noEpisodes")}</Text>
+    </View>;
+
+    if (!selectedSeason) return <View style={s.seriesDetail}>
+      {detailHeader}
+      <Text style={[s.seriesDetailMessage, { color: colors.mutedForeground }]}>{t("selectSeason")}</Text>
+    </View>;
+
+    return <FlatList
+      style={s.seriesDetailList}
+      contentContainerStyle={s.seriesEpisodeListContent}
+      data={selectedSeason.episodes}
+      keyExtractor={(episode) => episode.id}
+      ListHeaderComponent={detailHeader}
+      ListEmptyComponent={<Text style={[s.seriesDetailMessage, { color: colors.mutedForeground }]}>{t("seasonHasNoEpisodes")}</Text>}
+      renderItem={({ item: episode }) => <Pressable
+        onPress={() => onEpisode(selectedSeason.id, episode.id)}
+        style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}
+      >
+        <Text style={{ color: colors.foreground, flex: 1 }}>{episode.title}</Text>
+        <Feather name="play-circle" size={24} color={colors.primary} />
+      </Pressable>}
+      initialNumToRender={8}
+      maxToRenderPerBatch={10}
+      windowSize={7}
+      removeClippedSubviews={Platform.OS !== "web"}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator
+    />;
+  }
+
+  if (shouldUseWholeCatalogLoadingSkeleton(loadingInitial, items.length, search)) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
+
+  return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
+    <FlatList
+      key={`golden-series-${columns}`}
+      style={{ flex: 1 }}
+      contentContainerStyle={s.gridListContent}
+      data={items}
+      numColumns={columns}
+      keyExtractor={(item) => item.id}
+      ListHeaderComponent={<CatalogHeader
+        title={t("series")}
+        detail={t("seriesCount", { count: countText(totalCount, countKnown) })}
+        search={search}
+        onSearch={onSearch}
+        loading={refreshing || loadingInitial}
+        onRefresh={onRefresh}
+        activeCategoryLabel={activeCategoryLabel}
+      >
+        <SortControl selected={sortMode} supportsAdded={supportsAdded} onSelect={onSort} />
+      </CatalogHeader>}
+      ListFooterComponent={footerError
+        ? <CatalogErrorState message={footerError} onRetry={onRetryMore} />
+        : <PageFooter loading={loadingMore} />}
+      ListEmptyComponent={loadingInitial
+        ? <CatalogLoadingSkeleton text={t("loadingSeries")} />
+        : error
+          ? <CatalogErrorState message={error} onRetry={onRetry} />
+          : <View style={s.emptyGrid}><Text>—</Text></View>}
+      onEndReached={onLoadMore}
+      onEndReachedThreshold={0.55}
+      renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
+        <GridCard title={item.title} image={item.image} onPress={() => onOpen(item.id)} />
+      </View>}
+      initialNumToRender={Math.max(8, columns * 3)}
+      maxToRenderPerBatch={Math.max(8, columns * 3)}
+      windowSize={7}
+      removeClippedSubviews={Platform.OS !== "web"}
+      keyboardShouldPersistTaps="handled"
+      showsVerticalScrollIndicator={false}
+    />
+    <CategoryDrawer visible={drawerOpen} items={categories} selected={selectedCategory} onClose={() => setDrawerOpen(false)} onSelect={onSelectCategory} />
+  </View>;
+}
+
+function CatalogErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  const colors = useColors();
+  const { t } = useI18n();
+  return <View style={[s.catalogError, { borderColor: colors.destructive, backgroundColor: colors.card }]}>
+    <Text style={{ color: colors.mutedForeground, flex: 1 }}>{message}</Text>
+    {onRetry ? <FocusButton label={t("refresh")} icon="refresh-cw" variant="secondary" onPress={onRetry} /> : null}
   </View>;
 }
 
@@ -647,12 +1036,9 @@ export function PagedSeriesCatalog({
   onEpisode: (episode: XtreamEpisode) => void;
   onDrawerVisibilityChange: (visible: boolean) => void;
 }) {
-  const colors = useColors();
   const { t } = useI18n();
-  const { width } = useWindowDimensions();
   const [search, setSearch] = useState("");
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "series");
+  const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "series", provider.type === "m3u");
   const [category, setCategory] = useRememberedCategory(provider.id, "series", categories, categoriesReady);
   const providerType = pagedProviderType(provider.type);
   const effectiveSort: CatalogSortMode = provider.type === "m3u" && sortMode === "added" ? "default" : sortMode;
@@ -667,75 +1053,52 @@ export function PagedSeriesCatalog({
     snapshotCount: allOnlySnapshotCount(category, search, snapshotCount),
   });
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
-  const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const detail = selected ? {
+    id: `${provider.id}:${String(selected.series_id)}`,
+    title: selected.name,
+    seasons: Object.entries(info?.episodes || {}).map(([season, episodes]) => ({
+      id: season,
+      label: `${t("season")} ${season}`,
+      episodes: episodes.map((episode) => ({
+        id: String(episode.id),
+        title: episode.title || `${t("episode")} ${episode.episode_num ?? ""}`,
+        seasonId: season,
+      })),
+    })),
+  } : null;
 
-  useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
-  useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
-  if (selected) {
-    const groups = Object.entries(info?.episodes || {});
-    return <View style={s.seriesDetail}>
-      <FocusButton label={t("back")} icon="arrow-left" variant="ghost" onPress={onBack} />
-      <Text style={[s.title, { color: colors.foreground, marginTop: 14 }]}>{selected.name}</Text>
-      {!info
-        ? <CatalogLoadingSkeleton text={t("loadingEpisodes")} />
-        : groups.length
-          ? groups.map(([season, episodes]) => <View key={season} style={{ marginTop: 18 }}>
-              <Text style={[s.section, { color: colors.foreground }]}>{t("season")} {season}</Text>
-              <View style={s.list}>{episodes.map((episode) => <Pressable
-                key={String(episode.id)}
-                onPress={() => onEpisode(episode)}
-                style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}
-              >
-                <Text style={{ color: colors.foreground, flex: 1 }}>{episode.title || `${t("episode")} ${episode.episode_num ?? ""}`}</Text>
-                <Feather name="play-circle" size={24} color={colors.primary} />
-              </Pressable>)}</View>
-            </View>)
-          : <Text style={{ color: colors.mutedForeground }}>{t("noEpisodes")}</Text>}
-    </View>;
-  }
-
-  if (page.loadingInitial && page.items.length === 0) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
-
-  return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
-    <FlatList
-      key={`series-${columns}`}
-      style={{ flex: 1 }}
-      contentContainerStyle={s.gridListContent}
-      data={page.items}
-      numColumns={columns}
-      keyExtractor={(item) => String(item.series_id)}
-      ListHeaderComponent={<CatalogHeader
-        title={t("series")}
-        detail={t("seriesCount", { count: countText(page.totalCount, page.countKnown) })}
-        search={search}
-        onSearch={setSearch}
-        loading={refreshing || page.loadingInitial}
-        onRefresh={() => {
-          void Promise.resolve(onRefresh()).finally(() => {
-            reloadCategories();
-            page.reload();
-          });
-        }}
-      >
-        <SortControl selected={effectiveSort} supportsAdded={provider.type === "xtream"} onSelect={onSort} />
-      </CatalogHeader>}
-      ListFooterComponent={<PageFooter loading={page.loadingMore} />}
-      ListEmptyComponent={<View style={s.emptyGrid}><Text>—</Text></View>}
-      onEndReached={page.loadMore}
-      onEndReachedThreshold={0.55}
-      renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
-        <GridCard title={item.name} image={item.cover} onPress={() => onOpen(item)} />
-      </View>}
-      initialNumToRender={Math.max(8, columns * 3)}
-      maxToRenderPerBatch={Math.max(8, columns * 3)}
-      windowSize={7}
-      removeClippedSubviews={Platform.OS !== "web"}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator={false}
-    />
-    <CategoryDrawer visible={drawerOpen} items={drawerItems} selected={category} onClose={() => setDrawerOpen(false)} onSelect={setCategory} />
-  </View>;
+  return <GoldenSeriesCatalog
+    categories={drawerItems}
+    selectedCategory={category}
+    onSelectCategory={setCategory}
+    search={search}
+    onSearch={setSearch}
+    sortMode={effectiveSort}
+    supportsAdded={provider.type === "xtream"}
+    onSort={onSort}
+    refreshing={refreshing}
+    onRefresh={() => {
+      void Promise.resolve(onRefresh()).finally(() => {
+        reloadCategories();
+        page.reload();
+      });
+    }}
+    items={page.items.map((item) => ({ id: String(item.series_id), title: item.name, image: item.cover }))}
+    totalCount={page.totalCount}
+    countKnown={page.countKnown}
+    loadingInitial={page.loadingInitial}
+    loadingMore={page.loadingMore}
+    onLoadMore={page.loadMore}
+    detail={detail}
+    detailLoading={Boolean(selected && !info)}
+    onOpen={(id) => { const item = page.items.find((candidate) => String(candidate.series_id) === id); if (item) onOpen(item); }}
+    onBack={onBack}
+    onEpisode={(seasonId, episodeId) => {
+      const episode = info?.episodes?.[seasonId]?.find((candidate) => String(candidate.id) === episodeId);
+      if (episode) onEpisode(episode);
+    }}
+    onDrawerVisibilityChange={onDrawerVisibilityChange}
+  />;
 }
 
 const s = StyleSheet.create({
@@ -745,6 +1108,7 @@ const s = StyleSheet.create({
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },
   section: { fontSize: 20, fontWeight: "800" },
   search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
+  activeCategoryChip: { alignSelf: "flex-start", maxWidth: "100%", borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, flexDirection: "row", alignItems: "center", gap: 7 },
   sortDropdownWrap: { paddingTop: 10, paddingBottom: 10, alignSelf: "stretch" },
   sortDropdownButton: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
   sortDropdownMenu: { marginTop: 6, borderWidth: 1, borderRadius: 12, padding: 6, gap: 3 },
@@ -754,6 +1118,8 @@ const s = StyleSheet.create({
   liveRow: { borderWidth: 1, borderRadius: 14, padding: 8, flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   liveMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
   liveProgram: { fontSize: 12.5, marginTop: 3 },
+  intentionalEmptyState: { paddingHorizontal: 24, paddingVertical: 42, alignItems: "center", gap: 8 },
+  intentionalEmptyTitle: { fontSize: 18, fontWeight: "800", textAlign: "center" },
   logo: { width: 50, height: 50, borderRadius: 10 },
   iconButton: { padding: 10 },
   card: { padding: 6 },
@@ -763,7 +1129,13 @@ const s = StyleSheet.create({
   pageFooterSpacer: { height: 20 },
   skeletonRoot: { flex: 1, minHeight: 220, alignItems: "center", justifyContent: "center", gap: 10, padding: 24 },
   emptyGrid: { padding: 30, alignItems: "center" },
+  catalogError: { margin: 18, borderWidth: 1, borderRadius: 12, padding: 14, flexDirection: "row", alignItems: "center", gap: 10 },
   seriesDetail: { flex: 1, padding: 18, maxWidth: 1500, width: "100%", alignSelf: "center" },
+  seriesDetailList: { flex: 1, maxWidth: 1500, width: "100%", alignSelf: "center" },
+  seriesEpisodeListContent: { padding: 18, paddingBottom: 40 },
+  seriesDetailMessage: { paddingVertical: 32, textAlign: "center", fontSize: 16 },
+  seasonSelectorContent: { gap: 8, paddingVertical: 10, paddingRight: 18 },
+  seasonChip: { minHeight: 42, borderWidth: 1, borderRadius: 999, paddingHorizontal: 16, alignItems: "center", justifyContent: "center" },
   list: { gap: 8 },
   episode: { borderWidth: 1, borderRadius: 12, padding: 14, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
   drawerBackdrop: { flex: 1, flexDirection: "row", backgroundColor: "rgba(0,0,0,0.52)" },

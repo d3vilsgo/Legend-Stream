@@ -18,7 +18,7 @@ import {
 import { hasUsableM3UCacheSnapshot } from "./m3uCacheAvailability";
 import { parseM3UProviderSource } from "./m3uCatalogRefs";
 import {
-  projectCatalogItems,
+  projectCatalogItemsCooperatively,
   type PersistedLiveCatalogItem,
   type PersistedSeriesCatalogItem,
   type PersistedVodCatalogItem,
@@ -63,12 +63,30 @@ import {
   noteM3UNetworkCatalogCounts,
 } from "./m3uSwitchMetrics";
 import { safeLog } from "./safeLog";
+import { recordM3UCacheBatch, recordM3USourceInputFacts } from "./m3uInAppDiagnostics";
 import { yieldToUi } from "./cooperative";
 import type { XtreamCategory } from "./xtreamCatalog";
 
 const M3U_CACHE_STAGE_TOTAL = 3;
 export const M3U_HOME_PREVIEW_LIMIT = 48;
+const M3U_DIAGNOSTIC_CACHE_BATCH_SIZE = 200;
 const activationProviders = new Set<string>();
+
+function shouldLogDiagnosticCacheBatch(batchIndex: number, totalRows: number) {
+  const totalBatches = Math.max(1, Math.ceil(totalRows / M3U_DIAGNOSTIC_CACHE_BATCH_SIZE));
+  return batchIndex === 1 || batchIndex === totalBatches || batchIndex % 25 === 0;
+}
+
+function logDiagnosticCacheBatch(
+  marker: "M3U_CACHE_BATCH_BEGIN" | "M3U_CACHE_BATCH_END",
+  kind: "live" | "vod" | "series",
+  batchIndex: number,
+  totalRows: number,
+) {
+  recordM3UCacheBatch(marker === "M3U_CACHE_BATCH_BEGIN" ? "begin" : "end", kind, batchIndex);
+  if (!shouldLogDiagnosticCacheBatch(batchIndex, totalRows)) return;
+  safeLog.info(marker, { kind, batch: batchIndex, timestamp: Date.now() });
+}
 
 export type M3UCatalogCacheProvider = Omit<Pick<
   Provider,
@@ -396,6 +414,8 @@ export async function persistM3UProviderCache(
     return false;
   }
 
+  recordM3USourceInputFacts(projection.inputCounts, projection.duplicateItemIdCount);
+
   if (projection.unsafeOutcome) {
     return failClosedWrite({
       providerId: provider.id,
@@ -408,13 +428,16 @@ export async function persistM3UProviderCache(
     });
   }
 
-  const persistedLive = projectCatalogItems(provider.id, "live", projection.liveRows as any);
-  const persistedVod = projectCatalogItems(provider.id, "vod", projection.movieRows as any);
-  const persistedSeries = projectCatalogItems(provider.id, "series", projection.seriesRows as any);
+  const stagingProviderId = `__staging__${provider.id}`;
+  const [stagedLive, stagedVod, stagedSeries] = await Promise.all([
+    projectCatalogItemsCooperatively(stagingProviderId, "live", projection.liveRows as any),
+    projectCatalogItemsCooperatively(stagingProviderId, "vod", projection.movieRows as any),
+    projectCatalogItemsCooperatively(stagingProviderId, "series", projection.seriesRows as any),
+  ]);
   if (
-    persistedLive.length !== projection.liveRows.length ||
-    persistedVod.length !== projection.movieRows.length ||
-    persistedSeries.length !== projection.seriesRows.length
+    stagedLive.length !== projection.liveRows.length ||
+    stagedVod.length !== projection.movieRows.length ||
+    stagedSeries.length !== projection.seriesRows.length
   ) {
     return failClosedWrite({
       providerId: provider.id,
@@ -426,11 +449,6 @@ export async function persistM3UProviderCache(
       scan: projection.scan,
     });
   }
-
-  const stagingProviderId = `__staging__${provider.id}`;
-  const stagedLive = persistedLive.map((item) => ({ ...item, providerId: stagingProviderId }));
-  const stagedVod = persistedVod.map((item) => ({ ...item, providerId: stagingProviderId }));
-  const stagedSeries = persistedSeries.map((item) => ({ ...item, providerId: stagingProviderId }));
   const stagedCounts = emptyM3UCacheCounts();
   const writtenCounts = emptyM3UCacheCounts();
   const batchProgress = createM3USqliteBatchProgress();
@@ -453,6 +471,10 @@ export async function persistM3UProviderCache(
       markNew: true,
       onBatchStarted: (batchIndex) => {
         noteM3USqliteBatchStarted(batchProgress, "live", batchIndex);
+        logDiagnosticCacheBatch("M3U_CACHE_BATCH_BEGIN", "live", batchIndex, stagedLive.length);
+      },
+      onBatchCommitted: (observation) => {
+        logDiagnosticCacheBatch("M3U_CACHE_BATCH_END", "live", observation.batchIndex, stagedLive.length);
       },
       onSqliteStage: (stage) => {
         sqliteStage = stage;
@@ -463,6 +485,10 @@ export async function persistM3UProviderCache(
       markNew: true,
       onBatchStarted: (batchIndex) => {
         noteM3USqliteBatchStarted(batchProgress, "vod", batchIndex);
+        logDiagnosticCacheBatch("M3U_CACHE_BATCH_BEGIN", "vod", batchIndex, stagedVod.length);
+      },
+      onBatchCommitted: (observation) => {
+        logDiagnosticCacheBatch("M3U_CACHE_BATCH_END", "vod", observation.batchIndex, stagedVod.length);
       },
       onSqliteStage: (stage) => {
         sqliteStage = stage;
@@ -473,6 +499,10 @@ export async function persistM3UProviderCache(
       markNew: true,
       onBatchStarted: (batchIndex) => {
         noteM3USqliteBatchStarted(batchProgress, "series", batchIndex);
+        logDiagnosticCacheBatch("M3U_CACHE_BATCH_BEGIN", "series", batchIndex, stagedSeries.length);
+      },
+      onBatchCommitted: (observation) => {
+        logDiagnosticCacheBatch("M3U_CACHE_BATCH_END", "series", observation.batchIndex, stagedSeries.length);
       },
       onSqliteStage: (stage) => {
         sqliteStage = stage;

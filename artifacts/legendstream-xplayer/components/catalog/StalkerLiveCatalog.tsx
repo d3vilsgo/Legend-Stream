@@ -52,7 +52,7 @@ export function StalkerLiveCatalog({
     provider?.id === providerId && provider.type === "stalker" ? provider : null,
   );
   const [search, setSearch] = useState("");
-  const [category, setCategoryState] = useState(() => readCatalogCategorySelection(providerId, "live"));
+  const [category, setCategoryState] = useState<string | null>(() => readCatalogCategorySelection(providerId, "live", null));
   const [categories, setCategories] = useState<StalkerCategoryPagerItem[]>([
     { id: "__all__", title: "Tümü" },
   ]);
@@ -75,6 +75,7 @@ export function StalkerLiveCatalog({
           providerId,
           "live",
           next.map((item) => String(item.category_id)),
+          null,
         );
         setCategories(options);
         setCategoryState(valid);
@@ -82,12 +83,12 @@ export function StalkerLiveCatalog({
       .catch(() => {
         if (categoryGeneration.current !== generation) return;
         setCategories([{ id: "__all__", title: "Tümü" }]);
-        setCategoryState("__all__");
+        setCategoryState(null);
       });
   }, [providerId]);
 
   useEffect(() => {
-    setCategoryState(readCatalogCategorySelection(providerId, "live"));
+    setCategoryState(readCatalogCategorySelection(providerId, "live", null));
   }, [providerId]);
 
   useEffect(() => {
@@ -105,10 +106,10 @@ export function StalkerLiveCatalog({
     provider: provider?.id === providerId && provider.type === "stalker" ? provider : null,
     providerType: null,
     kind: "live",
-    categoryId: category,
+    categoryId: category ?? undefined,
     search,
     sort: "default",
-    enabled: true,
+    enabled: category !== null && sync.categoriesReady,
     snapshotCount: category === "__all__" && search.trim() === ""
       ? { totalCount: sync.totalCount, countKnown: sync.countKnown }
       : undefined,
@@ -143,7 +144,7 @@ export function StalkerLiveCatalog({
     </View>;
   }
 
-  const selectedCategory = categories.find((item) => item.id === category) ?? categories[0] ?? null;
+  const selectedCategory = categories.find((item) => item.id === category) ?? null;
   const countLabel = page.countKnown && page.totalCount !== null ? page.totalCount.toLocaleString() : "—";
 
   return <StalkerCategoryPager
@@ -162,7 +163,7 @@ export function StalkerLiveCatalog({
           <View style={{ flex: 1 }}>
             <Text style={[styles.title, { color: colors.foreground }]}>Canlı TV</Text>
             <Text style={{ color: colors.mutedForeground }}>
-              {selectedCategory?.title || "Tümü"} · {countLabel} kanal{epgLoading ? " · EPG…" : ""}
+              {selectedCategory ? `${selectedCategory.title} · ${countLabel} kanal${epgLoading ? " · EPG…" : ""}` : "Kategori seçilmedi"}
             </Text>
           </View>
           <Pressable
@@ -187,6 +188,7 @@ export function StalkerLiveCatalog({
           <TextInput
             value={search}
             onChangeText={setSearch}
+            editable={category !== null}
             placeholder="Kanal ara..."
             placeholderTextColor={colors.mutedForeground}
             autoCorrect={false}
@@ -202,7 +204,10 @@ export function StalkerLiveCatalog({
           <Text style={{ color: colors.mutedForeground }}>Kanallar yükleniyor</Text>
         </View> : null}
       </View>}
-      ListEmptyComponent={!page.loadingInitial ? <Text style={{ color: colors.mutedForeground, textAlign: "center", paddingVertical: 30 }}>—</Text> : null}
+      ListEmptyComponent={!page.loadingInitial ? <View style={styles.intentionalEmptyState}>
+        <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 18 }}>Bir kategori seçin</Text>
+        <Text style={{ color: colors.mutedForeground, textAlign: "center" }}>Yayınları görmek için kategori menüsünden bir seçim yapın.</Text>
+      </View> : null}
       ListFooterComponent={page.loadingMore ? <View style={styles.loadingRow}><ActivityIndicator size="small" color={colors.primary} /></View> : null}
       onEndReached={page.loadMore}
       onEndReachedThreshold={0.45}
@@ -251,6 +256,7 @@ const styles = StyleSheet.create({
   search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
   searchInput: { flex: 1, minHeight: 44, fontSize: 16 },
   loadingRow: { minHeight: 44, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
+  intentionalEmptyState: { paddingHorizontal: 24, paddingVertical: 42, alignItems: "center", gap: 8 },
   channelRow: { borderWidth: 1, borderRadius: 14, flexDirection: "row", alignItems: "center", minHeight: 68 },
   channelMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: 12, padding: 10 },
   logo: { width: 48, height: 48, borderRadius: 10 },

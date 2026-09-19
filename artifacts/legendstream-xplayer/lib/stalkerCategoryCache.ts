@@ -1,7 +1,10 @@
 import * as SQLite from "expo-sqlite";
 import { initCatalogCache } from "./catalogCache";
 import { enqueueCatalogDbWrite } from "./catalogDbWriter";
-import type { StalkerLiveCategory } from "./stalkerLiveCatalog";
+import {
+  normalizeStalkerLiveCategoryName,
+  type StalkerLiveCategory,
+} from "./stalkerLiveCatalog";
 
 const CATALOG_DB_NAME = "legendstream-catalog-v1.db";
 let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
@@ -30,7 +33,7 @@ export async function persistStalkerLiveCategories(
            VALUES (?, 'live', ?, ?, NULL)`,
           providerId,
           category.id,
-          category.name || category.id,
+          normalizeStalkerLiveCategoryName(category.name),
         );
       }
     });

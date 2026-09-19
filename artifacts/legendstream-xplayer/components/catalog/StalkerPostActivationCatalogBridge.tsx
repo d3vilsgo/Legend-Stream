@@ -18,7 +18,7 @@ export function StalkerPostActivationCatalogBridge() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { provider, connectProvider, isLoading, clearError } = usePlayer();
-  const { syncState, refreshCatalog, refreshSnapshot } = useCatalogSync();
+  const { syncState, snapshot, hasUsableCache, refreshCatalog, refreshSnapshot } = useCatalogSync();
   const activeProviderIdRef = useRef<string | null>(provider?.id ?? null);
   const [repairOpen, setRepairOpen] = useState(false);
   const [repairUrl, setRepairUrl] = useState("");
@@ -48,10 +48,12 @@ export function StalkerPostActivationCatalogBridge() {
   const safeErrorCode = syncState && "errorCode" in syncState
     ? syncState.errorCode
     : undefined;
+  const usableLiveCatalog = snapshot.providerId === provider.id && (
+    hasUsableCache || snapshot.counts.live > 0 || snapshot.live.length > 0
+  );
   const showNotice =
     phase === "credentials-required" ||
-    phase === "preparing" ||
-    phase === "syncing" ||
+    ((phase === "preparing" || phase === "syncing") && !usableLiveCatalog) ||
     phase === "error" ||
     phase === "cancelled";
   const noticeMessage = phase === "preparing" || phase === "syncing"

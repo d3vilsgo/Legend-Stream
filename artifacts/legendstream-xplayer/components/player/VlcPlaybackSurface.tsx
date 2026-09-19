@@ -8,6 +8,12 @@ import {
   updatePlayerRuntimeInfo,
 } from "@/lib/playerRuntimeInfo";
 import { setPlayerKeepAwake } from "@/modules/legendstream-pip";
+import {
+  recordM3UVlcPlaying,
+  recordM3UVlcSurfaceMount,
+  recordM3UVlcUriHandoff,
+  type M3UPlaybackUriMetadata,
+} from "@/lib/m3uInAppDiagnostics";
 
 const PLAYER_KEEP_AWAKE_TAG = "legendstream-active-playback";
 const FALLBACK_VIDEO_SIZE = { width: 16, height: 9 } as const;
@@ -56,6 +62,8 @@ type Props = {
   onPaused: () => void;
   onEnd: () => void;
   onError: () => void;
+  diagnosticM3ULive?: boolean;
+  diagnosticM3UUriMetadata?: M3UPlaybackUriMetadata;
 };
 
 const validVideoSize = (value?: PlayerVideoSize) =>
@@ -151,6 +159,8 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     onPaused,
     onEnd,
     onError,
+    diagnosticM3ULive = false,
+    diagnosticM3UUriMetadata,
   },
   forwardedRef,
 ) {
@@ -209,6 +219,10 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [paused, playbackReady]);
 
   useEffect(() => {
+    if (diagnosticM3ULive) {
+      recordM3UVlcSurfaceMount();
+      if (diagnosticM3UUriMetadata) recordM3UVlcUriHandoff(diagnosticM3UUriMetadata);
+    }
     applyGeneration.current += 1;
     lastLoadEvent.current = undefined;
     lastMetricKey.current = "";
@@ -228,7 +242,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
         effectiveCodec: runtimeCodecMode,
       });
     };
-  }, [codecMode, runtimeCodecMode, uri]);
+  }, [codecMode, diagnosticM3ULive, diagnosticM3UUriMetadata, runtimeCodecMode, uri]);
 
   const isLikelyWindowSurface = useCallback((size?: PlayerVideoSize) => {
     if (!validVideoSize(size)) return false;
@@ -410,13 +424,14 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   const handlePlaying = useCallback(() => {
     setFirstFramePending(false);
     setPlaybackReady(true);
+    if (diagnosticM3ULive) recordM3UVlcPlaying();
     void logPlayerDiagnostic("vlc_playing", {
       codec: codecMode,
       effectiveCodec: runtimeCodecMode,
       fit,
     });
     onPlaying();
-  }, [codecMode, fit, onPlaying, runtimeCodecMode]);
+  }, [codecMode, diagnosticM3ULive, fit, onPlaying, runtimeCodecMode]);
 
   const handlePaused = useCallback(() => {
     setPlaybackReady(false);
@@ -516,6 +531,8 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 10,
     backgroundColor: "rgba(0,0,0,0.72)",
+    zIndex: 30,
+    elevation: 30,
   },
   loadingText: {
     color: "#ffffff",

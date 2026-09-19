@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Platform,
@@ -8,7 +8,6 @@ import {
   SectionList,
   StyleSheet,
   Text,
-  TextInput,
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -22,6 +21,12 @@ import { FocusButton } from "@/components/FocusButton";
 import { HomeDiscovery, type HomeContentView } from "@/components/home/HomeDiscovery";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
 import { PagedLiveCatalog } from "@/components/catalog/PagedCatalogViews";
+import {
+  StalkerGoldenMoviesCatalog,
+  type StalkerMoviePlayable,
+} from "@/components/stalker/StalkerGoldenMoviesCatalog";
+import { StalkerProductErrorBoundary } from "@/components/stalker/StalkerProductErrorBoundary";
+import { StalkerSeriesProductSurface } from "@/components/stalker/StalkerSeriesProductSurface";
 import { PlayerChromeTimeoutSetting } from "@/components/PlayerChromeTimeoutSetting";
 import { ProviderBackupPanel } from "@/components/ProviderBackupPanel";
 import { ProviderSubscriptionChip } from "@/components/ProviderSubscriptionChip";
@@ -30,9 +35,14 @@ import {
   type ProviderConfig,
   usePlayer,
 } from "@/context/PlayerContext";
-import type { MediaProgress } from "@/context/MediaLibraryContext";
+import { useMediaLibrary, type MediaProgress } from "@/context/MediaLibraryContext";
+import type { MediaPlaybackRef } from "@/lib/mediaProgress";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
+import { useStalkerLiveCatalogSync } from "@/hooks/useStalkerLiveCatalogSync";
+import { useStalkerProductCounts } from "@/hooks/useStalkerProductCounts";
+import { useStalkerHomeSummary } from "@/hooks/useStalkerHomeSummary";
+import { useResolvedLiveIdentityChannels } from "@/hooks/useResolvedLiveIdentityChannels";
 import type { DownloadedMedia } from "@/lib/downloads";
 import {
   indexLiveChannelsByProviderAndId,
@@ -48,6 +58,16 @@ import {
   tryBeginProviderSwitch,
 } from "@/lib/providerSwitchUx";
 import { redactSensitiveText } from "@/lib/safeLog";
+import {
+  readCurrentStalkerProductSession,
+  type StalkerProductProviderIdentity,
+} from "@/lib/stalkerProductSession";
+import { resolveStalkerVodHistoryLink } from "@/lib/stalkerVod";
+import {
+  resolveStalkerSeriesHistoryEpisode,
+  type StalkerSeriesEpisodeIdentity,
+  type StalkerSeriesPlayableIntent,
+} from "@/lib/stalkerSeriesProduct";
 import { yieldToUi } from "@/lib/cooperative";
 
 type StalkerViewName = HomeContentView | "player";
@@ -61,6 +81,8 @@ type Playable = {
   returnTo: StalkerContentView;
   liveIdentity?: LiveChannelIdentity;
   vodIdentity?: CatalogPlaybackIdentity;
+  progressRef?: MediaPlaybackRef;
+  seriesIdentity?: StalkerSeriesEpisodeIdentity;
 };
 
 /**
@@ -82,6 +104,12 @@ const providerPresentation = (provider: ProviderConfig) =>
     type: provider.declaredType ?? provider.type,
   });
 
+function isStalkerProductProvider(
+  provider: ProviderConfig,
+): provider is ProviderConfig & StalkerProductProviderIdentity {
+  return provider.type === "stalker";
+}
+
 /**
  * R17 parity freeze:
  * - This page owns the Stalker presentation lifecycle; protocol/session code stays outside.
@@ -90,7 +118,9 @@ const providerPresentation = (provider: ProviderConfig) =>
  * - Product adapters resolve a normalized Playable and hand it to this page. They do not
  *   own a private player.
  * - Live can already use the golden PagedLiveCatalog because useCatalogPage has a proven
- *   Stalker-live backend seam. VOD and Series remain explicit R17-C/R17-D migration seams.
+ *   Stalker-live backend seam. Movies use a controlled golden presentation clone while
+ *   Series adapts protocol data into the shared Golden Series catalog. Both product
+ *   adapters hand normalized playback intents to this page instead of owning a player.
  */
 export default function StalkerMainPage() {
   const colors = useColors();
@@ -106,7 +136,7 @@ export default function StalkerMainPage() {
     isLoading,
     isEpgLoading,
     error,
-    refreshProvider,
+    scopedError,
     toggleFavorite,
     recordWatched,
     removeWatched,
@@ -115,6 +145,7 @@ export default function StalkerMainPage() {
     removeProvider,
     disconnectProvider,
     clearError,
+    clearScopedError,
   } = usePlayer();
   useCredentialDiagnosticsStartup();
 
@@ -124,6 +155,11 @@ export default function StalkerMainPage() {
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
   const [switchingProviderId, setSwitchingProviderId] = useState<string | null>(null);
   const switchingProviderRef = useRef<string | null>(null);
+  const historyPlaybackAbortRef = useRef<AbortController | null>(null);
+  const historyPlaybackSequenceRef = useRef(0);
+  const liveCatalog = useStalkerLiveCatalogSync(provider);
+  const productCounts = useStalkerProductCounts(provider?.type === "stalker" ? provider.id : undefined);
+  const homeSummary = useStalkerHomeSummary(provider?.type === "stalker" ? provider.id : undefined);
 
   const playerLiveChannels = useMemo(
     () => provider
@@ -135,15 +171,31 @@ export default function StalkerMainPage() {
       : [],
     [channels, provider?.id],
   );
+  const historyIdentityIds = useMemo(
+    () => view === "history" ? [...history, ...favorites] : [],
+    [favorites, history, view],
+  );
+  const resolvedHistoryChannels = useResolvedLiveIdentityChannels(
+    provider,
+    historyIdentityIds,
+    playerLiveChannels,
+  );
 
-  if (!provider || provider.type !== "stalker") return null;
+  useEffect(() => () => {
+    historyPlaybackAbortRef.current?.abort();
+    historyPlaybackSequenceRef.current += 1;
+  }, [provider?.id]);
+
+  if (!provider || !isStalkerProductProvider(provider)) return null;
 
   const navigate = (target: StalkerContentView) => {
     setCatalogError(null);
+    if (target !== "live") clearScopedError("live-history");
     setView(target);
   };
 
   const openResolvedPlayable = (next: Playable) => {
+    if (next.kind !== "live") clearScopedError("live-history");
     setPlayable(next);
     setView("player");
   };
@@ -174,7 +226,111 @@ export default function StalkerMainPage() {
     });
   };
 
-  const openProgress = (item: MediaProgress) => {
+  const openMovie = (movie: StalkerMoviePlayable) => {
+    openResolvedPlayable({
+      title: movie.title,
+      subtitle: movie.subtitle,
+      url: movie.url,
+      kind: "movie",
+      returnTo: "movies",
+      vodIdentity: { providerId: provider.id, itemId: movie.itemId },
+      progressRef: {
+        type: "stalker-vod",
+        itemId: movie.itemId,
+        categoryId: movie.categoryId,
+      },
+    });
+  };
+
+  const openSeriesEpisode = (intent: StalkerSeriesPlayableIntent) => {
+    if (intent.identity.providerId !== provider.id) {
+      setCatalogError("Bölüm artık etkin sağlayıcıya ait değil.");
+      return;
+    }
+    openResolvedPlayable({
+      title: intent.title,
+      subtitle: intent.subtitle,
+      url: intent.url,
+      kind: intent.kind,
+      returnTo: "series",
+      seriesIdentity: intent.identity,
+      progressRef: {
+        type: "stalker-episode",
+        seriesId: intent.identity.seriesId,
+        seasonId: intent.identity.seasonId,
+        episodeId: intent.identity.episodeId,
+      },
+    });
+  };
+
+  const openProgress = async (item: MediaProgress) => {
+    historyPlaybackAbortRef.current?.abort();
+    const sequence = ++historyPlaybackSequenceRef.current;
+    if (item.playbackRef.type === "stalker-episode") {
+      if (item.providerId !== provider.id) {
+        setCatalogError("Bölüm artık etkin sağlayıcıya ait değil.");
+        return;
+      }
+      const abort = new AbortController();
+      historyPlaybackAbortRef.current = abort;
+      setCatalogError(null);
+      try {
+        const intent = await resolveStalkerSeriesHistoryEpisode(
+          readCurrentStalkerProductSession(provider).session,
+          provider.id,
+          item.playbackRef,
+          item.title,
+          abort.signal,
+        );
+        if (abort.signal.aborted || sequence !== historyPlaybackSequenceRef.current) return;
+        openResolvedPlayable({
+          title: intent.title,
+          subtitle: intent.subtitle,
+          url: intent.url,
+          kind: intent.kind,
+          returnTo: "history",
+          seriesIdentity: intent.identity,
+          progressRef: item.playbackRef,
+        });
+      } catch (caught) {
+        if (abort.signal.aborted || sequence !== historyPlaybackSequenceRef.current) return;
+        setCatalogError(redactSensitiveText(
+          caught instanceof Error ? caught.message : "Bölüm geçmişten yeniden açılamadı.",
+        ));
+      }
+      return;
+    }
+    if (item.playbackRef.type === "stalker-vod") {
+      const abort = new AbortController();
+      historyPlaybackAbortRef.current = abort;
+      setCatalogError(null);
+      try {
+        const { url } = await resolveStalkerVodHistoryLink(
+          readCurrentStalkerProductSession(provider).session,
+          {
+            itemId: item.playbackRef.itemId,
+            categoryId: item.playbackRef.categoryId,
+          },
+          { signal: abort.signal },
+        );
+        if (abort.signal.aborted || sequence !== historyPlaybackSequenceRef.current) return;
+        openResolvedPlayable({
+          title: item.title,
+          subtitle: item.subtitle,
+          url,
+          kind: "movie",
+          returnTo: "history",
+          vodIdentity: { providerId: provider.id, itemId: item.playbackRef.itemId },
+          progressRef: item.playbackRef,
+        });
+      } catch (caught) {
+        if (abort.signal.aborted || sequence !== historyPlaybackSequenceRef.current) return;
+        setCatalogError(redactSensitiveText(
+          caught instanceof Error ? caught.message : "Film geçmişten yeniden açılamadı.",
+        ));
+      }
+      return;
+    }
     openResolvedPlayable({
       title: item.title,
       subtitle: item.subtitle,
@@ -229,25 +385,7 @@ export default function StalkerMainPage() {
     }
   };
 
-  if (view === "player") {
-    return (
-      <View style={s.fullPlayer}>
-        {playable ? (
-          <NativeVideoPlayer
-            source={playable.url}
-            title={playable.title}
-            subtitle={playable.subtitle}
-            mediaKind={playable.kind}
-            liveIdentity={playable.liveIdentity}
-            vodIdentity={playable.vodIdentity}
-            autoFullscreen
-            allowDownload={playable.kind === "movie" || playable.kind === "episode"}
-            onFullscreenExit={() => setView(playable.returnTo)}
-          />
-        ) : null}
-      </View>
-    );
-  }
+  const presentedView = view === "player" ? playable?.returnTo ?? "home" : view;
 
   const nav = [
     { key: "home" as const, label: t("home"), icon: "home" as const },
@@ -260,6 +398,9 @@ export default function StalkerMainPage() {
   ];
   const top = Math.max(insets.top, Platform.OS === "web" ? 20 : 0);
   const providerSwitchBusy = isLoading || switchingProviderId !== null;
+  const visibleScopedError = presentedView === "live" && scopedError?.domain === "live-history" && scopedError.providerId === provider.id
+    ? t(scopedError.messageKey)
+    : null;
 
   return (
     <View
@@ -276,7 +417,7 @@ export default function StalkerMainPage() {
         style={[
           s.header,
           { borderColor: colors.border },
-          view === "home" ? s.homeHeaderPremium : null,
+          presentedView === "home" ? s.homeHeaderPremium : null,
         ]}
       >
         <View style={s.headerTop}>
@@ -291,52 +432,61 @@ export default function StalkerMainPage() {
               key={item.key}
               label={item.label}
               icon={item.icon}
-              variant={view === item.key ? "secondary" : "ghost"}
+              variant={presentedView === item.key ? "secondary" : "ghost"}
               onPress={() => navigate(item.key)}
             />
           ))}
         </ScrollView>
       </View>
 
-      {error || catalogError ? (
+      {error || catalogError || visibleScopedError ? (
         <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}>
           <Text style={{ color: colors.destructive, flex: 1 }}>
-            {visibleErrorText(error || catalogError)}
+            {visibleErrorText(error || catalogError || visibleScopedError)}
           </Text>
-          <Pressable onPress={() => { clearError(); setCatalogError(null); }}>
+          <Pressable onPress={() => { clearError(); clearScopedError(); setCatalogError(null); }}>
             <Feather name="x" size={20} color={colors.mutedForeground} />
           </Pressable>
         </View>
       ) : null}
 
-      {view === "live" ? (
+      {presentedView === "live" ? (
         <PagedLiveCatalog
           provider={provider}
-          snapshotCount={{ totalCount: null, countKnown: false }}
+          snapshotCount={{ totalCount: liveCatalog.totalCount, countKnown: liveCatalog.countKnown }}
           hasMeaningfulM3ULiveGroups={null}
           epgByChannel={epgByChannel}
           favorites={favorites}
           epgLoading={isEpgLoading}
-          refreshing={isLoading}
-          onRefresh={refreshProvider}
+          refreshing={isLoading || liveCatalog.syncing}
+          onRefresh={liveCatalog.refresh}
           onOpen={openLive}
           onFavorite={(id) => void toggleFavorite(id)}
           onDrawerVisibilityChange={setCatalogDrawerOpen}
         />
       ) : null}
 
-      {view === "movies" ? (
-        <CatalogMigrationShell title={t("movies")} loadingText={t("loadingMovies")} />
+      {presentedView === "movies" ? (
+        <StalkerProductErrorBoundary product="movies" providerId={provider.id} onBack={() => navigate("home")}>
+          <StalkerGoldenMoviesCatalog
+            provider={provider}
+            onPlayable={openMovie}
+            onError={setCatalogError}
+            onDrawerVisibilityChange={setCatalogDrawerOpen}
+          />
+        </StalkerProductErrorBoundary>
       ) : null}
 
-      {view === "series" ? (
-        <CatalogMigrationShell title={t("series")} loadingText={t("loadingSeries")} />
+      {presentedView === "series" ? (
+        <StalkerProductErrorBoundary product="series" providerId={provider.id} onBack={() => navigate("home")}>
+          <StalkerSeriesProductSurface provider={provider} onPlayable={openSeriesEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} />
+        </StalkerProductErrorBoundary>
       ) : null}
 
-      {view === "history" ? (
+      {presentedView === "history" ? (
         <HistoryView
           providerId={provider.id}
-          channels={playerLiveChannels}
+          channels={resolvedHistoryChannels}
           favorites={favorites}
           history={history}
           onOpen={openLive}
@@ -344,7 +494,7 @@ export default function StalkerMainPage() {
         />
       ) : null}
 
-      {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? (
+      {presentedView !== "live" && presentedView !== "movies" && presentedView !== "series" && presentedView !== "history" ? (
         <ScrollView
           style={{ flex: 1 }}
           contentContainerStyle={s.content}
@@ -352,19 +502,19 @@ export default function StalkerMainPage() {
           showsVerticalScrollIndicator={false}
           scrollEnabled={!catalogDrawerOpen}
         >
-          {view === "home" ? (
+          {presentedView === "home" ? (
             <HomeDiscovery
               provider={provider}
-              live={playerLiveChannels.length}
-              vod={null}
-              series={null}
+              live={liveCatalog.countKnown ? liveCatalog.totalCount : null}
+              vod={productCounts.vod}
+              series={productCounts.series}
               vodCategories={0}
               seriesCategories={0}
-              catalogLoading={false}
-              channels={playerLiveChannels}
+              catalogLoading={liveCatalog.syncing && !liveCatalog.countKnown}
+              channels={liveCatalog.channels}
               history={history}
-              movies={[]}
-              seriesItems={[]}
+              movies={homeSummary.movies}
+              seriesItems={homeSummary.series}
               newChannels={[]}
               newMovies={[]}
               newSeries={[]}
@@ -376,8 +526,8 @@ export default function StalkerMainPage() {
               onRemoveLive={(id) => void removeWatched(id)}
             />
           ) : null}
-          {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
-          {view === "settings" ? (
+          {presentedView === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
+          {presentedView === "settings" ? (
             <Settings
               provider={provider}
               providers={providers}
@@ -390,44 +540,27 @@ export default function StalkerMainPage() {
           ) : null}
         </ScrollView>
       ) : null}
-    </View>
-  );
-}
 
-function CatalogMigrationShell({ title, loadingText }: { title: string; loadingText: string }) {
-  const colors = useColors();
-  const { t } = useI18n();
-  const [search, setSearch] = useState("");
-  return (
-    <ScrollView style={{ flex: 1 }} contentContainerStyle={s.catalogContent} showsVerticalScrollIndicator={false}>
-      <View style={s.catalogHead}>
-        <View>
-          <Text style={[s.title, { color: colors.foreground }]}>{title}</Text>
-          <Text style={{ color: colors.mutedForeground }}>—</Text>
+      {view === "player" && playable ? (
+        <View style={s.fullPlayer}>
+          <NativeVideoPlayer
+            source={playable.url}
+            title={playable.title}
+            subtitle={playable.subtitle}
+            mediaKind={playable.kind}
+            liveIdentity={playable.liveIdentity}
+            vodIdentity={playable.vodIdentity}
+            progressRef={playable.progressRef}
+            autoFullscreen
+            allowDownload={playable.kind === "movie" || playable.kind === "episode"}
+            onFullscreenExit={() => {
+              setView(playable.returnTo);
+              setPlayable(null);
+            }}
+          />
         </View>
-        <FocusButton label={t("loading")} icon="refresh-cw" variant="ghost" onPress={() => undefined} disabled />
-      </View>
-      <View style={[s.search, { borderColor: colors.border, backgroundColor: colors.card }]}>
-        <Feather name="search" size={18} color={colors.mutedForeground} />
-        <TextInput
-          value={search}
-          onChangeText={setSearch}
-          placeholder={`${t("search")} ${title.toLowerCase()}`}
-          placeholderTextColor={colors.mutedForeground}
-          style={{ flex: 1, color: colors.foreground, minHeight: 44 }}
-        />
-      </View>
-      <Pressable disabled style={[s.sortControl, { borderColor: colors.border, backgroundColor: colors.card }]}>
-        <Feather name="sliders" size={16} color={colors.mutedForeground} />
-        <Text style={{ color: colors.foreground, fontWeight: "700", fontSize: 13 }}>
-          {t("providerOrder")}
-        </Text>
-      </Pressable>
-      <View style={s.migrationLoading}>
-        <ActivityIndicator size="small" color={colors.primary} />
-        <Text style={{ color: colors.mutedForeground, fontWeight: "600" }}>{loadingText}</Text>
-      </View>
-    </ScrollView>
+      ) : null}
+    </View>
   );
 }
 
@@ -443,6 +576,7 @@ function HistoryView({ providerId, channels, favorites, history, onOpen, onOpenM
 }) {
   const colors = useColors();
   const { t } = useI18n();
+  const { entries, unscopedEntries } = useMediaLibrary();
   const channelIndex = useMemo(() => indexLiveChannelsByProviderAndId(channels), [channels]);
   const recent = useMemo(
     () => resolveLiveIdentityPresentationRows(providerId, history, channelIndex).map((channel, index) => ({ key: `history:${index}:${channel.id}`, channel })),
@@ -456,7 +590,7 @@ function HistoryView({ providerId, channels, favorites, history, onOpen, onOpenM
     () => [
       { title: t("recentlyWatched"), data: recent },
       { title: t("favorites"), data: favs },
-    ],
+    ].filter((section) => section.data.length > 0),
     [recent, favs, t],
   );
   return (
@@ -468,7 +602,7 @@ function HistoryView({ providerId, channels, favorites, history, onOpen, onOpenM
       ListHeaderComponent={
         <View>
           <Text style={[s.title, { color: colors.foreground }]}>{t("history")}</Text>
-          <View style={{ marginBottom: 30 }}><ContinueWatchingView onOpen={onOpenMedia} /></View>
+          <View style={{ marginBottom: 30 }}><ContinueWatchingView onOpen={onOpenMedia} showHeading={false} showEmpty={false} /></View>
         </View>
       }
       renderSectionHeader={({ section }) => (
@@ -483,7 +617,9 @@ function HistoryView({ providerId, channels, favorites, history, onOpen, onOpenM
           <Feather name="play" size={20} color={colors.primary} />
         </Pressable>
       )}
-      ListEmptyComponent={<Text style={{ color: colors.mutedForeground }}>{t("nothingYet")}</Text>}
+      ListEmptyComponent={entries.length || unscopedEntries.length
+        ? null
+        : <Text style={{ color: colors.mutedForeground }}>{t("nothingYet")}</Text>}
       initialNumToRender={24}
       maxToRenderPerBatch={24}
       windowSize={9}
@@ -580,7 +716,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onSwitch, on
 
 const s = StyleSheet.create({
   screen: { flex: 1 },
-  fullPlayer: { flex: 1, backgroundColor: "#000" },
+  fullPlayer: { ...StyleSheet.absoluteFillObject, zIndex: 100, backgroundColor: "#000" },
   content: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
   header: { borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingBottom: 8 },
   homeHeaderPremium: { paddingHorizontal: 18, paddingTop: 6, paddingBottom: 10 },
@@ -597,9 +733,4 @@ const s = StyleSheet.create({
   settings: { borderWidth: 1, borderRadius: 16, padding: 18, gap: 8 },
   rail: { gap: 6, paddingVertical: 14 },
   episode: { borderWidth: 1, borderRadius: 12, padding: 14, flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8 },
-  catalogContent: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
-  catalogHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 12 },
-  search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
-  sortControl: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8, marginTop: 10, marginBottom: 10 },
-  migrationLoading: { minHeight: 140, alignItems: "center", justifyContent: "center", gap: 10 },
 });

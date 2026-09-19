@@ -13,6 +13,34 @@ export const LIVE_CATEGORY_FIRST_SEEN_SQL = `SELECT category_id, MIN(rowid) AS f
     AND category_id <> '__all__'
   GROUP BY category_id
   ORDER BY first_row_id ASC`;
+export const LIVE_CATEGORIES_WITH_NAMES_SQL = `WITH first_seen AS (
+  ${LIVE_CATEGORY_FIRST_SEEN_SQL}
+), provider_categories AS (
+  SELECT category_id, category_name, rowid AS provider_order
+    FROM catalog_categories
+   WHERE provider_id = ?
+     AND kind = 'live'
+)
+SELECT category_id, category_name
+  FROM (
+    SELECT category_id, category_name, 0 AS source_order, provider_order AS category_order
+      FROM provider_categories
+     WHERE TRIM(category_id) <> '' AND category_id <> '__all__'
+    UNION ALL
+    SELECT first_seen.category_id, NULL AS category_name, 1 AS source_order, first_seen.first_row_id AS category_order
+      FROM first_seen
+     WHERE NOT EXISTS (
+       SELECT 1 FROM provider_categories
+        WHERE provider_categories.category_id = first_seen.category_id
+     )
+  )
+ ORDER BY source_order ASC, category_order ASC`;
+
+export function resolveLiveCategoryDisplayName(categoryId: string, categoryName?: string | null) {
+  const name = categoryName?.trim() ?? "";
+  if (name && !(name === categoryId && /^\d+$/.test(categoryId))) return name;
+  return /^\d+$/.test(categoryId) ? "Kategori" : categoryId;
+}
 
 export type CatalogPageRequest = {
   providerId: string;

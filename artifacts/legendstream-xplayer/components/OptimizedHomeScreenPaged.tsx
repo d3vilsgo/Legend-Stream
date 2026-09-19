@@ -20,6 +20,7 @@ import { DownloadsView } from "@/components/DownloadsView";
 import { FocusButton } from "@/components/FocusButton";
 import { HomeDiscovery, type HomeContentView } from "@/components/home/HomeDiscovery";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
+import { M3UDiagnosticPanel } from "@/components/M3UDiagnosticPanel";
 import {
   PagedLiveCatalog,
   PagedMoviesCatalog,
@@ -65,7 +66,20 @@ import {
   safeProviderSwitchError,
   tryBeginProviderSwitch,
 } from "@/lib/providerSwitchUx";
-import { redactSensitiveText } from "@/lib/safeLog";
+import { redactSensitiveText, safeLog } from "@/lib/safeLog";
+import {
+  recordM3UBusyState as recordM3UBusyDiagnosticState,
+  recordM3UHeartbeat,
+  recordM3UOpenLiveEnter,
+  recordM3UOpenLiveSetPlayable,
+  recordM3UOpenLiveSetPlayerView,
+  recordM3UPlayerViewCommit,
+  recordM3UNavigate,
+  recordM3UNavPress,
+  recordM3UTouchSentinel,
+  recordM3UViewCommit,
+  setM3UDiagnosticSession,
+} from "@/lib/m3uInAppDiagnostics";
 import type { StalkerProductProviderIdentity } from "@/lib/stalkerProductSession";
 import {
   buildEpisodeStreamUrl,
@@ -118,8 +132,8 @@ export default function OptimizedHomeScreenPaged() {
   const { t } = useI18n();
   const {
     provider, providers, channels, epgByChannel, favorites, history, isHydrating, isLoading, isEpgLoading,
-    error, connectProvider, cancelProviderConnect, refreshProvider, recoverLegacyCatalogFallback, toggleFavorite, recordWatched,
-    removeWatched, resolveProviderForSwitch, setActiveProvider, removeProvider, disconnectProvider, clearError,
+    error, scopedError, connectProvider, cancelProviderConnect, refreshProvider, recoverLegacyCatalogFallback, toggleFavorite, recordWatched,
+    removeWatched, resolveProviderForSwitch, setActiveProvider, removeProvider, disconnectProvider, clearError, clearScopedError,
   } = usePlayer();
   const { snapshot, hasUsableCache, isSyncing, isRefreshing, refreshSnapshot, refreshCatalog } = useCatalogSync();
   useCredentialDiagnosticsStartup();
@@ -166,7 +180,7 @@ export default function OptimizedHomeScreenPaged() {
       return () => { cancelled = true; };
     }
     const providerId = provider.id;
-    void getCachedCatalogCategoryMetadata(providerId).then((metadata) => {
+    void getCachedCatalogCategoryMetadata(providerId, provider.type === "m3u").then((metadata) => {
       if (!cancelled && activeProviderIdRef.current === providerId) setCategoryMetadata({ providerId, ...metadata });
     }).catch(() => {
       if (!cancelled && activeProviderIdRef.current === providerId) setCategoryMetadata(null);
@@ -243,10 +257,95 @@ export default function OptimizedHomeScreenPaged() {
     }
   };
 
+  const m3uDiagnosticEnabled = provider?.type === "m3u";
+
+  React.useEffect(() => {
+    if (!m3uDiagnosticEnabled || !provider) return;
+    setM3UDiagnosticSession(provider.id, view);
+  }, [m3uDiagnosticEnabled, provider?.id, view]);
+
+  const logM3UBusyState = (currentView: ViewName) => {
+    if (!m3uDiagnosticEnabled) return;
+    const busySnapshot = {
+      isLoading,
+      isSyncing,
+      isRefreshing,
+      isHydrating,
+      catalogDrawerOpen,
+      switchingProviderPresent: switchingProviderId !== null,
+    };
+    recordM3UBusyDiagnosticState(busySnapshot);
+    safeLog.info("M3U_BUSY_STATE", {
+      view: currentView,
+      loading: busySnapshot.isLoading,
+      syncing: busySnapshot.isSyncing,
+      refreshing: busySnapshot.isRefreshing,
+      hydrating: busySnapshot.isHydrating,
+      drawer: busySnapshot.catalogDrawerOpen,
+      switching: busySnapshot.switchingProviderPresent,
+      timestamp: Date.now(),
+    });
+  };
+  const logM3UNavPress = (target: ContentView) => {
+    if (!m3uDiagnosticEnabled) return;
+    recordM3UNavPress(target, view);
+    safeLog.info("M3U_NAV_PRESS", { target, current: view, timestamp: Date.now() });
+    logM3UBusyState(view);
+  };
+  const logM3UNavigate = (target: ContentView) => {
+    if (!m3uDiagnosticEnabled) return;
+    recordM3UNavigate(target);
+    safeLog.info("M3U_NAVIGATE", { from: view, to: target, timestamp: Date.now() });
+  };
+
   const navigate = (target: ContentView) => {
+    logM3UNavPress(target);
+    if (target !== "live") clearScopedError("live-history");
+    logM3UNavigate(target);
     setView(target);
     if (target !== "series") { seriesRequestGenerationRef.current += 1; setSelectedSeries(null); setSeriesInfo(null); }
   };
+
+  React.useEffect(() => {
+    if (!m3uDiagnosticEnabled) return;
+    recordM3UViewCommit(view);
+    if (view === "player") {
+      recordM3UPlayerViewCommit();
+      return;
+    }
+    safeLog.info("M3U_VIEW_COMMIT", { view, timestamp: Date.now() });
+    if (view !== "home") {
+      safeLog.info("M3U_TARGET_MOUNT", { target: view, timestamp: Date.now() });
+    }
+    logM3UBusyState(view);
+  }, [
+    view,
+    m3uDiagnosticEnabled,
+    isLoading,
+    isSyncing,
+    isRefreshing,
+    isHydrating,
+    catalogDrawerOpen,
+    switchingProviderId,
+  ]);
+
+  React.useEffect(() => {
+    if (!m3uDiagnosticEnabled) return;
+    const intervalMs = 250;
+    let expectedAt = Date.now() + intervalMs;
+    let lastCompactLogAt = 0;
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const driftMs = Math.max(0, now - expectedAt);
+      expectedAt = now + intervalMs;
+      recordM3UHeartbeat(driftMs, now);
+      if (driftMs >= 150 || now - lastCompactLogAt >= 1000) {
+        lastCompactLogAt = now;
+        safeLog.info("M3U_JS_HEARTBEAT", { driftMs, timestamp: now });
+      }
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }, [m3uDiagnosticEnabled]);
 
   if (isHydrating) return <View style={[s.centered, { backgroundColor: colors.background }]}><Text style={{ color: colors.foreground }}>{t("loading")}</Text></View>;
 
@@ -264,10 +363,13 @@ export default function OptimizedHomeScreenPaged() {
   }
 
   const openLive = (channel: Channel) => {
+    if (m3uDiagnosticEnabled) recordM3UOpenLiveEnter();
     if (!channel.streamUrl) { setCatalogError("The cached playback address is unavailable. Refresh Live TV and try again."); return; }
     setPlayable({ title: channel.name, subtitle: channel.category, url: channel.streamUrl, kind: "live", returnTo: "live", liveIdentity: { providerId: channel.providerId, channelId: channel.id } });
+    if (m3uDiagnosticEnabled) recordM3UOpenLiveSetPlayable();
     void recordWatched(channel.id);
     setView("player");
+    if (m3uDiagnosticEnabled) recordM3UOpenLiveSetPlayerView();
   };
 
   const openMovie = (item: XtreamVodItem) => {
@@ -307,7 +409,10 @@ export default function OptimizedHomeScreenPaged() {
   const openDownload = (item: DownloadedMedia) => { setPlayable({ title: item.title, subtitle: item.subtitle, url: item.uri, kind: "download", returnTo: "downloads" }); setView("player"); };
   const openProgress = (item: MediaProgress) => { setPlayable({ title: item.title, subtitle: item.subtitle, url: item.source, kind: item.kind, returnTo: "history" }); setView("player"); };
 
-  if (view === "player") return <View style={s.fullPlayer}>{playable ? <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => setView(playable.returnTo)} /> : null}</View>;
+  if (view === "player") return <View style={s.fullPlayer}>
+    {playable ? <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => setView(playable.returnTo)} /> : null}
+    {m3uDiagnosticEnabled && provider ? <M3UDiagnosticPanel providerId={provider.id} /> : null}
+  </View>;
 
   const nav = [
     { key: "home" as const, label: t("home"), icon: "home" as const },
@@ -320,14 +425,29 @@ export default function OptimizedHomeScreenPaged() {
   ];
   const top = Math.max(insets.top, Platform.OS === "web" ? 20 : 0);
   const countKnown = snapshot.providerId === provider.id && (hasUsableCache || snapshot.ready || snapshot.counts.live + snapshot.counts.vod + snapshot.counts.series > 0);
+  const visibleScopedError = view === "live" && scopedError?.domain === "live-history" && scopedError.providerId === provider.id
+    ? t(scopedError.messageKey)
+    : null;
 
   return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
     <View style={[s.header, { borderColor: colors.border }, view === "home" ? s.homeHeaderPremium : null]}>
       <View style={s.headerTop}><Text style={[s.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text><ProviderSubscriptionChip provider={provider} /></View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.nav}>{nav.map((item) => <FocusButton key={item.key} label={item.label} icon={item.icon} variant={view === item.key ? "secondary" : "ghost"} onPress={() => navigate(item.key)} />)}</ScrollView>
     </View>
+    {m3uDiagnosticEnabled ? <Pressable
+      accessibilityRole="button"
+      accessibilityLabel="M3U diagnostic touch sentinel"
+      onPress={() => {
+        recordM3UTouchSentinel();
+        safeLog.info("M3U_TOUCH_SENTINEL", { timestamp: Date.now() });
+      }}
+      style={[s.diagnosticSentinel, { borderColor: colors.border, backgroundColor: colors.card }]}
+    >
+      <Text style={{ color: colors.mutedForeground, fontSize: 10, fontWeight: "800" }}>TOUCH</Text>
+    </Pressable> : null}
+    {m3uDiagnosticEnabled ? <M3UDiagnosticPanel providerId={provider.id} /> : null}
 
-    {error || catalogError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}><Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError)}</Text><Pressable onPress={() => { clearError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable></View> : null}
+    {error || catalogError || visibleScopedError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}><Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError || visibleScopedError)}</Text><Pressable onPress={() => { clearError(); clearScopedError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable></View> : null}
 
     {view === "live" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedLiveCatalog provider={provider} snapshotCount={liveCount} hasMeaningfulM3ULiveGroups={categoryMetadata?.providerId === provider.id ? categoryMetadata.hasMeaningfulM3ULiveGroups : null} epgByChannel={epgByChannel} favorites={favorites} epgLoading={isEpgLoading} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
     {view === "live" && provider.type === "stalker" ? <StalkerLiveCatalog providerId={provider.id} channels={playerLiveChannels} epgByChannel={epgByChannel} favorites={favorites} epgLoading={isEpgLoading} refreshing={isLoading} onRefresh={refreshPagedCatalog} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} /> : null}
@@ -528,6 +648,7 @@ const s = StyleSheet.create({
   brand: { fontSize: 18, fontWeight: "900", letterSpacing: 1 },
   brandLarge: { fontSize: 28, fontWeight: "900", letterSpacing: 1 },
   error: { margin: 12, borderWidth: 1, borderRadius: 12, padding: 10, flexDirection: "row", gap: 8, alignItems: "center" },
+  diagnosticSentinel: { position: "absolute", right: 8, top: 76, zIndex: 50, minWidth: 42, minHeight: 30, borderWidth: 1, borderRadius: 8, alignItems: "center", justifyContent: "center", opacity: 0.82 },
   setup: { width: "100%", maxWidth: 720, alignSelf: "center", paddingHorizontal: 20, gap: 14 },
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },
   section: { fontSize: 20, fontWeight: "800" },

@@ -2,6 +2,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState, StatusBar, useWindowDimensions } from "react-native";
 import * as ScreenOrientation from "expo-screen-orientation";
 import { logPlayerDiagnostic } from "@/lib/playerDiagnostics";
+import {
+  recordM3UOrientationBegin,
+  recordM3UOrientationError,
+  recordM3UOrientationGetCompleted,
+  recordM3UOrientationReady,
+  recordM3UOrientationUnlockBegin,
+  recordM3UOrientationUnlockEnd,
+} from "@/lib/m3uInAppDiagnostics";
 
 const isLandscapeOrientation = (orientation: ScreenOrientation.Orientation) =>
   orientation === ScreenOrientation.Orientation.LANDSCAPE_LEFT ||
@@ -20,7 +28,7 @@ const isPortraitOrientation = (orientation: ScreenOrientation.Orientation) =>
  * explicit one-shot orientation lock when the user wants to force the opposite
  * orientation.
  */
-export function usePlayerOrientation(followDevice = true) {
+export function usePlayerOrientation(followDevice = true, diagnosticM3ULive = false) {
   const { width, height } = useWindowDimensions();
   const initialOrientation = useRef<ScreenOrientation.Orientation | null>(null);
   const mounted = useRef(true);
@@ -52,15 +60,27 @@ export function usePlayerOrientation(followDevice = true) {
     }, 1000);
 
     const prepare = async () => {
+      const startedAt = globalThis.performance?.now?.() ?? Date.now();
+      if (diagnosticM3ULive) recordM3UOrientationBegin();
       try {
         initialOrientation.current = await ScreenOrientation.getOrientationAsync();
+        if (diagnosticM3ULive) recordM3UOrientationGetCompleted();
         if (followDevice) {
+          if (diagnosticM3ULive) recordM3UOrientationUnlockBegin();
           await ScreenOrientation.unlockAsync();
+          if (diagnosticM3ULive) recordM3UOrientationUnlockEnd();
         }
-      } catch {
+      } catch (caught) {
+        if (diagnosticM3ULive) recordM3UOrientationError(caught);
         // Fullscreen playback can continue even if the OEM rejects a lock change.
       } finally {
-        if (mounted.current) setReady(true);
+        if (mounted.current) {
+          setReady(true);
+          if (diagnosticM3ULive) {
+            const finishedAt = globalThis.performance?.now?.() ?? Date.now();
+            recordM3UOrientationReady(finishedAt - startedAt);
+          }
+        }
       }
     };
 
@@ -71,7 +91,7 @@ export function usePlayerOrientation(followDevice = true) {
       clearInterval(statusGuard);
       try { StatusBar.setHidden(false, "fade"); } catch { /* best effort */ }
     };
-  }, [followDevice, hideStatusBar]);
+  }, [diagnosticM3ULive, followDevice, hideStatusBar]);
 
   useEffect(() => {
     if (ready) hideStatusBar();
