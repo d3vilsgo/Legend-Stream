@@ -168,7 +168,7 @@ async function main() {
     const hydrateCall = playerSource.indexOf("const cached = await hydrateM3UProviderCache(provider);");
     const installLive = playerSource.indexOf("next.channels = cached.live;", hydrateCall);
     assert.ok(hydrateCall >= 0 && installLive > hydrateCall);
-    assert.match(m3uCacheSource, /getCachedPersistedItems\(provider\.id, "live", undefined, M3U_HOME_PREVIEW_LIMIT\)/);
+    assert.match(m3uCacheSource, /getCachedPersistedItems\(provider\.id, "live", undefined, M3U_HOME_PREVIEW_LIMIT, provider\)/);
     assert.match(m3uCacheSource, /scope:\s*"preview"/);
     assert.doesNotMatch(m3uCacheSource, /installM3UCatalog|getM3UCatalog|installFullCatalog/);
   });

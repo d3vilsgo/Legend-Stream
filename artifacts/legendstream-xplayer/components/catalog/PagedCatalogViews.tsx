@@ -494,6 +494,7 @@ function GridCard({ title, image, onPress }: { title: string; image?: string; on
 export function PagedLiveCatalog({
   provider,
   snapshotCount,
+  catalogRevision,
   hasMeaningfulM3ULiveGroups,
   epgByChannel,
   favorites,
@@ -506,6 +507,7 @@ export function PagedLiveCatalog({
 }: {
   provider: ProviderConfig;
   snapshotCount: SnapshotCount;
+  catalogRevision?: number;
   hasMeaningfulM3ULiveGroups: boolean | null;
   epgByChannel: ReadonlyMap<string, readonly EpgProgram[]>;
   favorites: string[];
@@ -542,6 +544,7 @@ export function PagedLiveCatalog({
     provider,
     providerType,
     kind: "live",
+    catalogRevision,
     categoryId: requestCategory ?? undefined,
     search,
     sort: "default",
@@ -707,6 +710,7 @@ export function PagedLiveCatalog({
 export function PagedMoviesCatalog({
   provider,
   snapshotCount,
+  catalogRevision,
   sortMode,
   onSort,
   refreshing,
@@ -716,6 +720,7 @@ export function PagedMoviesCatalog({
 }: {
   provider: ProviderConfig;
   snapshotCount: SnapshotCount;
+  catalogRevision?: number;
   sortMode: CatalogSortMode;
   onSort: (mode: CatalogSortMode) => void;
   refreshing: boolean;
@@ -736,6 +741,7 @@ export function PagedMoviesCatalog({
     providerType,
     kind: "vod",
     categoryId: category,
+    catalogRevision,
     search,
     sort: effectiveSort,
     enabled: providerType !== null,
@@ -1012,6 +1018,7 @@ function CatalogErrorState({ message, onRetry }: { message: string; onRetry?: ()
 export function PagedSeriesCatalog({
   provider,
   snapshotCount,
+  catalogRevision,
   sortMode,
   onSort,
   refreshing,
@@ -1025,6 +1032,7 @@ export function PagedSeriesCatalog({
 }: {
   provider: ProviderConfig;
   snapshotCount: SnapshotCount;
+  catalogRevision?: number;
   sortMode: CatalogSortMode;
   onSort: (mode: CatalogSortMode) => void;
   refreshing: boolean;
@@ -1047,6 +1055,7 @@ export function PagedSeriesCatalog({
     providerType,
     kind: "series",
     categoryId: category,
+    catalogRevision,
     search,
     sort: effectiveSort,
     enabled: providerType !== null && selected === null,

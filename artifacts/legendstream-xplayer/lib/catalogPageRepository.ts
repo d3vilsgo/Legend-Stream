@@ -157,6 +157,7 @@ async function pageDatabase(diagnosticM3U = false) {
 }
 
 function safePayload(
+  provider: CatalogRuntimeProvider,
   row: CatalogPageSqlRow,
 ): PersistedLiveCatalogItem | PersistedVodCatalogItem | PersistedSeriesCatalogItem | null {
   if (!row.payload) return null;
@@ -165,6 +166,7 @@ function safePayload(
       row.provider_id,
       row.kind,
       JSON.parse(row.payload),
+      provider,
     );
   } catch {
     return null;
@@ -188,7 +190,7 @@ function mapRows(
   if (request.kind === "live") {
     const items: Channel[] = [];
     for (const row of rows) {
-      const persisted = safePayload(row);
+      const persisted = safePayload(provider, row);
       if (persisted?.catalogKind === "live") {
         items.push(liveRuntimeItem(persisted, provider));
       }
@@ -198,7 +200,7 @@ function mapRows(
 
   const items: XtreamVodItem[] = [];
   for (const row of rows) {
-    const persisted = safePayload(row);
+    const persisted = safePayload(provider, row);
     if (persisted?.catalogKind === "vod") {
       items.push(vodRuntimeItem(persisted, provider));
     }
@@ -444,7 +446,8 @@ export async function getCachedCatalogCategoryMetadata(
   };
 }
 
-async function persistedSeriesRow(providerId: string, seriesId: string) {
+async function persistedSeriesRow(provider: CatalogRuntimeProvider, seriesId: string) {
+  const providerId = provider.id;
   const db = await pageDatabase();
   const row = await db.getFirstAsync<{ payload: string }>(
     `SELECT payload
@@ -460,6 +463,7 @@ async function persistedSeriesRow(providerId: string, seriesId: string) {
       providerId,
       "series",
       JSON.parse(row.payload),
+      provider,
     );
     return persisted?.catalogKind === "series" ? persisted : null;
   } catch {
@@ -472,7 +476,7 @@ export async function loadM3USeriesInfoFromCache(
   seriesId: string | number,
 ): Promise<XtreamSeriesInfo | null> {
   if (provider.type !== "m3u") return null;
-  const persisted = await persistedSeriesRow(provider.id, String(seriesId));
+  const persisted = await persistedSeriesRow(provider, String(seriesId));
   if (!persisted) return null;
   const direct = await buildM3UDirectHydrationCooperatively(
     provider,
@@ -566,7 +570,7 @@ export async function getCachedLivePlaybackWindow(
   const channels: Channel[] = [];
   for (const row of payloads) {
     try {
-      const persisted = normalizePersistedCatalogPayload(provider.id, "live", JSON.parse(row.payload));
+      const persisted = normalizePersistedCatalogPayload(provider.id, "live", JSON.parse(row.payload), provider);
       if (persisted?.catalogKind === "live") channels.push(liveRuntimeItem(persisted, provider));
     } catch {
       // Skip malformed persisted rows without widening the bounded playback window.
@@ -636,7 +640,7 @@ export async function getCachedVodPlaybackWindow(
   const items: XtreamVodItem[] = [];
   for (const row of payloads) {
     try {
-      const persisted = normalizePersistedCatalogPayload(provider.id, "vod", JSON.parse(row.payload));
+      const persisted = normalizePersistedCatalogPayload(provider.id, "vod", JSON.parse(row.payload), provider);
       if (persisted?.catalogKind === "vod") items.push(vodRuntimeItem(persisted, provider));
     } catch {
       // Skip malformed persisted rows without widening the bounded playback window.

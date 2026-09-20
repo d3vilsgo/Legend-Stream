@@ -59,6 +59,8 @@ export interface Channel {
   tvgId?: string;
   streamType?: string;
   contentType?: ChannelContentType;
+  playbackStreamId?: string;
+  playbackContainerExtension?: string | null;
   nowPlaying?: string;
   nextPlaying?: string;
 }
@@ -693,6 +695,8 @@ async function loadXtream(provider: Provider): Promise<ProviderLoadResult> {
         tvgId: stream.epg_channel_id || undefined,
         streamType: "xtream",
         contentType: "live",
+        playbackStreamId: streamId,
+        playbackContainerExtension: extension,
       };
     },
     250,

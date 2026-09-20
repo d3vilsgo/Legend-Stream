@@ -154,9 +154,9 @@ export async function hydrateM3UProviderCache(
     const sqliteStartedAt = Date.now();
     await initCatalogCache();
     const [rawLive, rawVod, rawSeries, state, rawCounts] = await Promise.all([
-      getCachedPersistedItems(provider.id, "live", undefined, M3U_HOME_PREVIEW_LIMIT),
-      getCachedPersistedItems(provider.id, "vod", undefined, M3U_HOME_PREVIEW_LIMIT),
-      getCachedPersistedItems(provider.id, "series", undefined, M3U_HOME_PREVIEW_LIMIT),
+      getCachedPersistedItems(provider.id, "live", undefined, M3U_HOME_PREVIEW_LIMIT, provider),
+      getCachedPersistedItems(provider.id, "vod", undefined, M3U_HOME_PREVIEW_LIMIT, provider),
+      getCachedPersistedItems(provider.id, "series", undefined, M3U_HOME_PREVIEW_LIMIT, provider),
       getCatalogSyncState(provider.id),
       getCatalogCounts(provider.id),
     ]);

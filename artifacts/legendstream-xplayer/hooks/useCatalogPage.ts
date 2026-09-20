@@ -50,6 +50,7 @@ type UseCatalogPageInput<K extends CatalogPageKind> = {
   sort: CatalogPageSort;
   enabled: boolean;
   snapshotCount?: SnapshotCount;
+  catalogRevision?: number;
 };
 
 const emptyState = <T,>(): CatalogPageState<T> => ({
@@ -85,6 +86,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
   sort,
   enabled,
   snapshotCount,
+  catalogRevision = 0,
 }: UseCatalogPageInput<K>) {
   const [state, setState] = useState<CatalogPageState<ItemForKind<K>>>(() => emptyState());
   const [stalkerLivePublishRevision, setStalkerLivePublishRevision] = useState(0);
@@ -92,6 +94,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
   const generationRef = useRef(0);
   const stalkerRequestRef = useRef<AbortController | null>(null);
   const observedStalkerLivePublishRevisionRef = useRef(0);
+  const observedCatalogRevisionRef = useRef(catalogRevision);
   const activeQueryKeyRef = useRef<string | null>(null);
   const pendingCommitRef = useRef<{
     startedAt: number;
@@ -337,6 +340,20 @@ export function useCatalogPage<K extends CatalogPageKind>({
     });
     void loadPage(null, "initial", generation);
   }, [effectiveEnabled, provider, baseRequest, queryKey, resolvedSnapshotTotal, loadPage]);
+
+  useEffect(() => {
+    observedCatalogRevisionRef.current = catalogRevision;
+  }, [provider?.id]);
+
+  useEffect(() => {
+    if (
+      provider?.type !== "m3u" ||
+      catalogRevision <= 0 ||
+      catalogRevision <= observedCatalogRevisionRef.current
+    ) return;
+    observedCatalogRevisionRef.current = catalogRevision;
+    reload();
+  }, [provider?.id, provider?.type, catalogRevision, reload]);
 
   useEffect(() => {
     if (!stalkerLive || stalkerLivePublishRevision <= 0) return;

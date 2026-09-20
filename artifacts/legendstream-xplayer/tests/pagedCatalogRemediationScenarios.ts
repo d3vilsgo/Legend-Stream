@@ -12,6 +12,7 @@ const viewsSource = source("components/catalog/PagedCatalogViews.tsx");
 const homeSource = source("components/home/HomeDiscovery.tsx");
 const repositorySource = source("lib/catalogPageRepository.ts");
 const pagingSource = source("lib/catalogPaging.ts");
+const hookSource = source("hooks/useCatalogPage.ts");
 
 let passed = 0;
 
@@ -112,6 +113,14 @@ async function main() {
     assert.doesNotMatch(viewsSource, /items\.filter\(/);
     assert.doesNotMatch(screenSource, /getM3UCatalog|hydrateM3UProviderKindCache/);
   });
+
+  assert.match(hookSource, /catalogRevision <= observedCatalogRevisionRef\.current/);
+  assert.match(hookSource, /observedCatalogRevisionRef\.current = catalogRevision;\s*reload\(\)/);
+  const queryKeyBlock = hookSource.slice(
+    hookSource.indexOf("const queryKey = useMemo"),
+    hookSource.indexOf("activeQueryKeyRef.current"),
+  );
+  assert.doesNotMatch(queryKeyBlock, /catalogRevision/);
 
   assert.equal(passed, 4);
   console.log("paged catalog remediation scenarios: 4/4 passed");
