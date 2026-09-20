@@ -374,7 +374,9 @@ function main() {
     assert.match(playerSource, /startEpgBackgroundAttempt\([\s\S]*EPG_BACKGROUND_BUDGET_MS/);
     assert.match(playerSource, /EPG_ABORT_REQUESTED/);
     assert.match(playerSource, /EPG_UNDERLYING_SETTLED/);
-    assert.match(playerSource, /bulkEpgPromiseRef\.current\.set\(resolvedProviderId,[\s\S]*?\.finally\(\(\) => \{[\s\S]*?bulkEpgPromiseRef\.current\.delete\(resolvedProviderId\)/);
+    // True work-lifetime ownership is enforced behaviorally by epgRuntimeScenarios Q.
+    // This diagnostics scenario only requires the M3U-visible lifecycle markers to remain wired.
+    assert.match(playerSource, /recordM3UEpgWorkEnd\(/);
     assert.match(playerSource, /provider\.type !== "xtream"\) return;/);
   });
 
