@@ -1,6 +1,8 @@
+import { orderSeriesEpisodes, orderSeriesSeasons } from "./seriesEpisodeOrder";
+
 export type GoldenSeriesCardModel = { id: string; title: string; image?: string };
-export type GoldenSeriesEpisodeModel = { id: string; title: string; seasonId: string };
-export type GoldenSeriesSeasonModel = { id: string; label: string; episodes: GoldenSeriesEpisodeModel[] };
+export type GoldenSeriesEpisodeModel = { id: string; title: string; seasonId: string; episodeNumber?: number };
+export type GoldenSeriesSeasonModel = { id: string; label: string; seasonNumber?: number; episodes: GoldenSeriesEpisodeModel[] };
 export type GoldenSeriesDetailModel = { id: string; title: string; seasons: GoldenSeriesSeasonModel[] };
 
 function numericIdentity(value: string) {
@@ -9,30 +11,17 @@ function numericIdentity(value: string) {
 }
 
 export function orderGoldenSeriesEpisodes(episodes: readonly GoldenSeriesEpisodeModel[]) {
-  return [...episodes].sort((a, b) => {
-    const aNumber = numericIdentity(a.id);
-    const bNumber = numericIdentity(b.id);
-    if (aNumber != null && bNumber != null) return aNumber - bNumber;
-    if (aNumber != null) return -1;
-    if (bNumber != null) return 1;
-    return a.title.localeCompare(b.title, "tr", { numeric: true, sensitivity: "base" });
-  });
+  return orderSeriesEpisodes(episodes);
 }
 
 export function orderGoldenSeriesSeasons(seasons: readonly GoldenSeriesSeasonModel[]) {
-  return [...seasons]
-    .sort((a, b) => {
-      const aNumber = numericIdentity(a.id);
-      const bNumber = numericIdentity(b.id);
-      if (aNumber != null && bNumber != null) return aNumber - bNumber;
-      if (aNumber != null) return -1;
-      if (bNumber != null) return 1;
-      return a.label.localeCompare(b.label, "tr", { numeric: true, sensitivity: "base" });
-    })
-    .map((season) => ({
-      ...season,
-      episodes: orderGoldenSeriesEpisodes(season.episodes),
-    }));
+  return orderSeriesSeasons(
+    seasons,
+    (season) => season.seasonNumber ?? numericIdentity(season.id) ?? undefined,
+  ).map((season) => ({
+    ...season,
+    episodes: orderGoldenSeriesEpisodes(season.episodes),
+  }));
 }
 
 export function initialGoldenSeriesSeasonId(seasons: readonly GoldenSeriesSeasonModel[]) {

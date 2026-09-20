@@ -1068,10 +1068,12 @@ export function PagedSeriesCatalog({
     seasons: Object.entries(info?.episodes || {}).map(([season, episodes]) => ({
       id: season,
       label: `${t("season")} ${season}`,
+      seasonNumber: /^\\d+$/.test(season.trim()) ? Number(season) : undefined,
       episodes: episodes.map((episode) => ({
         id: String(episode.id),
         title: episode.title || `${t("episode")} ${episode.episode_num ?? ""}`,
         seasonId: season,
+        episodeNumber: episode.episode_num,
       })),
     })),
   } : null;

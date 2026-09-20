@@ -1,4 +1,5 @@
 import { yieldToUi } from "./cooperative";
+import { orderSeriesEpisodes, orderSeriesSeasons } from "./seriesEpisodeOrder";
 import {
   createXtreamClient,
   normalizeXtreamBaseUrl,
@@ -361,19 +362,28 @@ export async function loadXtreamLiveCatalogFromPreparedRun(
   return { categories, streams, authValidated: true as const };
 }
 
+function semanticSeasonNumber(season: string) {
+  const normalized = season.trim();
+  return /^\\d+$/.test(normalized) ? Number(normalized) : undefined;
+}
+
 function registerEpisodeQueue(credentials: XtreamCredentials | null | undefined, info: XtreamSeriesInfo) {
+  const seasonGroups = Object.entries(info.episodes ?? {}).map(([season, episodes]) => ({
+    season,
+    seasonNumber: semanticSeasonNumber(season),
+    episodes,
+  }));
   const items: EpisodePlaybackItem[] = [];
-  Object.entries(info.episodes ?? {}).forEach(([season, episodes]) => {
-    episodes.forEach((episode) => {
-      items.push({
-        id: String(episode.id),
-        title: episode.title || `S${season} · E${episode.episode_num ?? items.length + 1}`,
-        season,
-        episodeNumber: episode.episode_num,
-        url: buildEpisodeStreamUrl(credentials, episode),
-      });
-    });
-  });
+  for (const group of orderSeriesSeasons(seasonGroups, (item) => item.seasonNumber)) {
+    const episodeItems = group.episodes.map((episode) => ({
+      id: String(episode.id),
+      title: episode.title || `S${group.season} · E${episode.episode_num ?? ""}`,
+      season: group.season,
+      episodeNumber: episode.episode_num,
+      url: buildEpisodeStreamUrl(credentials, episode),
+    }));
+    items.push(...orderSeriesEpisodes(episodeItems));
+  }
   items.forEach((item, index) => {
     episodeQueueByUrl.set(item.url, { items, index });
   });

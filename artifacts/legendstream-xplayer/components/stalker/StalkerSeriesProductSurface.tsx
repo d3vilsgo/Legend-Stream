@@ -108,6 +108,7 @@ export function StalkerSeriesProductSurface({
           id: episode.id,
           title: episode.label,
           seasonId: season.id,
+          episodeNumber: episode.episodeNumber,
         })),
       })),
     };

@@ -2,6 +2,7 @@ import { StalkerPortalError } from "./stalkerPortal";
 import type { StalkerIsolatedSession } from "./stalkerIsolatedLogin";
 import { redactSensitiveText } from "./safeLog";
 import { yieldToUi } from "./cooperative";
+import { orderSeriesEpisodes } from "./seriesEpisodeOrder";
 
 export type StalkerSeriesProductCategory = { id: string; title: string };
 export type StalkerSeriesProductItem = {
@@ -21,6 +22,7 @@ export type StalkerSeriesProductEpisode = {
   id: string;
   label: string;
   seasonId: string;
+  episodeNumber?: number;
 };
 export type StalkerSeriesProductSeason = {
   id: string;
@@ -245,6 +247,16 @@ function episodeIdentity(value: unknown): string | null {
   return exactScalarIdentifier(row.id);
 }
 
+export function stalkerSeriesEpisodeNumber(value: unknown) {
+  const row = objectValue(value);
+  if (!row) return undefined;
+  for (const key of ["episode_number", "episode_num", "episode"] as const) {
+    const ordinal = numberField(row, key);
+    if (ordinal != null && ordinal >= 0) return ordinal;
+  }
+  return undefined;
+}
+
 function episodeLabel(value: unknown, id: string) {
   const row = objectValue(value);
   return row
@@ -463,6 +475,7 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
           id: episodeId,
           label: episodeLabel(candidate, episodeId),
           seasonId,
+          episodeNumber: stalkerSeriesEpisodeNumber(candidate),
         });
         const episodeCmd = rawText(objectValue(candidate)?.cmd) ?? seasonCmd;
         if (episodeCmd) bucket.commands.set(episodeId, episodeCmd);
@@ -473,7 +486,7 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
 
     const refs = new Map<string, OpaqueSeasonPlaybackRef>();
     const seasons = sortStalkerSeriesSeasons([...seasonsById.entries()].map(([seasonId, bucket]) => {
-      const episodes = [...bucket.episodes.values()];
+      const episodes = orderSeriesEpisodes([...bucket.episodes.values()]);
       for (const episode of episodes) {
         const cmd = bucket.commands.get(episode.id) ?? rawText(bucket.row.cmd);
         if (cmd) refs.set(episodePlaybackRefKey(item.id, seasonId, episode.id), {
