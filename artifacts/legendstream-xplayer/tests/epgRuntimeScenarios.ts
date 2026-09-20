@@ -119,7 +119,8 @@ async function main() {
   const immediate = await runEpgBackgroundAttempt(async () => "epg-ok", 50);
   assert.deepEqual(immediate.classification, "success");
   assert.equal(immediate.value, "epg-ok");
-  assert.match(playerContextSource, /if \(existingWork\) \{\s*if \(boundedProvider\) return;/);
+  const sameProviderWorkGate = /const\s+([A-Za-z_$][\w$]*)\s*=\s*bulkEpgPromiseRef\.current\.get\(resolvedProviderId\);[\s\S]*?if\s*\(\1\)\s*\{\s*if\s*\(boundedProvider\)\s*return;/;
+  assert.match(playerContextSource, sameProviderWorkGate);
   assert.match(playerContextSource, /Date\.now\(\) \+ EPG_RETRY_BACKOFF_MS/);
   passed += 1;
 
@@ -129,13 +130,19 @@ async function main() {
   let cacheMissCalls = 0;
   if (!hasUsableChannelEpg(cachedPrograms, "c1", now)) cacheMissCalls += 1;
   assert.equal(cacheMissCalls, 0);
-  assert.match(playerContextSource, /if \(programs\.length\) \{\s*setState/);
   const bulkRefreshStart = playerContextSource.indexOf("if (!channelId) {");
   const bulkRefreshEnd = playerContextSource.indexOf("const inFlight = bulkEpgPromiseRef.current.get", bulkRefreshStart);
   const bulkRefreshSource = playerContextSource.slice(bulkRefreshStart, bulkRefreshEnd);
   assert.ok(bulkRefreshStart >= 0 && bulkRefreshEnd > bulkRefreshStart);
   assert.doesNotMatch(bulkRefreshSource, /epg:\s*\[\]/);
-  assert.match(bulkRefreshSource, /if \(programs\.length\) \{[\s\S]*mergeEpgPrograms\(previous\.epg, ids, programs\)/);
+  const publicationStart = bulkRefreshSource.indexOf("const programs = attempt.value ?? [];");
+  const publicationEnd = bulkRefreshSource.indexOf("epgCacheRef.current.set", publicationStart);
+  const publicationSource = bulkRefreshSource.slice(publicationStart, publicationEnd);
+  assert.ok(publicationStart >= 0 && publicationEnd > publicationStart);
+  assert.match(publicationSource, /if \(programs\.length\)/);
+  assert.match(publicationSource, /setState\(\(previous\) =>/);
+  assert.match(publicationSource, /epgAttemptGenerationRef\.current\.isCurrent\(resolvedProviderId, generation\)/);
+  assert.match(publicationSource, /mergeEpgPrograms\(previous\.epg, ids, programs\)/);
   passed += 1;
 
   // E. FAILURE RECOVERY: rejected single-flight entries are released and can be retried.
@@ -253,9 +260,15 @@ async function main() {
   assert.match(playerSource, /void refreshEpg\(provider\.id, currentLive\.id\)/);
   assert.doesNotMatch(playerSource, /await refreshEpg\(provider\.id, currentLive\.id\)/);
   assert.match(playerContextSource, /const boundedProvider = provider\.type === "m3u" \|\| provider\.type === "xtream"/);
-  assert.match(playerContextSource, /runEpgBackgroundAttempt\([\s\S]*EPG_BACKGROUND_BUDGET_MS/);
+  assert.match(playerContextSource, /startEpgBackgroundAttempt\([\s\S]*EPG_BACKGROUND_BUDGET_MS/);
   assert.match(playerContextSource, /const inFlight = bulkEpgPromiseRef\.current\.get\(resolvedProviderId\);\s*if \(inFlight\) return;/);
-  assert.match(playerContextSource, /: \{\s*classification: "success" as const,\s*value: await loadBulkProviderEpg\(provider, providerChannels\),\s*elapsedMs: 0,/);
+  const directWorkStart = playerContextSource.indexOf("const directWork =");
+  const workOwnerStart = playerContextSource.indexOf("const workResultPromise =", directWorkStart);
+  const directWorkSource = playerContextSource.slice(directWorkStart, workOwnerStart);
+  assert.ok(directWorkStart >= 0 && workOwnerStart > directWorkStart);
+  assert.match(directWorkSource, /boundedHandle\s*\?\s*null/);
+  assert.match(directWorkSource, /loadBulkProviderEpg\(provider, providerChannels\)/);
+  assert.match(directWorkSource, /classification:\s*"success"/);
   passed += 1;
 
   // M. PHYSICAL BUG CONTRACT: unresolved EPG cannot serialize channel selection.
@@ -325,11 +338,35 @@ async function main() {
   assert.ok(observedDrift !== null && observedDrift >= 0);
   passed += 1;
 
-  // Q. BULK OWNERSHIP.
-  assert.match(playerContextSource, /const workResultPromise = boundedHandle\?\.workPromise \?\? directWork!/);
-  assert.match(playerContextSource, /bulkEpgPromiseRef\.current\.set\(resolvedProviderId, workOwner\)/);
-  assert.match(playerContextSource, /if \(bulkEpgPromiseRef\.current\.get\(resolvedProviderId\) === workOwner\)[\s\S]*bulkEpgPromiseRef\.current\.delete/);
-  assert.doesNotMatch(playerContextSource, /bulkEpgPromiseRef\.current\.set\(resolvedProviderId, attemptPromise\)/);
+  // Q. BULK OWNERSHIP: provider gate must own underlying work, not caller-visible attempt.
+  assert.match(playerContextSource, /startEpgBackgroundAttempt\([\s\S]*?EPG_BACKGROUND_BUDGET_MS/);
+  const underlyingResultBinding = playerContextSource.match(
+    /const\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\?\.workPromise\s*\?\?\s*([A-Za-z_$][\w$]*)!;/,
+  );
+  assert.ok(underlyingResultBinding, "bulk result owner must derive from workPromise");
+  const underlyingResultName = underlyingResultBinding[1];
+  const ownerPattern = new RegExp(
+    `let\\s+([A-Za-z_$][\\w$]*)!:\\s*Promise<void>;[\\s\\S]*?\\1\\s*=\\s*${underlyingResultName}\\s*\\.then\\(\\(\\) => undefined\\)\\s*\\.finally`,
+  );
+  const ownerMatch = playerContextSource.match(ownerPattern);
+  assert.ok(ownerMatch, "underlying work must be wrapped by a settlement owner");
+  const ownerName = ownerMatch[1];
+  assert.match(
+    playerContextSource,
+    new RegExp(`bulkEpgPromiseRef\\.current\\.set\\(resolvedProviderId,\\s*${ownerName}\\)`),
+  );
+  assert.match(
+    playerContextSource,
+    new RegExp(`bulkEpgPromiseRef\\.current\\.get\\(resolvedProviderId\\)\\s*===\\s*${ownerName}[\\s\\S]*?bulkEpgPromiseRef\\.current\\.delete\\(resolvedProviderId\\)`),
+  );
+  const attemptBinding = playerContextSource.match(
+    /const\s+([A-Za-z_$][\w$]*)\s*=\s*([A-Za-z_$][\w$]*)\?\.attemptPromise\s*\?\?\s*([A-Za-z_$][\w$]*);/,
+  );
+  assert.ok(attemptBinding, "caller-visible attempt must remain distinct from underlying work");
+  assert.doesNotMatch(
+    playerContextSource,
+    new RegExp(`bulkEpgPromiseRef\\.current\\.set\\(resolvedProviderId,\\s*${attemptBinding[1]}\\)`),
+  );
   passed += 1;
 
   // R. SEMANTIC TRIGGER.
@@ -340,18 +377,30 @@ async function main() {
   const boundedEffects = playerContextSource.slice(boundedEffectStart, stalkerEffectStart);
   assert.ok(boundedEffectStart >= 0 && stalkerEffectStart > boundedEffectStart);
   assert.doesNotMatch(boundedEffects, /lastLoadedAt/);
-  assert.match(boundedEffects, /boundedAutoEpgTriggerKey/);
+  assert.match(boundedEffects, /boundedEpgAutoTriggerKey\(provider, state\.channels\)/);
+  assert.match(boundedEffects, /\[isHydrating, boundedAutoEpgTriggerKey, refreshEpg\]/);
+  assert.doesNotMatch(boundedEffects, /\[isHydrating,[^\]]*state\.channels[^\]]*refreshEpg\]/);
   passed += 1;
 
-  // S. M3U TOKENIZER PARITY.
-  const mixedM3U = "\uFEFF#EXTM3U url-tvg=\"x\"\r\n#EXTINF:-1,One\nhttp://one\r\n\r\n#EXTGRP:News\n";
-  const expectedLines = mixedM3U.replace(/^\uFEFF/, "").split(/\r?\n/);
-  const cooperativeLines = await tokenizeM3ULinesCooperatively(mixedM3U, 2, async () => undefined);
-  assert.deepEqual(cooperativeLines, expectedLines);
+  // S. M3U TOKENIZER PARITY: the actual pure production helper preserves prior split semantics.
+  const tokenizerCases = [
+    "\uFEFF#EXTM3U url-tvg=\"https://epg.invalid/xmltv.php\"\r\n#EXTINF:-1 group-title=\"News\",One\r\nhttp://one\r\n",
+    "#EXTM3U x-tvg-url=\"https://epg.invalid/guide.xml\"\n#EXTINF:-1,İstanbul Haber\nhttp://two\n#EXTGRP:Genel\n",
+    "#EXTM3U\r\n\r\n#EXTINF:-1,Final\r\nhttp://final",
+    "#EXTM3U\n#EXTINF malformed\n#BROKEN\nhttp://orphan\n\n",
+    "\uFEFF#EXTM3U\n#EXTINF:-1 tvg-name=\"Çocuk Dünyası\",Çocuk Dünyası\nhttps://örnek.invalid/canlı\n",
+  ];
+  for (const input of tokenizerCases) {
+    const expected = input.replace(/^\uFEFF/, "").split(/\r?\n/);
+    const actual = await tokenizeM3ULinesCooperatively(input, 2, async () => undefined);
+    assert.deepEqual(actual, expected);
+  }
   const cooperativeM3UStart = iptvSource.indexOf("async function parseM3UCooperatively");
   const providerErrorStart = iptvSource.indexOf("export class ProviderLoadError", cooperativeM3UStart);
+  const cooperativeM3USource = iptvSource.slice(cooperativeM3UStart, providerErrorStart);
+  assert.match(cooperativeM3USource, /tokenizeM3ULinesCooperatively\(/);
   assert.doesNotMatch(
-    iptvSource.slice(cooperativeM3UStart, providerErrorStart),
+    cooperativeM3USource,
     /content\.replace\(\/\^\\uFEFF\/[\s\S]*\.split\(\/\\r\?\\n\//,
   );
   assert.match(cooperativeSource, /export async function tokenizeM3ULinesCooperatively/);
