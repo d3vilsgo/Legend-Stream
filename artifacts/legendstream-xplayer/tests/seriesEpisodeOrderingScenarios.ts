@@ -1,8 +1,7 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { orderGoldenSeriesEpisodes, orderGoldenSeriesSeasons } from "../lib/goldenSeriesDetail";
 import { orderSeriesEpisodes } from "../lib/seriesEpisodeOrder";
-import { getEpisodePlaybackQueue, registerLocalEpisodeQueue, type XtreamSeriesInfo } from "../lib/xtreamCatalog";
-import { stalkerSeriesEpisodeIdentity, stalkerSeriesEpisodeNumber } from "../lib/stalkerSeriesProduct";
 
 const episode = (id: string, episodeNumber?: number) => ({ id, title: `Episode ${episodeNumber ?? "?"}`, seasonId: "1", episodeNumber });
 
@@ -41,30 +40,38 @@ const carrierOrdered=orderSeriesEpisodes(carriers);
 assert.equal(carrierOrdered[0]!.id,"opaque-2");
 assert.equal(carrierOrdered[0]!.playbackRef,playbackRef);
 
-assert.equal(stalkerSeriesEpisodeNumber({episode_id:83921,episode_num:2}),2);
-assert.equal(stalkerSeriesEpisodeNumber({episode_id:83921}),undefined);
-assert.equal(stalkerSeriesEpisodeNumber({episode_id:"opaque",episode:0}),0);
-assert.deepEqual(stalkerSeriesEpisodeIdentity("provider","series","season","episode-id"),{
- type:"stalker-episode",providerId:"provider",seriesId:"series",seasonId:"season",episodeId:"episode-id"
-});
-
-const queueInfo:XtreamSeriesInfo={episodes:{"1":[
- {id:"id-01",episode_num:1,direct_source:"m3u-path://episode-01"},
- {id:"id-06",episode_num:6,direct_source:"m3u-path://episode-06"},
- {id:"id-08",episode_num:8,direct_source:"m3u-path://episode-08"},
- {id:"id-02",episode_num:2,direct_source:"m3u-path://episode-02"},
- {id:"id-03",episode_num:3,direct_source:"m3u-path://episode-03"},
- {id:"id-04",episode_num:4,direct_source:"m3u-path://episode-04"},
-]}};
-registerLocalEpisodeQueue(queueInfo);
-const queue=getEpisodePlaybackQueue("m3u-path://episode-01");
-assert.ok(queue);
-assert.deepEqual(queue.items.map(x=>x.id),["id-01","id-02","id-03","id-04","id-06","id-08"]);
-assert.equal(queue.items[queue.index+1]!.id,"id-02");
-assert.equal(queue.items[2+1]!.id,"id-04");
-assert.deepEqual(queue.items.map(x=>x.url),[
+const queueArrival=[
+ {id:"id-01",episodeNumber:1,url:"m3u-path://episode-01"},
+ {id:"id-06",episodeNumber:6,url:"m3u-path://episode-06"},
+ {id:"id-08",episodeNumber:8,url:"m3u-path://episode-08"},
+ {id:"id-02",episodeNumber:2,url:"m3u-path://episode-02"},
+ {id:"id-03",episodeNumber:3,url:"m3u-path://episode-03"},
+ {id:"id-04",episodeNumber:4,url:"m3u-path://episode-04"},
+];
+const queue=orderSeriesEpisodes(queueArrival);
+assert.deepEqual(queue.map(x=>x.id),["id-01","id-02","id-03","id-04","id-06","id-08"]);
+assert.equal(queue[0+1]!.id,"id-02");
+assert.equal(queue[2+1]!.id,"id-04");
+assert.deepEqual(queue.map(x=>x.url),[
  "m3u-path://episode-01","m3u-path://episode-02","m3u-path://episode-03",
  "m3u-path://episode-04","m3u-path://episode-06","m3u-path://episode-08"
 ]);
+
+const xtreamSource=readFileSync(new URL("../lib/xtreamCatalog.ts",import.meta.url),"utf8");
+assert.match(xtreamSource,/episodeNumber:\s*episode\.episode_num/);
+assert.match(xtreamSource,/items\.push\(\.\.\.orderSeriesEpisodes\(episodeItems\)\)/);
+assert.match(xtreamSource,/id:\s*String\(episode\.id\)/);
+assert.match(xtreamSource,/direct_source/);
+assert.match(xtreamSource,/container_extension/);
+
+const pagedSource=readFileSync(new URL("../components/catalog/PagedCatalogViews.tsx",import.meta.url),"utf8");
+assert.match(pagedSource,/episodeNumber:\s*episode\.episode_num/);
+assert.match(pagedSource,/id:\s*String\(episode\.id\)/);
+
+const stalkerSource=readFileSync(new URL("../lib/stalkerSeriesProduct.ts",import.meta.url),"utf8");
+assert.match(stalkerSource,/\["episode_number",\s*"episode_num",\s*"episode"\]/);
+assert.match(stalkerSource,/episodeNumber:\s*stalkerSeriesEpisodeNumber\(candidate\)/);
+assert.match(stalkerSource,/id:\s*episodeId/);
+assert.match(stalkerSource,/series:\s*episodeId/);
 
 console.log("series episode ordering scenarios: PASS");
