@@ -223,7 +223,8 @@ async function main() {
     assert.equal(result.count, 8_779);
     assert.equal(result.rows.length, 100);
     assert.match(plan.pageSql, /NULL AS payload/i);
-    assert.match(repositorySource, /persistedSeriesRow\(providerId: string, seriesId: string\)/);
+    assert.match(repositorySource, /persistedSeriesRow\(provider: CatalogRuntimeProvider, seriesId: string\)/);
+    assert.match(repositorySource, /normalizePersistedCatalogPayload\([\s\S]*provider/);
   });
 
   await scenario("M3U Live first-open is count plus at most 100 rows", () => {
@@ -370,7 +371,7 @@ async function main() {
     assert.match(providerSwitchSource, /const HOME_SAMPLE_LIMIT = 48/);
     assert.match(providerSwitchSource, /hydrateM3UProviderCache\(provider\)/);
     assert.match(m3uCacheSource, /export const M3U_HOME_PREVIEW_LIMIT = 48/);
-    assert.match(m3uCacheSource, /getCachedPersistedItems\(provider\.id, "vod", undefined, M3U_HOME_PREVIEW_LIMIT\)/);
+    assert.match(m3uCacheSource, /getCachedPersistedItems\(provider\.id, "vod", undefined, M3U_HOME_PREVIEW_LIMIT, provider\)/);
     assert.doesNotMatch(m3uCacheSource, /installM3UCatalog|getM3UCatalog|installFullCatalog/);
   });
 
