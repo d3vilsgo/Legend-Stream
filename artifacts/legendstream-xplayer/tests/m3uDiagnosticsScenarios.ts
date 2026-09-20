@@ -368,9 +368,13 @@ function main() {
     assert.match(playerSource, /recordM3UBackgroundRefreshEnd\([\s\S]*if \(!persistenceOwnsRequest\) providerLoadGateRef\.current\.finish\(ownership\)/);
     assert.match(playerSource, /const EPG_START_DELAY_MS = 1_200/);
     assert.match(playerSource, /const boundedProvider = provider\.type === "m3u" \|\| provider\.type === "xtream"/);
-    assert.match(playerSource, /const existingPromise = bulkEpgPromiseRef\.current\.get\(resolvedProviderId\);[\s\S]*if \(existingPromise\) \{\s*if \(boundedProvider\) return/);
-    assert.match(playerSource, /if \(m3uEpgStartedAt !== null\) recordM3UEpgBegin\(\);[\s\S]*runEpgBackgroundAttempt/);
-    assert.match(playerSource, /recordM3UEpgEnd\([\s\S]*bulkEpgPromiseRef\.current\.delete\(resolvedProviderId\)[\s\S]*setIsEpgLoading\(false\)/);
+    const sameProviderGate = /const\s+([A-Za-z_$][\w$]*)\s*=\s*bulkEpgPromiseRef\.current\.get\(resolvedProviderId\);[\s\S]*?if\s*\(\1\)\s*\{\s*if\s*\(boundedProvider\)\s*return/;
+    assert.match(playerSource, sameProviderGate);
+    assert.match(playerSource, /recordM3UEpgBegin\(\);[\s\S]*recordM3UEpgWorkBegin\(/);
+    assert.match(playerSource, /startEpgBackgroundAttempt\([\s\S]*EPG_BACKGROUND_BUDGET_MS/);
+    assert.match(playerSource, /EPG_ABORT_REQUESTED/);
+    assert.match(playerSource, /EPG_UNDERLYING_SETTLED/);
+    assert.match(playerSource, /bulkEpgPromiseRef\.current\.set\(resolvedProviderId,[\s\S]*?\.finally\(\(\) => \{[\s\S]*?bulkEpgPromiseRef\.current\.delete\(resolvedProviderId\)/);
     assert.match(playerSource, /provider\.type !== "xtream"\) return;/);
   });
 
@@ -416,13 +420,13 @@ function main() {
     const errorClassStart = iptvSource.indexOf("export class ProviderLoadError", cooperativeStart);
     const cooperativeSource = iptvSource.slice(cooperativeStart, errorClassStart);
     const splitBegin = cooperativeSource.indexOf("recordM3USplitBegin();");
-    const splitOperation = cooperativeSource.indexOf('content.replace(/^\\uFEFF/, "").split(/\\r?\\n/)');
+    const tokenizeOperation = cooperativeSource.indexOf("tokenizeM3ULinesCooperatively(");
     const splitEnd = cooperativeSource.indexOf("recordM3USplitEnd();");
     const parseLinesEnd = cooperativeSource.indexOf("recordM3UParseLinesEnd();");
     const catalogBuild = cooperativeSource.indexOf("await buildM3UCatalogCooperatively");
     const catalogBuildEnd = cooperativeSource.indexOf("recordM3UCatalogBuildEnd();");
-    assert.ok(splitBegin >= 0 && splitBegin < splitOperation);
-    assert.ok(splitOperation < splitEnd && splitEnd < parseLinesEnd);
+    assert.ok(splitBegin >= 0 && splitBegin < tokenizeOperation);
+    assert.ok(tokenizeOperation < splitEnd && splitEnd < parseLinesEnd);
     assert.ok(parseLinesEnd < catalogBuild && catalogBuild < catalogBuildEnd);
 
     const standaloneStart = iptvSource.indexOf("export function parseM3U(");
@@ -472,12 +476,11 @@ function main() {
     assert.match(playerSource, /recordM3UBackgroundRefreshEnd\(/);
     assert.match(iptvSource, /const batchSize = 500;/);
     assert.match(iptvSource, /buildM3UCatalogCooperatively\(entries, providerId, \{\s*batchSize: 200,/);
-    assert.match(iptvSource, /const lines = content\.replace\(\/\^\\uFEFF\/, ""\)\.split\(\/\\r\?\\n\/\);/);
+    assert.match(iptvSource, /tokenizeM3ULinesCooperatively\([\s\S]*recordM3UBackgroundJsSlice/);
     const xtreamStart = iptvSource.indexOf("async function loadXtream");
     const stalkerStart = iptvSource.indexOf("async function loadStalker", xtreamStart);
     const providerStart = iptvSource.indexOf("export async function loadProvider", stalkerStart);
     assert.doesNotMatch(iptvSource.slice(xtreamStart, providerStart), /recordM3U(?:Fetch|Response|Split|ParseLines|CatalogBuild)/);
-    assert.match(iptvSource, /tokenizeM3ULinesCooperatively/);
     assert.match(iptvSource, /recordM3UBackgroundJsSlice/);
     assert.doesNotMatch(
       iptvSource.slice(
