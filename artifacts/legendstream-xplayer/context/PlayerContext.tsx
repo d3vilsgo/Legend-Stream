@@ -871,7 +871,7 @@ async function loadBulkProviderEpg(
       seedChannels,
       { signal },
     );
-    return normalizeProgramText(programs, provider.type === "m3u");
+    return normalizeProgramText(programs);
   }
 
   let epgUrl = provider.epgUrl?.trim();

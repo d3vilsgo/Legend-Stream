@@ -7,6 +7,7 @@ import {
   EPG_BACKGROUND_BUDGET_MS,
   EPG_PAGED_SEED_LIMIT,
   EPG_RETRY_BACKOFF_MS,
+  type EpgBackgroundAttemptTiming,
   EpgAttemptGeneration,
   EpgSingleFlight,
   clearRegisteredEpgChannels,
@@ -305,14 +306,14 @@ async function main() {
 
   // O. ATTEMPT VS WORK LIFETIME.
   const ignoredAbort = deferred<string>();
-  let timeoutTiming: { timeoutTimerDriftMs: number | null } | null = null;
-  let settledTiming: { underlyingSettleAfterTimeoutMs: number | null } | null = null;
+  const timeoutTiming = { value: null as EpgBackgroundAttemptTiming | null };
+  const settledTiming = { value: null as EpgBackgroundAttemptTiming | null };
   const lifetime = startEpgBackgroundAttempt(
     () => ignoredAbort.promise,
     5,
     {
-      onTimeout: (timing) => { timeoutTiming = timing; },
-      onUnderlyingSettled: (timing) => { settledTiming = timing; },
+      onTimeout: (timing) => { timeoutTiming.value = timing; },
+      onUnderlyingSettled: (timing) => { settledTiming.value = timing; },
     },
   );
   assert.equal((await lifetime.attemptPromise).classification, "timeout");
@@ -323,8 +324,10 @@ async function main() {
   assert.equal(underlyingSettled, false);
   ignoredAbort.resolve("late");
   assert.equal((await lifetime.workPromise).classification, "timeout");
-  assert.ok(timeoutTiming && timeoutTiming.timeoutTimerDriftMs !== null);
-  assert.ok(settledTiming && settledTiming.underlyingSettleAfterTimeoutMs !== null);
+  assert.ok(timeoutTiming.value);
+  assert.notEqual(timeoutTiming.value.timeoutTimerDriftMs, null);
+  assert.ok(settledTiming.value);
+  assert.notEqual(settledTiming.value.underlyingSettleAfterTimeoutMs, null);
   passed += 1;
 
   // P. TIMER DRIFT.
