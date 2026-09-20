@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { tokenizeM3ULinesCooperatively } from "../lib/iptv";
+import { tokenizeM3ULinesCooperatively } from "../lib/cooperative";
 import {
   EPG_BACKGROUND_BUDGET_MS,
   EPG_PAGED_SEED_LIMIT,
@@ -27,6 +27,7 @@ const playerSource = source("components/CompatibilityVideoPlayerV2.tsx");
 const homeSource = source("components/OptimizedHomeScreenPaged.tsx");
 const liveListSource = source("components/catalog/PagedCatalogViews.tsx");
 const iptvSource = source("lib/iptv.ts");
+const cooperativeSource = source("lib/cooperative.ts");
 
 type Program = {
   channelId: string;
@@ -353,6 +354,7 @@ async function main() {
     iptvSource.slice(cooperativeM3UStart, providerErrorStart),
     /content\.replace\(\/\^\\uFEFF\/[\s\S]*\.split\(\/\\r\?\\n\//,
   );
+  assert.match(cooperativeSource, /export async function tokenizeM3ULinesCooperatively/);
   passed += 1;
 
   // T. ABORT BOUNDARIES.

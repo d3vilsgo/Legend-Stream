@@ -1,4 +1,4 @@
-import { mapInBatches, yieldToUi } from "./cooperative";
+import { mapInBatches, tokenizeM3ULinesCooperatively, yieldToUi } from "./cooperative";
 import {
   createM3UShapeDiagnosticsObserver,
   type M3UShapeDiagnostics,
@@ -478,47 +478,18 @@ export function parseM3U(
   };
 }
 
-export async function tokenizeM3ULinesCooperatively(
-  content: string,
-  batchLines = 500,
-  yieldFn: () => Promise<void> = yieldToUi,
-): Promise<string[]> {
-  const lines: string[] = [];
-  const size = Math.max(1, Math.trunc(batchLines));
-  let cursor = content.charCodeAt(0) === 0xfeff ? 1 : 0;
-  let sinceYield = 0;
-  let sliceStartedAt = globalThis.performance?.now?.() ?? Date.now();
-
-  while (cursor <= content.length) {
-    const newline = content.indexOf("\n", cursor);
-    if (newline < 0) {
-      lines.push(content.slice(cursor));
-      recordM3UBackgroundJsSlice((globalThis.performance?.now?.() ?? Date.now()) - sliceStartedAt);
-      break;
-    }
-    const lineEnd = newline > cursor && content.charCodeAt(newline - 1) === 13
-      ? newline - 1
-      : newline;
-    lines.push(content.slice(cursor, lineEnd));
-    cursor = newline + 1;
-    sinceYield += 1;
-    if (sinceYield >= size) {
-      recordM3UBackgroundJsSlice((globalThis.performance?.now?.() ?? Date.now()) - sliceStartedAt);
-      sinceYield = 0;
-      await yieldFn();
-      sliceStartedAt = globalThis.performance?.now?.() ?? Date.now();
-    }
-  }
-  return lines;
-}
-
 async function parseM3UCooperatively(
   content: string,
   providerId: string,
   providerSource?: string,
 ): Promise<ProviderLoadResult> {
   recordM3USplitBegin();
-  const lines = await tokenizeM3ULinesCooperatively(content);
+  const lines = await tokenizeM3ULinesCooperatively(
+    content,
+    500,
+    yieldToUi,
+    recordM3UBackgroundJsSlice,
+  );
   recordM3USplitEnd();
   const entries: Channel[] = [];
   const state: M3UParseState = { pending: null };
