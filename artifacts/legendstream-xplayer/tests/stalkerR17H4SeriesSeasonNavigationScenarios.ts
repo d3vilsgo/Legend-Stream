@@ -83,10 +83,18 @@ async function main() {
     assert.match(goldenSource, /onEpisode\(selectedSeason\.id, episode\.id\)/);
   });
 
-  await scenario("numeric episode identity order is one through ten, not lexical", () => {
+  await scenario("semantic episode ordinal orders one through ten without reinterpreting playback identity", () => {
     const unordered = season("1", 0);
-    unordered.episodes = ["10", "2", "1", "3"].map((id) => ({ id, title: `Bölüm ${id}`, seasonId: "1" }));
-    assert.deepEqual(orderGoldenSeriesSeasons([unordered])[0]!.episodes.map((episode) => episode.id), ["1", "2", "3", "10"]);
+    unordered.episodes = [
+      { id: "playback-10", title: "Bölüm 10", seasonId: "1", episodeNumber: 10 },
+      { id: "playback-2", title: "Bölüm 2", seasonId: "1", episodeNumber: 2 },
+      { id: "playback-1", title: "Bölüm 1", seasonId: "1", episodeNumber: 1 },
+      { id: "playback-3", title: "Bölüm 3", seasonId: "1", episodeNumber: 3 },
+    ];
+    assert.deepEqual(
+      orderGoldenSeriesSeasons([unordered])[0]!.episodes.map((episode) => episode.id),
+      ["playback-1", "playback-2", "playback-3", "playback-10"],
+    );
   });
 
   await scenario("selected season episodes are owned by a bounded virtualized vertical list", () => {
