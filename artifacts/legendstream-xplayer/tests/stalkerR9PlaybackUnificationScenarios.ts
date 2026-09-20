@@ -236,7 +236,7 @@ async function main() {
     assert.match(runtime, /persisted\.playbackRef\.type === "xtream-live"/);
     assert.match(runtime, /persisted\.playbackRef\.type === "m3u-path" && provider\.type === "m3u"/);
     assert.match(runtime, /buildM3UStreamUrl\(providerSource\(provider\), persisted\.playbackRef\)/);
-    assert.match(runtime, /getVodInfo\(credentials, ref\.streamId\)/);
+    assert.match(runtime, /getVodInfo\(credentials, ref\.streamId, signal\)/);
   });
 
   assert.equal(passed, 14);

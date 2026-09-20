@@ -14,6 +14,7 @@ import {
   getNewCachedPersistedItems,
 } from "./catalogCache";
 import {
+  isCatalogRuntimeSource,
   makeDirectVodRuntimeSource,
   makeStalkerLiveRuntimeSource,
   parseCatalogRuntimeSource,
