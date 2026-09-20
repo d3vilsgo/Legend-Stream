@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { orderGoldenSeriesEpisodes, orderGoldenSeriesSeasons } from "../lib/goldenSeriesDetail";
 import { orderSeriesEpisodes } from "../lib/seriesEpisodeOrder";
 
@@ -57,18 +59,19 @@ assert.deepEqual(queue.map(x=>x.url),[
  "m3u-path://episode-04","m3u-path://episode-06","m3u-path://episode-08"
 ]);
 
-const xtreamSource=readFileSync(new URL("../lib/xtreamCatalog.ts",import.meta.url),"utf8");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const xtreamSource=readFileSync(resolve(ROOT, "lib/xtreamCatalog.ts"),"utf8");
 assert.match(xtreamSource,/episodeNumber:\s*episode\.episode_num/);
 assert.match(xtreamSource,/items\.push\(\.\.\.orderSeriesEpisodes\(episodeItems\)\)/);
 assert.match(xtreamSource,/id:\s*String\(episode\.id\)/);
 assert.match(xtreamSource,/direct_source/);
 assert.match(xtreamSource,/container_extension/);
 
-const pagedSource=readFileSync(new URL("../components/catalog/PagedCatalogViews.tsx",import.meta.url),"utf8");
+const pagedSource=readFileSync(resolve(ROOT, "components/catalog/PagedCatalogViews.tsx"),"utf8");
 assert.match(pagedSource,/episodeNumber:\s*episode\.episode_num/);
 assert.match(pagedSource,/id:\s*String\(episode\.id\)/);
 
-const stalkerSource=readFileSync(new URL("../lib/stalkerSeriesProduct.ts",import.meta.url),"utf8");
+const stalkerSource=readFileSync(resolve(ROOT, "lib/stalkerSeriesProduct.ts"),"utf8");
 assert.match(stalkerSource,/\["episode_number",\s*"episode_num",\s*"episode"\]/);
 assert.match(stalkerSource,/episodeNumber:\s*stalkerSeriesEpisodeNumber\(candidate\)/);
 assert.match(stalkerSource,/id:\s*episodeId/);
