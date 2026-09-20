@@ -5,7 +5,18 @@ import {
 } from "./m3uShapeDiagnostics";
 import { createStalkerPortalSession } from "./stalkerPortal";
 import {
+  recordM3UBackgroundJsSlice,
   recordM3UCatalogBuildEnd,
+  recordM3UEpgBodyBegin,
+  recordM3UEpgBodyEnd,
+  recordM3UEpgDecodeBegin,
+  recordM3UEpgDecodeEnd,
+  recordM3UEpgFetchBegin,
+  recordM3UEpgFetchResponse,
+  recordM3UEpgParseBegin,
+  recordM3UEpgParseEnd,
+  recordM3UEpgStringAssemblyBegin,
+  recordM3UEpgStringAssemblyEnd,
   recordM3UFetchBegin,
   recordM3UFetchResponse,
   recordM3UParseLinesEnd,
@@ -281,8 +292,10 @@ async function forEachM3UCatalogBatch<T>(
   visitor: (value: T, index: number) => void,
 ) {
   for (let start = 0; start < input.length; start += batchSize) {
+    const sliceStartedAt = globalThis.performance?.now?.() ?? Date.now();
     const end = Math.min(start + batchSize, input.length);
     for (let index = start; index < end; index += 1) visitor(input[index], index);
+    recordM3UBackgroundJsSlice((globalThis.performance?.now?.() ?? Date.now()) - sliceStartedAt);
     if (end < input.length) await yieldFn();
   }
 }
@@ -465,13 +478,47 @@ export function parseM3U(
   };
 }
 
+export async function tokenizeM3ULinesCooperatively(
+  content: string,
+  batchLines = 500,
+  yieldFn: () => Promise<void> = yieldToUi,
+): Promise<string[]> {
+  const lines: string[] = [];
+  const size = Math.max(1, Math.trunc(batchLines));
+  let cursor = content.charCodeAt(0) === 0xfeff ? 1 : 0;
+  let sinceYield = 0;
+  let sliceStartedAt = globalThis.performance?.now?.() ?? Date.now();
+
+  while (cursor <= content.length) {
+    const newline = content.indexOf("\n", cursor);
+    if (newline < 0) {
+      lines.push(content.slice(cursor));
+      recordM3UBackgroundJsSlice((globalThis.performance?.now?.() ?? Date.now()) - sliceStartedAt);
+      break;
+    }
+    const lineEnd = newline > cursor && content.charCodeAt(newline - 1) === 13
+      ? newline - 1
+      : newline;
+    lines.push(content.slice(cursor, lineEnd));
+    cursor = newline + 1;
+    sinceYield += 1;
+    if (sinceYield >= size) {
+      recordM3UBackgroundJsSlice((globalThis.performance?.now?.() ?? Date.now()) - sliceStartedAt);
+      sinceYield = 0;
+      await yieldFn();
+      sliceStartedAt = globalThis.performance?.now?.() ?? Date.now();
+    }
+  }
+  return lines;
+}
+
 async function parseM3UCooperatively(
   content: string,
   providerId: string,
   providerSource?: string,
 ): Promise<ProviderLoadResult> {
   recordM3USplitBegin();
-  const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const lines = await tokenizeM3ULinesCooperatively(content);
   recordM3USplitEnd();
   const entries: Channel[] = [];
   const state: M3UParseState = { pending: null };
@@ -479,11 +526,13 @@ async function parseM3UCooperatively(
   const batchSize = 500;
 
   for (let start = 0; start < lines.length; start += batchSize) {
+    const sliceStartedAt = globalThis.performance?.now?.() ?? Date.now();
     const end = Math.min(start + batchSize, lines.length);
     for (let index = start; index < end; index += 1) {
       const line = lines[index].trim();
       if (line) parseM3ULine(line, providerId, entries, state, diagnostics);
     }
+    recordM3UBackgroundJsSlice((globalThis.performance?.now?.() ?? Date.now()) - sliceStartedAt);
     if (end < lines.length) await yieldToUi();
   }
 
@@ -743,10 +792,12 @@ const decodeBytesCooperatively = async (
   bytes: Uint8Array,
   encoding: string,
   signal?: AbortSignal,
+  diagnosticM3U = false,
 ) => {
   const Decoder = (globalThis as any).TextDecoder;
   if (typeof Decoder !== "function") return null;
 
+  if (diagnosticM3U) recordM3UEpgDecodeBegin();
   const decoder = new Decoder(encoding);
   const parts: string[] = [];
   for (let offset = 0; offset < bytes.length; offset += EPG_DECODE_CHUNK_BYTES) {
@@ -756,12 +807,23 @@ const decodeBytesCooperatively = async (
     if (end < bytes.length) await yieldToUi();
   }
   parts.push(decoder.decode());
-  return parts.join("");
+  if (diagnosticM3U) recordM3UEpgDecodeEnd();
+  if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+  if (diagnosticM3U) recordM3UEpgStringAssemblyBegin();
+  const text = parts.join("");
+  if (diagnosticM3U) recordM3UEpgStringAssemblyEnd();
+  return text;
 };
 
-const decodeResponseText = async (response: Response, signal?: AbortSignal) => {
+const decodeResponseText = async (
+  response: Response,
+  signal?: AbortSignal,
+  diagnosticM3U = false,
+) => {
   try {
+    if (diagnosticM3U) recordM3UEpgBodyBegin();
     const bytes = new Uint8Array(await response.arrayBuffer());
+    if (diagnosticM3U) recordM3UEpgBodyEnd();
     if (signal?.aborted) throw new Error("EPG background attempt aborted.");
     await yieldToUi();
     const head = Array.from(bytes.slice(0, 256), (byte) => String.fromCharCode(byte)).join("");
@@ -770,20 +832,26 @@ const decodeResponseText = async (response: Response, signal?: AbortSignal) => {
     const Decoder = (globalThis as any).TextDecoder;
     if (typeof Decoder === "function") {
       try {
-        const decoded = await decodeBytesCooperatively(bytes, encoding, signal);
+        const decoded = await decodeBytesCooperatively(bytes, encoding, signal, diagnosticM3U);
         if (decoded !== null) return decoded;
       } catch {
         if (signal?.aborted) throw new Error("EPG background attempt aborted.");
-        const decoded = await decodeBytesCooperatively(bytes, "utf-8", signal);
+        const decoded = await decodeBytesCooperatively(bytes, "utf-8", signal, diagnosticM3U);
         if (decoded !== null) return decoded;
       }
     }
+    if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+    if (diagnosticM3U) recordM3UEpgStringAssemblyBegin();
     const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+    if (diagnosticM3U) recordM3UEpgStringAssemblyEnd();
     if (/^(?:utf-?8)$/i.test(encoding)) return binaryStringToUtf8(binary);
     return binary;
   } catch {
     if (signal?.aborted) throw new Error("EPG background attempt aborted.");
-    return response.text();
+    if (diagnosticM3U) recordM3UEpgBodyBegin();
+    const text = await response.text();
+    if (diagnosticM3U) recordM3UEpgBodyEnd();
+    return text;
   }
 };
 
@@ -893,12 +961,20 @@ export async function loadEpg(
   options: EpgLoadOptions = {},
 ): Promise<EpgProgram[]> {
   if (provider.epgUrl) {
+    const diagnosticM3U = provider.type === "m3u";
+    if (diagnosticM3U) recordM3UEpgFetchBegin();
     const response = await fetch(provider.epgUrl, {
       headers: { Accept: "application/xml,text/xml,*/*" },
       signal: options.signal ?? AbortSignal.timeout(30_000),
     });
+    if (diagnosticM3U) recordM3UEpgFetchResponse();
     if (!response.ok) throw new Error(`EPG request failed with ${response.status}.`);
-    return parseXmltvAsync(await decodeResponseText(response, options.signal), channels, Date.now(), options.signal);
+    const text = await decodeResponseText(response, options.signal, diagnosticM3U);
+    if (options.signal?.aborted) throw new Error("EPG background attempt aborted.");
+    if (diagnosticM3U) recordM3UEpgParseBegin();
+    const programs = await parseXmltvAsync(text, channels, Date.now(), options.signal);
+    if (diagnosticM3U) recordM3UEpgParseEnd();
+    return programs;
   }
 
   if (provider.type === "xtream" && provider.username && provider.password) {

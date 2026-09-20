@@ -119,6 +119,21 @@ export type M3UDiagnosticState = {
   m3uParseLinesMs: number | null;
   m3uCatalogBuildMs: number | null;
   m3uTotalIngestMs: number | null;
+  m3uBgMaxJsSliceMs: number;
+  epgAttemptActive: boolean;
+  epgUnderlyingWorkActive: boolean;
+  epgRetryGateActive: boolean;
+  epgGenerationCurrent: boolean | null;
+  epgFetchHeaderMs: number | null;
+  epgBodyMaterializeMs: number | null;
+  epgDecodeMs: number | null;
+  epgStringAssemblyMs: number | null;
+  epgParseMs: number | null;
+  epgNormalizeMs: number | null;
+  epgPublicationMs: number | null;
+  epgTotalWorkMs: number | null;
+  epgTimeoutTimerDriftMs: number | null;
+  epgUnderlyingSettleAfterTimeoutMs: number | null;
   correlationSequence: M3UCorrelationEvent[];
 };
 
@@ -201,6 +216,21 @@ const initialState = (): M3UDiagnosticState => ({
   m3uParseLinesMs: null,
   m3uCatalogBuildMs: null,
   m3uTotalIngestMs: null,
+  m3uBgMaxJsSliceMs: 0,
+  epgAttemptActive: false,
+  epgUnderlyingWorkActive: false,
+  epgRetryGateActive: false,
+  epgGenerationCurrent: null,
+  epgFetchHeaderMs: null,
+  epgBodyMaterializeMs: null,
+  epgDecodeMs: null,
+  epgStringAssemblyMs: null,
+  epgParseMs: null,
+  epgNormalizeMs: null,
+  epgPublicationMs: null,
+  epgTotalWorkMs: null,
+  epgTimeoutTimerDriftMs: null,
+  epgUnderlyingSettleAfterTimeoutMs: null,
   correlationSequence: [],
 });
 
@@ -222,6 +252,27 @@ const emptyIngestClock = (): M3UIngestClock => ({
   parseLinesEnd: null,
 });
 let ingestClock = emptyIngestClock();
+type EpgPhaseClock = {
+  workBegin: number | null;
+  fetchBegin: number | null;
+  bodyBegin: number | null;
+  decodeBegin: number | null;
+  stringAssemblyBegin: number | null;
+  parseBegin: number | null;
+  normalizeBegin: number | null;
+  publicationBegin: number | null;
+};
+const emptyEpgPhaseClock = (): EpgPhaseClock => ({
+  workBegin: null,
+  fetchBegin: null,
+  bodyBegin: null,
+  decodeBegin: null,
+  stringAssemblyBegin: null,
+  parseBegin: null,
+  normalizeBegin: null,
+  publicationBegin: null,
+});
+let epgPhaseClock = emptyEpgPhaseClock();
 const monotonicNow = () => globalThis.performance?.now?.() ?? Date.now();
 const wallNow = () => Date.now();
 const elapsedFromPress = () => playbackPressStartedAt === null
@@ -358,6 +409,7 @@ export function recordM3UBackgroundRefreshBegin() {
   publish({
     ...state,
     m3uBgRefreshActive: true,
+    m3uBgMaxJsSliceMs: 0,
     lastM3uBgRefreshBegin: at,
     lastM3uBgRefreshLoadEnd: null,
     lastM3uBgRefreshEnd: null,
@@ -482,12 +534,148 @@ export function recordM3UCatalogBuildEnd(monotonicAt = monotonicNow()) {
   });
 }
 
+function publishM3UEpgMarker(
+  marker: string,
+  monotonicAt: number,
+  patch: Partial<M3UDiagnosticState>,
+) {
+  if (state.providerType !== "m3u") return;
+  const at = wallNow();
+  const elapsedMs = safePhaseDuration(epgPhaseClock.workBegin, monotonicAt);
+  publish({
+    ...state,
+    ...patch,
+    correlationSequence: [
+      ...state.correlationSequence.slice(-31),
+      { marker, at, elapsedMs },
+    ],
+  });
+  safeLog.info(marker, { timestamp: at, elapsedMs });
+}
+
+export function recordM3UBackgroundJsSlice(elapsedMs: number) {
+  if (state.providerType !== "m3u" || !state.m3uBgRefreshActive) return;
+  publish({
+    ...state,
+    m3uBgMaxJsSliceMs: Math.max(
+      state.m3uBgMaxJsSliceMs,
+      Math.max(0, Math.round(elapsedMs)),
+    ),
+  });
+}
+
+export function recordM3UEpgWorkBegin(monotonicAt = monotonicNow()) {
+  if (state.providerType !== "m3u") return;
+  epgPhaseClock = { ...emptyEpgPhaseClock(), workBegin: monotonicAt };
+  publishM3UEpgMarker("EPG_WORK_BEGIN", monotonicAt, {
+    epgUnderlyingWorkActive: true,
+    epgFetchHeaderMs: null,
+    epgBodyMaterializeMs: null,
+    epgDecodeMs: null,
+    epgStringAssemblyMs: null,
+    epgParseMs: null,
+    epgNormalizeMs: null,
+    epgPublicationMs: null,
+    epgTotalWorkMs: null,
+    epgTimeoutTimerDriftMs: null,
+    epgUnderlyingSettleAfterTimeoutMs: null,
+  });
+}
+
+export function recordM3UEpgWorkEnd(elapsedMs: number, monotonicAt = monotonicNow()) {
+  publishM3UEpgMarker("EPG_UNDERLYING_SETTLED", monotonicAt, {
+    epgUnderlyingWorkActive: false,
+    epgTotalWorkMs: Math.max(0, Math.round(elapsedMs)),
+  });
+}
+
+export function recordM3UEpgFetchBegin(monotonicAt = monotonicNow()) {
+  epgPhaseClock.fetchBegin = monotonicAt;
+  publishM3UEpgMarker("EPG_FETCH_BEGIN", monotonicAt, {});
+}
+export function recordM3UEpgFetchResponse(monotonicAt = monotonicNow()) {
+  publishM3UEpgMarker("EPG_FETCH_RESPONSE", monotonicAt, {
+    epgFetchHeaderMs: safePhaseDuration(epgPhaseClock.fetchBegin, monotonicAt),
+  });
+}
+export function recordM3UEpgBodyBegin(monotonicAt = monotonicNow()) {
+  epgPhaseClock.bodyBegin = monotonicAt;
+  publishM3UEpgMarker("EPG_BODY_BEGIN", monotonicAt, {});
+}
+export function recordM3UEpgBodyEnd(monotonicAt = monotonicNow()) {
+  publishM3UEpgMarker("EPG_BODY_END", monotonicAt, {
+    epgBodyMaterializeMs: safePhaseDuration(epgPhaseClock.bodyBegin, monotonicAt),
+  });
+}
+export function recordM3UEpgDecodeBegin(monotonicAt = monotonicNow()) {
+  epgPhaseClock.decodeBegin = monotonicAt;
+  publishM3UEpgMarker("EPG_DECODE_BEGIN", monotonicAt, {});
+}
+export function recordM3UEpgDecodeEnd(monotonicAt = monotonicNow()) {
+  publishM3UEpgMarker("EPG_DECODE_END", monotonicAt, {
+    epgDecodeMs: safePhaseDuration(epgPhaseClock.decodeBegin, monotonicAt),
+  });
+}
+export function recordM3UEpgStringAssemblyBegin(monotonicAt = monotonicNow()) {
+  epgPhaseClock.stringAssemblyBegin = monotonicAt;
+  publishM3UEpgMarker("EPG_FULL_STRING_ASSEMBLY_BEGIN", monotonicAt, {});
+}
+export function recordM3UEpgStringAssemblyEnd(monotonicAt = monotonicNow()) {
+  publishM3UEpgMarker("EPG_FULL_STRING_ASSEMBLY_END", monotonicAt, {
+    epgStringAssemblyMs: safePhaseDuration(epgPhaseClock.stringAssemblyBegin, monotonicAt),
+  });
+}
+export function recordM3UEpgParseBegin(monotonicAt = monotonicNow()) {
+  epgPhaseClock.parseBegin = monotonicAt;
+  publishM3UEpgMarker("EPG_PARSE_BEGIN", monotonicAt, {});
+}
+export function recordM3UEpgParseEnd(monotonicAt = monotonicNow()) {
+  publishM3UEpgMarker("EPG_PARSE_END", monotonicAt, {
+    epgParseMs: safePhaseDuration(epgPhaseClock.parseBegin, monotonicAt),
+  });
+}
+export function recordM3UEpgNormalizeBegin(monotonicAt = monotonicNow()) {
+  epgPhaseClock.normalizeBegin = monotonicAt;
+  publishM3UEpgMarker("EPG_NORMALIZE_BEGIN", monotonicAt, {});
+}
+export function recordM3UEpgNormalizeEnd(monotonicAt = monotonicNow()) {
+  publishM3UEpgMarker("EPG_NORMALIZE_END", monotonicAt, {
+    epgNormalizeMs: safePhaseDuration(epgPhaseClock.normalizeBegin, monotonicAt),
+  });
+}
+export function recordM3UEpgPublicationBegin(monotonicAt = monotonicNow()) {
+  epgPhaseClock.publicationBegin = monotonicAt;
+  publishM3UEpgMarker("EPG_PUBLICATION_BEGIN", monotonicAt, {});
+}
+export function recordM3UEpgPublicationEnd(monotonicAt = monotonicNow()) {
+  publishM3UEpgMarker("EPG_PUBLICATION_END", monotonicAt, {
+    epgPublicationMs: safePhaseDuration(epgPhaseClock.publicationBegin, monotonicAt),
+  });
+}
+export function recordM3UEpgTimeoutTimerDrift(elapsedMs: number) {
+  if (state.providerType !== "m3u") return;
+  publish({ ...state, epgTimeoutTimerDriftMs: Math.max(0, Math.round(elapsedMs)) });
+}
+export function recordM3UEpgUnderlyingSettleAfterTimeout(elapsedMs: number) {
+  if (state.providerType !== "m3u") return;
+  publish({ ...state, epgUnderlyingSettleAfterTimeoutMs: Math.max(0, Math.round(elapsedMs)) });
+}
+export function recordM3UEpgRetryGate(active: boolean) {
+  if (state.providerType !== "m3u") return;
+  publish({ ...state, epgRetryGateActive: active });
+}
+export function recordM3UEpgGenerationCurrent(current: boolean | null) {
+  if (state.providerType !== "m3u") return;
+  publish({ ...state, epgGenerationCurrent: current });
+}
+
 export function recordM3UEpgBegin() {
   if (state.providerType !== "m3u") return;
   const at = wallNow();
   publish({
     ...state,
     m3uEpgActive: true,
+    epgAttemptActive: true,
     lastM3uEpgBegin: at,
     lastM3uEpgEnd: null,
     lastM3uEpgElapsedMs: null,
@@ -503,6 +691,7 @@ export function recordM3UEpgEnd(elapsedMs: number) {
   publish({
     ...state,
     m3uEpgActive: false,
+    epgAttemptActive: false,
     lastM3uEpgEnd: at,
     lastM3uEpgElapsedMs: safeElapsed,
     correlationSequence: [...state.correlationSequence.slice(-31), { marker: "M3U_EPG_END", at, elapsedMs: safeElapsed }],
@@ -779,10 +968,26 @@ export function resetM3UDiagnosticCounters() {
     m3uParseLinesMs: null,
     m3uCatalogBuildMs: null,
     m3uTotalIngestMs: null,
+    m3uBgMaxJsSliceMs: 0,
+    epgAttemptActive: false,
+    epgUnderlyingWorkActive: false,
+    epgRetryGateActive: false,
+    epgGenerationCurrent: null,
+    epgFetchHeaderMs: null,
+    epgBodyMaterializeMs: null,
+    epgDecodeMs: null,
+    epgStringAssemblyMs: null,
+    epgParseMs: null,
+    epgNormalizeMs: null,
+    epgPublicationMs: null,
+    epgTotalWorkMs: null,
+    epgTimeoutTimerDriftMs: null,
+    epgUnderlyingSettleAfterTimeoutMs: null,
     correlationSequence: [],
   });
   playbackPressStartedAt = null;
   ingestClock = emptyIngestClock();
+  epgPhaseClock = emptyEpgPhaseClock();
 }
 
 const value = (input: string | number | boolean | null | undefined) =>
@@ -882,6 +1087,22 @@ export function buildM3UDiagnosticReport(snapshot: M3UDiagnosticState) {
     `lastM3uEpgBegin=${value(snapshot.lastM3uEpgBegin)}`,
     `lastM3uEpgEnd=${value(snapshot.lastM3uEpgEnd)}`,
     `lastM3uEpgElapsedMs=${value(snapshot.lastM3uEpgElapsedMs)}`,
+    `m3uBgMaxJsSliceMs=${snapshot.m3uBgMaxJsSliceMs}`,
+    "EPG_WORK_LIFETIME",
+    `epgAttemptActive=${snapshot.epgAttemptActive}`,
+    `epgUnderlyingWorkActive=${snapshot.epgUnderlyingWorkActive}`,
+    `epgRetryGateActive=${snapshot.epgRetryGateActive}`,
+    `epgGenerationCurrent=${value(snapshot.epgGenerationCurrent)}`,
+    `EPG_FETCH_HEADER_MS=${value(snapshot.epgFetchHeaderMs)}`,
+    `EPG_BODY_MATERIALIZE_MS=${value(snapshot.epgBodyMaterializeMs)}`,
+    `EPG_DECODE_MS=${value(snapshot.epgDecodeMs)}`,
+    `EPG_STRING_ASSEMBLY_MS=${value(snapshot.epgStringAssemblyMs)}`,
+    `EPG_PARSE_MS=${value(snapshot.epgParseMs)}`,
+    `EPG_NORMALIZE_MS=${value(snapshot.epgNormalizeMs)}`,
+    `EPG_PUBLICATION_MS=${value(snapshot.epgPublicationMs)}`,
+    `EPG_TOTAL_WORK_MS=${value(snapshot.epgTotalWorkMs)}`,
+    `EPG_TIMEOUT_TIMER_DRIFT_MS=${value(snapshot.epgTimeoutTimerDriftMs)}`,
+    `EPG_UNDERLYING_SETTLE_AFTER_TIMEOUT_MS=${value(snapshot.epgUnderlyingSettleAfterTimeoutMs)}`,
     "M3U_INGEST_PHASES",
     `m3uFetchWaitMs=${value(snapshot.m3uFetchWaitMs)}`,
     `m3uResponseTextMs=${value(snapshot.m3uResponseTextMs)}`,

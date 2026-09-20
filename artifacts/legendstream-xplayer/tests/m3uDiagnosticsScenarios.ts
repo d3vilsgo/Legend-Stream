@@ -15,6 +15,8 @@ import {
   recordM3UFetchBegin,
   recordM3UFetchResponse,
   recordM3UEpgEnd,
+  recordM3UEpgTimeoutTimerDrift,
+  recordM3UEpgUnderlyingSettleAfterTimeout,
   recordM3ULivePress,
   recordM3ULivePressIn,
   recordM3ULivePressOut,
@@ -475,6 +477,15 @@ function main() {
     const stalkerStart = iptvSource.indexOf("async function loadStalker", xtreamStart);
     const providerStart = iptvSource.indexOf("export async function loadProvider", stalkerStart);
     assert.doesNotMatch(iptvSource.slice(xtreamStart, providerStart), /recordM3U(?:Fetch|Response|Split|ParseLines|CatalogBuild)/);
+    assert.match(iptvSource, /tokenizeM3ULinesCooperatively/);
+    assert.match(iptvSource, /recordM3UBackgroundJsSlice/);
+    assert.doesNotMatch(
+      iptvSource.slice(
+        iptvSource.indexOf("async function parseM3UCooperatively"),
+        iptvSource.indexOf("export class ProviderLoadError"),
+      ),
+      /content\.replace\(\/\^\\uFEFF\/[\s\S]*\.split\(\/\\r\?\\n\//,
+    );
   });
 
   scenario("Z2Q report remains privacy-safe after reachability hardening", () => {
@@ -486,6 +497,13 @@ function main() {
     assert.match(report, /m3uCatalogBuildMs=400/);
     assert.match(report, /m3uTotalIngestMs=1500/);
     assert.doesNotMatch(report, /playlistUrl|streamUrl|epgUrl|username|password|token|cookie|mac=/i);
+    recordM3UEpgTimeoutTimerDrift(37);
+    recordM3UEpgUnderlyingSettleAfterTimeout(1234);
+    const lifetimeReport = buildM3UDiagnosticReport(getM3UDiagnosticSnapshot());
+    assert.match(lifetimeReport, /EPG_TIMEOUT_TIMER_DRIFT_MS=37/);
+    assert.match(lifetimeReport, /EPG_UNDERLYING_SETTLE_AFTER_TIMEOUT_MS=1234/);
+    assert.match(lifetimeReport, /m3uBgMaxJsSliceMs=/);
+    assert.doesNotMatch(lifetimeReport, /playlistUrl|streamUrl|epgUrl|username|password|token|cookie|mac=/i);
   });
 
   scenario("Z2QA M3U DBG is the top shell sibling and Android-safe without consuming unrelated touches", () => {

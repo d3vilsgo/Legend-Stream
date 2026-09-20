@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tokenizeM3ULinesCooperatively } from "../lib/iptv";
 import {
   EPG_BACKGROUND_BUDGET_MS,
   EPG_PAGED_SEED_LIMIT,
@@ -14,6 +15,7 @@ import {
   mergeEpgPrograms,
   registerEpgChannels,
   runEpgBackgroundAttempt,
+  startEpgBackgroundAttempt,
   selectChannelEpg,
   selectProgramsAt,
 } from "../lib/epgRuntime";
@@ -287,9 +289,106 @@ async function main() {
   assert.match(playerContextSource, /Date\.now\(\) \+ EPG_RETRY_BACKOFF_MS/);
   passed += 1;
 
-  assert.equal(passed, 14);
+  // O. ATTEMPT VS WORK LIFETIME.
+  const ignoredAbort = deferred<string>();
+  let timeoutTiming: { timeoutTimerDriftMs: number | null } | null = null;
+  let settledTiming: { underlyingSettleAfterTimeoutMs: number | null } | null = null;
+  const lifetime = startEpgBackgroundAttempt(
+    () => ignoredAbort.promise,
+    5,
+    {
+      onTimeout: (timing) => { timeoutTiming = timing; },
+      onUnderlyingSettled: (timing) => { settledTiming = timing; },
+    },
+  );
+  assert.equal((await lifetime.attemptPromise).classification, "timeout");
+  assert.equal(lifetime.signal.aborted, true);
+  let underlyingSettled = false;
+  void lifetime.workPromise.then(() => { underlyingSettled = true; });
+  await Promise.resolve();
+  assert.equal(underlyingSettled, false);
+  ignoredAbort.resolve("late");
+  assert.equal((await lifetime.workPromise).classification, "timeout");
+  assert.ok(timeoutTiming && timeoutTiming.timeoutTimerDriftMs !== null);
+  assert.ok(settledTiming && settledTiming.underlyingSettleAfterTimeoutMs !== null);
+  passed += 1;
+
+  // P. TIMER DRIFT.
+  let observedDrift: number | null = null;
+  const driftHandle = startEpgBackgroundAttempt(
+    () => new Promise<void>(() => undefined),
+    5,
+    { onTimeout: (timing) => { observedDrift = timing.timeoutTimerDriftMs; } },
+  );
+  assert.equal((await driftHandle.attemptPromise).classification, "timeout");
+  assert.ok(observedDrift !== null && observedDrift >= 0);
+  passed += 1;
+
+  // Q. BULK OWNERSHIP.
+  assert.match(playerContextSource, /const workResultPromise = boundedHandle\?\.workPromise \?\? directWork!/);
+  assert.match(playerContextSource, /bulkEpgPromiseRef\.current\.set\(resolvedProviderId, workOwner\)/);
+  assert.match(playerContextSource, /if \(bulkEpgPromiseRef\.current\.get\(resolvedProviderId\) === workOwner\)[\s\S]*bulkEpgPromiseRef\.current\.delete/);
+  assert.doesNotMatch(playerContextSource, /bulkEpgPromiseRef\.current\.set\(resolvedProviderId, attemptPromise\)/);
+  passed += 1;
+
+  // R. SEMANTIC TRIGGER.
+  assert.match(playerContextSource, /function boundedEpgAutoTriggerKey\(provider: ProviderConfig, channels: readonly Channel\[\]\)/);
+  assert.match(playerContextSource, /effectiveEpgSourceIdentity\(provider\)/);
+  const boundedEffectStart = playerContextSource.indexOf("const boundedAutoEpgTriggerKey = useMemo");
+  const stalkerEffectStart = playerContextSource.indexOf('if (isHydrating || !state.provider || state.provider.type !== "stalker")', boundedEffectStart);
+  const boundedEffects = playerContextSource.slice(boundedEffectStart, stalkerEffectStart);
+  assert.ok(boundedEffectStart >= 0 && stalkerEffectStart > boundedEffectStart);
+  assert.doesNotMatch(boundedEffects, /lastLoadedAt/);
+  assert.match(boundedEffects, /boundedAutoEpgTriggerKey/);
+  passed += 1;
+
+  // S. M3U TOKENIZER PARITY.
+  const mixedM3U = "\uFEFF#EXTM3U url-tvg=\"x\"\r\n#EXTINF:-1,One\nhttp://one\r\n\r\n#EXTGRP:News\n";
+  const expectedLines = mixedM3U.replace(/^\uFEFF/, "").split(/\r?\n/);
+  const cooperativeLines = await tokenizeM3ULinesCooperatively(mixedM3U, 2, async () => undefined);
+  assert.deepEqual(cooperativeLines, expectedLines);
+  const cooperativeM3UStart = iptvSource.indexOf("async function parseM3UCooperatively");
+  const providerErrorStart = iptvSource.indexOf("export class ProviderLoadError", cooperativeM3UStart);
+  assert.doesNotMatch(
+    iptvSource.slice(cooperativeM3UStart, providerErrorStart),
+    /content\.replace\(\/\^\\uFEFF\/[\s\S]*\.split\(\/\\r\?\\n\//,
+  );
+  passed += 1;
+
+  // T. ABORT BOUNDARIES.
+  assert.match(iptvSource, /if \(signal\?\.aborted\) throw new Error\("EPG background attempt aborted\."\)/);
+  assert.match(iptvSource, /if \(end < bytes\.length\) await yieldToUi\(\)/);
+  assert.match(iptvSource, /scanned % 120 === 0[\s\S]*signal\?\.aborted[\s\S]*await yieldToUi\(\)/);
+  assert.match(iptvSource, /recordM3UEpgStringAssemblyBegin/);
+  passed += 1;
+
+  // U. LIVE WHILE TIMED-OUT UNDERLYING WORK IS STILL ALIVE.
+  const longWork = deferred<void>();
+  const background = startEpgBackgroundAttempt(() => longWork.promise, 5);
+  assert.equal((await background.attemptPromise).classification, "timeout");
+  let liveOpenedDuringLateWork = false;
+  const openDuringLateWork = () => { liveOpenedDuringLateWork = true; };
+  openDuringLateWork();
+  assert.equal(liveOpenedDuringLateWork, true);
+  assert.equal(background.signal.aborted, true);
+  longWork.resolve();
+  await background.workPromise;
+  assert.doesNotMatch(liveRowSource, /isEpgLoading|epgLoading|await/);
+  assert.doesNotMatch(openLiveSource, /isEpgLoading|epgByChannel|refreshEpg|await/);
+  passed += 1;
+
+  // V. PHASE/LIFETIME DIAGNOSTICS + SAFE SOURCE IDENTITY.
+  assert.match(playerContextSource, /EPG_ABORT_REQUESTED/);
+  assert.match(playerContextSource, /EPG_UNDERLYING_SETTLED/);
+  assert.match(playerContextSource, /recordM3UEpgTimeoutTimerDrift/);
+  assert.match(playerContextSource, /recordM3UEpgUnderlyingSettleAfterTimeout/);
+  assert.match(playerContextSource, /const sourceKey = boundedProvider \? effectiveEpgSourceIdentity\(provider\) : undefined/);
+  passed += 1;
+
+  assert.equal(passed, 22);
   process.stdout.write("epg runtime scenarios: 12/12 passed\n");
   process.stdout.write("epg Z2RA non-blocking contract scenarios: 2/2 passed\n");
+  process.stdout.write("epg Z2RB ownership/liveness scenarios: 8/8 passed\n");
 }
 
 void main().catch((error) => {
