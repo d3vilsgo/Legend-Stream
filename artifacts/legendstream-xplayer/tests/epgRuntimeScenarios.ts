@@ -119,7 +119,7 @@ async function main() {
   const immediate = await runEpgBackgroundAttempt(async () => "epg-ok", 50);
   assert.deepEqual(immediate.classification, "success");
   assert.equal(immediate.value, "epg-ok");
-  assert.match(playerContextSource, /if \(existingPromise\) \{\s*if \(boundedProvider\) return;/);
+  assert.match(playerContextSource, /if \(existingWork\) \{\s*if \(boundedProvider\) return;/);
   assert.match(playerContextSource, /Date\.now\(\) \+ EPG_RETRY_BACKOFF_MS/);
   passed += 1;
 
