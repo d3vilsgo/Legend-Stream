@@ -44,6 +44,13 @@ import {
 } from "@/lib/m3uTransportRouting";
 import { safeLog } from "@/lib/safeLog";
 import {
+  beginManualEpg,
+  endManualEpg,
+  recordAutoEpgStart,
+  selectManualEpgProvider,
+  type ManualEpgResult,
+} from "@/lib/manualEpgMode";
+import {
   recordM3UBackgroundRefreshBegin,
   recordM3UBackgroundRefreshEnd,
   recordM3UBackgroundRefreshLoadEnd,
@@ -215,6 +222,7 @@ interface PlayerContextValue extends PlayerState {
   refreshProvider: (providerId?: string) => Promise<void>;
   recoverLegacyCatalogFallback: (providerId: string, error: unknown) => Promise<boolean>;
   refreshEpg: (providerId?: string, channelId?: string) => Promise<void>;
+  loadEpgManually: (providerId: string) => Promise<void>;
   resolveProviderForSwitch: (providerId: string) => Promise<ProviderConfig | null>;
   setActiveProvider: (providerId: string) => Promise<boolean>;
   toggleFavorite: (channelId: string) => Promise<void>;
@@ -497,15 +505,6 @@ function effectiveEpgSourceIdentity(provider: ProviderConfig) {
     )}`;
   }
   return "none";
-}
-
-function boundedEpgAutoTriggerKey(provider: ProviderConfig, channels: readonly Channel[]) {
-  const seed = channels
-    .filter((channel) => channel.providerId === provider.id)
-    .slice(0, EPG_PAGED_SEED_LIMIT)
-    .map((channel) => channel.id)
-    .join("|");
-  return [provider.id, effectiveEpgSourceIdentity(provider), seed].join("\u0000");
 }
 
 const sameAccount = (a: ProviderConfig, b: Provider) =>
@@ -924,6 +923,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     new Map<string, { loadedAt: number; channelCount: number; inputKey?: string; sourceKey?: string }>(),
   );
   const bulkEpgPromiseRef = useRef(new Map<string, Promise<void>>());
+  const manualEpgResultRef = useRef(new Map<string, ManualEpgResult>());
   const activeEpgSingleFlightRef = useRef(new EpgSingleFlight());
   const epgAttemptGenerationRef = useRef(new EpgAttemptGeneration());
   const epgRetryNotBeforeRef = useRef(new Map<string, number>());
@@ -1678,7 +1678,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   };
 
   const refreshEpg = useCallback(
-    async (providerId?: string, channelId?: string) => {
+    async (providerId?: string, channelId?: string, force = false) => {
       const snapshot = stateRef.current;
       const resolvedProviderId = providerId ?? snapshot.provider?.id;
       if (!resolvedProviderId) return;
@@ -1696,7 +1696,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         : boundedProvider
           ? fallbackChannels.slice(0, EPG_PAGED_SEED_LIMIT)
           : fallbackChannels;
-      if (!providerChannels.length) return;
+      if (!providerChannels.length) {
+        if (force) manualEpgResultRef.current.set(resolvedProviderId, "empty");
+        return;
+      }
 
       if (!channelId) {
         const externalInput = registeredChannels.length > 0;
@@ -1709,7 +1712,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         const now = Date.now();
         const cached = epgCacheRef.current.get(resolvedProviderId);
         if (
-          cached &&
+          !force && cached &&
           now - cached.loadedAt < EPG_CACHE_TTL_MS &&
           (
             boundedProvider
@@ -1728,12 +1731,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           return;
         }
         const retryNotBefore = epgRetryNotBeforeRef.current.get(resolvedProviderId) ?? 0;
-        if (boundedProvider && Date.now() < retryNotBefore) {
+        if (boundedProvider && !force && Date.now() < retryNotBefore) {
           if (provider.type === "m3u") recordM3UEpgRetryGate(true);
           return;
         }
         if (provider.type === "m3u") recordM3UEpgRetryGate(false);
 
+        if (boundedProvider && !force) recordAutoEpgStart(resolvedProviderId);
         setIsEpgLoading(true);
         const generation = boundedProvider
           ? epgAttemptGenerationRef.current.begin(resolvedProviderId)
@@ -1831,6 +1835,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         const attempt = await attemptPromise;
         try {
           if (attempt.classification !== "success") {
+            if (force) manualEpgResultRef.current.set(resolvedProviderId, attempt.classification);
             if (boundedProvider) {
               epgRetryNotBeforeRef.current.set(
                 resolvedProviderId,
@@ -1862,6 +1867,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             );
           if (provider.type === "m3u") recordM3UEpgGenerationCurrent(generationCurrent);
           if (!generationCurrent) {
+            if (force) manualEpgResultRef.current.set(resolvedProviderId, "stale");
             safeLog.info("EPG_RESULT_IGNORED_STALE", {
               providerType: provider.type,
               providerHash,
@@ -1912,7 +1918,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             channelCount: providerChannels.length,
             result: programs.length ? "success" : "empty",
           });
+          if (force) manualEpgResultRef.current.set(resolvedProviderId, programs.length ? "success" : "empty");
         } catch {
+          if (force) manualEpgResultRef.current.set(resolvedProviderId, "failure");
           // EPG remains optional for Stalker and bounded providers alike.
         } finally {
           if (m3uEpgStartedAt !== null) {
@@ -1939,6 +1947,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       await activeEpgSingleFlightRef.current.run(requestKey, async () => {
         const beforeRequest = stateRef.current;
         if (hasUsableChannelEpg(beforeRequest.epg, channelId)) return;
+        recordAutoEpgStart(resolvedProviderId);
         setIsEpgLoading(true);
         try {
           const generation = epgAttemptGenerationRef.current.begin(resolvedProviderId);
@@ -1984,40 +1993,27 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     [],
   );
 
-  const boundedAutoEpgTriggerKey = useMemo(() => {
-    const provider = state.provider;
-    if (!provider || (provider.type !== "m3u" && provider.type !== "xtream")) return null;
-    return boundedEpgAutoTriggerKey(provider, state.channels);
-  }, [
-    state.provider?.id,
-    state.provider?.type,
-    state.provider?.epgUrl,
-    state.provider?.url,
-    state.provider?.username,
-    state.provider?.password,
-    state.channels,
-  ]);
+  const loadEpgManually = useCallback(async (providerId: string) => {
+    const provider = stateRef.current.provider;
+    if (provider?.id !== providerId || (provider.type !== "m3u" && provider.type !== "xtream")) return;
+    if (!beginManualEpg(providerId)) return;
+    manualEpgResultRef.current.delete(providerId);
+    try {
+      await refreshEpg(providerId, undefined, true);
+      // The five-second attempt budget may end before the underlying work settles.
+      // Keep the visible manual attempt owned until that work actually finishes.
+      await bulkEpgPromiseRef.current.get(providerId);
+      endManualEpg(providerId, manualEpgResultRef.current.get(providerId) ?? "failure");
+    } catch {
+      endManualEpg(providerId, "failure");
+    } finally {
+      manualEpgResultRef.current.delete(providerId);
+    }
+  }, [refreshEpg]);
 
   useEffect(() => {
-    if (isHydrating || !boundedAutoEpgTriggerKey) return;
-    const provider = stateRef.current.provider;
-    if (!provider || (provider.type !== "m3u" && provider.type !== "xtream")) return;
-    if (!stateRef.current.channels.some((channel) => channel.providerId === provider.id)) return;
-
-    let cancelled = false;
-    const providerId = provider.id;
-    const timer = setTimeout(() => {
-      void (async () => {
-        await yieldToUi();
-        if (!cancelled) await refreshEpg(providerId);
-      })();
-    }, EPG_START_DELAY_MS);
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [isHydrating, boundedAutoEpgTriggerKey, refreshEpg]);
+    selectManualEpgProvider(state.provider?.id ?? null);
+  }, [state.provider?.id]);
 
   useEffect(() => {
     if (isHydrating || !state.provider || state.provider.type !== "stalker") return;
@@ -2112,6 +2108,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       refreshProvider,
       recoverLegacyCatalogFallback,
       refreshEpg,
+      loadEpgManually,
       resolveProviderForSwitch,
       setActiveProvider,
       toggleFavorite,
@@ -2131,6 +2128,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       scopedError,
       m3uCatalogCommit,
       refreshEpg,
+      loadEpgManually,
     ],
   );
 

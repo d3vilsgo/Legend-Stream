@@ -236,7 +236,9 @@ async function main() {
   assert.match(liveListSource, /selectProgramsAt\(epgByChannel\.get\(channel\.id\), epgClock\)\.now/);
   assert.match(liveListSource, /current \? `Şu an:/);
   assert.match(liveListSource, /: "—"/);
-  assert.match(liveListSource, /void refreshEpg\(provider\.id\)/);
+  assert.match(liveListSource, /registerEpgChannels\(provider\.id, seed\)/);
+  assert.doesNotMatch(liveListSource, /refreshEpg\(provider\.id\)/);
+  assert.match(liveListSource, /<ManualEpgControl providerId=\{provider\.id\} enabled=\{page\.items\.length > 0\}/);
   const liveRowStart = liveListSource.indexOf("renderItem={({ item: channel }) => {");
   const liveRowEnd = liveListSource.indexOf("extraData={{ favorites, epgByChannel, epgClock }}", liveRowStart);
   const liveRowSource = liveListSource.slice(liveRowStart, liveRowEnd);
@@ -252,14 +254,13 @@ async function main() {
   assert.doesNotMatch(openLiveSource, /refreshEpg|isEpgLoading|await/);
   passed += 1;
 
-  // L. PLAYER: canonical currentLive triggers lazy recovery and feeds existing PlayerChrome contract.
+  // L. PLAYER: cached EPG is consumed without starting an automatic request.
   assert.match(playerSource, /registerEpgChannels\(provider\.id, \[currentLive\]\)/);
-  assert.match(playerSource, /void refreshEpg\(provider\.id, currentLive\.id\)/);
+  assert.doesNotMatch(playerSource, /refreshEpg\(provider\.id, currentLive\.id\)/);
   assert.match(playerSource, /epgNow=\{currentEpg\.now\}/);
   assert.match(playerSource, /epgNext=\{currentEpg\.next\}/);
   assert.match(playerSource, /epgLoading=\{currentKind === "live" && isEpgLoading\}/);
-  assert.match(playerSource, /void refreshEpg\(provider\.id, currentLive\.id\)/);
-  assert.doesNotMatch(playerSource, /await refreshEpg\(provider\.id, currentLive\.id\)/);
+  assert.match(playerContextSource, /loadEpgManually = useCallback/);
   assert.match(playerContextSource, /const boundedProvider = provider\.type === "m3u" \|\| provider\.type === "xtream"/);
   assert.match(playerContextSource, /startEpgBackgroundAttempt\([\s\S]*EPG_BACKGROUND_BUDGET_MS/);
   assert.match(playerContextSource, /const inFlight = bulkEpgPromiseRef\.current\.get\(resolvedProviderId\);\s*if \(inFlight\) return;/);
@@ -372,17 +373,11 @@ async function main() {
   );
   passed += 1;
 
-  // R. SEMANTIC TRIGGER.
-  assert.match(playerContextSource, /function boundedEpgAutoTriggerKey\(provider: ProviderConfig, channels: readonly Channel\[\]\)/);
+  // R. Source identity still gates cache validity; provider restore has no EPG timer.
   assert.match(playerContextSource, /effectiveEpgSourceIdentity\(provider\)/);
-  const boundedEffectStart = playerContextSource.indexOf("const boundedAutoEpgTriggerKey = useMemo");
-  const stalkerEffectStart = playerContextSource.indexOf('if (isHydrating || !state.provider || state.provider.type !== "stalker")', boundedEffectStart);
-  const boundedEffects = playerContextSource.slice(boundedEffectStart, stalkerEffectStart);
-  assert.ok(boundedEffectStart >= 0 && stalkerEffectStart > boundedEffectStart);
-  assert.doesNotMatch(boundedEffects, /lastLoadedAt/);
-  assert.match(boundedEffects, /boundedEpgAutoTriggerKey\(provider, state\.channels\)/);
-  assert.match(boundedEffects, /\[isHydrating, boundedAutoEpgTriggerKey, refreshEpg\]/);
-  assert.doesNotMatch(boundedEffects, /\[isHydrating,[^\]]*state\.channels[^\]]*refreshEpg\]/);
+  assert.doesNotMatch(playerContextSource, /boundedAutoEpgTriggerKey/);
+  assert.match(playerContextSource, /await refreshEpg\(providerId, undefined, true\)/);
+  assert.match(playerContextSource, /await bulkEpgPromiseRef\.current\.get\(providerId\)/);
   passed += 1;
 
   // S. M3U TOKENIZER PARITY: the actual pure production helper preserves prior split semantics.

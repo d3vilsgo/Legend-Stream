@@ -123,7 +123,6 @@ export function CompatibilityVideoPlayer({
     channels,
     epg,
     isEpgLoading,
-    refreshEpg,
     recordWatched,
   } = usePlayer();
   const initialKind = mediaKind ?? inferMediaKind(source);
@@ -441,8 +440,7 @@ export function CompatibilityVideoPlayer({
     if (currentKind !== "live" || !provider || !currentLive) return;
     if (currentLive.providerId !== provider.id) return;
     registerEpgChannels(provider.id, [currentLive]);
-    void refreshEpg(provider.id, currentLive.id);
-  }, [currentKind, currentLive?.id, provider?.id, refreshEpg]);
+  }, [currentKind, currentLive?.id, provider?.id]);
 
   const currentEpg = selectChannelEpg(epg, currentLive, Date.now());
 

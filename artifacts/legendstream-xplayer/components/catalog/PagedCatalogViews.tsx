@@ -17,8 +17,9 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FocusButton } from "@/components/FocusButton";
+import { ManualEpgControl } from "@/components/catalog/ManualEpgControl";
 import type { EpgProgram, ProviderConfig, ProviderType } from "@/context/PlayerContext";
-import { selectProgramsAt, usePlayer } from "@/context/PlayerContext";
+import { selectProgramsAt } from "@/context/PlayerContext";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { useCatalogPage } from "@/hooks/useCatalogPage";
@@ -520,7 +521,6 @@ export function PagedLiveCatalog({
 }) {
   const colors = useColors();
   const { t } = useI18n();
-  const { refreshEpg } = usePlayer();
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [epgClock, setEpgClock] = useState(() => Date.now());
@@ -605,11 +605,7 @@ export function PagedLiveCatalog({
     if (!epgSeedKey) return;
     const seed = page.items.slice(0, EPG_PAGED_SEED_LIMIT);
     registerEpgChannels(provider.id, seed);
-    const timer = setTimeout(() => {
-      void refreshEpg(provider.id);
-    }, 250);
-    return () => clearTimeout(timer);
-  }, [epgSeedKey, provider.id, refreshEpg]);
+  }, [epgSeedKey, provider.id]);
   const initialEmpty = shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search);
   if (stalkerLive && !categoriesReady) return <CatalogLoadingSkeleton text={t("loading")} />;
   if (initialEmpty) return <CatalogLoadingSkeleton text={t("loading")} />;
@@ -636,6 +632,7 @@ export function PagedLiveCatalog({
           });
         }}
       >
+        <ManualEpgControl providerId={provider.id} enabled={page.items.length > 0} />
         {provider.type === "m3u" && page.countKnown && hasMeaningfulM3ULiveGroups === false
           ? <Text style={[s.m3uHint, { color: colors.mutedForeground }]}>{t("m3uNoGroups")}</Text>
           : null}
