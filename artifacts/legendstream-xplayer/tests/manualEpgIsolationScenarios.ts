@@ -72,7 +72,7 @@ scenario("heartbeat drift is visible during both A and B", () => {
   recordManualEpgHeartbeat("b", 35.4);
   recordManualEpgHeartbeat("b", 10);
   assert.equal(getManualEpgSnapshot().heartbeatDriftMaxMs, 35);
-  assert.match(control, /recordManualEpgHeartbeat\(providerId, Date\.now\(\) - expected\)/);
+  assert.match(control, /const drift = Date\.now\(\) - expected;[\s\S]*?recordManualEpgHeartbeat\(providerId, drift\);[\s\S]*?recordXtreamEpgHeartbeat\(drift\);/);
 });
 scenario("no automatic starts and no secrets in diagnostic report", () => {
   const report = manualEpgDiagnosticLines().join("\n");

@@ -140,8 +140,8 @@ async function main() {
   const publicationEnd = bulkRefreshSource.indexOf("epgCacheRef.current.set", publicationStart);
   const publicationSource = bulkRefreshSource.slice(publicationStart, publicationEnd);
   assert.ok(publicationStart >= 0 && publicationEnd > publicationStart);
-  assert.match(publicationSource, /if \(programs\.length\)/);
-  assert.match(publicationSource, /setState\(\(previous\) =>/);
+  assert.match(publicationSource, /const xtreamMode = provider\.type === "xtream" \? getXtreamEpgDiagnosticSnapshot\(\)\.mode : "FULL_PIPELINE";/);
+  assert.match(publicationSource, /const suppressPublication = provider\.type === "xtream" && xtreamMode !== "FULL_PIPELINE";[\s\S]*?if \(programs\.length && !suppressPublication\) \{[\s\S]*?setState\(\(previous\) =>/);
   assert.match(publicationSource, /epgAttemptGenerationRef\.current\.isCurrent\(resolvedProviderId, generation\)/);
   assert.match(publicationSource, /mergeEpgPrograms\(previous\.epg, ids, programs\)/);
   passed += 1;
