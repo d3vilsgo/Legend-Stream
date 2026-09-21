@@ -51,6 +51,12 @@ import {
   type ManualEpgResult,
 } from "@/lib/manualEpgMode";
 import {
+  beginXtreamEpgPhase,
+  endXtreamEpgPhase,
+  getXtreamEpgDiagnosticSnapshot,
+  resetXtreamEpgDiagnosticRun,
+} from "@/lib/xtreamEpgDiagnostics";
+import {
   recordM3UBackgroundRefreshBegin,
   recordM3UBackgroundRefreshEnd,
   recordM3UBackgroundRefreshLoadEnd,
@@ -830,8 +836,9 @@ function compactEpgPrograms(programs: EpgProgram[], nowMs = Date.now()) {
   return compact;
 }
 
-async function normalizeProgramText(programs: EpgProgram[], diagnosticM3U = false) {
+async function normalizeProgramText(programs: EpgProgram[], diagnosticM3U = false, diagnosticXtream = false) {
   if (diagnosticM3U) recordM3UEpgNormalizeBegin();
+  if (diagnosticXtream) beginXtreamEpgPhase("NORMALIZE");
   try {
     const normalized = await mapInBatches(
       programs,
@@ -846,6 +853,7 @@ async function normalizeProgramText(programs: EpgProgram[], diagnosticM3U = fals
     return compactEpgPrograms(normalized);
   } finally {
     if (diagnosticM3U) recordM3UEpgNormalizeEnd();
+    if (diagnosticXtream) endXtreamEpgPhase("NORMALIZE");
   }
 }
 
@@ -870,7 +878,7 @@ async function loadBulkProviderEpg(
       seedChannels,
       { signal },
     );
-    return normalizeProgramText(programs);
+    return normalizeProgramText(programs, false, true);
   }
 
   let epgUrl = provider.epgUrl?.trim();
@@ -896,7 +904,7 @@ async function loadBulkProviderEpg(
     channels,
     { signal },
   );
-  return normalizeProgramText(programs, provider.type === "m3u");
+  return normalizeProgramText(programs, provider.type === "m3u", provider.type === "xtream");
 }
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
@@ -1751,6 +1759,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           recordM3UEpgWorkBegin(m3uEpgStartedAt);
         }
         const providerHash = redactProviderId(resolvedProviderId);
+        if (provider.type === "xtream" && force) resetXtreamEpgDiagnosticRun(providerChannels.length);
         if (boundedProvider) {
           safeLog.info("EPG_ATTEMPT_BEGIN", {
             providerType: provider.type,
@@ -1881,7 +1890,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           await yieldToUi();
           const ids = new Set(providerChannels.map((channel) => channel.id));
           const programs = attempt.value ?? [];
-          if (programs.length) {
+          const xtreamMode = provider.type === "xtream" ? getXtreamEpgDiagnosticSnapshot().mode : "FULL_PIPELINE";
+          const suppressPublication = provider.type === "xtream" && xtreamMode !== "FULL_PIPELINE";
+          if (programs.length && !suppressPublication) {
+            if (provider.type === "xtream") beginXtreamEpgPhase("PUBLICATION");
             if (provider.type === "m3u") recordM3UEpgPublicationBegin();
             setState((previous) => {
               if (
@@ -1902,6 +1914,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
               return next;
             });
             if (provider.type === "m3u") recordM3UEpgPublicationEnd();
+            if (provider.type === "xtream") {
+              endXtreamEpgPhase("PUBLICATION", { publishedItemCount: programs.length });
+              beginXtreamEpgPhase("UI_COMMIT");
+              await yieldToUi();
+              endXtreamEpgPhase("UI_COMMIT", { publishedItemCount: programs.length });
+            }
+          }
+          if (suppressPublication) {
+            if (force) manualEpgResultRef.current.set(resolvedProviderId, "empty");
+            return;
           }
           epgCacheRef.current.set(resolvedProviderId, {
             loadedAt: Date.now(),
@@ -1997,6 +2019,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const provider = stateRef.current.provider;
     if (provider?.id !== providerId || (provider.type !== "m3u" && provider.type !== "xtream")) return;
     if (!beginManualEpg(providerId)) return;
+    if (provider.type === "xtream") beginXtreamEpgPhase("TRIGGER");
     manualEpgResultRef.current.delete(providerId);
     try {
       await refreshEpg(providerId, undefined, true);
@@ -2007,6 +2030,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     } catch {
       endManualEpg(providerId, "failure");
     } finally {
+      if (provider.type === "xtream") endXtreamEpgPhase("TRIGGER");
       manualEpgResultRef.current.delete(providerId);
     }
   }, [refreshEpg]);

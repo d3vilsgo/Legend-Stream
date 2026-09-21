@@ -29,6 +29,13 @@ import {
   type XtreamCredentials,
 } from "./xtreamCatalog";
 import { normalizeXtreamBaseUrl as normalizeCanonicalXtreamBaseUrl } from "./xtream/client";
+import {
+  beginXtreamEpgPhase,
+  endXtreamEpgPhase,
+  getXtreamEpgDiagnosticSnapshot,
+  recordXtreamEpgHeadersReceived,
+  setXtreamEpgSourceKind,
+} from "./xtreamEpgDiagnostics";
 
 export type ProviderType = "m3u" | "xtream" | "stalker";
 export type ChannelContentType = "live" | "movie" | "series";
@@ -935,27 +942,51 @@ export async function loadEpg(
   channels: Channel[],
   options: EpgLoadOptions = {},
 ): Promise<EpgProgram[]> {
+  const diagnosticXtream = provider.type === "xtream";
+  const mode = diagnosticXtream ? getXtreamEpgDiagnosticSnapshot().mode : "FULL_PIPELINE";
+
   if (provider.epgUrl) {
     const diagnosticM3U = provider.type === "m3u";
+    if (diagnosticXtream) {
+      setXtreamEpgSourceKind("xmltv");
+      beginXtreamEpgPhase("FETCH");
+    }
     if (diagnosticM3U) recordM3UEpgFetchBegin();
     const response = await fetch(provider.epgUrl, {
       headers: { Accept: "application/xml,text/xml,*/*" },
       signal: options.signal ?? AbortSignal.timeout(30_000),
     });
+    if (diagnosticXtream) {
+      recordXtreamEpgHeadersReceived();
+      endXtreamEpgPhase("FETCH");
+      if (mode === "FETCH_ONLY") return [];
+      beginXtreamEpgPhase("BODY");
+      beginXtreamEpgPhase("DECODE");
+    }
     if (diagnosticM3U) recordM3UEpgFetchResponse();
     if (!response.ok) throw new Error(`EPG request failed with ${response.status}.`);
     const text = await decodeResponseText(response, options.signal, diagnosticM3U);
+    if (diagnosticXtream) {
+      endXtreamEpgPhase("DECODE", { bodyChars: text.length });
+      endXtreamEpgPhase("BODY", { bodyChars: text.length });
+      if (mode === "FETCH_BODY_ONLY") return [];
+    }
     if (options.signal?.aborted) throw new Error("EPG background attempt aborted.");
+    if (diagnosticXtream) beginXtreamEpgPhase("PARSE");
     if (diagnosticM3U) recordM3UEpgParseBegin();
     const programs = await parseXmltvAsync(text, channels, Date.now(), options.signal);
     if (diagnosticM3U) recordM3UEpgParseEnd();
+    if (diagnosticXtream) endXtreamEpgPhase("PARSE", { programmeCount: programs.length });
     return programs;
   }
 
   if (provider.type === "xtream" && provider.username && provider.password) {
+    setXtreamEpgSourceKind("short_epg");
     const baseUrl = cleanBaseUrl(provider.url);
     const query = `username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}`;
     const targetChannels = channels.filter((channel) => channel.streamType === "xtream").slice(0, 60);
+    beginXtreamEpgPhase("FETCH");
+    let headersSeen = false;
     const results = await Promise.all(
       targetChannels.map(async (channel) => {
         const streamId = channel.id.split(":").pop();
@@ -964,10 +995,18 @@ export async function loadEpg(
           const response = await fetch(`${baseUrl}/player_api.php?${query}&action=get_short_epg&stream_id=${encodeURIComponent(streamId)}&limit=8`, {
             signal: options.signal ?? AbortSignal.timeout(12_000),
           });
-          if (!response.ok) return [] as EpgProgram[];
-          const data = await asJson(response);
+          if (!headersSeen) { headersSeen = true; recordXtreamEpgHeadersReceived(); }
+          if (!response.ok || mode === "FETCH_ONLY") return [] as EpgProgram[];
+          beginXtreamEpgPhase("BODY");
+          const text = await response.text();
+          endXtreamEpgPhase("BODY", { bodyChars: text.length });
+          if (mode === "FETCH_BODY_ONLY") return [] as EpgProgram[];
+          beginXtreamEpgPhase("DECODE");
+          const data = JSON.parse(text) as any;
+          endXtreamEpgPhase("DECODE");
           const rows = Array.isArray(data?.epg_listings) ? data.epg_listings : [];
-          return rows
+          beginXtreamEpgPhase("PARSE");
+          const parsed = rows
             .map((row: any, index: number) => ({
               id: `${channel.id}:${row.id ?? index}`,
               channelId: channel.id,
@@ -977,13 +1016,17 @@ export async function loadEpg(
               end: Number(row.stop_timestamp) * 1000,
             }))
             .filter((row: EpgProgram) => Number.isFinite(row.start) && Number.isFinite(row.end));
+          endXtreamEpgPhase("PARSE", { programmeCount: parsed.length });
+          return parsed;
         } catch {
           return [] as EpgProgram[];
         }
       }),
     );
+    endXtreamEpgPhase("FETCH");
     return results.flat().sort((a, b) => a.start - b.start);
   }
+  if (diagnosticXtream) setXtreamEpgSourceKind("unknown");
   return [];
 }
 

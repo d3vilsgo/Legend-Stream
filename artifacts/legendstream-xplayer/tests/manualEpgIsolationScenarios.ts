@@ -15,6 +15,7 @@ const player = source("components/CompatibilityVideoPlayerV2.tsx");
 const control = source("components/catalog/ManualEpgControl.tsx");
 const iptv = source("lib/iptv.ts");
 const stalker = source("components/catalog/StalkerLiveCatalog.tsx");
+const xtreamDiag = source("lib/xtreamEpgDiagnostics.ts");
 let passed = 0;
 const scenario = (label: string, run: () => void) => {
   run();
@@ -100,3 +101,26 @@ scenario("Stalker Live old EPG registration is unchanged", () => {
   assert.match(stalker, /void refreshEpg\(provider\.id\)/);
 });
 process.stdout.write(`manual EPG isolation scenarios: ${passed}/${passed} passed\n`);
+
+scenario("Z3C2 diagnostic modes preserve phase isolation and sanitized source-kind reporting", () => {
+  assert.match(xtreamDiag, /"FETCH_ONLY"/);
+  assert.match(xtreamDiag, /"FETCH_BODY_ONLY"/);
+  assert.match(xtreamDiag, /"PARSE_NO_PUBLICATION"/);
+  assert.match(xtreamDiag, /"FULL_PIPELINE"/);
+  assert.match(iptv, /mode === "FETCH_ONLY"\) return \[\]/);
+  assert.match(iptv, /mode === "FETCH_BODY_ONLY"\) return \[\]/);
+  assert.match(context, /suppressPublication = provider\.type === "xtream" && xtreamMode !== "FULL_PIPELINE"/);
+  assert.match(xtreamDiag, /XTREAM_EPG_DIAGNOSTIC_MODE=/);
+  assert.match(xtreamDiag, /XTREAM_EPG_SOURCE_KIND=/);
+  assert.match(xtreamDiag, /XTREAM_EPG_MAX_OBSERVED_HEARTBEAT_DRIFT_MS=/);
+  assert.doesNotMatch(xtreamDiag, /username|password|token|mac|https?:\/\//i);
+});
+scenario("Z3C2 source kind distinguishes short EPG and XMLTV without exposing URLs", () => {
+  assert.match(iptv, /setXtreamEpgSourceKind\("xmltv"\)/);
+  assert.match(iptv, /setXtreamEpgSourceKind\("short_epg"\)/);
+  assert.match(iptv, /recordXtreamEpgHeadersReceived\(\)/);
+  assert.match(xtreamDiag, /bodyBytes|bodyChars/);
+});
+scenario("Z3C2 diagnostic mode does not touch playback identity", () => {
+  assert.doesNotMatch(xtreamDiag, /streamUrl|playbackStreamId|playbackContainerExtension|create_link/);
+});

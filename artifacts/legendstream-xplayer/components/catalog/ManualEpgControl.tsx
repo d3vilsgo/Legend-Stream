@@ -8,12 +8,26 @@ import {
   recordManualEpgHeartbeat,
   subscribeManualEpg,
 } from "@/lib/manualEpgMode";
+import {
+  getXtreamEpgDiagnosticSnapshot,
+  recordXtreamEpgHeartbeat,
+  setXtreamEpgDiagnosticMode,
+  subscribeXtreamEpgDiagnostics,
+  xtreamEpgDiagnosticLines,
+  type XtreamEpgDiagnosticMode,
+} from "@/lib/xtreamEpgDiagnostics";
 
 export function ManualEpgControl({ providerId, enabled }: { providerId: string; enabled: boolean }) {
   const colors = useColors();
   const { loadEpgManually } = usePlayer();
   const [showDiagnostics, setShowDiagnostics] = useState(false);
   const state = useSyncExternalStore(subscribeManualEpg, getManualEpgSnapshot, getManualEpgSnapshot);
+  const xtreamDiag = useSyncExternalStore(
+    subscribeXtreamEpgDiagnostics,
+    getXtreamEpgDiagnosticSnapshot,
+    getXtreamEpgDiagnosticSnapshot,
+  );
+  const modes: XtreamEpgDiagnosticMode[] = ["FETCH_ONLY", "FETCH_BODY_ONLY", "PARSE_NO_PUBLICATION", "FULL_PIPELINE"];
   const activeProvider = state.providerId === providerId;
   const loading = activeProvider && state.manualActive;
   const pressCount = activeProvider ? state.manualPressCount : 0;
@@ -21,7 +35,9 @@ export function ManualEpgControl({ providerId, enabled }: { providerId: string; 
   useEffect(() => {
     let expected = Date.now() + 1_000;
     const timer = setInterval(() => {
-      recordManualEpgHeartbeat(providerId, Date.now() - expected);
+      const drift = Date.now() - expected;
+      recordManualEpgHeartbeat(providerId, drift);
+      recordXtreamEpgHeartbeat(drift);
       expected = Date.now() + 1_000;
     }, 1_000);
     return () => clearInterval(timer);
@@ -41,6 +57,15 @@ export function ManualEpgControl({ providerId, enabled }: { providerId: string; 
           {loading ? "EPG Yükleniyor…" : pressCount ? "EPG'yi Yenile" : "EPG'yi Yükle"}
         </Text>
       </Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="EPG faz modu"
+        disabled={loading}
+        onPress={() => {
+          const index = modes.indexOf(xtreamDiag.mode);
+          setXtreamEpgDiagnosticMode(modes[(index + 1) % modes.length]);
+          setShowDiagnostics(true);
+        }}>
+        <Text style={{ color: colors.mutedForeground, fontSize: 10 }}>{xtreamDiag.mode}</Text>
+      </Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel="EPG tanılama"
         onPress={() => setShowDiagnostics((shown) => !shown)}>
         <Text style={{ color: colors.mutedForeground, fontSize: 11 }}>EPG DBG</Text>
@@ -53,7 +78,7 @@ export function ManualEpgControl({ providerId, enabled }: { providerId: string; 
         ...state, providerId, manualPressCount: 0, lastManualPressAt: null,
         manualActive: false, manualElapsedMs: null, manualResult: "idle", autoStartCount: 0,
         heartbeatDriftMaxMs: 0,
-      }).join("\n")}
+      }).concat(xtreamEpgDiagnosticLines(xtreamDiag)).join("\n")}
     </Text> : null}
   </View>;
 }
