@@ -33,8 +33,11 @@ import {
   beginXtreamEpgPhase,
   endXtreamEpgPhase,
   getXtreamEpgDiagnosticSnapshot,
+  recordXtreamEpgCpuStage,
   recordXtreamEpgHeadersReceived,
+  recordXtreamEpgParseYield,
   setXtreamEpgSourceKind,
+  type XtreamEpgCpuStage,
 } from "./xtreamEpgDiagnostics";
 
 export type ProviderType = "m3u" | "xtream" | "stalker";
@@ -883,8 +886,28 @@ export async function parseXmltvAsync(
   channels: Channel[],
   nowMs = Date.now(),
   signal?: AbortSignal,
+  diagnosticXtream = false,
 ): Promise<EpgProgram[]> {
+  const clock = () => globalThis.performance?.now?.() ?? Date.now();
+  const pending = new Map<XtreamEpgCpuStage, { total: number; max: number; units: number }>();
+  const measure = (stage: XtreamEpgCpuStage, start: number) => {
+    if (!diagnosticXtream) return;
+    const duration = Math.max(0, clock() - start);
+    const metric = pending.get(stage) ?? { total: 0, max: 0, units: 0 };
+    metric.total += duration;
+    metric.max = Math.max(metric.max, duration);
+    metric.units += 1;
+    pending.set(stage, metric);
+  };
+  const flush = () => {
+    for (const [stage, metric] of pending) {
+      recordXtreamEpgCpuStage(stage, metric.total, metric.max, metric.units);
+    }
+    pending.clear();
+  };
+  const mapStart = diagnosticXtream ? clock() : 0;
   const channelIds = channelIdMap(channels);
+  measure("CHANNEL_MATCH", mapStart);
   const programs: EpgProgram[] = [];
   const perChannel = new Map<string, number>();
   const programmePattern = /<programme\b([^>]*)>([\s\S]*?)<\/programme>/gi;
@@ -892,10 +915,20 @@ export async function parseXmltvAsync(
   const windowEnd = nowMs + 18 * 60 * 60 * 1000;
   let match: RegExpExecArray | null;
   let scanned = 0;
+  let chunkStart = diagnosticXtream ? clock() : 0;
 
-  while ((match = programmePattern.exec(content))) {
+  while (true) {
+    const scanStart = diagnosticXtream ? clock() : 0;
+    match = programmePattern.exec(content);
+    measure("XML_SCAN", scanStart);
+    if (!match) break;
+    const extractStart = diagnosticXtream ? clock() : 0;
     const attributes = parseAttributes(match[1]);
+    measure("PROGRAMME_EXTRACT", extractStart);
+    const matchStart = diagnosticXtream ? clock() : 0;
     const channelId = channelIds.get(decodeEpgText(attributes.channel || ""));
+    measure("CHANNEL_MATCH", matchStart);
+    const programmeStart = diagnosticXtream ? clock() : 0;
     if (channelId) {
       const start = parseXmlDate(attributes.start || "");
       const end = parseXmlDate(attributes.stop || "");
@@ -920,17 +953,30 @@ export async function parseXmltvAsync(
         perChannel.set(channelId, count + 1);
       }
     }
+    measure("PROGRAMME_EXTRACT", programmeStart);
 
     scanned += 1;
     if (scanned % 120 === 0) {
+      measure("PARSE_CHUNK", chunkStart);
+      flush();
       if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+      if (diagnosticXtream) recordXtreamEpgParseYield();
       await yieldToUi();
+      if (diagnosticXtream) chunkStart = clock();
     }
   }
 
+  if (scanned % 120 !== 0) measure("PARSE_CHUNK", chunkStart);
+  flush();
   if (signal?.aborted) throw new Error("EPG background attempt aborted.");
   await yieldToUi();
-  return programs.sort((a, b) => a.start - b.start);
+  const sortStart = diagnosticXtream ? clock() : 0;
+  const sorted = programs.sort((a, b) => a.start - b.start);
+  if (diagnosticXtream) {
+    const sortMs = clock() - sortStart;
+    recordXtreamEpgCpuStage("SORT_OR_GROUP", sortMs, sortMs, programs.length);
+  }
+  return sorted;
 }
 
 type EpgLoadOptions = {
@@ -974,7 +1020,7 @@ export async function loadEpg(
     if (options.signal?.aborted) throw new Error("EPG background attempt aborted.");
     if (diagnosticXtream) beginXtreamEpgPhase("PARSE");
     if (diagnosticM3U) recordM3UEpgParseBegin();
-    const programs = await parseXmltvAsync(text, channels, Date.now(), options.signal);
+    const programs = await parseXmltvAsync(text, channels, Date.now(), options.signal, diagnosticXtream);
     if (diagnosticM3U) recordM3UEpgParseEnd();
     if (diagnosticXtream) endXtreamEpgPhase("PARSE", { programmeCount: programs.length });
     return programs;

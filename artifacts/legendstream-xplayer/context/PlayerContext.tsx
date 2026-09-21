@@ -54,6 +54,7 @@ import {
   beginXtreamEpgPhase,
   endXtreamEpgPhase,
   getXtreamEpgDiagnosticSnapshot,
+  recordXtreamEpgCpuStage,
   resetXtreamEpgDiagnosticRun,
 } from "@/lib/xtreamEpgDiagnostics";
 import {
@@ -840,17 +841,33 @@ async function normalizeProgramText(programs: EpgProgram[], diagnosticM3U = fals
   if (diagnosticM3U) recordM3UEpgNormalizeBegin();
   if (diagnosticXtream) beginXtreamEpgPhase("NORMALIZE");
   try {
-    const normalized = await mapInBatches(
-      programs,
-      (program) => ({
+    const normalizeOne = (program: EpgProgram) => ({
         ...program,
         title: decodeMaybeBase64(program.title),
         description: undefined,
-      }),
-      250,
-    );
+    });
+    let normalized: EpgProgram[];
+    if (diagnosticXtream) {
+      normalized = new Array<EpgProgram>(programs.length);
+      for (let start = 0; start < programs.length; start += 250) {
+        const end = Math.min(start + 250, programs.length);
+        const began = globalThis.performance?.now?.() ?? Date.now();
+        for (let index = start; index < end; index += 1) normalized[index] = normalizeOne(programs[index]);
+        const elapsed = (globalThis.performance?.now?.() ?? Date.now()) - began;
+        recordXtreamEpgCpuStage("NORMALIZE_MAP", elapsed, elapsed, end - start);
+        if (end < programs.length) await yieldToUi();
+      }
+    } else {
+      normalized = await mapInBatches(programs, normalizeOne, 250);
+    }
     await yieldToUi();
-    return compactEpgPrograms(normalized);
+    const compactBegan = diagnosticXtream ? (globalThis.performance?.now?.() ?? Date.now()) : 0;
+    const compact = compactEpgPrograms(normalized);
+    if (diagnosticXtream) {
+      const elapsed = (globalThis.performance?.now?.() ?? Date.now()) - compactBegan;
+      recordXtreamEpgCpuStage("SORT_OR_GROUP", elapsed, elapsed, normalized.length);
+    }
+    return compact;
   } finally {
     if (diagnosticM3U) recordM3UEpgNormalizeEnd();
     if (diagnosticXtream) endXtreamEpgPhase("NORMALIZE");

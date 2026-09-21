@@ -6,6 +6,10 @@ import {
   beginManualEpg, endManualEpg, getManualEpgSnapshot, manualEpgDiagnosticLines,
   recordAutoEpgStart, recordManualEpgHeartbeat, selectManualEpgProvider,
 } from "../lib/manualEpgMode";
+import {
+  getXtreamEpgDiagnosticSnapshot, recordXtreamEpgCpuStage, recordXtreamEpgParseYield,
+  resetXtreamEpgDiagnosticRun, xtreamEpgDiagnosticLines,
+} from "../lib/xtreamEpgDiagnostics";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(root, path), "utf8");
@@ -93,7 +97,7 @@ scenario("stale publication and work lifetime guards survive", () => {
 });
 scenario("Xtream and M3U EPG mechanisms remain unchanged", () => {
   assert.match(iptv, /get_short_epg&stream_id=/);
-  assert.match(iptv, /parseXmltvAsync\(text, channels, Date\.now\(\), options\.signal\)/);
+  assert.match(iptv, /parseXmltvAsync\(text, channels, Date\.now\(\), options\.signal, diagnosticXtream\)/);
   assert.match(context, /xmltv\.php\?username=/);
 });
 scenario("Stalker Live old EPG registration is unchanged", () => {
@@ -123,4 +127,24 @@ scenario("Z3C2 source kind distinguishes short EPG and XMLTV without exposing UR
 });
 scenario("Z3C2 diagnostic mode does not touch playback identity", () => {
   assert.doesNotMatch(xtreamDiag, /streamUrl|playbackStreamId|playbackContainerExtension|create_link/);
+});
+scenario("Z3C3 separates XML scanning, extraction, channel matching, and bounded normalization", () => {
+  resetXtreamEpgDiagnosticRun(48);
+  recordXtreamEpgCpuStage("XML_SCAN", 9, 5, 120);
+  recordXtreamEpgCpuStage("XML_SCAN", 6, 4, 120);
+  recordXtreamEpgCpuStage("CHANNEL_MATCH", 2, 1, 120);
+  recordXtreamEpgCpuStage("PARSE_CHUNK", 10, 10, 1);
+  recordXtreamEpgParseYield();
+  const snapshot = getXtreamEpgDiagnosticSnapshot();
+  assert.deepEqual(snapshot.cpu.XML_SCAN, { totalMs: 15, maxSyncMs: 5, workUnits: 240 });
+  assert.equal(snapshot.cpu.CHANNEL_MATCH.workUnits, 120);
+  assert.equal(snapshot.cpu.PARSE_CHUNK.maxSyncMs, 10);
+  assert.equal(snapshot.parseYieldCount, 1);
+  assert.match(xtreamEpgDiagnosticLines(snapshot).join("\n"), /XTREAM_EPG_XML_SCAN_MAX_SYNC_MS=5/);
+  assert.match(iptv, /scanned % 120 === 0[\s\S]*?measure\("PARSE_CHUNK", chunkStart\);[\s\S]*?recordXtreamEpgParseYield\(\);[\s\S]*?await yieldToUi\(\)/);
+  assert.match(context, /start \+= 250[\s\S]*?recordXtreamEpgCpuStage\("NORMALIZE_MAP", elapsed, elapsed, end - start\)/);
+  assert.match(context, /recordXtreamEpgCpuStage\("SORT_OR_GROUP", elapsed, elapsed, normalized\.length\)/);
+  resetXtreamEpgDiagnosticRun(12);
+  assert.equal(getXtreamEpgDiagnosticSnapshot().cpu.XML_SCAN.workUnits, 0);
+  assert.equal(getXtreamEpgDiagnosticSnapshot().parseYieldCount, 0);
 });
