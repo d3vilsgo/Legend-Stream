@@ -75,11 +75,12 @@ scenario("provider switch clears previous provider diagnostic state", () => {
   endManualEpg("a", "success");
   assert.equal(getManualEpgSnapshot().providerId, "b");
 });
-scenario("heartbeat drift is visible during both A and B", () => {
+scenario("heartbeat diagnostics remain available without a user-visible debug timer", () => {
   recordManualEpgHeartbeat("b", 35.4);
   recordManualEpgHeartbeat("b", 10);
   assert.equal(getManualEpgSnapshot().heartbeatDriftMaxMs, 35);
-  assert.match(control, /const drift = Date\.now\(\) - expected;[\s\S]*?recordManualEpgHeartbeat\(providerId, drift\);[\s\S]*?recordXtreamEpgHeartbeat\(drift\);/);
+  assert.doesNotMatch(control, /setInterval|recordManualEpgHeartbeat|recordXtreamEpgHeartbeat/);
+  assert.doesNotMatch(control, /EPG DBG|FETCH_ONLY|FETCH_BODY_ONLY|PARSE_NO_PUBLICATION|FULL_PIPELINE|EPG faz modu|EPG tanılama/);
 });
 scenario("no automatic starts and no secrets in diagnostic report", () => {
   const report = manualEpgDiagnosticLines().join("\n");
