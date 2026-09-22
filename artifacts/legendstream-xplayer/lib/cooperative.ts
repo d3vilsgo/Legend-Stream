@@ -49,6 +49,11 @@ export async function yieldToUi(): Promise<void> {
   });
 }
 
+/** A timer turn for Xtream XMLTV CPU work, including pending touch/heartbeat timers. */
+export function yieldXtreamXmltvEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 export async function mapInBatches<T, R>(
   input: readonly T[],
   mapper: (value: T, index: number) => R,

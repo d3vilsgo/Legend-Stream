@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import "./xtreamXmltvParserScenarios";
+import { yieldXtreamXmltvEventLoop } from "../lib/cooperative";
 import {
   beginManualEpg, endManualEpg, getManualEpgSnapshot, manualEpgDiagnosticLines,
   recordAutoEpgStart, recordManualEpgHeartbeat, selectManualEpgProvider,
@@ -20,6 +22,7 @@ const control = source("components/catalog/ManualEpgControl.tsx");
 const iptv = source("lib/iptv.ts");
 const stalker = source("components/catalog/StalkerLiveCatalog.tsx");
 const xtreamDiag = source("lib/xtreamEpgDiagnostics.ts");
+const cooperative = source("lib/cooperative.ts");
 let passed = 0;
 const scenario = (label: string, run: () => void) => {
   run();
@@ -141,10 +144,33 @@ scenario("Z3C3 separates XML scanning, extraction, channel matching, and bounded
   assert.equal(snapshot.cpu.PARSE_CHUNK.maxSyncMs, 10);
   assert.equal(snapshot.parseYieldCount, 1);
   assert.match(xtreamEpgDiagnosticLines(snapshot).join("\n"), /XTREAM_EPG_XML_SCAN_MAX_SYNC_MS=5/);
-  assert.match(iptv, /scanned % 120 === 0[\s\S]*?measure\("PARSE_CHUNK", chunkStart\);[\s\S]*?recordXtreamEpgParseYield\(\);[\s\S]*?await yieldToUi\(\)/);
+  assert.match(iptv, /scanned % 120 === 0 \|\| \(diagnosticXtream && clock\(\) - chunkStart >= XTREAM_XMLTV_SYNC_BUDGET_MS\)/);
+  assert.match(iptv, /measure\("PARSE_CHUNK", chunkStart\);[\s\S]*?if \(scanned % 120 === 0\) flush\(\);[\s\S]*?recordXtreamEpgParseYield\(\);[\s\S]*?if \(diagnosticXtream\) await yieldXtreamXmltvEventLoop\(\);[\s\S]*?else await yieldToUi\(\)/);
   assert.match(context, /start \+= 250[\s\S]*?recordXtreamEpgCpuStage\("NORMALIZE_MAP", elapsed, elapsed, end - start\)/);
   assert.match(context, /recordXtreamEpgCpuStage\("SORT_OR_GROUP", elapsed, elapsed, normalized\.length\)/);
   resetXtreamEpgDiagnosticRun(12);
   assert.equal(getXtreamEpgDiagnosticSnapshot().cpu.XML_SCAN.workUnits, 0);
   assert.equal(getXtreamEpgDiagnosticSnapshot().parseYieldCount, 0);
 });
+
+scenario("Xtream parser uses timer turns and checks cancellation across each bounded chunk", () => {
+  assert.match(cooperative, /yieldXtreamXmltvEventLoop\(\): Promise<void> \{\s*return new Promise\(\(resolve\) => setTimeout\(resolve, 0\)\)/);
+  assert.match(iptv, /XTREAM_XMLTV_SYNC_BUDGET_MS = 48/);
+  assert.match(iptv, /recordXtreamEpgParseYield\(\);\s*if \(diagnosticXtream\) await yieldXtreamXmltvEventLoop\(\);\s*else await yieldToUi\(\);\s*if \(signal\?\.aborted\) throw/);
+  assert.match(iptv, /if \(diagnosticXtream \? chunkHasWork : scanned % 120 !== 0\) measure\("PARSE_CHUNK", chunkStart\)/);
+  assert.match(iptv, /programmePattern\.exec\(content\)/);
+  assert.match(iptv, /channelIds\.get\(decodeEpgText\(attributes\.channel \|\| ""\)\)/);
+  assert.match(iptv, /programs\.sort\(\(a, b\) => a\.start - b\.start\)/);
+  assert.match(xtreamDiag, /recordXtreamEpgParseYield\(\) \{\s*snapshot = \{ \.\.\.snapshot, parseYieldCount: snapshot\.parseYieldCount \+ 1 \};/);
+});
+
+// A microtask-only substitute would resume before the already queued timer.
+void (async () => {
+  let heartbeats = 0;
+  for (let chunk = 0; chunk < 12; chunk += 1) {
+    setTimeout(() => { heartbeats += 1; }, 0);
+    await yieldXtreamXmltvEventLoop();
+    assert.equal(heartbeats, chunk + 1);
+  }
+  process.stdout.write("ok - Xtream timer scheduler yields to heartbeat between 12 chunks\n");
+})().catch((error) => { process.stderr.write(String(error)); process.exitCode = 1; });

@@ -1,4 +1,4 @@
-import { mapInBatches, tokenizeM3ULinesCooperatively, yieldToUi } from "./cooperative";
+import { mapInBatches, tokenizeM3ULinesCooperatively, yieldToUi, yieldXtreamXmltvEventLoop } from "./cooperative";
 import {
   createM3UShapeDiagnosticsObserver,
   type M3UShapeDiagnostics,
@@ -881,6 +881,10 @@ export function parseXmltv(content: string, channels: Channel[]): EpgProgram[] {
   return programs.sort((a, b) => a.start - b.start);
 }
 
+// The existing maximum of 120 programmes remains an upper bound. The Xtream
+// diagnostic path also yields after a bounded amount of synchronous JS work.
+export const XTREAM_XMLTV_SYNC_BUDGET_MS = 48;
+
 export async function parseXmltvAsync(
   content: string,
   channels: Channel[],
@@ -916,12 +920,14 @@ export async function parseXmltvAsync(
   let match: RegExpExecArray | null;
   let scanned = 0;
   let chunkStart = diagnosticXtream ? clock() : 0;
+  let chunkHasWork = false;
 
   while (true) {
     const scanStart = diagnosticXtream ? clock() : 0;
     match = programmePattern.exec(content);
     measure("XML_SCAN", scanStart);
     if (!match) break;
+    chunkHasWork = true;
     const extractStart = diagnosticXtream ? clock() : 0;
     const attributes = parseAttributes(match[1]);
     measure("PROGRAMME_EXTRACT", extractStart);
@@ -956,20 +962,29 @@ export async function parseXmltvAsync(
     measure("PROGRAMME_EXTRACT", programmeStart);
 
     scanned += 1;
-    if (scanned % 120 === 0) {
+    if (scanned % 120 === 0 || (diagnosticXtream && clock() - chunkStart >= XTREAM_XMLTV_SYNC_BUDGET_MS)) {
       measure("PARSE_CHUNK", chunkStart);
-      flush();
+      // Publish aggregate diagnostics at the existing 120-record cadence,
+      // even when the CPU budget causes additional scheduler turns.
+      if (scanned % 120 === 0) flush();
       if (signal?.aborted) throw new Error("EPG background attempt aborted.");
       if (diagnosticXtream) recordXtreamEpgParseYield();
-      await yieldToUi();
-      if (diagnosticXtream) chunkStart = clock();
+      if (diagnosticXtream) await yieldXtreamXmltvEventLoop();
+      else await yieldToUi();
+      if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+      if (diagnosticXtream) {
+        chunkStart = clock();
+        chunkHasWork = false;
+      }
     }
   }
 
-  if (scanned % 120 !== 0) measure("PARSE_CHUNK", chunkStart);
+  if (diagnosticXtream ? chunkHasWork : scanned % 120 !== 0) measure("PARSE_CHUNK", chunkStart);
   flush();
   if (signal?.aborted) throw new Error("EPG background attempt aborted.");
-  await yieldToUi();
+  if (diagnosticXtream) await yieldXtreamXmltvEventLoop();
+  else await yieldToUi();
+  if (signal?.aborted) throw new Error("EPG background attempt aborted.");
   const sortStart = diagnosticXtream ? clock() : 0;
   const sorted = programs.sort((a, b) => a.start - b.start);
   if (diagnosticXtream) {

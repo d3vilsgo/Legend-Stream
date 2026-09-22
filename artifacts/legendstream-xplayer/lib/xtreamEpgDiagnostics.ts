@@ -67,7 +67,8 @@ export function recordXtreamEpgCpuStage(stage: XtreamEpgCpuStage, totalMs: numbe
 }
 export function recordXtreamEpgParseYield() {
   snapshot = { ...snapshot, parseYieldCount: snapshot.parseYieldCount + 1 };
-  notify();
+  // The following CPU-stage flush or phase completion publishes this count.
+  // Notifying React on every short CPU slice can itself starve the Live UI.
 }
 export function setXtreamEpgSourceKind(sourceKind: XtreamEpgSourceKind) {
   snapshot = { ...snapshot, sourceKind }; notify();
