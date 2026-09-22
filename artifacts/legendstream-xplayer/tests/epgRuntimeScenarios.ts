@@ -186,8 +186,7 @@ async function main() {
   const providerB = "provider-b:xtream-live:33";
   const providerPrograms: Program[] = [{ channelId: providerA, title: "A-only", start: now - 10, end: now + 100 }];
   assert.equal(selectChannelEpg(providerPrograms, { id: providerB }, now).now, undefined);
-  assert.match(playerContextSource, /previous\.providers\.some\(\(item\) => item\.id === resolvedProviderId\)/);
-  assert.match(playerContextSource, /epgAttemptGenerationRef\.current\.isCurrent\(resolvedProviderId, generation\)/);
+  assert.match(publicationSource, /ownedAttempt\?\.controller\.signal\.aborted\s*\|\|\s*generation === null\s*\|\|\s*!epgAttemptGenerationRef\.current\.isCurrent\(resolvedProviderId, generation\)\s*\|\|\s*previous\.provider\?\.id !== resolvedProviderId[\s\S]*?return previous;[\s\S]*?mergeEpgPrograms\(previous\.epg, ids, programs\)/);
   passed += 1;
 
   // H. XTREAM STABLE ID: legacy short-EPG lookup takes the final segment, valid for both ID forms.
@@ -269,7 +268,7 @@ async function main() {
   const workOwnerStart = playerContextSource.indexOf("let workOwner!:", workStart);
   const workSource = playerContextSource.slice(workStart, workOwnerStart);
   assert.ok(workStart >= 0 && workOwnerStart > workStart);
-  assert.match(workSource, /loadBulkProviderEpg\(provider, providerChannels,[\s\S]*ownedAttempt\?\.controller\.signal, diagnosticAttemptId\)/);
+  assert.match(workSource, /loadBulkProviderEpg\(provider, providerChannels,[\s\S]*ownedAttempt\?\.controller\.signal, diagnosticAttemptId, isOwned\)/);
   assert.match(workSource, /classification:\s*"success"/);
   passed += 1;
 
