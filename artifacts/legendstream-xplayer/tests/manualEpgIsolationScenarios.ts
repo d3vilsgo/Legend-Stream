@@ -50,7 +50,7 @@ scenario("single manual press starts one owned attempt and duplicate press is ig
   assert.equal(beginManualEpg("a"), false);
   assert.equal(getManualEpgSnapshot().manualPressCount, 1);
   assert.match(context, /await refreshEpg\(providerId, undefined, true\)/);
-  assert.match(context, /await bulkEpgPromiseRef\.current\.get\(providerId\)/);
+  assert.match(context, /const attemptPromise = workResultPromise;/);
 });
 scenario("underlying completion ends attempt and allows a later refresh", () => {
   endManualEpg("a", "success");
@@ -100,7 +100,7 @@ scenario("stale publication and work lifetime guards survive", () => {
 });
 scenario("Xtream and M3U EPG mechanisms remain unchanged", () => {
   assert.match(iptv, /get_short_epg&stream_id=/);
-  assert.match(iptv, /parseXmltvAsync\(text, channels, Date\.now\(\), options\.signal, diagnosticXtream\)/);
+  assert.match(iptv, /parseXmltvAsync\(text, channels, Date\.now\(\), options\.signal, diagnosticXtream, diagnosticAttemptId\)/);
   assert.match(context, /xmltv\.php\?username=/);
 });
 scenario("Stalker Live old EPG registration is unchanged", () => {
@@ -123,9 +123,9 @@ scenario("Z3C2 diagnostic modes preserve phase isolation and sanitized source-ki
   assert.doesNotMatch(xtreamDiag, /username|password|token|mac|https?:\/\//i);
 });
 scenario("Z3C2 source kind distinguishes short EPG and XMLTV without exposing URLs", () => {
-  assert.match(iptv, /setXtreamEpgSourceKind\("xmltv"\)/);
-  assert.match(iptv, /setXtreamEpgSourceKind\("short_epg"\)/);
-  assert.match(iptv, /recordXtreamEpgHeadersReceived\(\)/);
+  assert.match(iptv, /setXtreamEpgSourceKind\("xmltv", diagnosticAttemptId\)/);
+  assert.match(iptv, /setXtreamEpgSourceKind\("short_epg", diagnosticAttemptId\)/);
+  assert.match(iptv, /recordXtreamEpgHeadersReceived\(diagnosticAttemptId\)/);
   assert.match(xtreamDiag, /bodyBytes|bodyChars/);
 });
 scenario("Z3C2 diagnostic mode does not touch playback identity", () => {
@@ -145,9 +145,9 @@ scenario("Z3C3 separates XML scanning, extraction, channel matching, and bounded
   assert.equal(snapshot.parseYieldCount, 1);
   assert.match(xtreamEpgDiagnosticLines(snapshot).join("\n"), /XTREAM_EPG_XML_SCAN_MAX_SYNC_MS=5/);
   assert.match(iptv, /scanned % 120 === 0 \|\| \(diagnosticXtream && clock\(\) - chunkStart >= XTREAM_XMLTV_SYNC_BUDGET_MS\)/);
-  assert.match(iptv, /measure\("PARSE_CHUNK", chunkStart\);[\s\S]*?if \(scanned % 120 === 0\) flush\(\);[\s\S]*?recordXtreamEpgParseYield\(\);[\s\S]*?if \(diagnosticXtream\) await yieldXtreamXmltvEventLoop\(\);[\s\S]*?else await yieldToUi\(\)/);
-  assert.match(context, /start \+= 250[\s\S]*?recordXtreamEpgCpuStage\("NORMALIZE_MAP", elapsed, elapsed, end - start\)/);
-  assert.match(context, /recordXtreamEpgCpuStage\("SORT_OR_GROUP", elapsed, elapsed, normalized\.length\)/);
+  assert.match(iptv, /measure\("PARSE_CHUNK", chunkStart\);[\s\S]*?if \(scanned % 120 === 0\) flush\(\);[\s\S]*?recordXtreamEpgParseYield\(diagnosticAttemptId\);[\s\S]*?if \(diagnosticXtream\) await yieldXtreamXmltvEventLoop\(\);[\s\S]*?else await yieldToUi\(\)/);
+  assert.match(context, /start \+= 250[\s\S]*?recordXtreamEpgCpuStage\("NORMALIZE_MAP", elapsed, elapsed, end - start, diagnosticAttemptId\)/);
+  assert.match(context, /recordXtreamEpgCpuStage\("SORT_OR_GROUP", elapsed, elapsed, normalized\.length, diagnosticAttemptId\)/);
   resetXtreamEpgDiagnosticRun(12);
   assert.equal(getXtreamEpgDiagnosticSnapshot().cpu.XML_SCAN.workUnits, 0);
   assert.equal(getXtreamEpgDiagnosticSnapshot().parseYieldCount, 0);
@@ -156,12 +156,12 @@ scenario("Z3C3 separates XML scanning, extraction, channel matching, and bounded
 scenario("Xtream parser uses timer turns and checks cancellation across each bounded chunk", () => {
   assert.match(cooperative, /yieldXtreamXmltvEventLoop\(\): Promise<void> \{\s*return new Promise\(\(resolve\) => setTimeout\(resolve, 0\)\)/);
   assert.match(iptv, /XTREAM_XMLTV_SYNC_BUDGET_MS = 48/);
-  assert.match(iptv, /recordXtreamEpgParseYield\(\);\s*if \(diagnosticXtream\) await yieldXtreamXmltvEventLoop\(\);\s*else await yieldToUi\(\);\s*if \(signal\?\.aborted\) throw/);
+  assert.match(iptv, /recordXtreamEpgParseYield\(diagnosticAttemptId\);\s*if \(diagnosticXtream\) await yieldXtreamXmltvEventLoop\(\);\s*else await yieldToUi\(\);\s*if \(signal\?\.aborted\) throw/);
   assert.match(iptv, /if \(diagnosticXtream \? chunkHasWork : scanned % 120 !== 0\) measure\("PARSE_CHUNK", chunkStart\)/);
   assert.match(iptv, /programmePattern\.exec\(content\)/);
   assert.match(iptv, /channelIds\.get\(decodeEpgText\(attributes\.channel \|\| ""\)\)/);
   assert.match(iptv, /programs\.sort\(\(a, b\) => a\.start - b\.start\)/);
-  assert.match(xtreamDiag, /recordXtreamEpgParseYield\(\) \{\s*snapshot = \{ \.\.\.snapshot, parseYieldCount: snapshot\.parseYieldCount \+ 1 \};/);
+  assert.match(xtreamDiag, /recordXtreamEpgParseYield\(attemptId\?: number\) \{[\s\S]*?snapshot = \{ \.\.\.snapshot, parseYieldCount: snapshot\.parseYieldCount \+ 1 \};/);
 });
 
 // A microtask-only substitute would resume before the already queued timer.

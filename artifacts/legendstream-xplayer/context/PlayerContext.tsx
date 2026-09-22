@@ -19,8 +19,10 @@ import {
   ProviderLoadError,
   ProviderLoadResult,
   ProviderType,
+  EpgPhaseFailure,
 } from "@/lib/iptv";
 import { mapInBatches, yieldToUi } from "@/lib/cooperative";
+import { OwnedEpgAttempts, type OwnedEpgAttempt } from "@/lib/ownedEpgAttempt";
 import { deleteCredentials, readCredentials, saveCredentials, type ProviderSecrets } from "@/lib/secureCredentials";
 import { credentialFieldsEqual, hasRequiredCredentialFields, migratedLegacyStateAfterVerification, resolveCredentialState } from "@/lib/providerCredentialState";
 import type { ProviderMetadataCommitMetrics } from "@/lib/providerBackupService";
@@ -55,6 +57,9 @@ import {
   endXtreamEpgPhase,
   getXtreamEpgDiagnosticSnapshot,
   recordXtreamEpgCpuStage,
+  isXtreamEpgDiagnosticAttemptCurrent,
+  invalidateXtreamEpgDiagnosticAttempt,
+  recordXtreamEpgFailure,
   resetXtreamEpgDiagnosticRun,
 } from "@/lib/xtreamEpgDiagnostics";
 import {
@@ -69,8 +74,6 @@ import {
   recordM3UEpgPublicationBegin,
   recordM3UEpgPublicationEnd,
   recordM3UEpgRetryGate,
-  recordM3UEpgTimeoutTimerDrift,
-  recordM3UEpgUnderlyingSettleAfterTimeout,
   recordM3UEpgWorkBegin,
   recordM3UEpgWorkEnd,
   redactProviderId,
@@ -104,7 +107,6 @@ import {
   shouldFallbackLegacyXtreamCatalogToM3U,
 } from "@/lib/legacyCatalogFallback";
 import {
-  EPG_BACKGROUND_BUDGET_MS,
   EPG_PAGED_SEED_LIMIT,
   EPG_RETRY_BACKOFF_MS,
   EpgAttemptGeneration,
@@ -113,7 +115,6 @@ import {
   getRegisteredEpgChannels,
   hasUsableChannelEpg,
   mergeEpgPrograms,
-  startEpgBackgroundAttempt,
 } from "@/lib/epgRuntime";
 import {
   removeLegacyStalkerCatalogChannels,
@@ -837,9 +838,10 @@ function compactEpgPrograms(programs: EpgProgram[], nowMs = Date.now()) {
   return compact;
 }
 
-async function normalizeProgramText(programs: EpgProgram[], diagnosticM3U = false, diagnosticXtream = false) {
-  if (diagnosticM3U) recordM3UEpgNormalizeBegin();
-  if (diagnosticXtream) beginXtreamEpgPhase("NORMALIZE");
+async function normalizeProgramText(programs: EpgProgram[], diagnosticM3U = false, diagnosticXtream = false, diagnosticAttemptId?: number, signal?: AbortSignal, isCurrentEpg?: () => boolean) {
+  const reportM3U = () => diagnosticM3U && (isCurrentEpg?.() ?? true);
+  if (reportM3U()) recordM3UEpgNormalizeBegin();
+  if (diagnosticXtream) beginXtreamEpgPhase("NORMALIZE", diagnosticAttemptId);
   try {
     const normalizeOne = (program: EpgProgram) => ({
         ...program,
@@ -854,23 +856,25 @@ async function normalizeProgramText(programs: EpgProgram[], diagnosticM3U = fals
         const began = globalThis.performance?.now?.() ?? Date.now();
         for (let index = start; index < end; index += 1) normalized[index] = normalizeOne(programs[index]);
         const elapsed = (globalThis.performance?.now?.() ?? Date.now()) - began;
-        recordXtreamEpgCpuStage("NORMALIZE_MAP", elapsed, elapsed, end - start);
+        recordXtreamEpgCpuStage("NORMALIZE_MAP", elapsed, elapsed, end - start, diagnosticAttemptId);
         if (end < programs.length) await yieldToUi();
+        if (signal?.aborted) throw new EpgPhaseFailure("abort", "abort");
       }
     } else {
       normalized = await mapInBatches(programs, normalizeOne, 250);
     }
     await yieldToUi();
+    if (signal?.aborted) throw new EpgPhaseFailure("abort", "abort");
     const compactBegan = diagnosticXtream ? (globalThis.performance?.now?.() ?? Date.now()) : 0;
     const compact = compactEpgPrograms(normalized);
     if (diagnosticXtream) {
       const elapsed = (globalThis.performance?.now?.() ?? Date.now()) - compactBegan;
-      recordXtreamEpgCpuStage("SORT_OR_GROUP", elapsed, elapsed, normalized.length);
+      recordXtreamEpgCpuStage("SORT_OR_GROUP", elapsed, elapsed, normalized.length, diagnosticAttemptId);
     }
     return compact;
   } finally {
-    if (diagnosticM3U) recordM3UEpgNormalizeEnd();
-    if (diagnosticXtream) endXtreamEpgPhase("NORMALIZE");
+    if (reportM3U()) recordM3UEpgNormalizeEnd();
+    if (diagnosticXtream) endXtreamEpgPhase("NORMALIZE", {}, diagnosticAttemptId);
   }
 }
 
@@ -878,8 +882,13 @@ async function loadBulkProviderEpg(
   provider: ProviderConfig,
   channels: Channel[],
   signal?: AbortSignal,
+  diagnosticAttemptId?: number,
+  isCurrentEpg?: () => boolean,
 ): Promise<EpgProgram[]> {
   const xtreamProvider = toXtreamLoadProvider(fromProvider(provider));
+  const diagnosticMode = provider.type === "xtream"
+    ? getXtreamEpgDiagnosticSnapshot().mode : "FULL_PIPELINE";
+  const stopBeforeNormalization = diagnosticMode === "FETCH_ONLY" || diagnosticMode === "FETCH_BODY_ONLY";
 
   if (
     provider.type === "xtream" &&
@@ -893,9 +902,10 @@ async function loadBulkProviderEpg(
         epgUrl: undefined,
       },
       seedChannels,
-      { signal },
+      { signal, diagnosticAttemptId, isCurrentEpg },
     );
-    return normalizeProgramText(programs, false, true);
+    return stopBeforeNormalization ? programs :
+      normalizeProgramText(programs, false, true, diagnosticAttemptId, signal);
   }
 
   let epgUrl = provider.epgUrl?.trim();
@@ -919,9 +929,10 @@ async function loadBulkProviderEpg(
       epgUrl,
     },
     channels,
-    { signal },
+    { signal, diagnosticAttemptId, isCurrentEpg },
   );
-  return normalizeProgramText(programs, provider.type === "m3u", provider.type === "xtream");
+  return stopBeforeNormalization ? programs :
+    normalizeProgramText(programs, provider.type === "m3u", provider.type === "xtream", diagnosticAttemptId, signal, isCurrentEpg);
 }
 
 export function PlayerProvider({ children }: { children: ReactNode }) {
@@ -951,16 +962,27 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const manualEpgResultRef = useRef(new Map<string, ManualEpgResult>());
   const activeEpgSingleFlightRef = useRef(new EpgSingleFlight());
   const epgAttemptGenerationRef = useRef(new EpgAttemptGeneration());
+  const ownedEpgAttemptsRef = useRef(new OwnedEpgAttempts());
+  const previousEpgProviderRef = useRef<string | null>(null);
   const epgRetryNotBeforeRef = useRef(new Map<string, number>());
   const legacyCatalogFallbackGuardRef = useRef(new LegacyCatalogFallbackAttemptGuard());
 
+  const cancelOwnedEpg = (providerId: string) => {
+    const active = ownedEpgAttemptsRef.current.active(providerId);
+    ownedEpgAttemptsRef.current.cancel(providerId);
+    if (active) bulkEpgPromiseRef.current.delete(providerId);
+    invalidateXtreamEpgDiagnosticAttempt(active?.diagnosticAttemptId);
+  };
+
   const clearEpgProviderCache = (providerId: string) => {
+    cancelOwnedEpg(providerId);
     epgAttemptGenerationRef.current.invalidate(providerId);
     epgCacheRef.current.delete(providerId);
     clearRegisteredEpgChannels(providerId);
   };
 
   const invalidateEpgFreshness = (providerId: string) => {
+    cancelOwnedEpg(providerId);
     epgAttemptGenerationRef.current.invalidate(providerId);
     epgCacheRef.current.delete(providerId);
   };
@@ -1336,6 +1358,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         : [...latest.providers, savedProvider];
       if (!isCurrentConnectAttempt(attempt)) return false;
       clearEpgProviderCache(savedProvider.id);
+      if (latest.provider?.id && latest.provider.id !== savedProvider.id) {
+        cancelOwnedEpg(latest.provider.id);
+        epgAttemptGenerationRef.current.invalidate(latest.provider.id);
+      }
       const generation = await persistConnectedProviderAttempt(attempt, {
         ...latest,
         providers,
@@ -1587,6 +1613,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       setError(null);
       return false;
     }
+    if (current.provider?.id && current.provider.id !== providerId) {
+      cancelOwnedEpg(current.provider.id);
+      epgAttemptGenerationRef.current.invalidate(current.provider.id);
+    }
     providerLoadGateRef.current.invalidateAll();
     const busyId = beginPlayerBusy();
     setError(null);
@@ -1751,9 +1781,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
         const existingWork = bulkEpgPromiseRef.current.get(resolvedProviderId);
         if (existingWork) {
-          if (boundedProvider) return;
-          await existingWork;
-          return;
+          if (boundedProvider && !force) return;
+          if (boundedProvider) {
+            cancelOwnedEpg(resolvedProviderId);
+          } else {
+            await existingWork;
+            return;
+          }
         }
         const retryNotBefore = epgRetryNotBeforeRef.current.get(resolvedProviderId) ?? 0;
         if (boundedProvider && !force && Date.now() < retryNotBefore) {
@@ -1767,6 +1801,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         const generation = boundedProvider
           ? epgAttemptGenerationRef.current.begin(resolvedProviderId)
           : null;
+        const ownedAttempt: OwnedEpgAttempt | null = boundedProvider && generation !== null
+          ? ownedEpgAttemptsRef.current.begin(resolvedProviderId, generation) : null;
+        const isOwned = () => !boundedProvider || (
+          ownedAttempt !== null && ownedEpgAttemptsRef.current.isCurrent(ownedAttempt) &&
+          epgAttemptGenerationRef.current.isCurrent(resolvedProviderId, ownedAttempt.generation) &&
+          stateRef.current.provider?.id === resolvedProviderId
+        );
         if (provider.type === "m3u") recordM3UEpgGenerationCurrent(true);
         const m3uEpgStartedAt = provider.type === "m3u"
           ? (globalThis.performance?.now?.() ?? Date.now())
@@ -1776,7 +1817,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           recordM3UEpgWorkBegin(m3uEpgStartedAt);
         }
         const providerHash = redactProviderId(resolvedProviderId);
-        if (provider.type === "xtream" && force) resetXtreamEpgDiagnosticRun(providerChannels.length);
+        const diagnosticAttemptId = provider.type === "xtream"
+          ? resetXtreamEpgDiagnosticRun(providerChannels.length) : undefined;
+        if (ownedAttempt) ownedAttempt.diagnosticAttemptId = diagnosticAttemptId;
+        if (provider.type === "xtream" && force) beginXtreamEpgPhase("TRIGGER", diagnosticAttemptId);
         if (boundedProvider) {
           safeLog.info("EPG_ATTEMPT_BEGIN", {
             providerType: provider.type,
@@ -1785,64 +1829,34 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           });
         }
 
-        const boundedHandle = boundedProvider
-          ? startEpgBackgroundAttempt(
-              (signal) => loadBulkProviderEpg(provider, providerChannels, signal),
-              EPG_BACKGROUND_BUDGET_MS,
-              {
-                onTimeout: (timing) => {
-                  if (provider.type === "m3u" && timing.timeoutTimerDriftMs !== null) {
-                    recordM3UEpgTimeoutTimerDrift(timing.timeoutTimerDriftMs);
-                  }
-                },
-                onAbortRequested: (timing) => {
-                  safeLog.info("EPG_ABORT_REQUESTED", {
-                    providerType: provider.type,
-                    providerHash,
-                    elapsedMs: Math.max(0, Math.round(
-                      (timing.actualTimeoutAt ?? timing.expectedTimeoutAt) - timing.startedAt,
-                    )),
-                  });
-                },
-                onUnderlyingSettled: (timing) => {
-                  safeLog.info("EPG_UNDERLYING_SETTLED", {
-                    providerType: provider.type,
-                    providerHash,
-                    result: timing.classification,
-                    elapsedMs: timing.underlyingSettledAt === null
-                      ? null
-                      : Math.max(0, Math.round(timing.underlyingSettledAt - timing.startedAt)),
-                    settleAfterTimeoutMs: timing.underlyingSettleAfterTimeoutMs,
-                  });
-                  if (
-                    provider.type === "m3u" &&
-                    timing.underlyingSettleAfterTimeoutMs !== null
-                  ) {
-                    recordM3UEpgUnderlyingSettleAfterTimeout(
-                      timing.underlyingSettleAfterTimeoutMs,
-                    );
-                  }
-                },
-              },
-            )
-          : null;
-
-        const directWork = boundedHandle
-          ? null
-          : Promise.resolve()
-              .then(() => loadBulkProviderEpg(provider, providerChannels))
-              .then((value) => ({
-                classification: "success" as const,
-                value,
-                elapsedMs: 0,
-              }))
-              .catch(() => ({
-                classification: "failure" as const,
-                elapsedMs: 0,
-              }));
-
-        const workResultPromise = boundedHandle?.workPromise ?? directWork!;
-        const attemptPromise = boundedHandle?.attemptPromise ?? workResultPromise;
+        const startedAt = globalThis.performance?.now?.() ?? Date.now();
+        const workResultPromise = Promise.resolve()
+          .then(() => loadBulkProviderEpg(provider, providerChannels,
+            ownedAttempt?.controller.signal, diagnosticAttemptId, isOwned))
+          .then((value) => ({
+            classification: "success" as const,
+            value,
+            elapsedMs: Math.max(0, Math.round((globalThis.performance?.now?.() ?? Date.now()) - startedAt)),
+          }))
+          .catch((error: unknown) => {
+            if (provider.type === "xtream" && isOwned()) {
+              const failure = error instanceof EpgPhaseFailure ? error :
+                new EpgPhaseFailure("request", "network");
+              recordXtreamEpgFailure(failure.stage, failure.failureClass, failure.httpStatusClass,
+                failure.failureClass === "timeout" ? failure.stage : "none",
+                failure.failureClass === "timeout" || failure.failureClass === "abort", diagnosticAttemptId);
+            }
+            return {
+              classification: error instanceof EpgPhaseFailure && error.failureClass === "timeout"
+                ? "timeout" as const : "failure" as const,
+              elapsedMs: Math.max(0, Math.round((globalThis.performance?.now?.() ?? Date.now()) - startedAt)),
+            };
+          });
+        const attemptPromise = workResultPromise;
+        void workResultPromise.then((result) => safeLog.info("EPG_UNDERLYING_SETTLED", {
+          providerType: provider.type, providerHash,
+          result: result.classification, elapsedMs: result.elapsedMs,
+        }));
         let workOwner!: Promise<void>;
         workOwner = workResultPromise
           .then(() => undefined)
@@ -1850,8 +1864,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             if (bulkEpgPromiseRef.current.get(resolvedProviderId) === workOwner) {
               bulkEpgPromiseRef.current.delete(resolvedProviderId);
             }
-            setIsEpgLoading(false);
-            if (m3uEpgStartedAt !== null) {
+            if (isOwned()) setIsEpgLoading(false);
+            if (m3uEpgStartedAt !== null && isOwned()) {
               const endedAt = globalThis.performance?.now?.() ?? Date.now();
               recordM3UEpgWorkEnd(endedAt - m3uEpgStartedAt, endedAt);
             }
@@ -1860,6 +1874,14 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
         const attempt = await attemptPromise;
         try {
+          if (!isOwned()) {
+            safeLog.info("EPG_RESULT_IGNORED_STALE", {
+              providerType: provider.type, providerHash,
+              elapsedMs: attempt.elapsedMs, channelCount: providerChannels.length,
+              result: "stale",
+            });
+            return;
+          }
           if (attempt.classification !== "success") {
             if (force) manualEpgResultRef.current.set(resolvedProviderId, attempt.classification);
             if (boundedProvider) {
@@ -1884,13 +1906,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             return;
           }
 
-          const generationCurrent =
-            !boundedProvider ||
-            (
-              generation !== null &&
-              epgAttemptGenerationRef.current.isCurrent(resolvedProviderId, generation) &&
-              stateRef.current.provider?.id === resolvedProviderId
-            );
+          const generationCurrent = isOwned();
           if (provider.type === "m3u") recordM3UEpgGenerationCurrent(generationCurrent);
           if (!generationCurrent) {
             if (force) manualEpgResultRef.current.set(resolvedProviderId, "stale");
@@ -1905,17 +1921,19 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           }
 
           await yieldToUi();
+          if (!isOwned()) return;
           const ids = new Set(providerChannels.map((channel) => channel.id));
           const programs = attempt.value ?? [];
           const xtreamMode = provider.type === "xtream" ? getXtreamEpgDiagnosticSnapshot().mode : "FULL_PIPELINE";
           const suppressPublication = provider.type === "xtream" && xtreamMode !== "FULL_PIPELINE";
           if (programs.length && !suppressPublication) {
-            if (provider.type === "xtream") beginXtreamEpgPhase("PUBLICATION");
+            if (provider.type === "xtream") beginXtreamEpgPhase("PUBLICATION", diagnosticAttemptId);
             if (provider.type === "m3u") recordM3UEpgPublicationBegin();
             setState((previous) => {
               if (
                 boundedProvider &&
                 (
+                  ownedAttempt?.controller.signal.aborted ||
                   generation === null ||
                   !epgAttemptGenerationRef.current.isCurrent(resolvedProviderId, generation) ||
                   previous.provider?.id !== resolvedProviderId
@@ -1932,16 +1950,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
             });
             if (provider.type === "m3u") recordM3UEpgPublicationEnd();
             if (provider.type === "xtream") {
-              endXtreamEpgPhase("PUBLICATION", { publishedItemCount: programs.length });
-              beginXtreamEpgPhase("UI_COMMIT");
+              endXtreamEpgPhase("PUBLICATION", { publishedItemCount: programs.length }, diagnosticAttemptId);
+              beginXtreamEpgPhase("UI_COMMIT", diagnosticAttemptId);
               await yieldToUi();
-              endXtreamEpgPhase("UI_COMMIT", { publishedItemCount: programs.length });
+              if (!isOwned()) return;
+              endXtreamEpgPhase("UI_COMMIT", { publishedItemCount: programs.length }, diagnosticAttemptId);
             }
           }
           if (suppressPublication) {
-            if (force) manualEpgResultRef.current.set(resolvedProviderId, "empty");
+            if (force) manualEpgResultRef.current.set(resolvedProviderId, "success");
             return;
           }
+          if (!isOwned()) return;
           epgCacheRef.current.set(resolvedProviderId, {
             loadedAt: Date.now(),
             channelCount: providerChannels.length,
@@ -1959,13 +1979,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           });
           if (force) manualEpgResultRef.current.set(resolvedProviderId, programs.length ? "success" : "empty");
         } catch {
-          if (force) manualEpgResultRef.current.set(resolvedProviderId, "failure");
+          if (force && isOwned()) manualEpgResultRef.current.set(resolvedProviderId, "failure");
           // EPG remains optional for Stalker and bounded providers alike.
         } finally {
-          if (m3uEpgStartedAt !== null) {
+          if (provider.type === "xtream" && force && isXtreamEpgDiagnosticAttemptCurrent(diagnosticAttemptId))
+            endXtreamEpgPhase("TRIGGER", {}, diagnosticAttemptId);
+          if (m3uEpgStartedAt !== null && isOwned()) {
             const m3uEpgAttemptEndedAt = globalThis.performance?.now?.() ?? Date.now();
             recordM3UEpgEnd(m3uEpgAttemptEndedAt - m3uEpgStartedAt);
           }
+          if (ownedAttempt) ownedEpgAttemptsRef.current.complete(ownedAttempt);
         }
         return;
       }
@@ -1988,33 +2011,32 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         if (hasUsableChannelEpg(beforeRequest.epg, channelId)) return;
         recordAutoEpgStart(resolvedProviderId);
         setIsEpgLoading(true);
+        let ownedAttempt: OwnedEpgAttempt | null = null;
         try {
           const generation = epgAttemptGenerationRef.current.begin(resolvedProviderId);
-          const handle = startEpgBackgroundAttempt(
-            async (signal) => normalizeProgramText(
+          ownedAttempt = ownedEpgAttemptsRef.current.begin(resolvedProviderId, generation);
+          const diagnosticAttemptId = resetXtreamEpgDiagnosticRun(1);
+          ownedAttempt.diagnosticAttemptId = diagnosticAttemptId;
+          const programs = await normalizeProgramText(
               await loadEpg(
                 {
                   ...toXtreamLoadProvider(fromProvider(provider)),
                   epgUrl: undefined,
                 },
                 [targetChannel],
-                { signal },
+                { signal: ownedAttempt.controller.signal, diagnosticAttemptId },
               ),
-            ),
-            EPG_BACKGROUND_BUDGET_MS,
+              false, true, diagnosticAttemptId, ownedAttempt.controller.signal,
           );
-          const attempt = await handle.attemptPromise;
-          if (attempt.classification !== "success") {
-            await handle.workPromise;
-            return;
-          }
           if (
+            !ownedEpgAttemptsRef.current.isCurrent(ownedAttempt) ||
             !epgAttemptGenerationRef.current.isCurrent(resolvedProviderId, generation) ||
-            !stateRef.current.providers.some((item) => item.id === resolvedProviderId)
+            stateRef.current.provider?.id !== resolvedProviderId
           ) return;
-          const programs = attempt.value ?? [];
           setState((previous) => {
-            if (!previous.providers.some((item) => item.id === resolvedProviderId)) return previous;
+            if (ownedAttempt!.controller.signal.aborted ||
+                !epgAttemptGenerationRef.current.isCurrent(resolvedProviderId, generation) ||
+                previous.provider?.id !== resolvedProviderId) return previous;
             const next = {
               ...previous,
               epg: mergeEpgPrograms(previous.epg, new Set([channelId]), programs),
@@ -2025,7 +2047,10 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         } catch {
           // Active-channel EPG recovery is best effort and must never affect playback.
         } finally {
-          setIsEpgLoading(false);
+          if (ownedAttempt && ownedEpgAttemptsRef.current.isCurrent(ownedAttempt)) {
+            setIsEpgLoading(false);
+            ownedEpgAttemptsRef.current.complete(ownedAttempt);
+          }
         }
       });
     },
@@ -2036,25 +2061,30 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const provider = stateRef.current.provider;
     if (provider?.id !== providerId || (provider.type !== "m3u" && provider.type !== "xtream")) return;
     if (!beginManualEpg(providerId)) return;
-    if (provider.type === "xtream") beginXtreamEpgPhase("TRIGGER");
     manualEpgResultRef.current.delete(providerId);
     try {
       await refreshEpg(providerId, undefined, true);
-      // The five-second attempt budget may end before the underlying work settles.
-      // Keep the visible manual attempt owned until that work actually finishes.
-      await bulkEpgPromiseRef.current.get(providerId);
       endManualEpg(providerId, manualEpgResultRef.current.get(providerId) ?? "failure");
     } catch {
       endManualEpg(providerId, "failure");
     } finally {
-      if (provider.type === "xtream") endXtreamEpgPhase("TRIGGER");
       manualEpgResultRef.current.delete(providerId);
     }
   }, [refreshEpg]);
 
   useEffect(() => {
     selectManualEpgProvider(state.provider?.id ?? null);
+    const previousId = previousEpgProviderRef.current;
+    const nextId = state.provider?.id ?? null;
+    if (previousId && previousId !== nextId) {
+      cancelOwnedEpg(previousId);
+      epgAttemptGenerationRef.current.invalidate(previousId);
+      setIsEpgLoading(false);
+    }
+    previousEpgProviderRef.current = nextId;
   }, [state.provider?.id]);
+
+  useEffect(() => () => ownedEpgAttemptsRef.current.cancelAll(), []);
 
   useEffect(() => {
     if (isHydrating || !state.provider || state.provider.type !== "stalker") return;

@@ -13,6 +13,12 @@ export type XtreamEpgPhase =
 type PhaseMetric = { startedAt: number | null; elapsedMs: number | null; heartbeatDriftMaxMs: number };
 type CpuMetric = { totalMs: number; maxSyncMs: number; workUnits: number };
 export type XtreamEpgDiagnosticSnapshot = {
+  attemptId: number;
+  failureStage: string;
+  failureClass: string;
+  httpStatusClass: string;
+  timeoutScope: string;
+  underlyingAborted: boolean;
   mode: XtreamEpgDiagnosticMode;
   sourceKind: XtreamEpgSourceKind;
   maxObservedHeartbeatDriftMs: number;
@@ -36,6 +42,8 @@ const freshPhases = () => Object.fromEntries(phases.map((phase) => [phase, {
   startedAt: null, elapsedMs: null, heartbeatDriftMaxMs: 0,
 }])) as Record<XtreamEpgPhase, PhaseMetric>;
 let snapshot: XtreamEpgDiagnosticSnapshot = {
+  attemptId: 0, failureStage: "—", failureClass: "—", httpStatusClass: "—",
+  timeoutScope: "none", underlyingAborted: false,
   mode: "FULL_PIPELINE", sourceKind: "unknown", maxObservedHeartbeatDriftMs: 0,
   bodyBytes: null, bodyChars: null, channelCount: null, programmeCount: null,
   publishedItemCount: null, phases: freshPhases(),
@@ -51,12 +59,33 @@ export function setXtreamEpgDiagnosticMode(mode: XtreamEpgDiagnosticMode) {
   snapshot = { ...snapshot, mode }; notify();
 }
 export function resetXtreamEpgDiagnosticRun(channelCount: number) {
-  snapshot = { ...snapshot, sourceKind: "unknown", maxObservedHeartbeatDriftMs: 0,
+  snapshot = { ...snapshot, attemptId: snapshot.attemptId + 1,
+    failureStage: "—", failureClass: "—", httpStatusClass: "—",
+    timeoutScope: "none", underlyingAborted: false,
+    sourceKind: "unknown", maxObservedHeartbeatDriftMs: 0,
     bodyBytes: null, bodyChars: null, channelCount, programmeCount: null,
     publishedItemCount: null, phases: freshPhases(), cpu: freshCpu(), parseYieldCount: 0 };
   notify();
+  return snapshot.attemptId;
 }
-export function recordXtreamEpgCpuStage(stage: XtreamEpgCpuStage, totalMs: number, maxSyncMs: number, workUnits: number) {
+export function isXtreamEpgDiagnosticAttemptCurrent(attemptId?: number) {
+  return attemptId === undefined || snapshot.attemptId === attemptId;
+}
+export function invalidateXtreamEpgDiagnosticAttempt(attemptId?: number) {
+  if (attemptId !== undefined && isXtreamEpgDiagnosticAttemptCurrent(attemptId))
+    resetXtreamEpgDiagnosticRun(0);
+}
+export function recordXtreamEpgFailure(
+  stage: string, failureClass: string, httpStatusClass = "unknown",
+  timeoutScope = "none", underlyingAborted = false, attemptId?: number,
+) {
+  if (!isXtreamEpgDiagnosticAttemptCurrent(attemptId)) return;
+  snapshot = { ...snapshot, failureStage: stage, failureClass,
+    httpStatusClass, timeoutScope, underlyingAborted };
+  notify();
+}
+export function recordXtreamEpgCpuStage(stage: XtreamEpgCpuStage, totalMs: number, maxSyncMs: number, workUnits: number, attemptId?: number) {
+  if (!isXtreamEpgDiagnosticAttemptCurrent(attemptId)) return;
   const previous = snapshot.cpu[stage];
   snapshot = { ...snapshot, cpu: { ...snapshot.cpu, [stage]: {
     totalMs: previous.totalMs + totalMs,
@@ -65,15 +94,18 @@ export function recordXtreamEpgCpuStage(stage: XtreamEpgCpuStage, totalMs: numbe
   } } };
   notify();
 }
-export function recordXtreamEpgParseYield() {
+export function recordXtreamEpgParseYield(attemptId?: number) {
+  if (!isXtreamEpgDiagnosticAttemptCurrent(attemptId)) return;
   snapshot = { ...snapshot, parseYieldCount: snapshot.parseYieldCount + 1 };
   // The following CPU-stage flush or phase completion publishes this count.
   // Notifying React on every short CPU slice can itself starve the Live UI.
 }
-export function setXtreamEpgSourceKind(sourceKind: XtreamEpgSourceKind) {
+export function setXtreamEpgSourceKind(sourceKind: XtreamEpgSourceKind, attemptId?: number) {
+  if (!isXtreamEpgDiagnosticAttemptCurrent(attemptId)) return;
   snapshot = { ...snapshot, sourceKind }; notify();
 }
-export function beginXtreamEpgPhase(phase: XtreamEpgPhase) {
+export function beginXtreamEpgPhase(phase: XtreamEpgPhase, attemptId?: number) {
+  if (!isXtreamEpgDiagnosticAttemptCurrent(attemptId)) return;
   snapshot = { ...snapshot, phases: { ...snapshot.phases,
     [phase]: { ...snapshot.phases[phase], startedAt: now(), elapsedMs: null } } };
   safeLog.info(`XTREAM_EPG_${phase}_BEGIN`, {});
@@ -81,7 +113,8 @@ export function beginXtreamEpgPhase(phase: XtreamEpgPhase) {
 }
 export function endXtreamEpgPhase(phase: XtreamEpgPhase, metrics: {
   bodyBytes?: number; bodyChars?: number; programmeCount?: number; publishedItemCount?: number;
-} = {}) {
+} = {}, attemptId?: number) {
+  if (!isXtreamEpgDiagnosticAttemptCurrent(attemptId)) return;
   const metric = snapshot.phases[phase];
   const elapsedMs = metric.startedAt === null ? null : Math.max(0, Math.round(now() - metric.startedAt));
   snapshot = { ...snapshot,
@@ -95,7 +128,8 @@ export function endXtreamEpgPhase(phase: XtreamEpgPhase, metrics: {
     programmeCount: metrics.programmeCount, publishedItemCount: metrics.publishedItemCount });
   notify();
 }
-export function recordXtreamEpgHeadersReceived() {
+export function recordXtreamEpgHeadersReceived(attemptId?: number) {
+  if (!isXtreamEpgDiagnosticAttemptCurrent(attemptId)) return;
   safeLog.info("XTREAM_EPG_HEADERS_RECEIVED", {});
 }
 export function recordXtreamEpgHeartbeat(driftMs: number) {
@@ -111,6 +145,12 @@ export function recordXtreamEpgHeartbeat(driftMs: number) {
 }
 export function xtreamEpgDiagnosticLines(value = snapshot) {
   return [
+    `EPG_ATTEMPT_ID=${value.attemptId}`,
+    `XTREAM_EPG_FAILURE_STAGE=${value.failureStage}`,
+    `XTREAM_EPG_FAILURE_CLASS=${value.failureClass}`,
+    `XTREAM_EPG_HTTP_STATUS_CLASS=${value.httpStatusClass}`,
+    `XTREAM_EPG_TIMEOUT_SCOPE=${value.timeoutScope}`,
+    `XTREAM_EPG_UNDERLYING_ABORTED=${value.underlyingAborted}`,
     `XTREAM_EPG_DIAGNOSTIC_MODE=${value.mode}`,
     `XTREAM_EPG_SOURCE_KIND=${value.sourceKind}`,
     `XTREAM_EPG_MAX_OBSERVED_HEARTBEAT_DRIFT_MS=${value.maxObservedHeartbeatDriftMs}`,
