@@ -368,11 +368,13 @@ function main() {
     assert.match(playerSource, /recordM3UBackgroundRefreshEnd\([\s\S]*if \(!persistenceOwnsRequest\) providerLoadGateRef\.current\.finish\(ownership\)/);
     assert.match(playerSource, /const EPG_START_DELAY_MS = 1_200/);
     assert.match(playerSource, /const boundedProvider = provider\.type === "m3u" \|\| provider\.type === "xtream"/);
-    const sameProviderGate = /const\s+([A-Za-z_$][\w$]*)\s*=\s*bulkEpgPromiseRef\.current\.get\(resolvedProviderId\);[\s\S]*?if\s*\(\1\)\s*\{\s*if\s*\(boundedProvider\)\s*return/;
-    assert.match(playerSource, sameProviderGate);
+    assert.match(playerSource, /const existingWork = bulkEpgPromiseRef\.current\.get\(resolvedProviderId\);\s*if \(existingWork\) \{\s*if \(boundedProvider && !force\) return;\s*if \(boundedProvider\) \{\s*cancelOwnedEpg\(resolvedProviderId\);/);
+    assert.match(playerSource, /ownedEpgAttemptsRef\.current\.begin\(resolvedProviderId, generation\)/);
+    assert.match(playerSource, /const isOwned = \(\) => !boundedProvider \|\| \([\s\S]*?ownedEpgAttemptsRef\.current\.isCurrent\(ownedAttempt\)[\s\S]*?epgAttemptGenerationRef\.current\.isCurrent\(resolvedProviderId, ownedAttempt\.generation\)[\s\S]*?stateRef\.current\.provider\?\.id === resolvedProviderId/);
     assert.match(playerSource, /recordM3UEpgBegin\(\);[\s\S]*recordM3UEpgWorkBegin\(/);
-    assert.match(playerSource, /startEpgBackgroundAttempt\([\s\S]*EPG_BACKGROUND_BUDGET_MS/);
-    assert.match(playerSource, /EPG_ABORT_REQUESTED/);
+    assert.match(playerSource, /const attemptPromise = workResultPromise;/);
+    assert.match(playerSource, /ownedAttempt\?\.controller\.signal, diagnosticAttemptId, isOwned\)/);
+    assert.match(playerSource, /cancelOwnedEpg = \(providerId: string\) => \{[\s\S]*?ownedEpgAttemptsRef\.current\.cancel\(providerId\)/);
     assert.match(playerSource, /EPG_UNDERLYING_SETTLED/);
     // True work-lifetime ownership is enforced behaviorally by epgRuntimeScenarios Q.
     // This diagnostics scenario only requires the M3U-visible lifecycle markers to remain wired.
