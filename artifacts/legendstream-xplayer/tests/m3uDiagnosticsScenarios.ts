@@ -47,7 +47,6 @@ const pagedSource = readFileSync(resolve(ROOT, "components/catalog/PagedCatalogV
 const compatSource = readFileSync(resolve(ROOT, "components/CompatibilityVideoPlayerV2.tsx"), "utf8");
 const orientationSource = readFileSync(resolve(ROOT, "hooks/usePlayerOrientation.ts"), "utf8");
 const vlcSource = readFileSync(resolve(ROOT, "components/player/VlcPlaybackSurface.tsx"), "utf8");
-const panelSource = readFileSync(resolve(ROOT, "components/M3UDiagnosticPanel.tsx"), "utf8");
 const pageRepoSource = readFileSync(resolve(ROOT, "lib/catalogPageRepository.ts"), "utf8");
 const playerSource = readFileSync(resolve(ROOT, "context/PlayerContext.tsx"), "utf8");
 
@@ -308,7 +307,7 @@ function main() {
     assert.match(homeSource, /recordM3UOpenLiveEnter\(\)/);
     assert.match(homeSource, /setPlayable\(\{ title: channel\.name,[\s\S]*url: channel\.streamUrl,[\s\S]*kind: "live"/);
     assert.match(homeSource, /setView\("player"\);[\s\S]*recordM3UOpenLiveSetPlayerView\(\)/);
-    assert.match(homeSource, /view === "player"[\s\S]*M3UDiagnosticPanel/);
+    assert.doesNotMatch(homeSource, /M3UDiagnosticPanel|M3U DBG|M3U_TOUCH_SENTINEL/);
     assert.doesNotMatch(homeSource, /m3uDiagnosticEnabled \|\| view === "player"/);
     assert.match(compatSource, /\/live\\\/\/i\.test\(runtimeSource\)[\s\S]*\.m3u8[\s\S]*replace\([\s\S]*"\.ts"\)/);
     assert.match(compatSource, /getCachedLivePlaybackWindow\(provider,/);
@@ -318,8 +317,6 @@ function main() {
     assert.match(orientationSource, /recordM3UOrientationReady/);
     assert.match(vlcSource, /source=\{\{ uri, initType: 2, initOptions \}\}/);
     assert.match(vlcSource, /onPlaying=\{handlePlaying\}/);
-    assert.match(panelSource, /pointerEvents="box-none"/);
-    assert.doesNotMatch(panelSource, /streamUrl|playlistUrl|username|password|token|mac/i);
   });
 
   scenario("Z2O Paged Live report uses the mounted page state rather than inferred busy flags", () => {
@@ -513,27 +510,13 @@ function main() {
     assert.doesNotMatch(lifetimeReport, /playlistUrl|streamUrl|epgUrl|username|password|token|cookie|mac=/i);
   });
 
-  scenario("Z2QA M3U DBG is the top shell sibling and Android-safe without consuming unrelated touches", () => {
+  scenario("Z2QA production M3U UI exposes no temporary diagnostic overlay or responder", () => {
     assert.match(homeSource, /const m3uDiagnosticEnabled = provider\?\.type === "m3u";/);
-    assert.match(panelSource, /<View pointerEvents="box-none" style=\{styles\.overlay\}>/);
-    assert.match(panelSource, /useSafeAreaInsets\(\)/);
-    assert.match(panelSource, /top: Math\.max\(insets\.top \+ 8, 112\)/);
-    assert.match(panelSource, /overlay:\s*\{[\s\S]*zIndex: 1000,[\s\S]*elevation: 40,/);
-    assert.match(panelSource, /floatingButton:\s*\{[\s\S]*elevation: 41,/);
-    assert.match(panelSource, /panel:\s*\{[\s\S]*elevation: 42,/);
-
-    const liveSurface = homeSource.indexOf('{view === "live" && (provider.type === "m3u" || provider.type === "xtream")');
-    const moviesSurface = homeSource.indexOf('{view === "movies" && (provider.type === "m3u" || provider.type === "xtream")');
-    const seriesSurface = homeSource.indexOf('{view === "series" && (provider.type === "m3u" || provider.type === "xtream")');
-    const homeSurface = homeSource.indexOf('{view === "home" ? <HomeDiscovery');
-    const nonPlayerPanel = homeSource.lastIndexOf('{m3uDiagnosticEnabled ? <M3UDiagnosticPanel providerId={provider.id} /> : null}');
-    assert.ok(liveSurface >= 0 && moviesSurface >= 0 && seriesSurface >= 0 && homeSurface >= 0);
-    assert.ok(nonPlayerPanel > liveSurface, "M3U DBG must mount after Dedicated Live");
-    assert.ok(nonPlayerPanel > moviesSurface, "M3U DBG must mount after Movies");
-    assert.ok(nonPlayerPanel > seriesSurface, "M3U DBG must mount after Series");
-    assert.ok(nonPlayerPanel > homeSurface, "M3U DBG must mount after Home");
-    assert.match(homeSource, /m3uDiagnosticEnabled \? <M3UDiagnosticPanel/);
-    assert.doesNotMatch(homeSource, /provider\.type !== "m3u"[\s\S]{0,120}<M3UDiagnosticPanel/);
+    assert.doesNotMatch(homeSource, /M3UDiagnosticPanel/);
+    assert.doesNotMatch(homeSource, /M3U DBG/);
+    assert.doesNotMatch(homeSource, />TOUCH</);
+    assert.doesNotMatch(homeSource, /M3U_TOUCH_SENTINEL|recordM3UTouchSentinel|diagnosticSentinel/);
+    assert.doesNotMatch(homeSource, /M3U diagnostic touch sentinel/);
   });
 
   assert.equal(passed, 20);

@@ -20,7 +20,6 @@ import { DownloadsView } from "@/components/DownloadsView";
 import { FocusButton } from "@/components/FocusButton";
 import { HomeDiscovery, type HomeContentView } from "@/components/home/HomeDiscovery";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
-import { M3UDiagnosticPanel } from "@/components/M3UDiagnosticPanel";
 import {
   PagedLiveCatalog,
   PagedMoviesCatalog,
@@ -77,7 +76,6 @@ import {
   recordM3UPlayerViewCommit,
   recordM3UNavigate,
   recordM3UNavPress,
-  recordM3UTouchSentinel,
   recordM3UViewCommit,
   setM3UDiagnosticSession,
 } from "@/lib/m3uInAppDiagnostics";
@@ -447,7 +445,6 @@ export default function OptimizedHomeScreenPaged() {
 
   if (view === "player") return <View style={s.fullPlayer}>
     {playable ? <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => setView(playable.returnTo)} /> : null}
-    {m3uDiagnosticEnabled && provider ? <M3UDiagnosticPanel providerId={provider.id} /> : null}
   </View>;
 
   const nav = [
@@ -470,17 +467,6 @@ export default function OptimizedHomeScreenPaged() {
       <View style={s.headerTop}><Text style={[s.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text><ProviderSubscriptionChip provider={provider} /></View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.nav}>{nav.map((item) => <FocusButton key={item.key} label={item.label} icon={item.icon} variant={view === item.key ? "secondary" : "ghost"} onPress={() => navigate(item.key)} />)}</ScrollView>
     </View>
-    {m3uDiagnosticEnabled ? <Pressable
-      accessibilityRole="button"
-      accessibilityLabel="M3U diagnostic touch sentinel"
-      onPress={() => {
-        recordM3UTouchSentinel();
-        safeLog.info("M3U_TOUCH_SENTINEL", { timestamp: Date.now() });
-      }}
-      style={[s.diagnosticSentinel, { borderColor: colors.border, backgroundColor: colors.card }]}
-    >
-      <Text style={{ color: colors.mutedForeground, fontSize: 10, fontWeight: "800" }}>TOUCH</Text>
-    </Pressable> : null}
     {error || catalogError || visibleScopedError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}><Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError || visibleScopedError)}</Text><Pressable onPress={() => { clearError(); clearScopedError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable></View> : null}
 
     {view === "live" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedLiveCatalog provider={provider} snapshotCount={liveCount} catalogRevision={m3uCatalogRevision} hasMeaningfulM3ULiveGroups={categoryMetadata?.providerId === provider.id ? categoryMetadata.hasMeaningfulM3ULiveGroups : null} epgByChannel={epgByChannel} favorites={favorites} epgLoading={isEpgLoading} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
@@ -521,7 +507,6 @@ export default function OptimizedHomeScreenPaged() {
       {view === "settings" ? <Settings provider={provider} providers={providers} busy={providerSwitchBusy} switchingProviderId={switchingProviderId} onEdit={() => setEditingProviderId(provider.id)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
     </ScrollView> : null}
 
-    {m3uDiagnosticEnabled ? <M3UDiagnosticPanel providerId={provider.id} /> : null}
   </View>;
 }
 
@@ -684,7 +669,6 @@ const s = StyleSheet.create({
   brand: { fontSize: 18, fontWeight: "900", letterSpacing: 1 },
   brandLarge: { fontSize: 28, fontWeight: "900", letterSpacing: 1 },
   error: { margin: 12, borderWidth: 1, borderRadius: 12, padding: 10, flexDirection: "row", gap: 8, alignItems: "center" },
-  diagnosticSentinel: { position: "absolute", right: 8, top: 76, zIndex: 50, minWidth: 42, minHeight: 30, borderWidth: 1, borderRadius: 8, alignItems: "center", justifyContent: "center", opacity: 0.82 },
   setup: { width: "100%", maxWidth: 720, alignSelf: "center", paddingHorizontal: 20, gap: 14 },
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },
   section: { fontSize: 20, fontWeight: "800" },
