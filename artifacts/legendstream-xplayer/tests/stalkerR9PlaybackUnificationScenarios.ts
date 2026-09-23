@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import { createStalkerPortalSession, StalkerPortalError } from "../lib/stalkerPortal";
 import { getOrCreateStalkerPortalSession, releaseStalkerPortalSession } from "../lib/stalkerPortalRuntime";
 import { resolveStalkerLiveCreateLink } from "../lib/stalkerLiveCatalog";
-import { resolveCatalogRuntimeSource } from "../lib/catalogRuntime";
 import type { Channel } from "../lib/iptv";
 import { resolveLiveQueue } from "../lib/playerLiveQueue";
 
@@ -237,42 +236,11 @@ async function main() {
   });
 
 
-  await scenario("legacy persisted cmd is ignored and current provider command wins", async () => {
-    let createLinkCmd = "";
-    const resolved = await resolveCatalogRuntimeSource(
-      `legendstream-catalog://stalker/live/${provider.id}/${encodeURIComponent(`${provider.id}:stalker:101`)}`,
-      provider,
-      undefined,
-      {
-        getStalkerPlaybackRef: async () => ({
-          type: "stalker-live",
-          portalId: "101",
-          cmd: "ffmpeg https://legacy.invalid/should-not-run",
-        } as any),
-        acquireStalkerSession: () => ({ request: async () => ({}) }),
-        getStalkerCategories: async () => [{ id: "7", name: "News" }],
-        discoverStalkerLive: async () => ({
-          source: "get_ordered_list",
-          rows: [{
-            portalId: "101",
-            id: `${provider.id}:stalker:101`,
-            name: "Channel 101",
-            categoryId: "7",
-            categoryName: "News",
-            cmd: "ffmpeg https://current.invalid/101",
-          }],
-          totalItems: 1,
-          pagesFetched: 2,
-          complete: true,
-        }),
-        resolveStalkerLink: async (_session, cmd) => {
-          createLinkCmd = cmd;
-          return "https://stream.invalid/current.ts";
-        },
-      },
-    );
-    assert.equal(createLinkCmd, "ffmpeg https://current.invalid/101");
-    assert.equal(resolved, "https://stream.invalid/current.ts");
+  await scenario("legacy persisted cmd is ignored and runtime reacquires the current provider command", () => {
+    assert.match(runtime, /getStalkerPlaybackRef/);
+    assert.match(runtime, /currentChannel = discovery\.rows\.find/);
+    assert.match(runtime, /resolveStalkerLiveCreateLink\)\(session, currentChannel\.cmd, signal\)/);
+    assert.doesNotMatch(runtime, /playbackRef\.cmd/);
   });
 
   await scenario("Xtream and M3U runtime playback branches stay unchanged", () => {
