@@ -16,5 +16,5 @@ export function nextStalkerMountGeneration(){mountSequence+=1;return mountSequen
 export function traceStalker(event:string,details:StalkerTraceDetails={}){const clean:Record<string,string|number|boolean|null>={};for(const[key,value]of Object.entries(details)){if(!ALLOWED_KEYS.has(key)||value===undefined)continue;if(typeof value==="string")clean[key]=value.slice(0,96);else if(typeof value==="number"&&Number.isFinite(value))clean[key]=value;else if(typeof value==="boolean"||value===null)clean[key]=value;}const entry={at:Date.now(),event:event.slice(0,80),details:clean};entries=[...entries.slice(-(MAX_ENTRIES-1)),entry];safeLog.info("R18C2_STALKER_TRACE",entry);for(const listener of listeners)listener();}
 export function getStalkerTraceEntries(){return entries.slice();}
 export function clearStalkerTraceEntries(){entries=[];activeTraceId=null;for(const listener of listeners)listener();}
-export function subscribeStalkerTrace(listener:()=>void){listeners.add(listener);return()=>listeners.delete(listener);}
+export function subscribeStalkerTrace(listener:()=>void){listeners.add(listener);return()=>{listeners.delete(listener);};}
 export function formatStalkerTrace(items=entries){return items.map(entry=>JSON.stringify(entry)).join("\n");}
