@@ -2,27 +2,8 @@ import React from "react";
 import OptimizedHomeScreenV6 from "@/components/OptimizedHomeScreenV6";
 import StalkerMainPage from "@/components/StalkerMainPage";
 import { usePlayer } from "@/context/PlayerContext";
-import {
-  deriveProductCapabilities,
-  type ProductCapabilities,
-} from "@/lib/productContract";
-
-type TransitionalProductSurface = "paged" | "stalker";
-
-/**
- * R18-C transitional delegate selection.
- *
- * ProductShell is now the single root product boundary. Existing provider
- * surfaces remain authoritative for their view/navigation/player state until
- * their dedicated R18 convergence slices. The capability describes the
- * product behavior that requires the temporary Stalker surface; provider
- * identity does not select architecture at the app root anymore.
- */
-export function selectTransitionalProductSurface(
-  capabilities: ProductCapabilities,
-): TransitionalProductSurface {
-  return capabilities.liveCategoryMode === "provider-global" ? "stalker" : "paged";
-}
+import { deriveProductCapabilities } from "@/lib/productContract";
+import { selectTransitionalProductSurface } from "@/lib/productShell";
 
 export default function ProductShell() {
   const { provider } = usePlayer();
