@@ -265,7 +265,7 @@ export function CompatibilityVideoPlayer({
     if (traceId) traceStalker("PLAYER_SOURCE_RECEIVED", { traceId, sourceKind: classifyPlaybackSource(currentSource), resolved: false });
     setResolvedSource(null);
     setErrorText(null);
-    void resolveCatalogRuntimeSource(currentSource, provider, controller.signal, {}, traceId ?? undefined)
+    void resolveCatalogRuntimeSource(currentSource, provider, controller.signal)
       .then((next) => {
         if (!cancelled) { setResolvedSource(next); if (traceId) traceStalker("PLAYER_SOURCE_RECEIVED", { traceId, sourceKind: classifyPlaybackSource(next), resolved: true }); }
       })
