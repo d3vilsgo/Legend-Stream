@@ -37,18 +37,18 @@ async function scenario(name: string, run: () => void | Promise<void>) {
 
 async function main() {
   await scenario("application routing enters ProductShell before the dedicated Stalker page", () => {
-    assert.match(routeSource, /import ProductShell from "@\\/components\\/ProductShell"/);
-    assert.match(routeSource, /return <ProductShell \\/>/);
-    assert.doesNotMatch(routeSource, /StalkerMainPage|OptimizedHomeScreenV6|provider\\?\\.type/);
-    assert.match(productShellSource, /import StalkerMainPage from "@\\/components\\/StalkerMainPage"/);
-    assert.match(productShellSource, /<StalkerMainPage key=\\{provider\\.id\\}/);
+    assert.match(routeSource, /import ProductShell from "@\/components\/ProductShell"/);
+    assert.match(routeSource, /return <ProductShell \/>/);
+    assert.doesNotMatch(routeSource, /StalkerMainPage|OptimizedHomeScreenV6|provider\?\.type/);
+    assert.match(productShellSource, /import StalkerMainPage from "@\/components\/StalkerMainPage"/);
+    assert.match(productShellSource, /<StalkerMainPage key=\{provider\.id\}/);
   });
 
   await scenario("Xtream M3U and no-provider routing keep the existing golden page below ProductShell", () => {
-    assert.match(productShellSource, /import OptimizedHomeScreenV6 from "@\\/components\\/OptimizedHomeScreenV6"/);
-    assert.match(productShellSource, /<OptimizedHomeScreenV6 key=\\{provider\\.id\\}/);
-    assert.match(productShellSource, /if \\(!provider\\) \\{[\\s\\S]*?return <OptimizedHomeScreenV6 \\/>/);
-    assert.doesNotMatch(routeSource, /OptimizedHomeScreenPaged[^\\n]*provider/);
+    assert.match(productShellSource, /import OptimizedHomeScreenV6 from "@\/components\/OptimizedHomeScreenV6"/);
+    assert.match(productShellSource, /<OptimizedHomeScreenV6 key=\{provider\.id\}/);
+    assert.match(productShellSource, /if \(!provider\) \{[\s\\S]*?return <OptimizedHomeScreenV6 \/>/);
+    assert.doesNotMatch(routeSource, /OptimizedHomeScreenPaged[^\n]*provider/);
   });
 
   await scenario("dedicated Stalker page routes Movies to its golden catalog and keeps Series migration explicit", () => {
