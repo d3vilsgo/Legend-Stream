@@ -24,10 +24,8 @@ import {
 } from "./catalogPersistence";
 import { resolveStalkerLiveCreateLink } from "./stalkerLiveCatalog";
 import { discoverStalkerLiveChannels } from "./stalkerLiveDiscovery";
-import {
-  getCachedStalkerLiveCategories,
-  getPersistedStalkerLivePlaybackRef,
-} from "./stalkerLiveCache";
+import type { StalkerLiveCategory } from "./stalkerLiveCatalog";
+import { getPersistedStalkerLivePlaybackRef } from "./stalkerLiveCache";
 import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
 import type { StalkerPortalSession } from "./stalkerPortal";
 import { safeLog } from "./safeLog";
@@ -54,7 +52,7 @@ type CatalogRuntimeDependencies = {
     cmd: string,
     signal?: AbortSignal,
   ) => Promise<string>;
-  getStalkerCategories?: typeof getCachedStalkerLiveCategories;
+  getStalkerCategories?: (providerId: string) => Promise<StalkerLiveCategory[]>;
   discoverStalkerLive?: typeof discoverStalkerLiveChannels;
 };
 
@@ -291,7 +289,9 @@ export async function resolveCatalogRuntimeSource(
       portalUrl: credentials.portalUrl,
       mac: credentials.mac,
     });
-    const categories = await (dependencies.getStalkerCategories ?? getCachedStalkerLiveCategories)(ref.providerId);
+    const categories = dependencies.getStalkerCategories
+      ? await dependencies.getStalkerCategories(ref.providerId)
+      : [];
     if (signal?.aborted) throw new Error("Cached Stalker playback resolution was cancelled.");
     const discovery = await (dependencies.discoverStalkerLive ?? discoverStalkerLiveChannels)({
       session,
