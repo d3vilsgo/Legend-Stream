@@ -6,6 +6,7 @@ import {
 import {
   MAX_STALKER_LIVE_PAGES,
   fetchStalkerLiveCategories,
+  normalizeStalkerLiveCategoryName,
   normalizeStalkerLiveCategories,
   normalizeStalkerLivePage,
   projectStalkerLiveItem,
@@ -15,6 +16,10 @@ import {
   stalkerLivePageCeilingExceeded,
   traverseStalkerLivePages,
 } from "../lib/stalkerLiveCatalog";
+import {
+  chooseDefaultStalkerCategory,
+  fetchStalkerOrderedPage,
+} from "../lib/stalkerPagedCatalog";
 import { enqueueOwnedStalkerLiveCommit } from "../lib/stalkerLiveCommitOwnership";
 import { parseCatalogRuntimeSource, makeStalkerLiveRuntimeSource } from "../lib/catalogPersistence";
 
@@ -403,6 +408,53 @@ async function main() {
     assert.deepEqual(normalizeStalkerLiveCategories({ data: [
       { id: 1, title: "News" }, { id: 1, title: "Duplicate" }, { id: 2, title: "Sports" },
     ] }), [{ id: "1", name: "News" }, { id: "2", name: "Sports" }]);
+  });
+
+  await scenario("35 Live category normalization keeps provider labels and provider order", () => {
+    assert.deepEqual(normalizeStalkerLiveCategories({ data: [
+      { id: "229", title: "DE | SKY SPORT" },
+      { id: "234", name: "TR | ULUSAL" },
+      { id: "830", genre_name: "US | SPORTS" },
+    ] }), [
+      { id: "229", name: "DE | SKY SPORT" },
+      { id: "234", name: "TR | ULUSAL" },
+      { id: "830", name: "US | SPORTS" },
+    ]);
+  });
+
+  await scenario("36 missing or numeric Live category labels use the neutral fallback", () => {
+    assert.equal(normalizeStalkerLiveCategoryName(undefined), "Kategori");
+    assert.equal(normalizeStalkerLiveCategoryName("  "), "Kategori");
+    assert.equal(normalizeStalkerLiveCategoryName("229"), "Kategori");
+    assert.deepEqual(
+      normalizeStalkerLiveCategories({ data: [{ id: "229" }] }),
+      [{ id: "229", name: "Kategori" }],
+    );
+  });
+
+  await scenario("37 category selection keeps the provider id in get_ordered_list", async () => {
+    const calls: Array<Record<string, string | number | boolean | undefined>> = [];
+    await fetchStalkerOrderedPage({
+      session: portal((params) => {
+        calls.push(params);
+        return { data: [channel(229, { tv_genre_id: "229" })], total_items: 1, max_page_items: 1 };
+      }),
+      providerId: "provider-category-selection",
+      kind: "itv",
+      categoryId: "229",
+      page: 1,
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].action, "get_ordered_list");
+    assert.equal(calls[0].genre_id, "229");
+    assert.equal(Object.values(calls[0]).includes("DE | SKY SPORT"), false);
+  });
+
+  await scenario("38 synthetic All category remains human-readable", () => {
+    assert.deepEqual(
+      chooseDefaultStalkerCategory([{ id: "229", name: "DE | SKY SPORT" }], true),
+      { id: "0", name: "Tümü", synthetic: true },
+    );
   });
 
   console.log(`1..${passed}`);

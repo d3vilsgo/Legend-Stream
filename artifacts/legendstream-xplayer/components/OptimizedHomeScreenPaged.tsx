@@ -65,11 +65,22 @@ import {
   safeProviderSwitchError,
   tryBeginProviderSwitch,
 } from "@/lib/providerSwitchUx";
-import { redactSensitiveText } from "@/lib/safeLog";
+import { redactSensitiveText, safeLog } from "@/lib/safeLog";
+import { resolveCatalogPlaybackSource } from "@/lib/catalogRuntime";
+import {
+  recordM3UBusyState as recordM3UBusyDiagnosticState,
+  recordM3UHeartbeat,
+  recordM3UOpenLiveEnter,
+  recordM3UOpenLiveSetPlayable,
+  recordM3UOpenLiveSetPlayerView,
+  recordM3UPlayerViewCommit,
+  recordM3UNavigate,
+  recordM3UNavPress,
+  recordM3UViewCommit,
+  setM3UDiagnosticSession,
+} from "@/lib/m3uInAppDiagnostics";
 import type { StalkerProductProviderIdentity } from "@/lib/stalkerProductSession";
 import {
-  buildEpisodeStreamUrl,
-  buildVodStreamUrl,
   getSeriesInfo,
   registerLocalEpisodeQueue,
   type XtreamCredentials,
@@ -118,8 +129,8 @@ export default function OptimizedHomeScreenPaged() {
   const { t } = useI18n();
   const {
     provider, providers, channels, epgByChannel, favorites, history, isHydrating, isLoading, isEpgLoading,
-    error, connectProvider, cancelProviderConnect, refreshProvider, recoverLegacyCatalogFallback, toggleFavorite, recordWatched,
-    removeWatched, resolveProviderForSwitch, setActiveProvider, removeProvider, disconnectProvider, clearError,
+    error, scopedError, m3uCatalogCommit, connectProvider, cancelProviderConnect, refreshProvider, recoverLegacyCatalogFallback, toggleFavorite, recordWatched,
+    removeWatched, resolveProviderForSwitch, setActiveProvider, removeProvider, disconnectProvider, clearError, clearScopedError,
   } = usePlayer();
   const { snapshot, hasUsableCache, isSyncing, isRefreshing, refreshSnapshot, refreshCatalog } = useCatalogSync();
   useCredentialDiagnosticsStartup();
@@ -166,7 +177,7 @@ export default function OptimizedHomeScreenPaged() {
       return () => { cancelled = true; };
     }
     const providerId = provider.id;
-    void getCachedCatalogCategoryMetadata(providerId).then((metadata) => {
+    void getCachedCatalogCategoryMetadata(providerId, provider.type === "m3u").then((metadata) => {
       if (!cancelled && activeProviderIdRef.current === providerId) setCategoryMetadata({ providerId, ...metadata });
     }).catch(() => {
       if (!cancelled && activeProviderIdRef.current === providerId) setCategoryMetadata(null);
@@ -203,6 +214,11 @@ export default function OptimizedHomeScreenPaged() {
   const homeMovies = provider?.type === "stalker" ? [] : activeSnapshot?.movies ?? [];
   const homeSeries = provider?.type === "stalker" ? [] : activeSnapshot?.series ?? [];
 
+  const m3uCatalogRevision =
+    provider?.type === "m3u" &&
+    m3uCatalogCommit?.providerId === provider.id
+      ? m3uCatalogCommit.sequence
+      : 0;
   const liveCount = provider ? snapshotCount(provider.id, snapshot.providerId, snapshot.counts.live, snapshot.ready, hasUsableCache) : { totalCount: null, countKnown: false };
   const vodCount = provider ? provider.type === "stalker" ? { totalCount: null, countKnown: false } : snapshotCount(provider.id, snapshot.providerId, snapshot.counts.vod, snapshot.ready, hasUsableCache) : { totalCount: null, countKnown: false };
   const seriesCount = provider ? provider.type === "stalker" ? { totalCount: null, countKnown: false } : snapshotCount(provider.id, snapshot.providerId, snapshot.counts.series, snapshot.ready, hasUsableCache) : { totalCount: null, countKnown: false };
@@ -243,10 +259,95 @@ export default function OptimizedHomeScreenPaged() {
     }
   };
 
+  const m3uDiagnosticEnabled = provider?.type === "m3u";
+
+  React.useEffect(() => {
+    if (!m3uDiagnosticEnabled || !provider) return;
+    setM3UDiagnosticSession(provider.id, view);
+  }, [m3uDiagnosticEnabled, provider?.id, view]);
+
+  const logM3UBusyState = (currentView: ViewName) => {
+    if (!m3uDiagnosticEnabled) return;
+    const busySnapshot = {
+      isLoading,
+      isSyncing,
+      isRefreshing,
+      isHydrating,
+      catalogDrawerOpen,
+      switchingProviderPresent: switchingProviderId !== null,
+    };
+    recordM3UBusyDiagnosticState(busySnapshot);
+    safeLog.info("M3U_BUSY_STATE", {
+      view: currentView,
+      loading: busySnapshot.isLoading,
+      syncing: busySnapshot.isSyncing,
+      refreshing: busySnapshot.isRefreshing,
+      hydrating: busySnapshot.isHydrating,
+      drawer: busySnapshot.catalogDrawerOpen,
+      switching: busySnapshot.switchingProviderPresent,
+      timestamp: Date.now(),
+    });
+  };
+  const logM3UNavPress = (target: ContentView) => {
+    if (!m3uDiagnosticEnabled) return;
+    recordM3UNavPress(target, view);
+    safeLog.info("M3U_NAV_PRESS", { target, current: view, timestamp: Date.now() });
+    logM3UBusyState(view);
+  };
+  const logM3UNavigate = (target: ContentView) => {
+    if (!m3uDiagnosticEnabled) return;
+    recordM3UNavigate(target);
+    safeLog.info("M3U_NAVIGATE", { from: view, to: target, timestamp: Date.now() });
+  };
+
   const navigate = (target: ContentView) => {
+    logM3UNavPress(target);
+    if (target !== "live") clearScopedError("live-history");
+    logM3UNavigate(target);
     setView(target);
     if (target !== "series") { seriesRequestGenerationRef.current += 1; setSelectedSeries(null); setSeriesInfo(null); }
   };
+
+  React.useEffect(() => {
+    if (!m3uDiagnosticEnabled) return;
+    recordM3UViewCommit(view);
+    if (view === "player") {
+      recordM3UPlayerViewCommit();
+      return;
+    }
+    safeLog.info("M3U_VIEW_COMMIT", { view, timestamp: Date.now() });
+    if (view !== "home") {
+      safeLog.info("M3U_TARGET_MOUNT", { target: view, timestamp: Date.now() });
+    }
+    logM3UBusyState(view);
+  }, [
+    view,
+    m3uDiagnosticEnabled,
+    isLoading,
+    isSyncing,
+    isRefreshing,
+    isHydrating,
+    catalogDrawerOpen,
+    switchingProviderId,
+  ]);
+
+  React.useEffect(() => {
+    if (!m3uDiagnosticEnabled) return;
+    const intervalMs = 250;
+    let expectedAt = Date.now() + intervalMs;
+    let lastCompactLogAt = 0;
+    const timer = setInterval(() => {
+      const now = Date.now();
+      const driftMs = Math.max(0, now - expectedAt);
+      expectedAt = now + intervalMs;
+      recordM3UHeartbeat(driftMs, now);
+      if (driftMs >= 150 || now - lastCompactLogAt >= 1000) {
+        lastCompactLogAt = now;
+        safeLog.info("M3U_JS_HEARTBEAT", { driftMs, timestamp: now });
+      }
+    }, intervalMs);
+    return () => clearInterval(timer);
+  }, [m3uDiagnosticEnabled]);
 
   if (isHydrating) return <View style={[s.centered, { backgroundColor: colors.background }]}><Text style={{ color: colors.foreground }}>{t("loading")}</Text></View>;
 
@@ -264,17 +365,42 @@ export default function OptimizedHomeScreenPaged() {
   }
 
   const openLive = (channel: Channel) => {
-    if (!channel.streamUrl) { setCatalogError("The cached playback address is unavailable. Refresh Live TV and try again."); return; }
-    setPlayable({ title: channel.name, subtitle: channel.category, url: channel.streamUrl, kind: "live", returnTo: "live", liveIdentity: { providerId: channel.providerId, channelId: channel.id } });
-    void recordWatched(channel.id);
-    setView("player");
+    if (m3uDiagnosticEnabled) recordM3UOpenLiveEnter();
+
+    if (provider.type === "stalker") {
+      if (!channel.streamUrl) { setCatalogError("Playback source could not be resolved."); return; }
+      setPlayable({ title: channel.name, subtitle: channel.category, url: channel.streamUrl, kind: "live", returnTo: "live", liveIdentity: { providerId: channel.providerId, channelId: channel.id } });
+      void recordWatched(channel.id);
+      setView("player");
+      return;
+    }
+
+    const requestProviderId = provider.id;
+    void resolveCatalogPlaybackSource({ kind: "live", item: channel }, provider)
+      .then(({ url }) => {
+        if (activeProviderIdRef.current !== requestProviderId) return;
+        setPlayable({ title: channel.name, subtitle: channel.category, url, kind: "live", returnTo: "live", liveIdentity: { providerId: channel.providerId, channelId: channel.id } });
+        if (m3uDiagnosticEnabled) recordM3UOpenLiveSetPlayable();
+        void recordWatched(channel.id);
+        setView("player");
+        if (m3uDiagnosticEnabled) recordM3UOpenLiveSetPlayerView();
+      })
+      .catch(() => {
+        if (activeProviderIdRef.current === requestProviderId) setCatalogError("Playback source could not be resolved.");
+      });
   };
 
   const openMovie = (item: XtreamVodItem) => {
-    try {
-      setPlayable({ title: item.name, subtitle: item.genre || t("movies"), url: buildVodStreamUrl(credentials, item), kind: "movie", returnTo: "movies", vodIdentity: { providerId: provider.id, itemId: String(item.stream_id) } });
-      setView("player");
-    } catch (caught) { setCatalogError(caught instanceof Error ? caught.message : t("loadingMovies")); }
+    const requestProviderId = provider.id;
+    void resolveCatalogPlaybackSource({ kind: "movie", item }, provider)
+      .then(({ url }) => {
+        if (activeProviderIdRef.current !== requestProviderId) return;
+        setPlayable({ title: item.name, subtitle: item.genre || t("movies"), url, kind: "movie", returnTo: "movies", vodIdentity: { providerId: provider.id, itemId: String(item.stream_id) } });
+        setView("player");
+      })
+      .catch(() => {
+        if (activeProviderIdRef.current === requestProviderId) setCatalogError("Playback source could not be resolved.");
+      });
   };
 
   const isCurrentSeriesRequest = (providerId: string, generation: number) => activeProviderIdRef.current === providerId && seriesRequestGenerationRef.current === generation;
@@ -301,13 +427,25 @@ export default function OptimizedHomeScreenPaged() {
 
   const playEpisode = (episode: XtreamEpisode) => {
     if (!selectedSeries) return;
-    try { setPlayable({ title: episode.title || selectedSeries.name, subtitle: selectedSeries.name, url: buildEpisodeStreamUrl(credentials, episode), kind: "episode", returnTo: "series" }); setView("player"); }
-    catch (caught) { setCatalogError(caught instanceof Error ? caught.message : t("loadingEpisodes")); }
+    const requestProviderId = provider.id;
+    const title = episode.title || selectedSeries.name;
+    const subtitle = selectedSeries.name;
+    void resolveCatalogPlaybackSource({ kind: "episode", item: episode }, provider)
+      .then(({ url }) => {
+        if (activeProviderIdRef.current !== requestProviderId) return;
+        setPlayable({ title, subtitle, url, kind: "episode", returnTo: "series" });
+        setView("player");
+      })
+      .catch(() => {
+        if (activeProviderIdRef.current === requestProviderId) setCatalogError("Playback source could not be resolved.");
+      });
   };
   const openDownload = (item: DownloadedMedia) => { setPlayable({ title: item.title, subtitle: item.subtitle, url: item.uri, kind: "download", returnTo: "downloads" }); setView("player"); };
   const openProgress = (item: MediaProgress) => { setPlayable({ title: item.title, subtitle: item.subtitle, url: item.source, kind: item.kind, returnTo: "history" }); setView("player"); };
 
-  if (view === "player") return <View style={s.fullPlayer}>{playable ? <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => setView(playable.returnTo)} /> : null}</View>;
+  if (view === "player") return <View style={s.fullPlayer}>
+    {playable ? <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => setView(playable.returnTo)} /> : null}
+  </View>;
 
   const nav = [
     { key: "home" as const, label: t("home"), icon: "home" as const },
@@ -320,22 +458,24 @@ export default function OptimizedHomeScreenPaged() {
   ];
   const top = Math.max(insets.top, Platform.OS === "web" ? 20 : 0);
   const countKnown = snapshot.providerId === provider.id && (hasUsableCache || snapshot.ready || snapshot.counts.live + snapshot.counts.vod + snapshot.counts.series > 0);
+  const visibleScopedError = view === "live" && scopedError?.domain === "live-history" && scopedError.providerId === provider.id
+    ? t(scopedError.messageKey)
+    : null;
 
   return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
     <View style={[s.header, { borderColor: colors.border }, view === "home" ? s.homeHeaderPremium : null]}>
       <View style={s.headerTop}><Text style={[s.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text><ProviderSubscriptionChip provider={provider} /></View>
       <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.nav}>{nav.map((item) => <FocusButton key={item.key} label={item.label} icon={item.icon} variant={view === item.key ? "secondary" : "ghost"} onPress={() => navigate(item.key)} />)}</ScrollView>
     </View>
+    {error || catalogError || visibleScopedError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}><Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError || visibleScopedError)}</Text><Pressable onPress={() => { clearError(); clearScopedError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable></View> : null}
 
-    {error || catalogError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}><Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError)}</Text><Pressable onPress={() => { clearError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable></View> : null}
-
-    {view === "live" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedLiveCatalog provider={provider} snapshotCount={liveCount} hasMeaningfulM3ULiveGroups={categoryMetadata?.providerId === provider.id ? categoryMetadata.hasMeaningfulM3ULiveGroups : null} epgByChannel={epgByChannel} favorites={favorites} epgLoading={isEpgLoading} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
+    {view === "live" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedLiveCatalog provider={provider} snapshotCount={liveCount} catalogRevision={m3uCatalogRevision} hasMeaningfulM3ULiveGroups={categoryMetadata?.providerId === provider.id ? categoryMetadata.hasMeaningfulM3ULiveGroups : null} epgByChannel={epgByChannel} favorites={favorites} epgLoading={isEpgLoading} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
     {view === "live" && provider.type === "stalker" ? <StalkerLiveCatalog providerId={provider.id} channels={playerLiveChannels} epgByChannel={epgByChannel} favorites={favorites} epgLoading={isEpgLoading} refreshing={isLoading} onRefresh={refreshPagedCatalog} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} /> : null}
 
-    {view === "movies" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedMoviesCatalog provider={provider} snapshotCount={vodCount} sortMode={catalogSort} onSort={changeCatalogSort} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} onOpen={openMovie} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
+    {view === "movies" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedMoviesCatalog provider={provider} snapshotCount={vodCount} catalogRevision={m3uCatalogRevision} sortMode={catalogSort} onSort={changeCatalogSort} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} onOpen={openMovie} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
     {view === "movies" && provider.type === "stalker" && isStalkerProductProvider(provider) ? <StalkerProductErrorBoundary product="movies" providerId={provider.id} onBack={() => setView("home")}><StalkerVodSurface provider={provider} onBack={() => setView("home")} /></StalkerProductErrorBoundary> : null}
 
-    {view === "series" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedSeriesCatalog provider={provider} snapshotCount={seriesCount} sortMode={catalogSort} onSort={changeCatalogSort} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} selected={selectedSeries} info={seriesInfo} onOpen={(item) => void openSeries(item)} onBack={() => { seriesRequestGenerationRef.current += 1; setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
+    {view === "series" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedSeriesCatalog provider={provider} snapshotCount={seriesCount} catalogRevision={m3uCatalogRevision} sortMode={catalogSort} onSort={changeCatalogSort} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} selected={selectedSeries} info={seriesInfo} onOpen={(item) => void openSeries(item)} onBack={() => { seriesRequestGenerationRef.current += 1; setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
     {view === "series" && provider.type === "stalker" && isStalkerProductProvider(provider) ? <StalkerProductErrorBoundary product="series" providerId={provider.id} onBack={() => setView("home")}><StalkerSeriesProductSurface provider={provider} /></StalkerProductErrorBoundary> : null}
 
     {view === "history" ? <HistoryView providerId={provider.id} channels={resolvedFullHistoryIdentityChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
@@ -366,6 +506,7 @@ export default function OptimizedHomeScreenPaged() {
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
       {view === "settings" ? <Settings provider={provider} providers={providers} busy={providerSwitchBusy} switchingProviderId={switchingProviderId} onEdit={() => setEditingProviderId(provider.id)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
     </ScrollView> : null}
+
   </View>;
 }
 

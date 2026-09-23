@@ -57,6 +57,13 @@ const positiveInt = (value: unknown) => {
   return Number.isFinite(n) && n > 0 ? Math.trunc(n) : null;
 };
 
+export const STALKER_LIVE_CATEGORY_FALLBACK = "Kategori";
+
+export function normalizeStalkerLiveCategoryName(value: unknown) {
+  const name = stringValue(value);
+  return name && !/^\d+$/.test(name) ? name : STALKER_LIVE_CATEGORY_FALLBACK;
+}
+
 function rowsFromPayload(payload: unknown, keys: readonly string[]): unknown[] | null {
   if (Array.isArray(payload)) return payload;
   const root = asObject(payload);
@@ -93,7 +100,7 @@ export function normalizeStalkerLiveCategories(payload: unknown): StalkerLiveCat
     seen.add(id);
     result.push({
       id,
-      name: stringValue(row.title ?? row.name ?? row.genre_name ?? row.category_name) || id,
+      name: normalizeStalkerLiveCategoryName(row.title ?? row.name ?? row.genre_name ?? row.category_name),
     });
   }
   return result;
@@ -149,7 +156,9 @@ export function normalizeStalkerLivePage(
       name: stringValue(row.name ?? row.title) || `Channel ${portalId}`,
       logoUrl: stringValue(row.logo ?? row.logo_url ?? row.stream_icon) || undefined,
       categoryId,
-      categoryName: names.get(categoryId) || stringValue(row.tv_genre_name ?? row.genre_name ?? row.category_name) || categoryId,
+      categoryName: normalizeStalkerLiveCategoryName(
+        names.get(categoryId) ?? row.tv_genre_name ?? row.genre_name ?? row.category_name,
+      ),
       tvgId: stringValue(row.xmltv_id ?? row.epg_channel_id) || undefined,
       cmd,
     });
@@ -186,7 +195,7 @@ export function projectStalkerLiveItem(providerId: string, channel: StalkerLiveC
     tvgId: channel.tvgId,
     streamType: "stalker",
     contentType: "live",
-    playbackRef: { type: "stalker-live", portalId: channel.portalId, cmd: channel.cmd },
+    playbackRef: { type: "stalker-live", portalId: channel.portalId },
   };
 }
 

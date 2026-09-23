@@ -3,6 +3,7 @@ import { normalizeImageUrl } from "./imageUrl";
 import { yieldToUi } from "./cooperative";
 import {
   isSafeM3UPlaybackRef,
+  parseM3UStreamRef,
   type M3UPathPlaybackRef,
 } from "./m3uCatalogRefs";
 import type { XtreamSeriesItem, XtreamVodItem } from "./xtreamCatalog";
@@ -10,11 +11,16 @@ import { observeXtreamCardinalityProjection } from "./xtreamCardinalityDiagnosti
 
 export type CatalogKind = "live" | "vod" | "series";
 export type CatalogSourceMode = "canonical" | "direct";
+export type CatalogPersistenceProviderContext = {
+  id?: string;
+  type?: string;
+  url?: string;
+  playlistUrl?: string;
+};
 
 export type PersistedStalkerLivePlaybackRef = {
   type: "stalker-live";
   portalId: string;
-  cmd: string;
 };
 
 export type PersistedLivePlaybackRef =
@@ -127,6 +133,9 @@ const stringOrNumber = (value: unknown) =>
 const stringArray = (value: unknown) =>
   Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
 
+const providerSource = (provider?: CatalogPersistenceProviderContext) =>
+  provider?.url || provider?.playlistUrl || "";
+
 function normalizeM3UPlaybackRef(
   value: unknown,
   expectedKind: M3UPathPlaybackRef["kind"],
@@ -174,15 +183,25 @@ function normalizeLivePlaybackRef(value: unknown): PersistedLivePlaybackRef {
   }
   if (raw.type === "stalker-live") {
     const portalId = nonBlankString(raw.portalId);
-    const cmd = nonBlankString(raw.cmd);
-    if (portalId && cmd) return { type: "stalker-live", portalId, cmd };
+    if (portalId) return { type: "stalker-live", portalId };
   }
   return { type: "unresolved" };
 }
 
-function normalizeVodPlaybackRef(value: unknown, fallback: Record<string, unknown>): PersistedVodPlaybackRef | null {
+function normalizeVodPlaybackRef(
+  value: unknown,
+  fallback: Record<string, unknown>,
+  provider?: CatalogPersistenceProviderContext,
+): PersistedVodPlaybackRef | null {
   const m3u = normalizeM3UPlaybackRef(value, "movie");
   if (m3u) return m3u;
+  if (provider?.type === "m3u") {
+    return parseM3UStreamRef(
+      providerSource(provider),
+      stringValue(fallback.streamUrl) ?? stringValue(fallback.direct_source) ?? "",
+      "movie",
+    );
+  }
   const raw = asObject(value);
   const streamId = stringValue(raw?.streamId) ?? String(stringOrNumber(fallback.stream_id) ?? "");
   if (!streamId) return null;
@@ -194,7 +213,10 @@ function normalizeVodPlaybackRef(value: unknown, fallback: Record<string, unknow
   return { type: "xtream-vod", streamId, containerExtension, sourceMode };
 }
 
-function normalizeM3UEpisodes(value: unknown): PersistedM3UEpisode[] | undefined {
+function normalizeM3UEpisodes(
+  value: unknown,
+  provider?: CatalogPersistenceProviderContext,
+): PersistedM3UEpisode[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const episodes: PersistedM3UEpisode[] = [];
   for (const item of value) {
@@ -205,7 +227,15 @@ function normalizeM3UEpisodes(value: unknown): PersistedM3UEpisode[] | undefined
     const category = stringValue(raw.category) ?? "Series";
     const season = numberValue(raw.season);
     const episode = numberValue(raw.episode);
-    const playbackRef = normalizeM3UPlaybackRef(raw.playbackRef, "series");
+    const playbackRef =
+      normalizeM3UPlaybackRef(raw.playbackRef, "series") ??
+      (provider?.type === "m3u"
+        ? parseM3UStreamRef(
+            providerSource(provider),
+            stringValue(raw.streamUrl) ?? stringValue(raw.direct_source) ?? "",
+            "series",
+          )
+        : null);
     if (!id || !title || season === undefined || episode === undefined || !playbackRef) continue;
     episodes.push({
       id,
@@ -220,17 +250,38 @@ function normalizeM3UEpisodes(value: unknown): PersistedM3UEpisode[] | undefined
   return episodes.length ? episodes : undefined;
 }
 
-function projectLive(providerId: string, value: unknown): PersistedLiveCatalogItem | null {
+function projectLive(
+  providerId: string,
+  value: unknown,
+  provider?: CatalogPersistenceProviderContext,
+): PersistedLiveCatalogItem | null {
   const raw = asObject(value);
   if (!raw) return null;
   const id = stringValue(raw.id);
   const name = nonBlankString(raw.name);
   if (!id || !name) return null;
+
+  const authoritativeStreamId = nonBlankString(raw.playbackStreamId);
+  const authoritativeExtension = nonBlankString(raw.playbackContainerExtension);
   const playbackRef = raw.playbackRef
     ? normalizeLivePlaybackRef(raw.playbackRef)
-    : raw.schemaVersion === 1 && raw.catalogKind === "live"
-      ? normalizeLivePlaybackRef(raw.playbackRef)
-      : parseXtreamLivePlaybackRef(raw.streamUrl);
+    : authoritativeStreamId &&
+        authoritativeExtension &&
+        /^[a-zA-Z0-9]{1,10}$/.test(authoritativeExtension)
+      ? {
+          type: "xtream-live" as const,
+          streamId: authoritativeStreamId,
+          containerExtension: authoritativeExtension,
+        }
+      : provider?.type === "m3u"
+        ? parseM3UStreamRef(
+            providerSource(provider),
+            stringValue(raw.streamUrl) ?? "",
+            "live",
+          ) ?? { type: "unresolved" as const }
+        : raw.schemaVersion === 1 && raw.catalogKind === "live"
+          ? normalizeLivePlaybackRef(raw.playbackRef)
+          : parseXtreamLivePlaybackRef(raw.streamUrl);
   return {
     schemaVersion: 1,
     catalogKind: "live",
@@ -249,12 +300,17 @@ function projectLive(providerId: string, value: unknown): PersistedLiveCatalogIt
   };
 }
 
-function projectVod(providerId: string, value: unknown): PersistedVodCatalogItem | null {
+function projectVod(
+  providerId: string,
+  value: unknown,
+  provider?: CatalogPersistenceProviderContext,
+): PersistedVodCatalogItem | null {
   const raw = asObject(value);
   if (!raw) return null;
-  const streamId = stringOrNumber(raw.stream_id);
   const name = nonBlankString(raw.name);
-  const playbackRef = normalizeVodPlaybackRef(raw.playbackRef, raw);
+  const playbackRef = normalizeVodPlaybackRef(raw.playbackRef, raw, provider);
+  const streamId = stringOrNumber(raw.stream_id) ??
+    (playbackRef?.type === "m3u-path" ? playbackRef.streamId : undefined);
   if (streamId === undefined || !name || !playbackRef) return null;
   return {
     schemaVersion: 1,
@@ -262,12 +318,13 @@ function projectVod(providerId: string, value: unknown): PersistedVodCatalogItem
     providerId,
     stream_id: streamId,
     name,
-    stream_icon: normalizeImageUrl(raw.stream_icon) ?? undefined,
+    stream_icon: normalizeImageUrl(raw.stream_icon) ?? normalizeImageUrl(raw.logoUrl) ?? undefined,
     rating: stringOrNumber(raw.rating),
     rating_5based: numberValue(raw.rating_5based),
     added: stringValue(raw.added),
-    category_id: stringOrNumber(raw.category_id),
-    container_extension: stringValue(raw.container_extension),
+    category_id: stringOrNumber(raw.category_id) ?? stringValue(raw.category),
+    container_extension: stringValue(raw.container_extension) ??
+      (playbackRef.type === "m3u-path" ? playbackRef.containerExtension ?? undefined : undefined),
     plot: stringValue(raw.plot),
     cast: stringValue(raw.cast),
     director: stringValue(raw.director),
@@ -279,10 +336,14 @@ function projectVod(providerId: string, value: unknown): PersistedVodCatalogItem
   };
 }
 
-function projectSeries(providerId: string, value: unknown): PersistedSeriesCatalogItem | null {
+function projectSeries(
+  providerId: string,
+  value: unknown,
+  provider?: CatalogPersistenceProviderContext,
+): PersistedSeriesCatalogItem | null {
   const raw = asObject(value);
   if (!raw) return null;
-  const seriesId = stringOrNumber(raw.series_id);
+  const seriesId = stringOrNumber(raw.series_id) ?? stringOrNumber(raw.id);
   const name = nonBlankString(raw.name);
   if (seriesId === undefined || !name) return null;
   return {
@@ -291,7 +352,7 @@ function projectSeries(providerId: string, value: unknown): PersistedSeriesCatal
     providerId,
     series_id: seriesId,
     name,
-    cover: normalizeImageUrl(raw.cover) ?? undefined,
+    cover: normalizeImageUrl(raw.cover) ?? normalizeImageUrl(raw.coverUrl) ?? undefined,
     plot: stringValue(raw.plot),
     cast: stringValue(raw.cast),
     director: stringValue(raw.director),
@@ -299,9 +360,16 @@ function projectSeries(providerId: string, value: unknown): PersistedSeriesCatal
     releaseDate: stringValue(raw.releaseDate),
     release_date: stringValue(raw.release_date),
     rating: stringOrNumber(raw.rating),
-    category_id: stringOrNumber(raw.category_id),
+    category_id: stringOrNumber(raw.category_id) ?? stringValue(raw.category),
     backdrop_path: stringArray(raw.backdrop_path),
-    m3uEpisodes: normalizeM3UEpisodes(raw.m3uEpisodes),
+    m3uEpisodes: normalizeM3UEpisodes(
+      Array.isArray(raw.m3uEpisodes)
+        ? raw.m3uEpisodes
+        : asObject(raw.seasons)
+          ? Object.values(asObject(raw.seasons)!).flatMap((entries) => Array.isArray(entries) ? entries : [])
+          : undefined,
+      provider,
+    ),
   };
 }
 
@@ -309,10 +377,11 @@ export function projectCatalogItem(
   providerId: string,
   kind: CatalogKind,
   value: Channel | XtreamVodItem | XtreamSeriesItem | unknown,
+  provider?: CatalogPersistenceProviderContext,
 ): PersistedCatalogItem | null {
-  if (kind === "live") return projectLive(providerId, value);
-  if (kind === "vod") return projectVod(providerId, value);
-  return projectSeries(providerId, value);
+  if (kind === "live") return projectLive(providerId, value, provider);
+  if (kind === "vod") return projectVod(providerId, value, provider);
+  return projectSeries(providerId, value, provider);
 }
 
 export function projectCatalogItems(
@@ -361,8 +430,9 @@ export function normalizePersistedCatalogPayload(
   providerId: string,
   kind: CatalogKind,
   raw: unknown,
+  provider?: CatalogPersistenceProviderContext,
 ): PersistedCatalogItem | null {
-  return projectCatalogItem(providerId, kind, raw);
+  return projectCatalogItem(providerId, kind, raw, provider);
 }
 
 const RUNTIME_SCHEME = "legendstream-catalog:";

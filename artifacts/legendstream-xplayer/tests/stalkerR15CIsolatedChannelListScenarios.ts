@@ -168,7 +168,7 @@ async function main() {
     assert.match(pageBlock, /kind: "live"/);
     assert.match(pageBlock, /categoryId: category/);
     assert.match(pageBlock, /search,/);
-    assert.match(pageBlock, /enabled: true/);
+    assert.match(pageBlock, /enabled: category !== null && sync\.categoriesReady/);
     assert.match(liveCatalogSource, /onEndReached=\{page\.loadMore\}/);
   });
 

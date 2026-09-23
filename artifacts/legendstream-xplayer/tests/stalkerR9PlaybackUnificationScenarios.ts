@@ -198,10 +198,11 @@ async function main() {
   const stalkerLive = source("../components/catalog/StalkerLiveCatalog.tsx");
   const iptv = source("../lib/iptv.ts");
 
-  await scenario("catalogRuntime uses shared registry and has no private per-playback Stalker session", () => {
+  await scenario("catalogRuntime uses shared registry plus owned runtime discovery and no private Stalker session", () => {
     assert.match(runtime, /getOrCreateStalkerPortalSession/);
+    assert.match(runtime, /discoverStalkerLiveChannels/);
     assert.doesNotMatch(runtime, /createStalkerPortalSession/);
-    assert.doesNotMatch(runtime, /get_profile|get_genres|get_all_channels|get_ordered_list|get_main_info|syncStalkerLiveCatalog/);
+    assert.doesNotMatch(runtime, /get_profile|get_main_info|syncStalkerLiveCatalog/);
   });
 
   await scenario("Home, Live, History, and Favorites all pass canonical Channel streamUrl to the same player path", () => {
@@ -219,8 +220,10 @@ async function main() {
     assert.match(player, /provider\?\.mac/);
   });
 
-  await scenario("resolved Stalker URL remains runtime-only and is not persisted", () => {
-    assert.match(runtime, /return \(dependencies\.resolveStalkerLink \?\? resolveStalkerLiveCreateLink\)\(session, playbackRef\.cmd, signal\)/);
+  await scenario("resolved Stalker URL remains runtime-only and persisted cmd is not playback authority", () => {
+    assert.match(runtime, /currentChannel = discovery\.rows\.find/);
+    assert.match(runtime, /resolveStalkerLiveCreateLink\)\(session, currentChannel\.cmd, signal\)/);
+    assert.doesNotMatch(runtime, /playbackRef\.cmd/);
     assert.doesNotMatch(runtime, /AsyncStorage|setItem|INSERT|UPDATE|enqueueCatalogDbWrite/);
   });
 
@@ -232,15 +235,23 @@ async function main() {
     assert.doesNotMatch(runtimeStalker, /replace\(\^ffmpeg|rawCommand/);
   });
 
+
+  await scenario("legacy persisted cmd is ignored and runtime reacquires the current provider command", () => {
+    assert.match(runtime, /getStalkerPlaybackRef/);
+    assert.match(runtime, /currentChannel = discovery\.rows\.find/);
+    assert.match(runtime, /resolveStalkerLiveCreateLink\)\(session, currentChannel\.cmd, signal\)/);
+    assert.doesNotMatch(runtime, /playbackRef\.cmd/);
+  });
+
   await scenario("Xtream and M3U runtime playback branches stay unchanged", () => {
     assert.match(runtime, /persisted\.playbackRef\.type === "xtream-live"/);
     assert.match(runtime, /persisted\.playbackRef\.type === "m3u-path" && provider\.type === "m3u"/);
     assert.match(runtime, /buildM3UStreamUrl\(providerSource\(provider\), persisted\.playbackRef\)/);
-    assert.match(runtime, /getVodInfo\(credentials, ref\.streamId\)/);
+    assert.match(runtime, /getVodInfo\(credentials, ref\.streamId, signal\)/);
   });
 
-  assert.equal(passed, 14);
-  process.stdout.write("stalker R9 playback unification scenarios: 14/14 passed\n");
+  assert.equal(passed, 15);
+  process.stdout.write("stalker R9 playback unification scenarios: 15/15 passed\n");
 }
 
 void main().catch((error) => {

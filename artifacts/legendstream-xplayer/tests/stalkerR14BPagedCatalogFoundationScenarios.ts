@@ -335,10 +335,11 @@ async function main() {
     assert.equal(result.compatibilityFallback, true);
   });
 
-  await scenario("X existing Live playback reference remains stalker-live portalId+cmd", () => {
+  await scenario("X Live persistence keeps only durable stalker-live portalId", () => {
     const page = normalizeStalkerLivePage(payload([42]), "provider-x", 1, []);
     const persisted = projectStalkerLiveItem("provider-x", page.items[0]);
-    assert.deepEqual(persisted.playbackRef, { type: "stalker-live", portalId: "42", cmd: "ffmpeg opaque-42" });
+    assert.deepEqual(persisted.playbackRef, { type: "stalker-live", portalId: "42" });
+    assert.equal(JSON.stringify(persisted).includes("opaque-42"), false);
   });
 
   await scenario("Y R14-B foundation contains no M3U or Xtream behavior branch", () => {

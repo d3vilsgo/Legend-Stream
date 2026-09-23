@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import {
-  buildStalkerSeriesPlayerHandoff,
+  buildStalkerSeriesPlayableIntent,
   createStalkerSeriesProductController,
   stalkerSeriesEpisodeIdentity,
+  stalkerSeriesEpisodeIdentityKey,
   StalkerSeriesPlaybackOwnership,
   STALKER_SERIES_PRODUCT_LIMITS,
 } from "../lib/stalkerSeriesProduct";
@@ -58,7 +59,10 @@ async function main() {
   assert.equal(detail.seriesId, "22927:22927");
   assert.deepEqual(detail.seasons.map((season) => season.episodes.map((episode) => episode.id)), [["1", "2"], ["1", "2"]]);
   assert.notEqual(detail.seasons[0]!.episodes[0]!.key, detail.seasons[1]!.episodes[0]!.key);
-  assert.equal(detail.seasons[0]!.episodes[0]!.key, stalkerSeriesEpisodeIdentity("provider-a", "22927:22927", "1", "1"));
+  assert.equal(
+    detail.seasons[0]!.episodes[0]!.key,
+    stalkerSeriesEpisodeIdentityKey(stalkerSeriesEpisodeIdentity("provider-a", "22927:22927", "1", "1")),
+  );
   const serializedDetail = JSON.stringify(detail);
   assert.equal(serializedDetail.includes("season-one-cmd"), false);
   assert.equal(serializedDetail.includes("http://example.invalid"), false);
@@ -73,12 +77,19 @@ async function main() {
     series: "2",
   });
   assert.equal(source, "http://example.invalid/episode.mkv?token=signed%2Bquery&x=1");
-  const handoff = buildStalkerSeriesPlayerHandoff(detail, "1", "2", source);
+  const handoff = buildStalkerSeriesPlayableIntent("provider-a", detail, "1", "2", source);
   assert.deepEqual(handoff, {
-    source: "http://example.invalid/episode.mkv?token=signed%2Bquery&x=1",
-    title: "Bölüm 2",
-    subtitle: "Reacher · Sezon 1",
-    mediaKind: "episode",
+    identity: {
+      type: "stalker-episode",
+      providerId: "provider-a",
+      seriesId: "22927:22927",
+      seasonId: "1",
+      episodeId: "2",
+    },
+    url: "http://example.invalid/episode.mkv?token=signed%2Bquery&x=1",
+    title: "Reacher",
+    subtitle: "Sezon 1 · Bölüm 2",
+    kind: "episode",
   });
 
   const failed = harness((params) => {
@@ -97,20 +108,20 @@ async function main() {
   assert.equal(failedDetail.seasons[0]!.episodes.length, 1);
 
   const ownership = new StalkerSeriesPlaybackOwnership("provider-a");
-  const a = ownership.begin(stalkerSeriesEpisodeIdentity("provider-a", "s", "1", "1"));
-  const b = ownership.begin(stalkerSeriesEpisodeIdentity("provider-a", "s", "1", "2"));
+  const a = ownership.begin(stalkerSeriesEpisodeIdentityKey(stalkerSeriesEpisodeIdentity("provider-a", "s", "1", "1")));
+  const b = ownership.begin(stalkerSeriesEpisodeIdentityKey(stalkerSeriesEpisodeIdentity("provider-a", "s", "1", "2")));
   assert.equal(ownership.isCurrent(a), false);
   assert.equal(ownership.isCurrent(b), true);
   ownership.switchProvider("provider-b");
   assert.equal(ownership.isCurrent(b), false);
-  const c = ownership.begin(stalkerSeriesEpisodeIdentity("provider-b", "s", "1", "1"));
+  const c = ownership.begin(stalkerSeriesEpisodeIdentityKey(stalkerSeriesEpisodeIdentity("provider-b", "s", "1", "1")));
   assert.equal(ownership.isCurrent(c), true);
   ownership.invalidate();
   assert.equal(ownership.isCurrent(c), false);
 
   assert.equal(STALKER_SERIES_PRODUCT_LIMITS.page, 1);
   assert.equal(STALKER_SERIES_PRODUCT_LIMITS.maxCreateLinksPerSelection, 1);
-  assert.equal(STALKER_SERIES_PRODUCT_LIMITS.fallbackDialects, 0);
+  assert.equal(STALKER_SERIES_PRODUCT_LIMITS.fallbackDialects, 1);
 
   console.log("R16-D7 product Series scenarios: PASS");
 }

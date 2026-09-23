@@ -84,10 +84,101 @@ expect(
   "series projection must be whitelist-only while retaining artwork metadata",
 );
 
-const normalizedLegacy = normalizePersistedCatalogPayload(providerId, "live", live) as PersistedLiveCatalogItem;
+const normalizedLegacy = normalizePersistedCatalogPayload(providerId, "live", live, {
+  id: providerId,
+  type: "xtream",
+  url: "https://iptv.example",
+}) as PersistedLiveCatalogItem;
 expect(
   normalizedLegacy.playbackRef.type === "xtream-live" && !JSON.stringify(normalizedLegacy).includes("super-secret"),
   "legacy live payload must normalize through the same whitelist",
+);
+
+const opaqueDirectLive = projectCatalogItems(providerId, "live", [{
+  ...live,
+  streamUrl: "https://cdn.example/opaque/channel",
+  playbackStreamId: "123",
+  playbackContainerExtension: "ts",
+}] as any)[0] as PersistedLiveCatalogItem;
+assert.deepEqual(opaqueDirectLive.playbackRef, {
+  type: "xtream-live",
+  streamId: "123",
+  containerExtension: "ts",
+});
+
+const m3uProvider = {
+  id: "m3u-safe",
+  type: "m3u",
+  url: "https://iptv.invalid/get.php?username=test-user&password=test-pass&type=m3u_plus&output=ts",
+};
+const legacyM3ULive = normalizePersistedCatalogPayload("m3u-safe", "live", {
+  schemaVersion: 1,
+  catalogKind: "live",
+  id: "legacy-live",
+  providerId: "m3u-safe",
+  name: "Legacy live",
+  category: "Live",
+  streamUrl: "https://iptv.invalid/live/test-user/test-pass/701.ts",
+}, m3uProvider) as PersistedLiveCatalogItem;
+assert.deepEqual(legacyM3ULive.playbackRef, {
+  type: "m3u-path",
+  kind: "live",
+  streamId: "701",
+  containerExtension: "ts",
+});
+assert.notEqual(legacyM3ULive.playbackRef.type, "xtream-live");
+assert.doesNotMatch(JSON.stringify(legacyM3ULive), /test-user|test-pass|streamUrl|https:\/\//);
+
+const legacyM3UVod = normalizePersistedCatalogPayload("m3u-safe", "vod", {
+  id: "legacy-vod",
+  providerId: "m3u-safe",
+  name: "Legacy movie",
+  category: "Movies",
+  streamUrl: "https://iptv.invalid/movie/test-user/test-pass/702.mp4",
+}, m3uProvider) as PersistedVodCatalogItem;
+assert.deepEqual(legacyM3UVod.playbackRef, {
+  type: "m3u-path",
+  kind: "movie",
+  streamId: "702",
+  containerExtension: "mp4",
+});
+assert.doesNotMatch(JSON.stringify(legacyM3UVod), /test-user|test-pass|streamUrl|https:\/\//);
+
+const legacyM3USeries = normalizePersistedCatalogPayload("m3u-safe", "series", {
+  id: "legacy-series",
+  providerId: "m3u-safe",
+  name: "Legacy Series",
+  category: "Drama",
+  seasons: {
+    "1": [
+      {
+        id: "episode-a",
+        title: "Episode A",
+        category: "Drama",
+        season: 1,
+        episode: 1,
+        streamUrl: "https://iptv.invalid/series/test-user/test-pass/801.mkv",
+      },
+      {
+        id: "episode-b",
+        title: "Episode B",
+        category: "Drama",
+        season: 1,
+        episode: 2,
+        streamUrl: "https://iptv.invalid/series/test-user/test-pass/802.mkv",
+      },
+    ],
+  },
+}, m3uProvider);
+assert.equal(legacyM3USeries?.catalogKind, "series");
+assert.deepEqual(
+  legacyM3USeries?.catalogKind === "series"
+    ? legacyM3USeries.m3uEpisodes?.map((episode) => episode.playbackRef)
+    : [],
+  [
+    { type: "m3u-path", kind: "series", streamId: "801", containerExtension: "mkv" },
+    { type: "m3u-path", kind: "series", streamId: "802", containerExtension: "mkv" },
+  ],
 );
 
 const unresolved = normalizePersistedCatalogPayload(providerId, "live", {
@@ -126,11 +217,32 @@ const runtimeDirect = `legendstream-catalog://xtream/movie/${encodeURIComponent(
 expect(isCatalogRuntimeSource(runtimeDirect), "direct-source runtime reference must be credential-free and recognizable");
 
 const runtimeSource = fs.readFileSync(path.join(packageRoot, "lib/catalogRuntime.ts"), "utf8");
+const iptvSource = fs.readFileSync(path.join(packageRoot, "lib/iptv.ts"), "utf8");
+const pageSource = fs.readFileSync(path.join(packageRoot, "lib/catalogPageRepository.ts"), "utf8");
+const hookSource = fs.readFileSync(path.join(packageRoot, "hooks/useCatalogPage.ts"), "utf8");
+const screenSource = fs.readFileSync(path.join(packageRoot, "components/OptimizedHomeScreenPaged.tsx"), "utf8");
 expect(
   runtimeSource.includes("normalizeCatalogRuntimeBaseUrl") &&
   runtimeSource.includes("get\\.php") &&
   runtimeSource.includes("baseUrl: normalizeCatalogRuntimeBaseUrl(source)"),
   "cached live runtime must strip get.php before rebuilding the canonical stream URL",
 );
+
+
+assert.match(iptvSource, /playbackStreamId: streamId/);
+assert.match(iptvSource, /playbackContainerExtension: extension/);
+assert.match(pageSource, /safePayload\(provider, row\)/);
+assert.match(pageSource, /normalizePersistedCatalogPayload\(provider\.id, "live", JSON\.parse\(row\.payload\), provider\)/);
+assert.match(hookSource, /catalogRevision <= observedCatalogRevisionRef\.current[\s\S]*reload\(\)/);
+assert.match(runtimeSource, /getVodInfo\(credentials, ref\.streamId, signal\)/);
+assert.match(runtimeSource, /xtream-vod-canonical-fallback/);
+assert.match(runtimeSource, /buildVodStreamUrl\(credentials,[\s\S]*stream_id: ref\.streamId/);
+assert.match(runtimeSource, /export async function resolveCatalogPlaybackSource/);
+assert.match(runtimeSource, /buildM3UStreamUrl\(provider\.url \|\| provider\.playlistUrl/);
+assert.match(screenSource, /resolveCatalogPlaybackSource\(\{ kind: "live", item: channel \}, provider\)/);
+assert.match(screenSource, /resolveCatalogPlaybackSource\(\{ kind: "movie", item \}, provider\)/);
+assert.match(screenSource, /resolveCatalogPlaybackSource\(\{ kind: "episode", item: episode \}, provider\)/);
+assert.match(screenSource, /if \(provider\.type === "stalker"\)[\s\S]*url: channel\.streamUrl/);
+assert.doesNotMatch(JSON.stringify(opaqueDirectLive), /opaque\/channel|streamUrl|direct_source/);
 
 process.stdout.write(`catalog persistence scenarios: ${passed}/10 passed\n`);

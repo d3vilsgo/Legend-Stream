@@ -43,7 +43,7 @@ function numberField(row: Record<string, unknown> | null, key: string) {
   return undefined;
 }
 function normalizedSearchText(value: string) {
-  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("tr-TR").trim();
+  return value.toLocaleLowerCase("tr-TR").normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim();
 }
 
 export function normalizeStalkerVodYear(value: unknown) {
@@ -61,16 +61,25 @@ export function normalizeStalkerVodYear(value: unknown) {
 export function normalizeStalkerVodCategories(payload: unknown): StalkerVodCategory[] {
   const seen = new Set<string>();
   const categories: StalkerVodCategory[] = [];
+  let hasGlobalCategory = false;
   for (const raw of arrayRows(payload)) {
     const row = asObject(raw);
     if (!row) continue;
     const id = textField(row, "id");
     const title = textField(row, "title");
     if (!id || !title || seen.has(id)) continue;
+    const global = isStalkerVodGlobalCategory({ id, title });
+    if (global && hasGlobalCategory) continue;
     seen.add(id);
+    if (global) hasGlobalCategory = true;
     categories.push({ id, title });
   }
   return categories;
+}
+
+export function isStalkerVodGlobalCategory(category: StalkerVodCategory) {
+  const title = normalizedSearchText(category.title);
+  return category.id.trim() === "*" || title === "all" || title === "tumu" || title === "tum";
 }
 
 export function normalizeStalkerVodPage(payload: unknown, requestedPage: number): StalkerVodPage {
@@ -122,10 +131,7 @@ export function mergeStalkerVodItems(existing: readonly StalkerVodItem[], incomi
 }
 
 export function findStalkerVodGlobalCategory(categories: readonly StalkerVodCategory[]) {
-  return categories.find((category) => {
-    const title = normalizedSearchText(category.title);
-    return category.id.trim() === "*" || title === "all" || title === "tumu" || title === "tum";
-  }) ?? null;
+  return categories.find(isStalkerVodGlobalCategory) ?? null;
 }
 
 export async function loadStalkerVodCategories(session: StalkerVodSession, input: { signal?: AbortSignal } = {}): Promise<StalkerVodCategory[]> {
@@ -142,22 +148,39 @@ export async function loadStalkerVodPage(session: StalkerVodSession, category: S
   return normalizeStalkerVodPage(payload, requestedPage);
 }
 
-export async function searchStalkerVodCatalog(session: StalkerVodSession, categories: readonly StalkerVodCategory[], query: string, input: { signal?: AbortSignal } = {}) {
+export async function searchStalkerVodCatalog(
+  session: StalkerVodSession,
+  categories: readonly StalkerVodCategory[],
+  query: string,
+  input: {
+    signal?: AbortSignal;
+    categoryId?: string;
+    onProgress?: (results: readonly StalkerVodItem[]) => void;
+  } = {},
+) {
   const needle = normalizedSearchText(query);
   if (!needle) return [];
-  const globalCategory = findStalkerVodGlobalCategory(categories);
-  if (!globalCategory) throw new Error("Global VOD search requires the provider All category.");
+  const requestedCategoryId = input.categoryId?.trim();
+  const searchCategory = requestedCategoryId
+    ? categories.find((category) => category.id === requestedCategoryId) ?? null
+    : findStalkerVodGlobalCategory(categories);
+  if (!searchCategory) {
+    throw new Error(requestedCategoryId
+      ? "Selected VOD search category is unavailable."
+      : "Global VOD search requires the provider All category.");
+  }
   const results: StalkerVodItem[] = [];
   const seen = new Set<string>();
   let page = 1;
   while (page <= STALKER_VOD_MAX_PAGE) {
     if (input.signal?.aborted) throw new Error("VOD search aborted.");
-    const result = await loadStalkerVodPage(session, globalCategory, page, input);
+    const result = await loadStalkerVodPage(session, searchCategory, page, input);
     for (const item of result.items) {
       if (seen.has(item.portalId)) continue;
       seen.add(item.portalId);
       if (normalizedSearchText(item.title).includes(needle)) results.push(item);
     }
+    if (!input.signal?.aborted) input.onProgress?.([...results]);
     if (!result.hasNextPage) break;
     const nextPage = Math.max(page + 1, result.currentPage + 1);
     if (nextPage <= page) break;
@@ -185,4 +208,41 @@ export async function resolveStalkerVodLink(session: StalkerVodSession, item: St
   if (!cmd) throw new StalkerPortalError("INVALID_RESPONSE", "Stalker VOD item has no playback command.");
   const payload = await session.request({ type: "vod", action: "create_link", cmd, disable_ad: 0, download: 0 }, input.signal, undefined, { providerId: "stalker-vod-playback" });
   return normalizeStalkerVodResolvedUrl(payload);
+}
+
+export type StalkerVodHistoryIdentity = { itemId: string; categoryId: string };
+
+export async function findStalkerVodItemByIdentity(
+  session: StalkerVodSession,
+  identity: StalkerVodHistoryIdentity,
+  input: { signal?: AbortSignal } = {},
+) {
+  const itemId = identity.itemId.trim();
+  const categoryId = identity.categoryId.trim();
+  if (!itemId || !categoryId) throw new StalkerPortalError("INVALID_RESPONSE", "Stalker VOD history identity is invalid.");
+  let page = 1;
+  while (page <= STALKER_VOD_MAX_PAGE) {
+    if (input.signal?.aborted) throw new Error("VOD history replay aborted.");
+    const result = await loadStalkerVodPage(session, { id: categoryId, title: "" }, page, input);
+    const match = result.items.find((item) => item.portalId === itemId);
+    if (match) return match;
+    if (!result.hasNextPage) break;
+    const nextPage = Math.max(page + 1, result.currentPage + 1);
+    if (nextPage <= page) break;
+    page = nextPage;
+    await yieldToUi();
+  }
+  throw new StalkerPortalError("INVALID_RESPONSE", "Stalker VOD history item is no longer available.");
+}
+
+export async function resolveStalkerVodHistoryLink(
+  session: StalkerVodSession,
+  identity: StalkerVodHistoryIdentity,
+  input: { signal?: AbortSignal } = {},
+) {
+  const item = await findStalkerVodItemByIdentity(session, identity, input);
+  return {
+    item,
+    url: await resolveStalkerVodLink(session, item, input),
+  };
 }

@@ -1,4 +1,5 @@
 import { StalkerPortalError, type StalkerPortalDiagnosticsContext, type StalkerPortalSession } from "./stalkerPortal";
+import { isStalkerLiveGlobalCategoryId } from "./stalkerLiveCategoryIntent";
 
 export type StalkerCatalogKind = "itv" | "vod" | "series";
 export type StalkerCategoryDialect = "genre_id" | "genre" | "dual";
@@ -41,6 +42,13 @@ type FetchOrderedPageOptions = {
 
 const MAX_STALKER_ORDERED_PAGES = 5_000;
 const dialectByProvider = new Map<string, StalkerCategoryDialect>();
+
+class StalkerCategoryDialectMismatchError extends Error {
+  constructor() {
+    super("Stalker ordered-list dialect returned rows from a different category.");
+    this.name = "StalkerCategoryDialectMismatchError";
+  }
+}
 
 const asObject = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value)
@@ -97,16 +105,35 @@ export function clearStalkerCategoryDialect(providerId?: string) {
   else dialectByProvider.clear();
 }
 
-function dialectCandidates(providerId: string): StalkerCategoryDialect[] {
+function dialectCandidates(providerId: string, categoryId: string): StalkerCategoryDialect[] {
   const cached = dialectByProvider.get(providerId);
-  if (cached) return [cached];
-  return ["genre_id", "genre", "dual"];
+  const ordered: StalkerCategoryDialect[] = categoryId === "*"
+    ? ["genre", "dual"]
+    : ["genre_id", "genre", "dual"];
+  if (!cached || !ordered.includes(cached)) return ordered;
+  return [cached, ...ordered.filter((candidate) => candidate !== cached)];
 }
 
 function categoryParams(dialect: StalkerCategoryDialect, categoryId: string) {
   if (dialect === "genre_id") return { genre_id: categoryId };
   if (dialect === "genre") return { genre: categoryId };
   return { genre: categoryId, genre_id: categoryId };
+}
+
+function rowCategoryId(row: Record<string, unknown>) {
+  const value = row.tv_genre_id ?? row.genre_id ?? row.category_id;
+  if (typeof value === "string") return value.trim();
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
+}
+
+function assertOrderedPageCategory(rows: readonly Record<string, unknown>[], categoryId: string) {
+  if (isStalkerLiveGlobalCategoryId(categoryId) || rows.length === 0) return;
+  const explicit = rows.map(rowCategoryId).filter(Boolean);
+  if (explicit.length === 0) return;
+  if (explicit.some((value) => value !== categoryId)) {
+    throw new StalkerCategoryDialectMismatchError();
+  }
 }
 
 function canProbeNextDialect(caught: unknown) {
@@ -145,7 +172,7 @@ export async function fetchStalkerOrderedPage(options: FetchOrderedPageOptions):
   }
 
   let lastProbeError: unknown = null;
-  for (const dialect of dialectCandidates(options.providerId)) {
+  for (const dialect of dialectCandidates(options.providerId, categoryId)) {
     try {
       const payload = await options.session.request({
         type: options.kind,
@@ -160,8 +187,9 @@ export async function fetchStalkerOrderedPage(options: FetchOrderedPageOptions):
         throw new StalkerPortalError("CANCELLED", "Stalker ordered-list request was cancelled.");
       }
       const rows = payloadRows(payload);
+      assertOrderedPageCategory(rows, categoryId);
       const metadata = pageMetadata(payload);
-      if (!dialectByProvider.has(options.providerId)) dialectByProvider.set(options.providerId, dialect);
+      dialectByProvider.set(options.providerId, dialect);
       return {
         kind: options.kind,
         categoryId,
@@ -181,6 +209,10 @@ export async function fetchStalkerOrderedPage(options: FetchOrderedPageOptions):
     } catch (caught) {
       if (options.signal?.aborted || (caught instanceof StalkerPortalError && caught.code === "CANCELLED")) throw caught;
       lastProbeError = caught;
+      if (caught instanceof StalkerCategoryDialectMismatchError) {
+        if (dialectByProvider.get(options.providerId) === dialect) dialectByProvider.delete(options.providerId);
+        continue;
+      }
       if (dialectByProvider.has(options.providerId) || !canProbeNextDialect(caught)) throw caught;
     }
   }

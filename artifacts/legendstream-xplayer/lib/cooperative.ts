@@ -49,6 +49,11 @@ export async function yieldToUi(): Promise<void> {
   });
 }
 
+/** A timer turn for Xtream XMLTV CPU work, including pending touch/heartbeat timers. */
+export function yieldXtreamXmltvEventLoop(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
 export async function mapInBatches<T, R>(
   input: readonly T[],
   mapper: (value: T, index: number) => R,
@@ -81,4 +86,40 @@ export async function forEachBatch<T>(
     }
     if (end < input.length) await yieldToUi();
   }
+}
+
+
+export async function tokenizeM3ULinesCooperatively(
+  content: string,
+  batchLines = 500,
+  yieldFn: () => Promise<void> = yieldToUi,
+  onSlice?: (elapsedMs: number) => void,
+): Promise<string[]> {
+  const lines: string[] = [];
+  const size = Math.max(1, Math.trunc(batchLines));
+  let cursor = content.charCodeAt(0) === 0xfeff ? 1 : 0;
+  let sinceYield = 0;
+  let sliceStartedAt = globalThis.performance?.now?.() ?? Date.now();
+
+  while (cursor <= content.length) {
+    const newline = content.indexOf("\n", cursor);
+    if (newline < 0) {
+      lines.push(content.slice(cursor));
+      onSlice?.((globalThis.performance?.now?.() ?? Date.now()) - sliceStartedAt);
+      break;
+    }
+    const lineEnd = newline > cursor && content.charCodeAt(newline - 1) === 13
+      ? newline - 1
+      : newline;
+    lines.push(content.slice(cursor, lineEnd));
+    cursor = newline + 1;
+    sinceYield += 1;
+    if (sinceYield >= size) {
+      onSlice?.((globalThis.performance?.now?.() ?? Date.now()) - sliceStartedAt);
+      sinceYield = 0;
+      await yieldFn();
+      sliceStartedAt = globalThis.performance?.now?.() ?? Date.now();
+    }
+  }
+  return lines;
 }

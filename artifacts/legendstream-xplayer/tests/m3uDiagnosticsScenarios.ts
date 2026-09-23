@@ -3,6 +3,35 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { hasUsableM3UCacheSnapshot } from "../lib/m3uCacheAvailability";
+import {
+  buildM3UDiagnosticReport,
+  describeM3UPlaybackUri,
+  getM3UDiagnosticSnapshot,
+  recordM3UBackgroundRefreshBegin,
+  recordM3UBackgroundRefreshEnd,
+  recordM3UBackgroundRefreshLoadEnd,
+  recordM3UCatalogBuildEnd,
+  recordM3UEpgBegin,
+  recordM3UFetchBegin,
+  recordM3UFetchResponse,
+  recordM3UEpgEnd,
+  recordM3UEpgTimeoutTimerDrift,
+  recordM3UEpgUnderlyingSettleAfterTimeout,
+  recordM3ULivePress,
+  recordM3ULivePressIn,
+  recordM3ULivePressOut,
+  recordM3UPagedLiveState,
+  recordM3UParseLinesEnd,
+  recordM3UResponseTextEnd,
+  recordM3USplitBegin,
+  recordM3USplitEnd,
+  recordM3UOpenLiveEnter,
+  recordM3UOpenLiveSetPlayable,
+  recordM3UOpenLiveSetPlayerView,
+  recordM3UPlayerViewCommit,
+  resetM3UDiagnosticCounters,
+  setM3UDiagnosticSession,
+} from "../lib/m3uInAppDiagnostics";
 import { buildM3UCacheWriteProjection } from "../lib/m3uCacheWriteProjection";
 import {
   classifyM3UContentTypeWithSource,
@@ -13,6 +42,13 @@ import {
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const iptvSource = readFileSync(resolve(ROOT, "lib/iptv.ts"), "utf8");
 const cacheSource = readFileSync(resolve(ROOT, "lib/m3uCatalogCache.ts"), "utf8");
+const homeSource = readFileSync(resolve(ROOT, "components/OptimizedHomeScreenPaged.tsx"), "utf8");
+const pagedSource = readFileSync(resolve(ROOT, "components/catalog/PagedCatalogViews.tsx"), "utf8");
+const compatSource = readFileSync(resolve(ROOT, "components/CompatibilityVideoPlayerV2.tsx"), "utf8");
+const orientationSource = readFileSync(resolve(ROOT, "hooks/usePlayerOrientation.ts"), "utf8");
+const vlcSource = readFileSync(resolve(ROOT, "components/player/VlcPlaybackSurface.tsx"), "utf8");
+const pageRepoSource = readFileSync(resolve(ROOT, "lib/catalogPageRepository.ts"), "utf8");
+const playerSource = readFileSync(resolve(ROOT, "context/PlayerContext.tsx"), "utf8");
 
 let passed = 0;
 const scenario = (name: string, run: () => void) => {
@@ -216,8 +252,280 @@ function main() {
     assert.match(output, /m3u\.classification\.byGroupMovie=1/);
   });
 
-  assert.equal(passed, 8);
+  scenario("Z2M player handoff commit is observable and chronological", () => {
+    setM3UDiagnosticSession("provider-z2m", "live");
+    resetM3UDiagnosticCounters();
+    recordM3ULivePress();
+    recordM3UOpenLiveEnter();
+    recordM3UOpenLiveSetPlayable();
+    recordM3UOpenLiveSetPlayerView();
+    recordM3UPlayerViewCommit();
+    const snapshot = getM3UDiagnosticSnapshot();
+    assert.equal(snapshot.lastChannelPressCount, 1);
+    assert.ok(snapshot.lastLivePressAt);
+    assert.ok(snapshot.openLiveEnterAt);
+    assert.ok(snapshot.setPlayableAt);
+    assert.ok(snapshot.setPlayerViewAt);
+    assert.ok(snapshot.playerViewCommitAt);
+    assert.deepEqual(
+      snapshot.playbackSequence.map((entry) => entry.marker),
+      [
+        "M3U_LIVE_PRESS",
+        "M3U_OPEN_LIVE_ENTER",
+        "M3U_OPEN_LIVE_SET_PLAYABLE",
+        "M3U_OPEN_LIVE_SET_PLAYER_VIEW",
+        "M3U_PLAYER_VIEW_COMMIT",
+      ],
+    );
+  });
+
+  scenario("Z2M URI diagnostics report rewrite metadata without raw URL or credentials", () => {
+    const raw = "https://panel.example/live/alice/secret/12345.m3u8?token=private";
+    const effective = "https://panel.example/live/alice/secret/12345.ts?token=private";
+    const metadata = describeM3UPlaybackUri(raw, effective);
+    assert.deepEqual(metadata, {
+      scheme: "https",
+      inputExtension: "m3u8",
+      effectiveExtension: "ts",
+      rewriteApplied: true,
+      hasLivePath: true,
+      sourceLength: raw.length,
+    });
+    const report = buildM3UDiagnosticReport({
+      ...getM3UDiagnosticSnapshot(),
+      uriMetadata: metadata,
+    });
+    assert.match(report, /uriScheme=https/);
+    assert.match(report, /inputExtension=m3u8/);
+    assert.match(report, /effectiveExtension=ts/);
+    assert.match(report, /rewriteApplied=true/);
+    assert.doesNotMatch(report, /panel\.example|alice|secret|12345|private|token=/);
+  });
+
+  scenario("Z2M instrumentation preserves playback orientation queue and touch semantics", () => {
+    assert.match(pagedSource, /provider\.type === "m3u"\) recordM3ULivePress\(\)/);
+    assert.match(homeSource, /recordM3UOpenLiveEnter\(\)/);
+    assert.match(homeSource, /setPlayable\(\{ title: channel\.name,[\s\S]*url: channel\.streamUrl,[\s\S]*kind: "live"/);
+    assert.match(homeSource, /setView\("player"\);[\s\S]*recordM3UOpenLiveSetPlayerView\(\)/);
+    assert.doesNotMatch(homeSource, /M3UDiagnosticPanel|M3U DBG|M3U_TOUCH_SENTINEL/);
+    assert.doesNotMatch(homeSource, /m3uDiagnosticEnabled \|\| view === "player"/);
+    assert.match(compatSource, /\/live\\\/\/i\.test\(runtimeSource\)[\s\S]*\.m3u8[\s\S]*replace\([\s\S]*"\.ts"\)/);
+    assert.match(compatSource, /getCachedLivePlaybackWindow\(provider,/);
+    assert.match(pageRepoSource, /const LIVE_PLAYBACK_WINDOW_MAX = 500/);
+    assert.match(orientationSource, /await ScreenOrientation\.getOrientationAsync\(\)/);
+    assert.match(orientationSource, /await ScreenOrientation\.unlockAsync\(\)/);
+    assert.match(orientationSource, /recordM3UOrientationReady/);
+    assert.match(vlcSource, /source=\{\{ uri, initType: 2, initOptions \}\}/);
+    assert.match(vlcSource, /onPlaying=\{handlePlaying\}/);
+  });
+
+  scenario("Z2O Paged Live report uses the mounted page state rather than inferred busy flags", () => {
+    setM3UDiagnosticSession("provider-z2o", "live");
+    resetM3UDiagnosticCounters();
+    recordM3UPagedLiveState({
+      pageLoadingInitial: true,
+      pageLoadingMore: true,
+      pageItemsCount: 641,
+      parentRefreshing: false,
+      isEpgLoading: true,
+      categoriesReady: true,
+      selectedCategory: "__all__",
+    });
+    const snapshot = getM3UDiagnosticSnapshot();
+    assert.equal(snapshot.pageLoadingInitial, true);
+    assert.equal(snapshot.pageLoadingMore, true);
+    assert.equal(snapshot.pageItemsCount, 641);
+    assert.equal(snapshot.parentRefreshing, false);
+    assert.equal(snapshot.isEpgLoading, true);
+    assert.equal(snapshot.categoriesReady, true);
+    assert.equal(snapshot.selectedCategory, "__all__");
+    assert.match(pagedSource, /recordM3UPagedLiveState\(\{[\s\S]*pageLoadingInitial: page\.loadingInitial,[\s\S]*pageLoadingMore: page\.loadingMore,[\s\S]*pageItemsCount: page\.items\.length,[\s\S]*parentRefreshing: refreshing,[\s\S]*isEpgLoading: epgLoading,[\s\S]*categoriesReady,[\s\S]*selectedCategory: category/);
+  });
+
+  scenario("Z2O responder counters are independent and onPress keeps its existing semantic order", () => {
+    resetM3UDiagnosticCounters();
+    recordM3ULivePressIn();
+    recordM3ULivePressOut();
+    let snapshot = getM3UDiagnosticSnapshot();
+    assert.equal(snapshot.pressInCount, 1);
+    assert.equal(snapshot.pressCount, 0);
+    assert.equal(snapshot.pressOutCount, 1);
+    recordM3ULivePress();
+    snapshot = getM3UDiagnosticSnapshot();
+    assert.equal(snapshot.pressInCount, 1);
+    assert.equal(snapshot.pressCount, 1);
+    assert.equal(snapshot.pressOutCount, 1);
+    assert.match(pagedSource, /onPressIn=\{\(\) => \{[\s\S]*recordM3ULivePressIn\(\)[\s\S]*onPress=\{\(\) => \{\s*if \(provider\.type === "m3u"\) recordM3ULivePress\(\);\s*onOpen\(channel\);[\s\S]*onPressOut=\{\(\) => \{[\s\S]*recordM3ULivePressOut\(\)/);
+  });
+
+  scenario("Z2O background refresh markers remain intact under Z2R non-blocking EPG ownership", () => {
+    assert.match(playerSource, /const M3U_BACKGROUND_REFRESH_DELAY_MS = 1_250/);
+    assert.match(playerSource, /setTimeout\(\(\) => \{\s*if \(!cancelled\) void refreshProviderInBackground\(providerId\);\s*\}, M3U_BACKGROUND_REFRESH_DELAY_MS\)/);
+    assert.match(playerSource, /recordM3UBackgroundRefreshBegin\(\);[\s\S]*await loadProviderSmart\(fromProvider\(existing\), \{ persistM3U: false \}\);[\s\S]*recordM3UBackgroundRefreshLoadEnd/);
+    assert.match(playerSource, /recordM3UBackgroundRefreshEnd\([\s\S]*if \(!persistenceOwnsRequest\) providerLoadGateRef\.current\.finish\(ownership\)/);
+    assert.match(playerSource, /const EPG_START_DELAY_MS = 1_200/);
+    assert.match(playerSource, /const boundedProvider = provider\.type === "m3u" \|\| provider\.type === "xtream"/);
+    assert.match(playerSource, /const existingWork = bulkEpgPromiseRef\.current\.get\(resolvedProviderId\);\s*if \(existingWork\) \{\s*if \(boundedProvider && !force\) return;\s*if \(boundedProvider\) \{\s*cancelOwnedEpg\(resolvedProviderId\);/);
+    assert.match(playerSource, /ownedEpgAttemptsRef\.current\.begin\(resolvedProviderId, generation\)/);
+    assert.match(playerSource, /const isOwned = \(\) => !boundedProvider \|\| \([\s\S]*?ownedEpgAttemptsRef\.current\.isCurrent\(ownedAttempt\)[\s\S]*?epgAttemptGenerationRef\.current\.isCurrent\(resolvedProviderId, ownedAttempt\.generation\)[\s\S]*?stateRef\.current\.provider\?\.id === resolvedProviderId/);
+    assert.match(playerSource, /recordM3UEpgBegin\(\);[\s\S]*recordM3UEpgWorkBegin\(/);
+    assert.match(playerSource, /const attemptPromise = workResultPromise;/);
+    assert.match(playerSource, /ownedAttempt\?\.controller\.signal, diagnosticAttemptId, isOwned\)/);
+    assert.match(playerSource, /cancelOwnedEpg = \(providerId: string\) => \{[\s\S]*?ownedEpgAttemptsRef\.current\.cancel\(providerId\)/);
+    assert.match(playerSource, /EPG_UNDERLYING_SETTLED/);
+    // True work-lifetime ownership is enforced behaviorally by epgRuntimeScenarios Q.
+    // This diagnostics scenario only requires the M3U-visible lifecycle markers to remain wired.
+    assert.match(playerSource, /recordM3UEpgWorkEnd\(/);
+    assert.match(playerSource, /provider\.type !== "xtream"\) return;/);
+  });
+
+  scenario("Z2O correlation report is bounded privacy-safe and diagnostic-only", () => {
+    resetM3UDiagnosticCounters();
+    recordM3UBackgroundRefreshBegin();
+    recordM3UBackgroundRefreshLoadEnd(25);
+    recordM3UEpgBegin();
+    recordM3ULivePressIn();
+    recordM3ULivePressOut();
+    recordM3UEpgEnd(50);
+    recordM3UBackgroundRefreshEnd(75);
+    const report = buildM3UDiagnosticReport(getM3UDiagnosticSnapshot());
+    assert.match(report, /M3U_BG_REFRESH_BEGIN/);
+    assert.match(report, /M3U_BG_REFRESH_LOAD_END/);
+    assert.match(report, /M3U_EPG_BEGIN/);
+    assert.match(report, /M3U_LIVE_PRESS_IN/);
+    assert.match(report, /M3U_LIVE_PRESS_OUT/);
+    assert.match(report, /m3uBgRefreshActive=false/);
+    assert.match(report, /m3uEpgActive=false/);
+    assert.doesNotMatch(report, /playlistUrl|streamUrl|epgUrl|username|password|token|mac=/i);
+    assert.match(pagedSource, /if \(provider\.type === "m3u"\) recordM3ULivePressIn\(\)/);
+    assert.match(pagedSource, /if \(provider\.type === "m3u"\) recordM3ULivePressOut\(\)/);
+    assert.doesNotMatch(pagedSource, /disabled=\{provider\.type === "m3u"/);
+    const backgroundDelay = playerSource.match(/const M3U_BACKGROUND_REFRESH_DELAY_MS = ([0-9_]+);/);
+    assert.equal(backgroundDelay?.[1], "1_250");
+  });
+
+  scenario("Z2Q ingest markers are placed on the exact M3U full-load boundaries", () => {
+    const fetchStart = iptvSource.indexOf("async function fetchProviderText");
+    const loadM3UStart = iptvSource.indexOf("async function loadM3U", fetchStart);
+    const fetchSource = iptvSource.slice(fetchStart, loadM3UStart);
+    assert.ok(fetchStart >= 0 && loadM3UStart > fetchStart);
+    const fetchBegin = fetchSource.indexOf("recordM3UFetchBegin();");
+    const fetchCall = fetchSource.indexOf("response = await fetch(url");
+    const fetchResponse = fetchSource.indexOf("recordM3UFetchResponse();");
+    const responseText = fetchSource.indexOf("const text = await response.text();");
+    const responseTextEnd = fetchSource.indexOf("recordM3UResponseTextEnd();");
+    assert.ok(fetchBegin >= 0 && fetchBegin < fetchCall);
+    assert.ok(fetchCall < fetchResponse && fetchResponse < responseText && responseText < responseTextEnd);
+
+    const cooperativeStart = iptvSource.indexOf("async function parseM3UCooperatively");
+    const errorClassStart = iptvSource.indexOf("export class ProviderLoadError", cooperativeStart);
+    const cooperativeSource = iptvSource.slice(cooperativeStart, errorClassStart);
+    const splitBegin = cooperativeSource.indexOf("recordM3USplitBegin();");
+    const tokenizeOperation = cooperativeSource.indexOf("tokenizeM3ULinesCooperatively(");
+    const splitEnd = cooperativeSource.indexOf("recordM3USplitEnd();");
+    const parseLinesEnd = cooperativeSource.indexOf("recordM3UParseLinesEnd();");
+    const catalogBuild = cooperativeSource.indexOf("await buildM3UCatalogCooperatively");
+    const catalogBuildEnd = cooperativeSource.indexOf("recordM3UCatalogBuildEnd();");
+    assert.ok(splitBegin >= 0 && splitBegin < tokenizeOperation);
+    assert.ok(tokenizeOperation < splitEnd && splitEnd < parseLinesEnd);
+    assert.ok(parseLinesEnd < catalogBuild && catalogBuild < catalogBuildEnd);
+
+    const standaloneStart = iptvSource.indexOf("export function parseM3U(");
+    const standaloneEnd = iptvSource.indexOf("async function parseM3UCooperatively", standaloneStart);
+    const standaloneSource = iptvSource.slice(standaloneStart, standaloneEnd);
+    assert.doesNotMatch(standaloneSource, /recordM3U(?:Split|ParseLines|CatalogBuild)/);
+  });
+
+  scenario("Z2Q phase durations and chronological ingest sequence use monotonic boundaries", () => {
+    setM3UDiagnosticSession("provider-z2q", "live");
+    resetM3UDiagnosticCounters();
+    recordM3UFetchBegin(1000);
+    recordM3UFetchResponse(1500);
+    recordM3UResponseTextEnd(1600);
+    recordM3USplitBegin(1600);
+    recordM3USplitEnd(1750);
+    recordM3UParseLinesEnd(2100);
+    recordM3UCatalogBuildEnd(2500);
+    const snapshot = getM3UDiagnosticSnapshot();
+    assert.equal(snapshot.m3uFetchWaitMs, 500);
+    assert.equal(snapshot.m3uResponseTextMs, 100);
+    assert.equal(snapshot.m3uSplitMs, 150);
+    assert.equal(snapshot.m3uParseLinesMs, 350);
+    assert.equal(snapshot.m3uCatalogBuildMs, 400);
+    assert.equal(snapshot.m3uTotalIngestMs, 1500);
+    assert.deepEqual(
+      snapshot.correlationSequence.map((entry) => entry.marker),
+      [
+        "M3U_FETCH_BEGIN",
+        "M3U_FETCH_RESPONSE",
+        "M3U_RESPONSE_TEXT_END",
+        "M3U_SPLIT_BEGIN",
+        "M3U_SPLIT_END",
+        "M3U_PARSE_LINES_END",
+        "M3U_CATALOG_BUILD_END",
+      ],
+    );
+    assert.deepEqual(
+      snapshot.correlationSequence.map((entry) => entry.elapsedMs),
+      [0, 500, 600, 600, 750, 1100, 1500],
+    );
+  });
+
+  scenario("Z2Q keeps heartbeat background refresh parser batching and provider isolation unchanged", () => {
+    assert.match(homeSource, /const intervalMs = 250;[\s\S]*setInterval\(\(\) => \{[\s\S]*recordM3UHeartbeat\(driftMs, now\)/);
+    assert.match(playerSource, /recordM3UBackgroundRefreshBegin\(\);[\s\S]*recordM3UBackgroundRefreshLoadEnd/);
+    assert.match(playerSource, /recordM3UBackgroundRefreshEnd\(/);
+    assert.match(iptvSource, /const batchSize = 500;/);
+    assert.match(iptvSource, /buildM3UCatalogCooperatively\(entries, providerId, \{\s*batchSize: 200,/);
+    assert.match(iptvSource, /tokenizeM3ULinesCooperatively\([\s\S]*recordM3UBackgroundJsSlice/);
+    const xtreamStart = iptvSource.indexOf("async function loadXtream");
+    const stalkerStart = iptvSource.indexOf("async function loadStalker", xtreamStart);
+    const providerStart = iptvSource.indexOf("export async function loadProvider", stalkerStart);
+    assert.doesNotMatch(iptvSource.slice(xtreamStart, providerStart), /recordM3U(?:Fetch|Response|Split|ParseLines|CatalogBuild)/);
+    assert.match(iptvSource, /recordM3UBackgroundJsSlice/);
+    assert.doesNotMatch(
+      iptvSource.slice(
+        iptvSource.indexOf("async function parseM3UCooperatively"),
+        iptvSource.indexOf("export class ProviderLoadError"),
+      ),
+      /content\.replace\(\/\^\\uFEFF\/[\s\S]*\.split\(\/\\r\?\\n\//,
+    );
+  });
+
+  scenario("Z2Q report remains privacy-safe after reachability hardening", () => {
+    const report = buildM3UDiagnosticReport(getM3UDiagnosticSnapshot());
+    assert.match(report, /m3uFetchWaitMs=500/);
+    assert.match(report, /m3uResponseTextMs=100/);
+    assert.match(report, /m3uSplitMs=150/);
+    assert.match(report, /m3uParseLinesMs=350/);
+    assert.match(report, /m3uCatalogBuildMs=400/);
+    assert.match(report, /m3uTotalIngestMs=1500/);
+    assert.doesNotMatch(report, /playlistUrl|streamUrl|epgUrl|username|password|token|cookie|mac=/i);
+    recordM3UEpgTimeoutTimerDrift(37);
+    recordM3UEpgUnderlyingSettleAfterTimeout(1234);
+    const lifetimeReport = buildM3UDiagnosticReport(getM3UDiagnosticSnapshot());
+    assert.match(lifetimeReport, /EPG_TIMEOUT_TIMER_DRIFT_MS=37/);
+    assert.match(lifetimeReport, /EPG_UNDERLYING_SETTLE_AFTER_TIMEOUT_MS=1234/);
+    assert.match(lifetimeReport, /m3uBgMaxJsSliceMs=/);
+    assert.doesNotMatch(lifetimeReport, /playlistUrl|streamUrl|epgUrl|username|password|token|cookie|mac=/i);
+  });
+
+  scenario("Z2QA production M3U UI exposes no temporary diagnostic overlay or responder", () => {
+    assert.match(homeSource, /const m3uDiagnosticEnabled = provider\?\.type === "m3u";/);
+    assert.doesNotMatch(homeSource, /M3UDiagnosticPanel/);
+    assert.doesNotMatch(homeSource, /M3U DBG/);
+    assert.doesNotMatch(homeSource, />TOUCH</);
+    assert.doesNotMatch(homeSource, /M3U_TOUCH_SENTINEL|recordM3UTouchSentinel|diagnosticSentinel/);
+    assert.doesNotMatch(homeSource, /M3U diagnostic touch sentinel/);
+  });
+
+  assert.equal(passed, 20);
   console.log("m3u shape diagnostics scenarios: 8/8 passed");
+  console.log("m3u Z2M handoff diagnostics scenarios: 3/3 passed");
+  console.log("m3u Z2O targeted correlation diagnostics scenarios: 4/4 passed");
+  console.log("m3u Z2Q ingest phase diagnostics scenarios: 4/4 passed");
+  console.log("m3u Z2QA diagnostic reachability scenarios: 1/1 passed");
+  console.log("m3u shape + Z2M + Z2O + Z2Q + Z2QA diagnostics scenarios: 20/20 passed");
 }
 
 main();

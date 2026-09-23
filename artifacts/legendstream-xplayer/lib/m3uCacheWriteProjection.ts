@@ -44,6 +44,7 @@ export type M3UCacheWriteProjection = {
   rejectionCounts: M3URefRejectionCounts;
   scan: M3UCacheValidationScan;
   unsafeOutcome: Exclude<M3UCacheWriteOutcome, "success" | "unsupported-source" | "projection-drop" | "sqlite-error"> | null;
+  duplicateItemIdCount: number;
   liveRows: Array<Channel & { playbackRef: M3UPathPlaybackRef }>;
   movieRows: SafeM3UMovieRow[];
   seriesRows: SafeM3USeriesRow[];
@@ -91,6 +92,10 @@ export function buildM3UCacheWriteProjection(
   const liveRows: Array<Channel & { playbackRef: M3UPathPlaybackRef }> = [];
   const movieRows: SafeM3UMovieRow[] = [];
   const seriesRows: SafeM3USeriesRow[] = [];
+  const liveIds = new Set<string>();
+  const vodIds = new Set<string>();
+  const seriesIds = new Set<string>();
+  let duplicateItemIdCount = 0;
 
   const inputCounts = {
     live: liveInput.length,
@@ -110,6 +115,7 @@ export function buildM3UCacheWriteProjection(
     rejectionCounts,
     scan,
     unsafeOutcome,
+    duplicateItemIdCount,
     liveRows,
     movieRows,
     seriesRows,
@@ -136,6 +142,9 @@ export function buildM3UCacheWriteProjection(
     scan.scanInspectedCount += 1;
     const inspection = inspectM3UStreamRef(parsedProvider, channel.streamUrl, "live");
     if (!inspection.ref) return reject("live", inspection.reason);
+    const liveId = String(channel.id);
+    if (liveIds.has(liveId)) duplicateItemIdCount += 1;
+    else liveIds.add(liveId);
     liveRows.push({ ...channel, playbackRef: inspection.ref });
   }
 
@@ -144,6 +153,9 @@ export function buildM3UCacheWriteProjection(
     const inspection = inspectM3UStreamRef(parsedProvider, item.streamUrl, "movie");
     if (!inspection.ref) return reject("vod", inspection.reason);
     if (inspection.ref.containerExtension === null) return reject("vod", "missing-extension");
+    const vodId = String(inspection.ref.streamId);
+    if (vodIds.has(vodId)) duplicateItemIdCount += 1;
+    else vodIds.add(vodId);
     movieRows.push({
       // M3U runtime item.id includes parser position and is not a stable catalog key.
       // The credential-free playback ref streamId is stable across playlist reorderings,
@@ -158,6 +170,9 @@ export function buildM3UCacheWriteProjection(
   }
 
   for (const group of seriesInput) {
+    const seriesId = String(group.id);
+    if (seriesIds.has(seriesId)) duplicateItemIdCount += 1;
+    else seriesIds.add(seriesId);
     const allEpisodes = Object.values(group.seasons).flat();
     const episodes: PersistedM3UEpisode[] = [];
     for (const episode of allEpisodes) {
@@ -204,6 +219,10 @@ export async function buildM3UCacheWriteProjectionCooperatively(
   const liveRows: Array<Channel & { playbackRef: M3UPathPlaybackRef }> = [];
   const movieRows: SafeM3UMovieRow[] = [];
   const seriesRows: SafeM3USeriesRow[] = [];
+  const liveIds = new Set<string>();
+  const vodIds = new Set<string>();
+  const seriesIds = new Set<string>();
+  let duplicateItemIdCount = 0;
   const inputCounts = { live: liveInput.length, vod: movieInput.length, series: seriesInput.length };
   const batchSize = Math.max(1, options.batchSize ?? 200);
   const actualCandidateCount = liveInput.length + movieInput.length + seriesEpisodeCount(loaded);
@@ -217,6 +236,7 @@ export async function buildM3UCacheWriteProjectionCooperatively(
     rejectionCounts,
     scan,
     unsafeOutcome,
+    duplicateItemIdCount,
     liveRows,
     movieRows,
     seriesRows,
@@ -246,6 +266,9 @@ export async function buildM3UCacheWriteProjectionCooperatively(
     scan.scanInspectedCount += 1;
     const inspection = inspectM3UStreamRef(parsedProvider, channel.streamUrl, "live");
     if (!inspection.ref) return reject("live", inspection.reason);
+    const liveId = String(channel.id);
+    if (liveIds.has(liveId)) duplicateItemIdCount += 1;
+    else liveIds.add(liveId);
     liveRows.push({ ...channel, playbackRef: inspection.ref });
     await maybeYield();
   }
@@ -255,6 +278,9 @@ export async function buildM3UCacheWriteProjectionCooperatively(
     const inspection = inspectM3UStreamRef(parsedProvider, item.streamUrl, "movie");
     if (!inspection.ref) return reject("vod", inspection.reason);
     if (inspection.ref.containerExtension === null) return reject("vod", "missing-extension");
+    const vodId = String(inspection.ref.streamId);
+    if (vodIds.has(vodId)) duplicateItemIdCount += 1;
+    else vodIds.add(vodId);
     movieRows.push({
       stream_id: inspection.ref.streamId,
       name: item.name,
@@ -267,6 +293,9 @@ export async function buildM3UCacheWriteProjectionCooperatively(
   }
 
   for (const group of seriesInput) {
+    const seriesId = String(group.id);
+    if (seriesIds.has(seriesId)) duplicateItemIdCount += 1;
+    else seriesIds.add(seriesId);
     const episodes: PersistedM3UEpisode[] = [];
     for (const seasonEpisodes of Object.values(group.seasons)) {
       for (const episode of seasonEpisodes) {

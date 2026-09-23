@@ -11,6 +11,7 @@ import type { XtreamCategory } from "./xtreamCatalog";
 import {
   normalizePersistedCatalogPayload,
   type CatalogKind,
+  type CatalogPersistenceProviderContext,
   type PersistedCatalogItem,
 } from "./catalogPersistence";
 import {
@@ -191,9 +192,10 @@ const parsePayload = (
   providerId: string,
   kind: CatalogKind,
   row: CacheRow,
+  provider?: CatalogPersistenceProviderContext,
 ): PersistedCatalogItem | null => {
   try {
-    return normalizePersistedCatalogPayload(providerId, kind, JSON.parse(row.payload));
+    return normalizePersistedCatalogPayload(providerId, kind, JSON.parse(row.payload), provider);
   } catch {
     return null;
   }
@@ -745,6 +747,7 @@ export async function getCachedPersistedItems(
   kind: CatalogKind,
   categoryId?: string,
   limit?: number,
+  provider?: CatalogPersistenceProviderContext,
 ): Promise<PersistedCatalogItem[]> {
   const db = await database();
   const args: Array<string | number> = [providerId, kind];
@@ -762,7 +765,7 @@ export async function getCachedPersistedItems(
   }
   const rows = await db.getAllAsync<CacheRow>(sql, ...args);
   return rows
-    .map((row) => parsePayload(providerId, kind, row))
+    .map((row) => parsePayload(providerId, kind, row, provider))
     .filter((item): item is PersistedCatalogItem => item !== null);
 }
 
@@ -770,6 +773,7 @@ export async function getNewCachedPersistedItems(
   providerId: string,
   kind: CatalogKind,
   limit = 24,
+  provider?: CatalogPersistenceProviderContext,
 ): Promise<PersistedCatalogItem[]> {
   const db = await database();
   const rows = await db.getAllAsync<CacheRow>(
@@ -782,7 +786,7 @@ export async function getNewCachedPersistedItems(
     limit,
   );
   return rows
-    .map((row) => parsePayload(providerId, kind, row))
+    .map((row) => parsePayload(providerId, kind, row, provider))
     .filter((item): item is PersistedCatalogItem => item !== null);
 }
 

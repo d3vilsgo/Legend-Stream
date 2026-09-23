@@ -1,14 +1,45 @@
-import { mapInBatches, yieldToUi } from "./cooperative";
+import { mapInBatches, tokenizeM3ULinesCooperatively, yieldToUi, yieldXtreamXmltvEventLoop } from "./cooperative";
 import {
   createM3UShapeDiagnosticsObserver,
   type M3UShapeDiagnostics,
 } from "./m3uShapeDiagnostics";
 import { createStalkerPortalSession } from "./stalkerPortal";
 import {
+  recordM3UBackgroundJsSlice,
+  recordM3UCatalogBuildEnd,
+  recordM3UEpgBodyBegin,
+  recordM3UEpgBodyEnd,
+  recordM3UEpgDecodeBegin,
+  recordM3UEpgDecodeEnd,
+  recordM3UEpgFetchBegin,
+  recordM3UEpgFetchResponse,
+  recordM3UEpgParseBegin,
+  recordM3UEpgParseEnd,
+  recordM3UEpgStringAssemblyBegin,
+  recordM3UEpgStringAssemblyEnd,
+  recordM3UFetchBegin,
+  recordM3UFetchResponse,
+  recordM3UParseLinesEnd,
+  recordM3UResponseTextEnd,
+  recordM3USplitBegin,
+  recordM3USplitEnd,
+} from "./m3uInAppDiagnostics";
+import {
   loadXtreamLiveCatalogFromPreparedRun,
   type XtreamCredentials,
 } from "./xtreamCatalog";
 import { normalizeXtreamBaseUrl as normalizeCanonicalXtreamBaseUrl } from "./xtream/client";
+import {
+  beginXtreamEpgPhase,
+  endXtreamEpgPhase,
+  getXtreamEpgDiagnosticSnapshot,
+  recordXtreamEpgCpuStage,
+  recordXtreamEpgHeadersReceived,
+  recordXtreamEpgParseYield,
+  recordXtreamEpgFailure,
+  setXtreamEpgSourceKind,
+  type XtreamEpgCpuStage,
+} from "./xtreamEpgDiagnostics";
 
 export type ProviderType = "m3u" | "xtream" | "stalker";
 export type ChannelContentType = "live" | "movie" | "series";
@@ -39,6 +70,8 @@ export interface Channel {
   tvgId?: string;
   streamType?: string;
   contentType?: ChannelContentType;
+  playbackStreamId?: string;
+  playbackContainerExtension?: string | null;
   nowPlaying?: string;
   nextPlaying?: string;
 }
@@ -272,8 +305,10 @@ async function forEachM3UCatalogBatch<T>(
   visitor: (value: T, index: number) => void,
 ) {
   for (let start = 0; start < input.length; start += batchSize) {
+    const sliceStartedAt = globalThis.performance?.now?.() ?? Date.now();
     const end = Math.min(start + batchSize, input.length);
     for (let index = start; index < end; index += 1) visitor(input[index], index);
+    recordM3UBackgroundJsSlice((globalThis.performance?.now?.() ?? Date.now()) - sliceStartedAt);
     if (end < input.length) await yieldFn();
   }
 }
@@ -461,21 +496,31 @@ async function parseM3UCooperatively(
   providerId: string,
   providerSource?: string,
 ): Promise<ProviderLoadResult> {
-  const lines = content.replace(/^\uFEFF/, "").split(/\r?\n/);
+  recordM3USplitBegin();
+  const lines = await tokenizeM3ULinesCooperatively(
+    content,
+    500,
+    yieldToUi,
+    recordM3UBackgroundJsSlice,
+  );
+  recordM3USplitEnd();
   const entries: Channel[] = [];
   const state: M3UParseState = { pending: null };
   const diagnostics = createM3UShapeDiagnosticsObserver(providerSource);
   const batchSize = 500;
 
   for (let start = 0; start < lines.length; start += batchSize) {
+    const sliceStartedAt = globalThis.performance?.now?.() ?? Date.now();
     const end = Math.min(start + batchSize, lines.length);
     for (let index = start; index < end; index += 1) {
       const line = lines[index].trim();
       if (line) parseM3ULine(line, providerId, entries, state, diagnostics);
     }
+    recordM3UBackgroundJsSlice((globalThis.performance?.now?.() ?? Date.now()) - sliceStartedAt);
     if (end < lines.length) await yieldToUi();
   }
 
+  recordM3UParseLinesEnd();
   if (!entries.length) {
     throw new Error("No playable channels were found in this M3U playlist.");
   }
@@ -484,6 +529,7 @@ async function parseM3UCooperatively(
     batchSize: 200,
     yieldFn: yieldToUi,
   });
+  recordM3UCatalogBuildEnd();
   return {
     ...catalog,
     epgUrl: state.epgUrl,
@@ -551,17 +597,21 @@ async function fetchProviderText(url: string, init?: RequestInit) {
   const timeout = setTimeout(() => controller.abort(), 20_000);
   let response: Response;
   try {
+    recordM3UFetchBegin();
     response = await fetch(url, {
       ...init,
       signal: init?.signal ?? controller.signal,
     });
+    recordM3UFetchResponse();
     if (!response.ok) {
       throw new ProviderLoadError(
         `The provider returned HTTP ${response.status}.`,
         "PROVIDER_HTTP_ERROR",
       );
     }
-    return await response.text();
+    const text = await response.text();
+    recordM3UResponseTextEnd();
+    return text;
   } catch (caught) {
     if (caught instanceof ProviderLoadError) throw caught;
     const name = caught instanceof Error ? caught.name : "";
@@ -656,6 +706,8 @@ async function loadXtream(provider: Provider): Promise<ProviderLoadResult> {
         tvgId: stream.epg_channel_id || undefined,
         streamType: "xtream",
         contentType: "live",
+        playbackStreamId: streamId,
+        playbackContainerExtension: extension,
       };
     },
     250,
@@ -720,25 +772,78 @@ const parseXmlDate = (value: string) => {
 const stripTags = (value: string) =>
   decodeEpgText(value.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim());
 
-const decodeResponseText = async (response: Response) => {
+const EPG_DECODE_CHUNK_BYTES = 256 * 1024;
+
+const decodeBytesCooperatively = async (
+  bytes: Uint8Array,
+  encoding: string,
+  signal?: AbortSignal,
+  diagnosticM3U = false,
+  isCurrentEpg?: () => boolean,
+) => {
+  const Decoder = (globalThis as any).TextDecoder;
+  if (typeof Decoder !== "function") return null;
+
+  const reportM3U = () => diagnosticM3U && (isCurrentEpg?.() ?? true);
+  if (reportM3U()) recordM3UEpgDecodeBegin();
+  const decoder = new Decoder(encoding);
+  const parts: string[] = [];
+  for (let offset = 0; offset < bytes.length; offset += EPG_DECODE_CHUNK_BYTES) {
+    if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+    const end = Math.min(bytes.length, offset + EPG_DECODE_CHUNK_BYTES);
+    parts.push(decoder.decode(bytes.subarray(offset, end), { stream: end < bytes.length }));
+    if (end < bytes.length) await yieldToUi();
+  }
+  parts.push(decoder.decode());
+  if (reportM3U()) recordM3UEpgDecodeEnd();
+  if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+  if (reportM3U()) recordM3UEpgStringAssemblyBegin();
+  const text = parts.join("");
+  if (reportM3U()) recordM3UEpgStringAssemblyEnd();
+  return text;
+};
+
+const decodeResponseText = async (
+  response: Response,
+  signal?: AbortSignal,
+  diagnosticM3U = false,
+  readBody: <T>(operation: () => Promise<T>) => Promise<T> = (operation) => operation(),
+  isCurrentEpg?: () => boolean,
+) => {
+  const reportM3U = () => diagnosticM3U && (isCurrentEpg?.() ?? true);
   try {
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (reportM3U()) recordM3UEpgBodyBegin();
+    const bytes = new Uint8Array(await readBody(() => response.arrayBuffer()));
+    if (reportM3U()) recordM3UEpgBodyEnd();
+    if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+    await yieldToUi();
     const head = Array.from(bytes.slice(0, 256), (byte) => String.fromCharCode(byte)).join("");
     const declared = head.match(/<\?xml[^>]*encoding=["']\s*([^"']+)\s*["']/i)?.[1]?.toLowerCase();
     const encoding = declared || "utf-8";
     const Decoder = (globalThis as any).TextDecoder;
     if (typeof Decoder === "function") {
       try {
-        return new Decoder(encoding).decode(bytes);
+        const decoded = await decodeBytesCooperatively(bytes, encoding, signal, diagnosticM3U, isCurrentEpg);
+        if (decoded !== null) return decoded;
       } catch {
-        return new Decoder("utf-8").decode(bytes);
+        if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+        const decoded = await decodeBytesCooperatively(bytes, "utf-8", signal, diagnosticM3U, isCurrentEpg);
+        if (decoded !== null) return decoded;
       }
     }
+    if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+    if (reportM3U()) recordM3UEpgStringAssemblyBegin();
     const binary = Array.from(bytes, (byte) => String.fromCharCode(byte)).join("");
+    if (reportM3U()) recordM3UEpgStringAssemblyEnd();
     if (/^(?:utf-?8)$/i.test(encoding)) return binaryStringToUtf8(binary);
     return binary;
-  } catch {
-    return response.text();
+  } catch (error) {
+    if (error instanceof EpgPhaseFailure) throw error;
+    if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+    if (reportM3U()) recordM3UEpgBodyBegin();
+    const text = await readBody(() => response.text());
+    if (reportM3U()) recordM3UEpgBodyEnd();
+    return text;
   }
 };
 
@@ -783,12 +888,38 @@ export function parseXmltv(content: string, channels: Channel[]): EpgProgram[] {
   return programs.sort((a, b) => a.start - b.start);
 }
 
+// The existing maximum of 120 programmes remains an upper bound. The Xtream
+// diagnostic path also yields after a bounded amount of synchronous JS work.
+export const XTREAM_XMLTV_SYNC_BUDGET_MS = 48;
+
 export async function parseXmltvAsync(
   content: string,
   channels: Channel[],
   nowMs = Date.now(),
+  signal?: AbortSignal,
+  diagnosticXtream = false,
+  diagnosticAttemptId?: number,
 ): Promise<EpgProgram[]> {
+  const clock = () => globalThis.performance?.now?.() ?? Date.now();
+  const pending = new Map<XtreamEpgCpuStage, { total: number; max: number; units: number }>();
+  const measure = (stage: XtreamEpgCpuStage, start: number) => {
+    if (!diagnosticXtream) return;
+    const duration = Math.max(0, clock() - start);
+    const metric = pending.get(stage) ?? { total: 0, max: 0, units: 0 };
+    metric.total += duration;
+    metric.max = Math.max(metric.max, duration);
+    metric.units += 1;
+    pending.set(stage, metric);
+  };
+  const flush = () => {
+    for (const [stage, metric] of pending) {
+      recordXtreamEpgCpuStage(stage, metric.total, metric.max, metric.units, diagnosticAttemptId);
+    }
+    pending.clear();
+  };
+  const mapStart = diagnosticXtream ? clock() : 0;
   const channelIds = channelIdMap(channels);
+  measure("CHANNEL_MATCH", mapStart);
   const programs: EpgProgram[] = [];
   const perChannel = new Map<string, number>();
   const programmePattern = /<programme\b([^>]*)>([\s\S]*?)<\/programme>/gi;
@@ -796,10 +927,22 @@ export async function parseXmltvAsync(
   const windowEnd = nowMs + 18 * 60 * 60 * 1000;
   let match: RegExpExecArray | null;
   let scanned = 0;
+  let chunkStart = diagnosticXtream ? clock() : 0;
+  let chunkHasWork = false;
 
-  while ((match = programmePattern.exec(content))) {
+  while (true) {
+    const scanStart = diagnosticXtream ? clock() : 0;
+    match = programmePattern.exec(content);
+    measure("XML_SCAN", scanStart);
+    if (!match) break;
+    chunkHasWork = true;
+    const extractStart = diagnosticXtream ? clock() : 0;
     const attributes = parseAttributes(match[1]);
+    measure("PROGRAMME_EXTRACT", extractStart);
+    const matchStart = diagnosticXtream ? clock() : 0;
     const channelId = channelIds.get(decodeEpgText(attributes.channel || ""));
+    measure("CHANNEL_MATCH", matchStart);
+    const programmeStart = diagnosticXtream ? clock() : 0;
     if (channelId) {
       const start = parseXmlDate(attributes.start || "");
       const end = parseXmlDate(attributes.stop || "");
@@ -824,41 +967,193 @@ export async function parseXmltvAsync(
         perChannel.set(channelId, count + 1);
       }
     }
+    measure("PROGRAMME_EXTRACT", programmeStart);
 
     scanned += 1;
-    if (scanned % 120 === 0) await yieldToUi();
+    if (scanned % 120 === 0 || (diagnosticXtream && clock() - chunkStart >= XTREAM_XMLTV_SYNC_BUDGET_MS)) {
+      measure("PARSE_CHUNK", chunkStart);
+      // Publish aggregate diagnostics at the existing 120-record cadence,
+      // even when the CPU budget causes additional scheduler turns.
+      if (scanned % 120 === 0) flush();
+      if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+      if (diagnosticXtream) recordXtreamEpgParseYield(diagnosticAttemptId);
+      if (diagnosticXtream) await yieldXtreamXmltvEventLoop();
+      else await yieldToUi();
+      if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+      if (diagnosticXtream) {
+        chunkStart = clock();
+        chunkHasWork = false;
+      }
+    }
   }
 
-  await yieldToUi();
-  return programs.sort((a, b) => a.start - b.start);
+  if (diagnosticXtream ? chunkHasWork : scanned % 120 !== 0) measure("PARSE_CHUNK", chunkStart);
+  flush();
+  if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+  if (diagnosticXtream) await yieldXtreamXmltvEventLoop();
+  else await yieldToUi();
+  if (signal?.aborted) throw new Error("EPG background attempt aborted.");
+  const sortStart = diagnosticXtream ? clock() : 0;
+  const sorted = programs.sort((a, b) => a.start - b.start);
+  if (diagnosticXtream) {
+    const sortMs = clock() - sortStart;
+    recordXtreamEpgCpuStage("SORT_OR_GROUP", sortMs, sortMs, programs.length, diagnosticAttemptId);
+  }
+  return sorted;
 }
 
-export async function loadEpg(provider: Provider, channels: Channel[]): Promise<EpgProgram[]> {
+type EpgLoadOptions = {
+  signal?: AbortSignal;
+  diagnosticAttemptId?: number;
+  isCurrentEpg?: () => boolean;
+};
+
+export const XMLTV_EPG_NETWORK_TIMEOUT_MS = 30_000;
+export const SHORT_EPG_NETWORK_TIMEOUT_MS = 12_000;
+export const XMLTV_EPG_BODY_TIMEOUT_MS = 30_000;
+export const SHORT_EPG_BODY_TIMEOUT_MS = 12_000;
+
+export class EpgPhaseFailure extends Error {
+  constructor(
+    readonly stage: "request" | "response" | "body" | "decode" | "parse" | "abort",
+    readonly failureClass: "network" | "timeout" | "abort" | "http" | "invalid_response" | "parse" | "unknown",
+    readonly httpStatusClass = "unknown",
+  ) { super(`EPG ${stage} ${failureClass}`); }
+}
+
+// The same controller owns fetch and response consumption. Each stage has its own
+// deadline, and cancelling the parent invalidates both stages immediately.
+function epgRequestDeadline(parent?: AbortSignal) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  if (parent?.aborted) abort();
+  parent?.addEventListener("abort", abort, { once: true });
+  return {
+    signal: controller.signal,
+    async run<T>(stage: "request" | "body", durationMs: number, task: () => Promise<T>): Promise<T> {
+      if (controller.signal.aborted) throw new EpgPhaseFailure("abort", "abort");
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let onAbort: (() => void) | undefined;
+      try {
+        return await Promise.race([
+          Promise.resolve().then(task),
+          new Promise<T>((_, reject) => {
+            onAbort = () => reject(new EpgPhaseFailure("abort", "abort"));
+            controller.signal.addEventListener("abort", onAbort!, { once: true });
+            timer = setTimeout(() => {
+              reject(new EpgPhaseFailure(stage, "timeout"));
+              controller.abort();
+            }, durationMs);
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+        if (onAbort) controller.signal.removeEventListener("abort", onAbort);
+      }
+    },
+    close() { parent?.removeEventListener("abort", abort); },
+  };
+}
+
+function httpEpgFailure(status: number) {
+  const statusClass = status >= 200 && status < 600
+    ? `${Math.floor(status / 100)}xx` : "unknown";
+  return new EpgPhaseFailure("response", "http", statusClass);
+}
+
+export async function loadEpg(
+  provider: Provider,
+  channels: Channel[],
+  options: EpgLoadOptions = {},
+): Promise<EpgProgram[]> {
+  const diagnosticXtream = provider.type === "xtream";
+  const mode = diagnosticXtream ? getXtreamEpgDiagnosticSnapshot().mode : "FULL_PIPELINE";
+  const diagnosticAttemptId = options.diagnosticAttemptId;
+  let currentStage: EpgPhaseFailure["stage"] = "request";
+  try {
+
   if (provider.epgUrl) {
-    const response = await fetch(provider.epgUrl, {
-      headers: { Accept: "application/xml,text/xml,*/*" },
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!response.ok) throw new Error(`EPG request failed with ${response.status}.`);
-    return parseXmltvAsync(await decodeResponseText(response), channels);
+    const diagnosticM3U = provider.type === "m3u";
+    if (diagnosticXtream) {
+      setXtreamEpgSourceKind("xmltv", diagnosticAttemptId);
+      beginXtreamEpgPhase("FETCH", diagnosticAttemptId);
+    }
+    if (diagnosticM3U && (options.isCurrentEpg?.() ?? true)) recordM3UEpgFetchBegin();
+    const deadline = epgRequestDeadline(options.signal);
+    try {
+    const response = await deadline.run("request", XMLTV_EPG_NETWORK_TIMEOUT_MS,
+      () => fetch(provider.epgUrl!, {
+        headers: { Accept: "application/xml,text/xml,*/*" }, signal: deadline.signal,
+      }));
+    if (diagnosticXtream) {
+      recordXtreamEpgHeadersReceived(diagnosticAttemptId);
+      endXtreamEpgPhase("FETCH", {}, diagnosticAttemptId);
+    }
+    if (diagnosticM3U && (options.isCurrentEpg?.() ?? true)) recordM3UEpgFetchResponse();
+    if (!response.ok) throw diagnosticXtream
+      ? httpEpgFailure(response.status)
+      : new Error(`EPG request failed with ${response.status}.`);
+    if (diagnosticXtream && mode === "FETCH_ONLY") return [];
+    currentStage = "body";
+    if (diagnosticXtream) {
+      beginXtreamEpgPhase("BODY", diagnosticAttemptId);
+      beginXtreamEpgPhase("DECODE", diagnosticAttemptId);
+    }
+    const text = await decodeResponseText(response, deadline.signal, diagnosticM3U,
+      (operation) => deadline.run("body", XMLTV_EPG_BODY_TIMEOUT_MS, operation), options.isCurrentEpg);
+    if (diagnosticXtream) {
+      endXtreamEpgPhase("DECODE", { bodyChars: text.length }, diagnosticAttemptId);
+      endXtreamEpgPhase("BODY", { bodyChars: text.length }, diagnosticAttemptId);
+      if (mode === "FETCH_BODY_ONLY") return [];
+    }
+    if (options.signal?.aborted) throw new EpgPhaseFailure("abort", "abort");
+    currentStage = "parse";
+    if (diagnosticXtream) beginXtreamEpgPhase("PARSE", diagnosticAttemptId);
+    if (diagnosticM3U && (options.isCurrentEpg?.() ?? true)) recordM3UEpgParseBegin();
+    const programs = await parseXmltvAsync(text, channels, Date.now(), options.signal, diagnosticXtream, diagnosticAttemptId);
+    if (diagnosticM3U && (options.isCurrentEpg?.() ?? true)) recordM3UEpgParseEnd();
+    if (diagnosticXtream) endXtreamEpgPhase("PARSE", { programmeCount: programs.length }, diagnosticAttemptId);
+    return programs;
+    } finally { deadline?.close(); }
   }
 
   if (provider.type === "xtream" && provider.username && provider.password) {
+    setXtreamEpgSourceKind("short_epg", diagnosticAttemptId);
     const baseUrl = cleanBaseUrl(provider.url);
     const query = `username=${encodeURIComponent(provider.username)}&password=${encodeURIComponent(provider.password)}`;
     const targetChannels = channels.filter((channel) => channel.streamType === "xtream").slice(0, 60);
+    beginXtreamEpgPhase("FETCH", diagnosticAttemptId);
+    let headersSeen = false;
+    let validResponses = 0;
+    let firstFailure: EpgPhaseFailure | null = null;
     const results = await Promise.all(
       targetChannels.map(async (channel) => {
         const streamId = channel.id.split(":").pop();
         if (!streamId) return [] as EpgProgram[];
+        const deadline = epgRequestDeadline(options.signal);
+        let channelStage: EpgPhaseFailure["stage"] = "request";
         try {
-          const response = await fetch(`${baseUrl}/player_api.php?${query}&action=get_short_epg&stream_id=${encodeURIComponent(streamId)}&limit=8`, {
-            signal: AbortSignal.timeout(12_000),
-          });
-          if (!response.ok) return [] as EpgProgram[];
-          const data = await asJson(response);
+          const response = await deadline.run("request", SHORT_EPG_NETWORK_TIMEOUT_MS,
+            () => fetch(`${baseUrl}/player_api.php?${query}&action=get_short_epg&stream_id=${encodeURIComponent(streamId)}&limit=8`, {
+              signal: deadline.signal,
+            }));
+          if (!headersSeen) { headersSeen = true; recordXtreamEpgHeadersReceived(diagnosticAttemptId); }
+          if (!response.ok) throw httpEpgFailure(response.status);
+          validResponses += 1;
+          if (mode === "FETCH_ONLY") return [] as EpgProgram[];
+          channelStage = "body";
+          beginXtreamEpgPhase("BODY", diagnosticAttemptId);
+          const text = await deadline.run("body", SHORT_EPG_BODY_TIMEOUT_MS, () => response.text());
+          endXtreamEpgPhase("BODY", { bodyChars: text.length }, diagnosticAttemptId);
+          if (mode === "FETCH_BODY_ONLY") return [] as EpgProgram[];
+          channelStage = "decode";
+          beginXtreamEpgPhase("DECODE", diagnosticAttemptId);
+          const data = JSON.parse(text) as any;
+          endXtreamEpgPhase("DECODE", {}, diagnosticAttemptId);
           const rows = Array.isArray(data?.epg_listings) ? data.epg_listings : [];
-          return rows
+          channelStage = "parse";
+          beginXtreamEpgPhase("PARSE", diagnosticAttemptId);
+          const parsed = rows
             .map((row: any, index: number) => ({
               id: `${channel.id}:${row.id ?? index}`,
               channelId: channel.id,
@@ -868,14 +1163,35 @@ export async function loadEpg(provider: Provider, channels: Channel[]): Promise<
               end: Number(row.stop_timestamp) * 1000,
             }))
             .filter((row: EpgProgram) => Number.isFinite(row.start) && Number.isFinite(row.end));
-        } catch {
+          endXtreamEpgPhase("PARSE", { programmeCount: parsed.length }, diagnosticAttemptId);
+          return parsed;
+        } catch (error) {
+          if (options.signal?.aborted) throw new EpgPhaseFailure("abort", "abort");
+          firstFailure ??= error instanceof EpgPhaseFailure ? error :
+            new EpgPhaseFailure(channelStage, channelStage === "request" ? "network" : "parse");
           return [] as EpgProgram[];
+        } finally {
+          deadline.close();
         }
       }),
     );
+    endXtreamEpgPhase("FETCH", {}, diagnosticAttemptId);
+    if (!validResponses && firstFailure) throw firstFailure;
     return results.flat().sort((a, b) => a.start - b.start);
   }
+  if (diagnosticXtream) setXtreamEpgSourceKind("unknown", diagnosticAttemptId);
   return [];
+  } catch (error) {
+    if (diagnosticXtream) {
+      const failure = error instanceof EpgPhaseFailure ? error :
+        options.signal?.aborted ? new EpgPhaseFailure("abort", "abort") :
+        new EpgPhaseFailure(currentStage, currentStage === "request" ? "network" : "parse");
+      recordXtreamEpgFailure(failure.stage, failure.failureClass, failure.httpStatusClass,
+        failure.failureClass === "timeout" ? failure.stage : "none",
+        failure.failureClass === "timeout" || failure.failureClass === "abort", diagnosticAttemptId);
+    }
+    throw error;
+  }
 }
 
 function atobUtf8Safe(value: string) {

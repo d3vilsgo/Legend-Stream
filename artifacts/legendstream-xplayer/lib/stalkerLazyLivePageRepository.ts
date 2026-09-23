@@ -8,6 +8,7 @@ import {
 import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
 import { fetchStalkerOrderedPage, type StalkerOrderedPage } from "./stalkerPagedCatalog";
 import { StalkerPortalError } from "./stalkerPortal";
+import { isStalkerLiveGlobalCategoryId, normalizeStalkerLiveCategoryIntent } from "./stalkerLiveCategoryIntent";
 
 function pageFromCursor(cursor?: string) {
   if (!cursor) return 1;
@@ -17,11 +18,6 @@ function pageFromCursor(cursor?: string) {
     throw new StalkerPortalError("INVALID_RESPONSE", "Stalker lazy page cursor is invalid.");
   }
   return page;
-}
-
-function allCategory(categoryId?: string) {
-  const value = categoryId?.trim();
-  return !value || value === "__all__" ? "0" : value;
 }
 
 function fallbackOrderedPage(payload: unknown, providerId: string): StalkerOrderedPage {
@@ -55,7 +51,10 @@ export async function getStalkerLazyLivePage(options: {
     throw new Error("Stalker lazy Live credentials are unavailable.");
   }
   const page = pageFromCursor(options.cursor);
-  const categoryId = allCategory(options.categoryId);
+  const categoryId = normalizeStalkerLiveCategoryIntent(options.categoryId);
+  if (!categoryId) {
+    throw new StalkerPortalError("INVALID_RESPONSE", "Stalker lazy Live requires an explicit category selection.");
+  }
   const session = getOrCreateStalkerPortalSession({
     providerId: provider.id,
     portalUrl,
@@ -71,7 +70,7 @@ export async function getStalkerLazyLivePage(options: {
     page,
     signal,
     diagnostics: { providerId: provider.id },
-    compatibilityFallback: page === 1
+    compatibilityFallback: page === 1 && isStalkerLiveGlobalCategoryId(categoryId)
       ? async (fallbackSignal) => fallbackOrderedPage(
           await session.request(
             { type: "itv", action: "get_all_channels" },

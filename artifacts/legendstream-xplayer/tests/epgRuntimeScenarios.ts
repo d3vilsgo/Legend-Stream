@@ -2,14 +2,21 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { tokenizeM3ULinesCooperatively } from "../lib/cooperative";
 import {
+  EPG_BACKGROUND_BUDGET_MS,
   EPG_PAGED_SEED_LIMIT,
+  EPG_RETRY_BACKOFF_MS,
+  type EpgBackgroundAttemptTiming,
+  EpgAttemptGeneration,
   EpgSingleFlight,
   clearRegisteredEpgChannels,
   getRegisteredEpgChannels,
   hasUsableChannelEpg,
   mergeEpgPrograms,
   registerEpgChannels,
+  runEpgBackgroundAttempt,
+  startEpgBackgroundAttempt,
   selectChannelEpg,
   selectProgramsAt,
 } from "../lib/epgRuntime";
@@ -18,8 +25,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
 const playerContextSource = source("context/PlayerContext.tsx");
 const playerSource = source("components/CompatibilityVideoPlayerV2.tsx");
+const homeSource = source("components/OptimizedHomeScreenPaged.tsx");
 const liveListSource = source("components/catalog/PagedCatalogViews.tsx");
 const iptvSource = source("lib/iptv.ts");
+const cooperativeSource = source("lib/cooperative.ts");
 
 type Program = {
   channelId: string;
@@ -78,7 +87,10 @@ async function main() {
   );
   assert.equal(getRegisteredEpgChannels("p-bound").length, EPG_PAGED_SEED_LIMIT);
   assert.equal(EPG_PAGED_SEED_LIMIT, 48);
+  assert.equal(EPG_BACKGROUND_BUDGET_MS, 5_000);
+  assert.equal(EPG_RETRY_BACKOFF_MS, 30_000);
   assert.match(playerContextSource, /Math\.max\(channels\.length, provider\.channelCount \?\? 0\)/);
+  assert.match(playerContextSource, /boundedProvider\s*\? fallbackChannels\.slice\(0, EPG_PAGED_SEED_LIMIT\)\s*:\s*fallbackChannels/);
   passed += 1;
 
   // B + C. ACTIVE XTREAM + NO REQUEST STORM: same provider/channel has one in-flight task.
@@ -99,6 +111,18 @@ async function main() {
   assert.equal(await first, "ok");
   assert.equal(await second, "ok");
   assert.match(playerContextSource, /activeEpgSingleFlightRef\.current\.run\(requestKey/);
+  const timedOut = await runEpgBackgroundAttempt(
+    () => new Promise<string>(() => undefined),
+    10,
+  );
+  assert.equal(timedOut.classification, "timeout");
+  assert.ok(timedOut.elapsedMs >= 0);
+  const immediate = await runEpgBackgroundAttempt(async () => "epg-ok", 50);
+  assert.deepEqual(immediate.classification, "success");
+  assert.equal(immediate.value, "epg-ok");
+  const sameProviderWorkGate = /const\s+([A-Za-z_$][\w$]*)\s*=\s*bulkEpgPromiseRef\.current\.get\(resolvedProviderId\);[\s\S]*?if\s*\(\1\)\s*\{\s*if\s*\(boundedProvider && !force\)\s*return;/;
+  assert.match(playerContextSource, sameProviderWorkGate);
+  assert.match(playerContextSource, /Date\.now\(\) \+ EPG_RETRY_BACKOFF_MS/);
   passed += 1;
 
   // D. CACHE HIT: a usable future/current program suppresses a new lazy request.
@@ -107,6 +131,19 @@ async function main() {
   let cacheMissCalls = 0;
   if (!hasUsableChannelEpg(cachedPrograms, "c1", now)) cacheMissCalls += 1;
   assert.equal(cacheMissCalls, 0);
+  const bulkRefreshStart = playerContextSource.indexOf("if (!channelId) {");
+  const bulkRefreshEnd = playerContextSource.indexOf("const inFlight = bulkEpgPromiseRef.current.get", bulkRefreshStart);
+  const bulkRefreshSource = playerContextSource.slice(bulkRefreshStart, bulkRefreshEnd);
+  assert.ok(bulkRefreshStart >= 0 && bulkRefreshEnd > bulkRefreshStart);
+  assert.doesNotMatch(bulkRefreshSource, /epg:\s*\[\]/);
+  const publicationStart = bulkRefreshSource.indexOf("const programs = attempt.value ?? [];");
+  const publicationEnd = bulkRefreshSource.indexOf("epgCacheRef.current.set", publicationStart);
+  const publicationSource = bulkRefreshSource.slice(publicationStart, publicationEnd);
+  assert.ok(publicationStart >= 0 && publicationEnd > publicationStart);
+  assert.match(publicationSource, /const xtreamMode = provider\.type === "xtream" \? getXtreamEpgDiagnosticSnapshot\(\)\.mode : "FULL_PIPELINE";/);
+  assert.match(publicationSource, /const suppressPublication = provider\.type === "xtream" && xtreamMode !== "FULL_PIPELINE";[\s\S]*?if \(programs\.length && !suppressPublication\) \{[\s\S]*?setState\(\(previous\) =>/);
+  assert.match(publicationSource, /epgAttemptGenerationRef\.current\.isCurrent\(resolvedProviderId, generation\)/);
+  assert.match(publicationSource, /mergeEpgPrograms\(previous\.epg, ids, programs\)/);
   passed += 1;
 
   // E. FAILURE RECOVERY: rejected single-flight entries are released and can be retried.
@@ -123,6 +160,10 @@ async function main() {
   });
   assert.equal(retryResult, "recovered");
   assert.equal(attempts, 2);
+  const failedAttempt = await runEpgBackgroundAttempt(async () => {
+    throw new Error("network down");
+  }, 50);
+  assert.equal(failedAttempt.classification, "failure");
   passed += 1;
 
   // F. CHANNEL SWITCH RACE: late A data remains keyed to A and cannot resolve as B.
@@ -132,6 +173,12 @@ async function main() {
   shared = mergeEpgPrograms(shared, new Set([aPrograms[0].channelId]), aPrograms);
   assert.equal(selectChannelEpg(shared, { id: bPrograms[0].channelId }, now).now?.title, "B");
   assert.equal(selectChannelEpg(shared, { id: aPrograms[0].channelId }, now).now?.title, "A");
+  const generations = new EpgAttemptGeneration();
+  const staleGeneration = generations.begin("p1");
+  const currentGeneration = generations.begin("p1");
+  assert.equal(generations.isCurrent("p1", staleGeneration), false);
+  assert.equal(generations.isCurrent("p1", currentGeneration), true);
+  assert.match(playerContextSource, /EPG_RESULT_IGNORED_STALE/);
   passed += 1;
 
   // G. PROVIDER SWITCH: provider-scoped canonical IDs prevent stale provider A data from matching B.
@@ -139,7 +186,7 @@ async function main() {
   const providerB = "provider-b:xtream-live:33";
   const providerPrograms: Program[] = [{ channelId: providerA, title: "A-only", start: now - 10, end: now + 100 }];
   assert.equal(selectChannelEpg(providerPrograms, { id: providerB }, now).now, undefined);
-  assert.match(playerContextSource, /previous\.providers\.some\(\(item\) => item\.id === resolvedProviderId\)/);
+  assert.match(publicationSource, /ownedAttempt\?\.controller\.signal\.aborted\s*\|\|\s*generation === null\s*\|\|\s*!epgAttemptGenerationRef\.current\.isCurrent\(resolvedProviderId, generation\)\s*\|\|\s*previous\.provider\?\.id !== resolvedProviderId[\s\S]*?return previous;[\s\S]*?mergeEpgPrograms\(previous\.epg, ids, programs\)/);
   passed += 1;
 
   // H. XTREAM STABLE ID: legacy short-EPG lookup takes the final segment, valid for both ID forms.
@@ -160,6 +207,18 @@ async function main() {
   assert.match(iptvSource, /function channelIdMap\(channels: Channel\[\]\)/);
   assert.match(iptvSource, /channel\.tvgId \|\| channel\.name/);
   assert.match(iptvSource, /channelIds\.get\(decodeEpgText\(attributes\.channel \|\| ""\)\)/);
+  assert.match(iptvSource, /const deadline = epgRequestDeadline\(options\.signal\)/);
+  assert.match(iptvSource, /deadline\.run\("request", XMLTV_EPG_NETWORK_TIMEOUT_MS/);
+  assert.match(iptvSource, /if \(signal\?\.aborted\) throw new Error\("EPG background attempt aborted\."\)/);
+  assert.match(iptvSource, /const EPG_DECODE_CHUNK_BYTES = 256 \* 1024/);
+  assert.match(iptvSource, /decodeBytesCooperatively/);
+  assert.match(iptvSource, /bytes\.subarray\(offset, end\)/);
+  assert.match(iptvSource, /if \(end < bytes\.length\) await yieldToUi\(\)/);
+  const bgStart = playerContextSource.indexOf("const refreshProviderInBackground");
+  const bgEnd = playerContextSource.indexOf("useEffect(() => {", bgStart);
+  const bgSource = playerContextSource.slice(bgStart, bgEnd);
+  assert.match(bgSource, /existing\.epgUrl[\s\S]*updated\.epgUrl[\s\S]*invalidateEpgFreshness\(providerId\)/);
+  assert.doesNotMatch(bgSource, /clearRegisteredEpgChannels|clearEpgProviderCache/);
   passed += 1;
 
   // J. CURRENT/NEXT RESOLVER semantics.
@@ -177,19 +236,197 @@ async function main() {
   assert.match(liveListSource, /selectProgramsAt\(epgByChannel\.get\(channel\.id\), epgClock\)\.now/);
   assert.match(liveListSource, /current \? `Şu an:/);
   assert.match(liveListSource, /: "—"/);
-  assert.match(liveListSource, /void refreshEpg\(provider\.id\)/);
+  assert.match(liveListSource, /registerEpgChannels\(provider\.id, seed\)/);
+  assert.doesNotMatch(liveListSource, /refreshEpg\(provider\.id\)/);
+  assert.match(liveListSource, /<ManualEpgControl providerId=\{provider\.id\} enabled=\{page\.items\.length > 0\}/);
+  const liveRowStart = liveListSource.indexOf("renderItem={({ item: channel }) => {");
+  const liveRowEnd = liveListSource.indexOf("extraData={{ favorites, epgByChannel, epgClock }}", liveRowStart);
+  const liveRowSource = liveListSource.slice(liveRowStart, liveRowEnd);
+  assert.ok(liveRowStart >= 0 && liveRowEnd > liveRowStart);
+  assert.match(liveRowSource, /<Pressable[\s\S]*style=\{s\.liveMain\}[\s\S]*onPress=\{\(\) => \{\s*if \(provider\.type === "m3u"\) recordM3ULivePress\(\);\s*onOpen\(channel\);\s*\}/);
+  assert.doesNotMatch(liveRowSource, /disabled=/);
+  assert.match(homeSource, /epgLoading=\{isEpgLoading\} refreshing=\{isLoading \|\| isRefreshing \|\| isSyncing\}/);
+  const openLiveStart = homeSource.indexOf("const openLive =");
+  const openLiveEnd = homeSource.indexOf("const openMovie =", openLiveStart);
+  const openLiveSource = homeSource.slice(openLiveStart, openLiveEnd);
+  assert.match(openLiveSource, /setPlayable\(/);
+  assert.match(openLiveSource, /setView\("player"\)/);
+  assert.doesNotMatch(openLiveSource, /refreshEpg|isEpgLoading|await/);
   passed += 1;
 
-  // L. PLAYER: canonical currentLive triggers lazy recovery and feeds existing PlayerChrome contract.
+  // L. PLAYER: cached EPG is consumed without starting an automatic request.
   assert.match(playerSource, /registerEpgChannels\(provider\.id, \[currentLive\]\)/);
-  assert.match(playerSource, /void refreshEpg\(provider\.id, currentLive\.id\)/);
+  assert.doesNotMatch(playerSource, /refreshEpg\(provider\.id, currentLive\.id\)/);
   assert.match(playerSource, /epgNow=\{currentEpg\.now\}/);
   assert.match(playerSource, /epgNext=\{currentEpg\.next\}/);
   assert.match(playerSource, /epgLoading=\{currentKind === "live" && isEpgLoading\}/);
+  assert.match(playerContextSource, /loadEpgManually = useCallback/);
+  assert.match(playerContextSource, /const boundedProvider = provider\.type === "m3u" \|\| provider\.type === "xtream"/);
+  assert.doesNotMatch(playerContextSource, /EPG_BACKGROUND_BUDGET_MS/);
+  assert.match(playerContextSource, /const inFlight = bulkEpgPromiseRef\.current\.get\(resolvedProviderId\);\s*if \(inFlight\) return;/);
+  const workStart = playerContextSource.indexOf("const workResultPromise =", bulkRefreshStart);
+  const workOwnerStart = playerContextSource.indexOf("let workOwner!:", workStart);
+  const workSource = playerContextSource.slice(workStart, workOwnerStart);
+  assert.ok(workStart >= 0 && workOwnerStart > workStart);
+  assert.match(workSource, /loadBulkProviderEpg\(provider, providerChannels,[\s\S]*ownedAttempt\?\.controller\.signal, diagnosticAttemptId, isOwned\)/);
+  assert.match(workSource, /classification:\s*"success"/);
   passed += 1;
 
-  assert.equal(passed, 12);
-  process.stdout.write(`epg runtime scenarios: ${passed}/12 passed\n`);
+  // M. PHYSICAL BUG CONTRACT: unresolved EPG cannot serialize channel selection.
+  const unresolvedEpg = deferred<void>();
+  let playerOpened = false;
+  const openChannel = () => { playerOpened = true; };
+  void unresolvedEpg.promise;
+  openChannel();
+  assert.equal(playerOpened, true);
+  assert.equal(await Promise.race([
+    unresolvedEpg.promise.then(() => "epg"),
+    Promise.resolve("interaction"),
+  ]), "interaction");
+  assert.doesNotMatch(liveRowSource, /isEpgLoading|epgLoading|await/);
+  assert.doesNotMatch(openLiveSource, /isEpgLoading|epgByChannel|refreshEpg|await/);
+  const navigateStart = homeSource.indexOf("const navigate =");
+  const navigateEnd = homeSource.indexOf("React.useEffect(() => {", navigateStart);
+  const navigateSource = homeSource.slice(navigateStart, navigateEnd);
+  assert.ok(navigateStart >= 0 && navigateEnd > navigateStart);
+  assert.doesNotMatch(navigateSource, /isEpgLoading|refreshEpg|await/);
+  passed += 1;
+
+  // N. TIMEOUT/LATE COMPLETION: the bounded attempt result remains timeout after abandoned work finishes.
+  const late = deferred<string>();
+  const lateAttempt = runEpgBackgroundAttempt(() => late.promise, 5);
+  const timeoutResult = await lateAttempt;
+  assert.equal(timeoutResult.classification, "timeout");
+  late.resolve("late-epg");
+  await Promise.resolve();
+  assert.equal(timeoutResult.classification, "timeout");
+  assert.match(playerContextSource, /EPG_RESULT_IGNORED_STALE/);
+  assert.match(playerContextSource, /Date\.now\(\) \+ EPG_RETRY_BACKOFF_MS/);
+  passed += 1;
+
+  // O. ATTEMPT VS WORK LIFETIME.
+  const ignoredAbort = deferred<string>();
+  const timeoutTiming = { value: null as EpgBackgroundAttemptTiming | null };
+  const settledTiming = { value: null as EpgBackgroundAttemptTiming | null };
+  const lifetime = startEpgBackgroundAttempt(
+    () => ignoredAbort.promise,
+    5,
+    {
+      onTimeout: (timing) => { timeoutTiming.value = timing; },
+      onUnderlyingSettled: (timing) => { settledTiming.value = timing; },
+    },
+  );
+  assert.equal((await lifetime.attemptPromise).classification, "timeout");
+  assert.equal(lifetime.signal.aborted, true);
+  let underlyingSettled = false;
+  void lifetime.workPromise.then(() => { underlyingSettled = true; });
+  await Promise.resolve();
+  assert.equal(underlyingSettled, false);
+  ignoredAbort.resolve("late");
+  assert.equal((await lifetime.workPromise).classification, "timeout");
+  assert.ok(timeoutTiming.value);
+  assert.notEqual(timeoutTiming.value.timeoutTimerDriftMs, null);
+  assert.ok(settledTiming.value);
+  assert.notEqual(settledTiming.value.underlyingSettleAfterTimeoutMs, null);
+  passed += 1;
+
+  // P. TIMER DRIFT.
+  let observedDrift: number | null = null;
+  const driftHandle = startEpgBackgroundAttempt(
+    () => new Promise<void>(() => undefined),
+    5,
+    { onTimeout: (timing) => { observedDrift = timing.timeoutTimerDriftMs; } },
+  );
+  assert.equal((await driftHandle.attemptPromise).classification, "timeout");
+  assert.ok(observedDrift !== null && observedDrift >= 0);
+  passed += 1;
+
+  // Q. BULK OWNERSHIP: the UI and underlying work share one owned lifetime.
+  assert.match(playerContextSource, /ownedEpgAttemptsRef\.current\.begin\(resolvedProviderId, generation\)/);
+  assert.match(playerContextSource, /const attemptPromise = workResultPromise;/);
+  const underlyingResultName = "workResultPromise";
+  const ownerPattern = new RegExp(
+    `let\\s+([A-Za-z_$][\\w$]*)!:\\s*Promise<void>;[\\s\\S]*?\\1\\s*=\\s*${underlyingResultName}\\s*\\.then\\(\\(\\) => undefined\\)\\s*\\.finally`,
+  );
+  const ownerMatch = playerContextSource.match(ownerPattern);
+  assert.ok(ownerMatch, "underlying work must be wrapped by a settlement owner");
+  const ownerName = ownerMatch[1];
+  assert.match(
+    playerContextSource,
+    new RegExp(`bulkEpgPromiseRef\\.current\\.set\\(resolvedProviderId,\\s*${ownerName}\\)`),
+  );
+  assert.match(
+    playerContextSource,
+    new RegExp(`bulkEpgPromiseRef\\.current\\.get\\(resolvedProviderId\\)\\s*===\\s*${ownerName}[\\s\\S]*?bulkEpgPromiseRef\\.current\\.delete\\(resolvedProviderId\\)`),
+  );
+  assert.match(playerContextSource, /if \(!isOwned\(\)\) return;\s*epgCacheRef\.current\.set/);
+  passed += 1;
+
+  // R. Source identity still gates cache validity; provider restore has no EPG timer.
+  assert.match(playerContextSource, /effectiveEpgSourceIdentity\(provider\)/);
+  assert.doesNotMatch(playerContextSource, /boundedAutoEpgTriggerKey/);
+  assert.match(playerContextSource, /await refreshEpg\(providerId, undefined, true\)/);
+  assert.match(playerContextSource, /const attemptPromise = workResultPromise;/);
+  passed += 1;
+
+  // S. M3U TOKENIZER PARITY: the actual pure production helper preserves prior split semantics.
+  const tokenizerCases = [
+    "\uFEFF#EXTM3U url-tvg=\"https://epg.invalid/xmltv.php\"\r\n#EXTINF:-1 group-title=\"News\",One\r\nhttp://one\r\n",
+    "#EXTM3U x-tvg-url=\"https://epg.invalid/guide.xml\"\n#EXTINF:-1,İstanbul Haber\nhttp://two\n#EXTGRP:Genel\n",
+    "#EXTM3U\r\n\r\n#EXTINF:-1,Final\r\nhttp://final",
+    "#EXTM3U\n#EXTINF malformed\n#BROKEN\nhttp://orphan\n\n",
+    "\uFEFF#EXTM3U\n#EXTINF:-1 tvg-name=\"Çocuk Dünyası\",Çocuk Dünyası\nhttps://örnek.invalid/canlı\n",
+  ];
+  for (const input of tokenizerCases) {
+    const expected = input.replace(/^\uFEFF/, "").split(/\r?\n/);
+    const actual = await tokenizeM3ULinesCooperatively(input, 2, async () => undefined);
+    assert.deepEqual(actual, expected);
+  }
+  const cooperativeM3UStart = iptvSource.indexOf("async function parseM3UCooperatively");
+  const providerErrorStart = iptvSource.indexOf("export class ProviderLoadError", cooperativeM3UStart);
+  const cooperativeM3USource = iptvSource.slice(cooperativeM3UStart, providerErrorStart);
+  assert.match(cooperativeM3USource, /tokenizeM3ULinesCooperatively\(/);
+  assert.doesNotMatch(
+    cooperativeM3USource,
+    /content\.replace\(\/\^\\uFEFF\/[\s\S]*\.split\(\/\\r\?\\n\//,
+  );
+  assert.match(cooperativeSource, /export async function tokenizeM3ULinesCooperatively/);
+  passed += 1;
+
+  // T. ABORT BOUNDARIES.
+  assert.match(iptvSource, /if \(signal\?\.aborted\) throw new Error\("EPG background attempt aborted\."\)/);
+  assert.match(iptvSource, /if \(end < bytes\.length\) await yieldToUi\(\)/);
+  assert.match(iptvSource, /scanned % 120 === 0[\s\S]*signal\?\.aborted[\s\S]*await yieldToUi\(\)/);
+  assert.match(iptvSource, /recordM3UEpgStringAssemblyBegin/);
+  passed += 1;
+
+  // U. LIVE WHILE TIMED-OUT UNDERLYING WORK IS STILL ALIVE.
+  const longWork = deferred<void>();
+  const background = startEpgBackgroundAttempt(() => longWork.promise, 5);
+  assert.equal((await background.attemptPromise).classification, "timeout");
+  let liveOpenedDuringLateWork = false;
+  const openDuringLateWork = () => { liveOpenedDuringLateWork = true; };
+  openDuringLateWork();
+  assert.equal(liveOpenedDuringLateWork, true);
+  assert.equal(background.signal.aborted, true);
+  longWork.resolve();
+  await background.workPromise;
+  assert.doesNotMatch(liveRowSource, /isEpgLoading|epgLoading|await/);
+  assert.doesNotMatch(openLiveSource, /isEpgLoading|epgByChannel|refreshEpg|await/);
+  passed += 1;
+
+  // V. PHASE/LIFETIME DIAGNOSTICS + SAFE SOURCE IDENTITY.
+  assert.match(playerContextSource, /cancelOwnedEpg\(previousId\)/);
+  assert.match(playerContextSource, /EPG_UNDERLYING_SETTLED/);
+  assert.match(iptvSource, /XMLTV_EPG_NETWORK_TIMEOUT_MS = 30_000/);
+  assert.match(iptvSource, /SHORT_EPG_NETWORK_TIMEOUT_MS = 12_000/);
+  assert.match(playerContextSource, /const sourceKey = boundedProvider \? effectiveEpgSourceIdentity\(provider\) : undefined/);
+  passed += 1;
+
+  assert.equal(passed, 22);
+  process.stdout.write("epg runtime scenarios: 12/12 passed\n");
+  process.stdout.write("epg Z2RA non-blocking contract scenarios: 2/2 passed\n");
+  process.stdout.write("epg Z2RB ownership/liveness scenarios: 8/8 passed\n");
 }
 
 void main().catch((error) => {

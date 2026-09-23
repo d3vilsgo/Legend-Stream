@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   createStalkerSeriesProductController,
   stalkerSeriesEpisodeIdentity,
+  stalkerSeriesEpisodeIdentityKey,
   STALKER_SERIES_PRODUCT_LIMITS,
 } from "../lib/stalkerSeriesProduct";
 
@@ -61,8 +62,8 @@ async function main() {
   assert.equal(duplicateAcrossSeasonsA.id, "1");
   assert.equal(duplicateAcrossSeasonsB.id, "1");
   assert.notEqual(duplicateAcrossSeasonsA.key, duplicateAcrossSeasonsB.key);
-  assert.equal(duplicateAcrossSeasonsA.key, stalkerSeriesEpisodeIdentity("provider-physical", "series:physical", "6", "1"));
-  assert.equal(duplicateAcrossSeasonsB.key, stalkerSeriesEpisodeIdentity("provider-physical", "series:physical", "5", "1"));
+  assert.equal(duplicateAcrossSeasonsA.key, stalkerSeriesEpisodeIdentityKey(stalkerSeriesEpisodeIdentity("provider-physical", "series:physical", "6", "1")));
+  assert.equal(duplicateAcrossSeasonsB.key, stalkerSeriesEpisodeIdentityKey(stalkerSeriesEpisodeIdentity("provider-physical", "series:physical", "5", "1")));
 
   for (const season of detail.seasons) {
     for (const episode of season.episodes) assert.ok(episode.key && episode.id, `unselectable episode in season ${season.id}`);
@@ -82,7 +83,7 @@ async function main() {
   });
   assert.equal(calls.filter((call) => call.action === "create_link").length, 1);
   assert.equal(STALKER_SERIES_PRODUCT_LIMITS.maxCreateLinksPerSelection, 1);
-  assert.equal(STALKER_SERIES_PRODUCT_LIMITS.fallbackDialects, 0);
+  assert.equal(STALKER_SERIES_PRODUCT_LIMITS.fallbackDialects, 1);
   assert.ok(STALKER_SERIES_PRODUCT_LIMITS.maxEpisodesPerSeason >= 34);
   assert.ok(STALKER_SERIES_PRODUCT_LIMITS.maxTotalEpisodes >= 160);
 

@@ -67,7 +67,9 @@ export function providerIdFromChannelId(channelId: string): string | null {
   const identityPart = channelId.slice(first + 1, second);
   const streamPart = channelId.slice(second + 1);
   if (!providerId || !streamPart) return null;
-  if (/^\d+$/.test(identityPart) || identityPart === "xtream-live") return providerId;
+  if (/^\d+$/.test(identityPart) || identityPart === "xtream-live" || identityPart === "stalker") {
+    return providerId;
+  }
   return null;
 }
 

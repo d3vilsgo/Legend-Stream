@@ -11,20 +11,23 @@ const vlcSurface = source("components/player/VlcPlaybackSurface.tsx");
 const playerChrome = source("components/player/PlayerChrome.tsx");
 const playerChromeV2 = source("components/player/PlayerChromeV2.tsx");
 const home = source("components/OptimizedHomeScreenPaged.tsx");
+const stalkerMain = source("components/StalkerMainPage.tsx");
 const vod = source("components/stalker/StalkerVodSurface.tsx");
 const series = source("components/stalker/StalkerSeriesProductSurface.tsx");
 const seriesProduct = source("lib/stalkerSeriesProduct.ts");
 
 // A/B/C: one canonical player core, no media-specific player fork, exact media kinds.
 assert.match(nativePlayer, /CompatibilityVideoPlayer as NativeVideoPlayer/);
-for (const productSource of [home, vod, series]) assert.match(productSource, /NativeVideoPlayer/);
+for (const productSource of [home, vod, stalkerMain]) assert.match(productSource, /NativeVideoPlayer/);
+assert.doesNotMatch(series, /NativeVideoPlayer/);
 assert.doesNotMatch([compatibilityPlayer, vlcSurface, vod, series].join("\n"), /function\s+(?:VodPlayer|SeriesPlayer|LivePlayer)\b|class\s+(?:VodPlayer|SeriesPlayer|LivePlayer)\b/);
 assert.match(home, /kind:\s*"live"/);
 assert.match(home, /kind:\s*"movie"/);
 assert.match(home, /kind:\s*"episode"/);
 assert.match(vod, /mediaKind="movie"/);
-assert.match(seriesProduct, /mediaKind:\s*"episode"/);
-assert.match(series, /mediaKind=\{player\.mediaKind\}/);
+assert.match(seriesProduct, /kind:\s*"episode"/);
+assert.match(series, /emitPlayable\(buildStalkerSeriesPlayableIntent/);
+assert.match(stalkerMain, /mediaKind=\{playable\.kind\}/);
 
 // D/E/F/G: explicit first-frame UX, shared by every NativeVideoPlayer invocation.
 assert.match(vlcSurface, /const \[firstFramePending, setFirstFramePending\] = useState\(true\)/);
@@ -37,12 +40,13 @@ assert.match(vlcSurface, /const handleError[\s\S]*?setFirstFramePending\(false\)
 assert.match(vlcSurface, /return \(\) => \{[\s\S]*?setFirstFramePending\(false\)[\s\S]*?vlc_unmount/);
 assert.match(vlcSurface, /setFirstFramePending\(true\)[\s\S]*?setRuntimeCodecMode\("software"\)/);
 
-// H/I/J: player exit returns to existing detail state; Series season state is not cleared by player exit.
+// H/I/J: page-level player exit returns to the mounted origin; Series season state is not cleared.
 assert.match(vod, /onFullscreenExit=\{\(\) => setView\("details"\)\}/);
-assert.match(series, /onFullscreenExit=\{\(\) => setPlayer\(null\)\}/);
-const playerExitSlice = series.slice(series.indexOf("if (player)"), series.indexOf("return <StalkerSeriesProductCatalog"));
-assert.doesNotMatch(playerExitSlice, /setSelectedSeasonId\(null\)/);
-assert.match(series, /selectedSeasonId=\{selectedSeasonId\}/);
+assert.match(stalkerMain, /const presentedView = view === "player" \? playable\?\.returnTo \?\? "home" : view/);
+assert.match(stalkerMain, /presentedView === "series"[\s\S]*?<StalkerSeriesProductSurface provider=\{provider\} onPlayable=\{openSeriesEpisode\}/);
+assert.match(stalkerMain, /onFullscreenExit=\{\(\) => \{[\s\S]*?setView\(playable\.returnTo\)[\s\S]*?setPlayable\(null\)/);
+assert.match(series, /detail\.seasons\.map/);
+assert.match(series, /onEpisode=\{\(seasonId, episodeId\)/);
 
 // K/L/M: Live-only queue/EPG and movie/episode-only progress semantics remain in the canonical core.
 assert.match(compatibilityPlayer, /currentKind !== "live"/);
@@ -69,7 +73,7 @@ assert.match(playerChromeV2, /props\.onSelectSubtitle\s*\(/);
 assert.match(playerChromeV2, /props\.onSelectAudio\s*\(/);
 
 // O + shell parity: shared orientation, chrome timing, background tap, error and exit lifecycle.
-assert.match(compatibilityPlayer, /usePlayerOrientation\(autoFullscreen\)/);
+assert.match(compatibilityPlayer, /usePlayerOrientation\(autoFullscreen, m3uLiveDiagnostic\)/);
 assert.match(compatibilityPlayer, /DEFAULT_PLAYER_CHROME_TIMEOUT_SECONDS/);
 assert.match(compatibilityPlayer, /onBackgroundPress=\{onBackgroundPress\}/);
 assert.match(compatibilityPlayer, /errorText=\{errorText\}/);
@@ -77,7 +81,7 @@ assert.match(compatibilityPlayer, /orientation\.beginExit\(\)/);
 assert.match(compatibilityPlayer, /await orientation\.restore\(\)/);
 assert.match(compatibilityPlayer, /onFullscreenExit\?\.\(\)/);
 assert.match(vod, /autoFullscreen/);
-assert.match(series, /autoFullscreen/);
+assert.match(stalkerMain, /autoFullscreen/);
 assert.match(home, /autoFullscreen/);
 
 console.log("R16-D8-C2 canonical player UX parity source/runtime contracts: PASS");

@@ -12,6 +12,7 @@ const viewsSource = source("components/catalog/PagedCatalogViews.tsx");
 const homeSource = source("components/home/HomeDiscovery.tsx");
 const repositorySource = source("lib/catalogPageRepository.ts");
 const pagingSource = source("lib/catalogPaging.ts");
+const hookSource = source("hooks/useCatalogPage.ts");
 
 let passed = 0;
 
@@ -54,9 +55,16 @@ function turkishSearchFixture() {
 async function main() {
   await scenario("M3U no-groups hint is bounded and provider-specific", () => {
     assert.match(repositorySource, /EXISTS\([\s\S]*kind = 'live'[\s\S]*LIMIT 1[\s\S]*meaningful_live_groups/);
-    assert.match(viewsSource, /provider\.type === "m3u" && page\.countKnown && hasMeaningfulM3ULiveGroups === false/);
-    assert.match(viewsSource, /t\("m3uNoGroups"\)/);
-    assert.doesNotMatch(viewsSource, /provider\.type !== "m3u"[\s\S]*m3uNoGroups/);
+    const liveStart = viewsSource.indexOf("export function PagedLiveCatalog");
+    const liveEnd = viewsSource.indexOf("export function PagedMoviesCatalog", liveStart);
+    assert.ok(liveStart >= 0 && liveEnd > liveStart, "PagedLiveCatalog source boundary must remain explicit");
+    const liveSource = viewsSource.slice(liveStart, liveEnd);
+    assert.match(liveSource, /provider\.type === "m3u" && page\.countKnown && hasMeaningfulM3ULiveGroups === false/);
+    const hintIndex = liveSource.indexOf('t("m3uNoGroups")');
+    assert.ok(hintIndex >= 0, "M3U no-groups hint must remain in PagedLiveCatalog");
+    const hintGuard = liveSource.slice(Math.max(0, hintIndex - 240), hintIndex + 80);
+    assert.match(hintGuard, /provider\.type === "m3u" && page\.countKnown && hasMeaningfulM3ULiveGroups === false/);
+    assert.doesNotMatch(hintGuard, /provider\.type !== "m3u"/);
   });
 
   await scenario("password visibility control restores baseline accessibility props", () => {
@@ -65,16 +73,16 @@ async function main() {
     assert.match(screenSource, /hitSlop=\{8\}[\s\S]*setPasswordVisible/);
   });
 
-  await scenario("Home unknown-total fallback uses bounded category metadata as categories", () => {
+  await scenario("Home unknown totals stay unknown instead of substituting category counts", () => {
     assert.match(repositorySource, /SELECT COUNT\(\*\) FROM catalog_categories WHERE provider_id = \? AND kind = 'vod'/);
     assert.match(repositorySource, /SELECT COUNT\(\*\) FROM catalog_categories WHERE provider_id = \? AND kind = 'series'/);
     const homeDiscoveryRoute = screenSource.match(/\{view\s*===\s*"home"\s*\?\s*<HomeDiscovery[\s\S]*?\/>/)?.[0];
     assert.ok(homeDiscoveryRoute, "HomeDiscovery route must remain in the canonical paged Home shell");
     assert.match(homeDiscoveryRoute, /vodCategories=\{\s*provider\.type\s*===\s*"stalker"\s*\?\s*0\s*:\s*categoryMetadata\?\.providerId\s*===\s*provider\.id\s*\?\s*categoryMetadata\.vodCategories\s*:\s*0\s*\}/);
     assert.match(homeDiscoveryRoute, /seriesCategories=\{\s*provider\.type\s*===\s*"stalker"\s*\?\s*0\s*:\s*categoryMetadata\?\.providerId\s*===\s*provider\.id\s*\?\s*categoryMetadata\.seriesCategories\s*:\s*0\s*\}/);
-    assert.match(homeSource, /vod === null[\s\S]*t\("categoryCount"/);
-    assert.match(homeSource, /series === null[\s\S]*t\("categoryCount"/);
-    assert.doesNotMatch(homeSource, /vodCategories\.toLocaleString\(\)[\s\S]*t\("titles"/);
+    assert.match(homeSource, /const movieValue = vod === null \? null : vod\.toLocaleString\(\)/);
+    assert.match(homeSource, /const seriesValue = series === null \? null : series\.toLocaleString\(\)/);
+    assert.doesNotMatch(homeSource, /vodCategories\.toLocaleString\(\)|seriesCategories\.toLocaleString\(\)/);
   });
 
   await scenario("SQLite paging search covers Turkish dotted and dotless I without JS catalog filtering", () => {
@@ -105,6 +113,14 @@ async function main() {
     assert.doesNotMatch(viewsSource, /items\.filter\(/);
     assert.doesNotMatch(screenSource, /getM3UCatalog|hydrateM3UProviderKindCache/);
   });
+
+  assert.match(hookSource, /catalogRevision <= observedCatalogRevisionRef\.current/);
+  assert.match(hookSource, /observedCatalogRevisionRef\.current = catalogRevision;\s*reload\(\)/);
+  const queryKeyBlock = hookSource.slice(
+    hookSource.indexOf("const queryKey = useMemo"),
+    hookSource.indexOf("activeQueryKeyRef.current"),
+  );
+  assert.doesNotMatch(queryKeyBlock, /catalogRevision/);
 
   assert.equal(passed, 4);
   console.log("paged catalog remediation scenarios: 4/4 passed");

@@ -134,9 +134,10 @@ async function main() {
   assert.match(boundarySource, /Tekrar dene/);
   assert.match(boundarySource, /Ana ekrana dön/);
 
-  const seriesCatalogSource = source("components/stalker/StalkerSeriesProductCatalog.tsx");
-  assert.match(seriesCatalogSource, /key="stalker-series-categories"/);
-  assert.match(seriesCatalogSource, /key=\{`stalker-series-grid-\$\{screen\}`\}/);
+  const seriesCatalogSource = source("components/catalog/PagedCatalogViews.tsx");
+  assert.match(seriesCatalogSource, /export function GoldenSeriesCatalog/);
+  assert.match(seriesSource, /return <GoldenSeriesCatalog/);
+  assert.doesNotMatch(seriesSource, /StalkerSeriesProductCatalog|StalkerCategoryPager/);
 
   assert.match(rootSource, /view === "movies" && \(provider\.type === "m3u" \|\| provider\.type === "xtream"\)/);
   assert.match(rootSource, /view === "series" && \(provider\.type === "m3u" \|\| provider\.type === "xtream"\)/);

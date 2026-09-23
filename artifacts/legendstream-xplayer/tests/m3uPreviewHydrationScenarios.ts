@@ -30,7 +30,7 @@ async function main() {
     for (const kind of ["live", "vod", "series"] as const) {
       assert.match(
         cacheSource,
-        new RegExp(`getCachedPersistedItems\\(provider\\.id,\\s*"${kind}",\\s*undefined,\\s*M3U_HOME_PREVIEW_LIMIT\\)`),
+        new RegExp(`getCachedPersistedItems\\(provider\\.id,\\s*"${kind}",\\s*undefined,\\s*M3U_HOME_PREVIEW_LIMIT,\\s*provider\\)`),
       );
     }
     assert.match(switchSource, /const HOME_SAMPLE_LIMIT = 48/);
