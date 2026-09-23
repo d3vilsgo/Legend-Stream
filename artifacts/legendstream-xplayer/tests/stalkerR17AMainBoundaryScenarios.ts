@@ -14,6 +14,7 @@ const testsDir = dirname(fileURLToPath(import.meta.url));
 const packageRoot = resolve(testsDir, "..");
 const source = (path: string) => readFileSync(resolve(packageRoot, path), "utf8");
 const routeSource = source("app/(tabs)/index.tsx");
+const productShellSource = source("components/ProductShell.tsx");
 const stalkerMainSource = source("components/StalkerMainPage.tsx");
 const stalkerMoviesSource = source("components/stalker/StalkerGoldenMoviesCatalog.tsx");
 const stalkerMoviesControllerSource = source("hooks/useStalkerMoviesCatalog.ts");
@@ -35,15 +36,19 @@ async function scenario(name: string, run: () => void | Promise<void>) {
 }
 
 async function main() {
-  await scenario("application routing selects the dedicated Stalker page before main-page runtime", () => {
-    assert.match(routeSource, /import StalkerMainPage from "@\/components\/StalkerMainPage"/);
-    assert.match(routeSource, /provider\?\.type === "stalker" \? <StalkerMainPage \/> : <OptimizedHomeScreenV6 \/>/);
+  await scenario("application routing enters ProductShell before the dedicated Stalker page", () => {
+    assert.match(routeSource, /import ProductShell from "@\\/components\\/ProductShell"/);
+    assert.match(routeSource, /return <ProductShell \\/>/);
+    assert.doesNotMatch(routeSource, /StalkerMainPage|OptimizedHomeScreenV6|provider\\?\\.type/);
+    assert.match(productShellSource, /import StalkerMainPage from "@\\/components\\/StalkerMainPage"/);
+    assert.match(productShellSource, /<StalkerMainPage key=\\{provider\\.id\\}/);
   });
 
-  await scenario("Xtream M3U and no-provider routing keep the existing golden page path", () => {
-    assert.match(routeSource, /import OptimizedHomeScreenV6 from "@\/components\/OptimizedHomeScreenV6"/);
-    assert.match(routeSource, /: <OptimizedHomeScreenV6 \/>/);
-    assert.doesNotMatch(routeSource, /OptimizedHomeScreenPaged[^\n]*provider/);
+  await scenario("Xtream M3U and no-provider routing keep the existing golden page below ProductShell", () => {
+    assert.match(productShellSource, /import OptimizedHomeScreenV6 from "@\\/components\\/OptimizedHomeScreenV6"/);
+    assert.match(productShellSource, /<OptimizedHomeScreenV6 key=\\{provider\\.id\\}/);
+    assert.match(productShellSource, /if \\(!provider\\) \\{[\\s\\S]*?return <OptimizedHomeScreenV6 \\/>/);
+    assert.doesNotMatch(routeSource, /OptimizedHomeScreenPaged[^\\n]*provider/);
   });
 
   await scenario("dedicated Stalker page routes Movies to its golden catalog and keeps Series migration explicit", () => {
