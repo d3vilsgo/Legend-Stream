@@ -1,1 +1,49 @@
-import type { ProviderType } from "./iptv";\nimport type { CatalogPlaybackIdentity } from "./catalogPageRepository";\nimport type { MediaPlaybackRef } from "./mediaProgress";\nimport type { LiveChannelIdentity } from "./playerLiveQueue";\n\n/** R18 provider-neutral product vocabulary. Protocol/session/runtime authority stays below this boundary. */\nexport const PRODUCT_VIEWS = ["home", "live", "movies", "series", "history", "downloads", "settings"] as const;\nexport type ProductView = typeof PRODUCT_VIEWS[number];\nexport type ProductPlaybackReturnView = Extract<ProductView, "live" | "movies" | "series" | "history" | "downloads">;\nexport type LiveCategoryMode = "implicit-all" | "provider-global";\n\nexport type ProductCapabilities = Readonly<{\n  live: boolean;\n  movies: boolean;\n  series: boolean;\n  epg: boolean;\n  supportsMovieAddedSort: boolean;\n  liveCategoryMode: LiveCategoryMode;\n}>;\n\n/** Current presentation decisions: Xtream alone exposes added-sort; Stalker Live preserves provider-global category semantics. */\nexport function deriveProductCapabilities(providerType: ProviderType): ProductCapabilities {\n  return {\n    live: true,\n    movies: true,\n    series: true,\n    epg: true,\n    supportsMovieAddedSort: providerType === "xtream",\n    liveCategoryMode: providerType === "stalker" ? "provider-global" : "implicit-all",\n  };\n}\n\nexport type ProductPlaybackKind = "live" | "movie" | "episode" | "download";\n\n/**\n * Canonical identity types are composed rather than redefined.\n * runtimeSource is an in-memory resolved source for the current player handoff, not a durable identity.\n * Stalker Live CMD/session/create_link material is intentionally absent.\n */\nexport type ProductPlayableIntent = Readonly<{\n  title: string;\n  subtitle?: string;\n  kind: ProductPlaybackKind;\n  returnTo: ProductPlaybackReturnView;\n  runtimeSource: string;\n  liveIdentity?: LiveChannelIdentity;\n  vodIdentity?: CatalogPlaybackIdentity;\n  progressRef?: MediaPlaybackRef;\n}>;
+import type { ProviderType } from "./iptv";
+import type { CatalogPlaybackIdentity } from "./catalogPageRepository";
+import type { MediaPlaybackRef } from "./mediaProgress";
+import type { LiveChannelIdentity } from "./playerLiveQueue";
+
+/** R18 provider-neutral product vocabulary. Protocol/session/runtime authority stays below this boundary. */
+export const PRODUCT_VIEWS = ["home", "live", "movies", "series", "history", "downloads", "settings"] as const;
+export type ProductView = typeof PRODUCT_VIEWS[number];
+export type ProductPlaybackReturnView = Extract<ProductView, "live" | "movies" | "series" | "history" | "downloads">;
+export type LiveCategoryMode = "implicit-all" | "provider-global";
+
+export type ProductCapabilities = Readonly<{
+  live: boolean;
+  movies: boolean;
+  series: boolean;
+  epg: boolean;
+  supportsMovieAddedSort: boolean;
+  liveCategoryMode: LiveCategoryMode;
+}>;
+
+/** Current presentation decisions: Xtream alone exposes added-sort; Stalker Live preserves provider-global category semantics. */
+export function deriveProductCapabilities(providerType: ProviderType): ProductCapabilities {
+  return {
+    live: true,
+    movies: true,
+    series: true,
+    epg: true,
+    supportsMovieAddedSort: providerType === "xtream",
+    liveCategoryMode: providerType === "stalker" ? "provider-global" : "implicit-all",
+  };
+}
+
+export type ProductPlaybackKind = "live" | "movie" | "episode" | "download";
+
+/**
+ * Canonical identity types are composed rather than redefined.
+ * runtimeSource is an in-memory resolved source for the current player handoff, not a durable identity.
+ * Stalker Live CMD/session/create_link material is intentionally absent.
+ */
+export type ProductPlayableIntent = Readonly<{
+  title: string;
+  subtitle?: string;
+  kind: ProductPlaybackKind;
+  returnTo: ProductPlaybackReturnView;
+  runtimeSource: string;
+  liveIdentity?: LiveChannelIdentity;
+  vodIdentity?: CatalogPlaybackIdentity;
+  progressRef?: MediaPlaybackRef;
+}>;
