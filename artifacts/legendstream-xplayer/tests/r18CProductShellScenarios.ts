@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PRODUCT_VIEWS, deriveProductCapabilities } from "../lib/productContract";
-import { selectTransitionalProductSurface } from "../components/ProductShell";
+import { selectTransitionalProductSurface } from "../lib/productShell";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
