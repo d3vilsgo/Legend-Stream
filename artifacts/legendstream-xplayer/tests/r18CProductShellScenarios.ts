@@ -9,6 +9,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
 const indexSource = source("app/(tabs)/index.tsx");
 const shellSource = source("components/ProductShell.tsx");
+const shellPolicySource = source("lib/productShell.ts");
 const contractSource = source("lib/productContract.ts");
 
 const scenario = (name: string, run: () => void) => {
@@ -32,7 +33,7 @@ scenario("transitional delegation consumes product capability rather than provid
   assert.equal(selectTransitionalProductSurface(deriveProductCapabilities("stalker")), "stalker");
   assert.doesNotMatch(shellSource, /provider\.type\s*===|provider\?\.type\s*===/);
   assert.match(shellSource, /deriveProductCapabilities\(provider\.type\)/);
-  assert.match(shellSource, /capabilities\.liveCategoryMode/);
+  assert.match(shellPolicySource, /capabilities\.liveCategoryMode/);
 });
 
 scenario("provider switch remounts the delegated shell and cannot retain old shell player/view state", () => {
