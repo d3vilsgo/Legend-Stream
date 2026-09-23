@@ -28,7 +28,7 @@ import { getPersistedStalkerLivePlaybackRef } from "./stalkerLiveCache";
 import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
 import type { StalkerPortalSession } from "./stalkerPortal";
 import { safeLog } from "./safeLog";
-import { classifyPlaybackSource, shortSafeId, traceStalker } from "./stalkerPlaybackTrace";
+import { classifyPlaybackSource, getActiveStalkerTraceId, shortSafeId, traceStalker } from "./stalkerPlaybackTrace";
 
 export type CatalogRuntimeProvider = {
   id: string;
@@ -281,8 +281,8 @@ export async function resolveCatalogRuntimeSource(
   provider: CatalogRuntimeProvider | null | undefined,
   signal?: AbortSignal,
   dependencies: CatalogRuntimeDependencies = {},
-  traceId?: string,
 ): Promise<string> {
+  const traceId = getActiveStalkerTraceId() ?? undefined;
   let stage = "PARSE_REF";
   if (traceId) traceStalker("CATALOG_RUNTIME_RESOLVE_START", { traceId, sourceKind: classifyPlaybackSource(source), activeProviderPresent: Boolean(provider), providerShortId: shortSafeId(provider?.id) });
   try {
