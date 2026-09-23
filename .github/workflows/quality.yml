@@ -205,6 +205,12 @@ jobs:
           set -euo pipefail
           shell_contract="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/r18CProductShellScenarios.ts 2>&1 | tee /dev/stderr)"
           grep -F 'R18-C product shell scenarios passed.' <<<"$shell_contract"
+      - name: R18-C2 credential-safe Stalker trace
+        shell: bash
+        run: |
+          set -euo pipefail
+          trace="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/r18C2StalkerTraceScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'R18-C2 credential-safe trace scenarios passed.' <<<"$trace"
       - name: Repository hygiene guard
         shell: bash
         run: |

@@ -69,6 +69,7 @@ import {
   type StalkerSeriesPlayableIntent,
 } from "@/lib/stalkerSeriesProduct";
 import { yieldToUi } from "@/lib/cooperative";
+import { beginStalkerPlaybackTrace, classifyPlaybackSource, getActiveStalkerTraceId, nextStalkerMountGeneration, shortSafeId, traceStalker } from "@/lib/stalkerPlaybackTrace";
 
 type StalkerViewName = HomeContentView | "player";
 type StalkerContentView = Exclude<StalkerViewName, "player">;
@@ -148,6 +149,13 @@ export default function StalkerMainPage() {
     clearScopedError,
   } = usePlayer();
   useCredentialDiagnosticsStartup();
+  const mountGenerationRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!provider || provider.type !== "stalker") return;
+    const mountGeneration = nextStalkerMountGeneration(); mountGenerationRef.current = mountGeneration;
+    traceStalker("STALKER_RUNTIME_OWNER_MOUNT", { providerShortId: shortSafeId(provider.id), mountGeneration });
+    return () => traceStalker("STALKER_RUNTIME_OWNER_UNMOUNT", { providerShortId: shortSafeId(provider.id), mountGeneration });
+  }, [provider?.id, provider?.type]);
 
   const [view, setView] = useState<StalkerViewName>("home");
   const [playable, setPlayable] = useState<Playable | null>(null);
@@ -196,11 +204,15 @@ export default function StalkerMainPage() {
 
   const openResolvedPlayable = (next: Playable) => {
     if (next.kind !== "live") clearScopedError("live-history");
+    const traceId = getActiveStalkerTraceId();
+    if (traceId) traceStalker("STALKER_PLAYER_HANDOFF", { traceId, providerShortId: shortSafeId(provider.id), channelId: next.liveIdentity?.channelId, hasRuntimeSource: next.url.startsWith("legendstream-catalog://"), runtimeSourceKind: classifyPlaybackSource(next.url), kind: next.kind });
     setPlayable(next);
     setView("player");
   };
 
   const openLive = (channel: Channel) => {
+    const traceId = beginStalkerPlaybackTrace();
+    traceStalker("STALKER_LIVE_TAP", { traceId, providerShortId: shortSafeId(provider.id), channelId: channel.id, sourceKind: classifyPlaybackSource(channel.streamUrl) });
     if (!channel.streamUrl) {
       setCatalogError("The cached playback address is unavailable. Refresh Live TV and try again.");
       return;

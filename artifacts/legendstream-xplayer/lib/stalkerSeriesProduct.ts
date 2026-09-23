@@ -518,6 +518,10 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
   };
 
   return {
+    inspectEpisodePlaybackRef(seriesId: string, seasonId: string, episodeId: string) {
+      const ref = playbackRefs.get(episodePlaybackRefKey(seriesId, seasonId, episodeId));
+      return { found: Boolean(ref), hasCmd: Boolean(ref?.cmd) };
+    },
     async loadCategories(signal?: AbortSignal): Promise<StalkerSeriesProductCategory[]> {
       const payload = await boundedRequest(session, { type: "series", action: "get_categories" }, signal);
       const seen = new Set<string>();

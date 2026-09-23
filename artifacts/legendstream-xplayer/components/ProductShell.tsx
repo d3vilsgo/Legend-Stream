@@ -1,4 +1,5 @@
 import React from "react";
+import { shortSafeId, traceStalker } from "@/lib/stalkerPlaybackTrace";
 import OptimizedHomeScreenV6 from "@/components/OptimizedHomeScreenV6";
 import StalkerMainPage from "@/components/StalkerMainPage";
 import { usePlayer } from "@/context/PlayerContext";
@@ -7,6 +8,8 @@ import { selectTransitionalProductSurface } from "@/lib/productShell";
 
 export default function ProductShell() {
   const { provider } = usePlayer();
+
+  traceStalker("PRODUCT_SHELL_RENDER", { providerPresent: Boolean(provider), providerType: provider?.type ?? "none", providerShortId: shortSafeId(provider?.id), selectedDelegate: provider ? selectTransitionalProductSurface(deriveProductCapabilities(provider.type)) : "paged", delegateKey: provider ? shortSafeId(provider.id) : "none" });
 
   if (!provider) {
     return <OptimizedHomeScreenV6 />;

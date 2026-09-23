@@ -18,6 +18,7 @@ import {
 } from "@/lib/stalkerVod";
 import { writeStalkerProductCount } from "@/lib/stalkerProductCounts";
 import { writeStalkerMovieHomePreview } from "@/lib/stalkerHomeSummary";
+import { beginStalkerPlaybackTrace, classifyPlaybackSource, classifyStalkerTraceError, shortSafeId, traceStalker } from "@/lib/stalkerPlaybackTrace";
 
 export type StalkerMoviePlayable = {
   title: string;
@@ -207,6 +208,7 @@ export function useStalkerMoviesCatalog({
   };
 
   const openMovie = async (item: StalkerVodItem) => {
+    const traceId = beginStalkerPlaybackTrace(); traceStalker("STALKER_MOVIE_TAP", { traceId, providerShortId: shortSafeId(provider.id), itemId: item.portalId });
     playbackAbortRef.current?.abort();
     const abort = new AbortController();
     playbackAbortRef.current = abort;
@@ -214,9 +216,12 @@ export function useStalkerMoviesCatalog({
     setResolvingItemId(item.portalId);
     setError(null);
     try {
+      traceStalker("STALKER_MOVIE_CREATE_LINK_START", { traceId, kind: "movie" });
       const url = await resolveStalkerVodLink(session, item, { signal: abort.signal });
+      traceStalker("STALKER_MOVIE_CREATE_LINK_RESULT", { traceId, success: true, hasPlayableUrl: Boolean(url), kind: "movie" });
       if (abort.signal.aborted || sequence !== playbackSequenceRef.current || !sessionStillCurrent()) return;
       const category = categories.find((candidate) => candidate.id === (item.categoryId ?? selectedCategoryId));
+      traceStalker("STALKER_MOVIE_PLAYER_HANDOFF", { traceId, sourceKind: classifyPlaybackSource(url) });
       onPlayable({
         title: item.title,
         subtitle: item.genre || category?.title || moviesLabel,
@@ -225,6 +230,7 @@ export function useStalkerMoviesCatalog({
         categoryId: item.categoryId ?? selectedCategoryId ?? category?.id ?? "*",
       });
     } catch (caught) {
+      traceStalker("STALKER_MOVIE_CREATE_LINK_RESULT", { traceId, success: false, hasPlayableUrl: false, kind: "movie", errorClass: classifyStalkerTraceError(caught, abort.signal) });
       if (abort.signal.aborted || sequence !== playbackSequenceRef.current || !sessionStillCurrent()) return;
       setError(safeError(caught, "Film başlatılamadı."));
     } finally {

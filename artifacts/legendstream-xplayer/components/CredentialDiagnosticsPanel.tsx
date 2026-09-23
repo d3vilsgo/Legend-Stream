@@ -22,6 +22,7 @@ import {
 } from "@/lib/catalogSyncMetrics";
 import { subscribeCatalogMeasurementFreshness } from "@/lib/catalogMeasurementFreshness";
 import { redactSensitiveText, safeLog } from "@/lib/safeLog";
+import { clearStalkerTraceEntries, formatStalkerTrace, getStalkerTraceEntries, subscribeStalkerTrace } from "@/lib/stalkerPlaybackTrace";
 
 const formatDiagnosticsWithCryptoRuntime = (report: CredentialDiagnosticsReport) =>
   `${formatCredentialDiagnostics(report)}\ncryptoAvailable=${cryptoAvailable}\nnobleCryptoRuntimeTypes=${JSON.stringify(nobleCryptoRuntimeTypes())}`;
@@ -70,6 +71,10 @@ export function CredentialDiagnosticsPanel() {
   const [catalogRefreshMessage, setCatalogRefreshMessage] = useState<string | null>(null);
   const [copyMessage, setCopyMessage] = useState<string | null>(null);
   const [catalogCopyMessage, setCatalogCopyMessage] = useState<string | null>(null);
+  const [stalkerTrace, setStalkerTrace] = useState(() => getStalkerTraceEntries());
+  const [stalkerTraceMessage, setStalkerTraceMessage] = useState<string | null>(null);
+
+  useEffect(() => subscribeStalkerTrace(() => setStalkerTrace(getStalkerTraceEntries())), []);
 
   const loadCatalogMeasurement = async (
     options: { clearBeforeRead?: boolean; showFeedback?: boolean } = {},
@@ -217,6 +222,17 @@ export function CredentialDiagnosticsPanel() {
           Henüz katalog ölçümü yok.
         </Text>
       )}
+
+      <Text style={{ color: colors.foreground, fontSize: 16, fontWeight: "800" }}>R18-C2 Stalker Playback Trace</Text>
+      <Text style={{ color: colors.mutedForeground }}>Geçici, yalnız bellekte tutulan credential-safe playback izi. CMD, MAC, token, cookie veya authenticated URL içermez.</Text>
+      <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 8 }}>
+        <FocusButton label="Stalker Trace Kopyala" icon="copy" onPress={() => void Clipboard.setStringAsync(formatStalkerTrace(stalkerTrace)).then(() => setStalkerTraceMessage("Stalker trace panoya kopyalandı.")).catch(() => setStalkerTraceMessage("Stalker trace kopyalanamadı."))} />
+        <FocusButton label="Stalker Trace Temizle" icon="trash-2" variant="ghost" onPress={() => { clearStalkerTraceEntries(); setStalkerTraceMessage("Stalker trace temizlendi."); }} />
+      </View>
+      {stalkerTraceMessage ? <Text style={{ color: colors.mutedForeground }}>{stalkerTraceMessage}</Text> : null}
+      <ScrollView nestedScrollEnabled style={{ maxHeight: 360, borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 12 }}>
+        <Text selectable style={{ color: colors.foreground, fontFamily: "monospace", fontSize: 12 }}>{formatStalkerTrace(stalkerTrace) || "Henüz Stalker playback trace yok."}</Text>
+      </ScrollView>
 
       {importMetrics ? <>
         <Text style={{ color: colors.foreground, fontSize: 16, fontWeight: "800" }}>

@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { beginStalkerPlaybackTrace, clearStalkerTraceEntries, formatStalkerTrace, getStalkerTraceEntries, traceStalker } from "../lib/stalkerPlaybackTrace";
+const ROOT=resolve(dirname(fileURLToPath(import.meta.url)),".."); const source=(p:string)=>readFileSync(resolve(ROOT,p),"utf8");
+clearStalkerTraceEntries(); const traceId=beginStalkerPlaybackTrace();
+traceStalker("SAFETY_TEST",{traceId,providerShortId:"abcd1234",stage:"DISCOVERY",errorClass:"DISCOVERY_ERROR",mac:"00:11:22:33:44:55",username:"user-secret",password:"pass-secret",token:"token-secret",cookie:"cookie-secret",cmd:"ffmpeg http://secret/cmd",url:"http://secret/stream"} as Record<string,string>);
+const output=formatStalkerTrace(getStalkerTraceEntries());
+for(const forbidden of ["00:11:22:33:44:55","user-secret","pass-secret","token-secret","cookie-secret","ffmpeg http://secret/cmd","http://secret/stream"]) assert.equal(output.includes(forbidden),false);
+assert.match(output,/"stage":"DISCOVERY"/); assert.match(output,/"errorClass":"DISCOVERY_ERROR"/);
+assert.doesNotMatch(source("lib/stalkerPlaybackTrace.ts"),/AsyncStorage|SecureStore|FileSystem|setItem\(|writeFile/);
+assert.match(source("lib/catalogRuntime.ts"),/resolveStalkerLiveCreateLink\)\(session, currentChannel\.cmd, signal\)/);
+assert.match(source("components/ProductShell.tsx"),/<StalkerMainPage key=\{provider\.id\}/);
+console.log("R18-C2 credential-safe trace scenarios passed.");

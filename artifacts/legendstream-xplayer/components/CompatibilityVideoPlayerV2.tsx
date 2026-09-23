@@ -33,6 +33,7 @@ import {
   type LiveChannelIdentity,
 } from "@/lib/playerLiveQueue";
 import { registerEpgChannels } from "@/lib/epgRuntime";
+import { classifyPlaybackSource, classifyStalkerTraceError, getActiveStalkerTraceId, traceStalker } from "@/lib/stalkerPlaybackTrace";
 import type { Channel } from "@/lib/iptv";
 import { usePlayerOrientation } from "@/hooks/usePlayerOrientation";
 import {
@@ -260,13 +261,16 @@ export function CompatibilityVideoPlayer({
       return () => { cancelled = true; };
     }
     const controller = new AbortController();
+    const traceId = getActiveStalkerTraceId();
+    if (traceId) traceStalker("PLAYER_SOURCE_RECEIVED", { traceId, sourceKind: classifyPlaybackSource(currentSource), resolved: false });
     setResolvedSource(null);
     setErrorText(null);
-    void resolveCatalogRuntimeSource(currentSource, provider, controller.signal)
+    void resolveCatalogRuntimeSource(currentSource, provider, controller.signal, {}, traceId ?? undefined)
       .then((next) => {
-        if (!cancelled) setResolvedSource(next);
+        if (!cancelled) { setResolvedSource(next); if (traceId) traceStalker("PLAYER_SOURCE_RECEIVED", { traceId, sourceKind: classifyPlaybackSource(next), resolved: true }); }
       })
-      .catch(() => {
+      .catch((caught) => {
+        if (traceId) traceStalker("PLAYER_SOURCE_RECEIVED", { traceId, sourceKind: "none", resolved: false, errorClass: classifyStalkerTraceError(caught, controller.signal) });
         if (cancelled) return;
         setResolvedSource(null);
         setErrorText("The cached playback address could not be refreshed. Refresh the catalog and try again.");
@@ -748,6 +752,11 @@ export function CompatibilityVideoPlayer({
     revealControls();
     revealMediaInfo();
   }, [clearControlsTimer, clearInfoTimer, pipSupported, revealControls, revealMediaInfo, videoSize]);
+
+  useEffect(() => {
+    const traceId = getActiveStalkerTraceId();
+    if (traceId && effectiveUri) traceStalker("PLAYER_MOUNT", { traceId, sourceKind: classifyPlaybackSource(effectiveUri), resolved: true });
+  }, [effectiveUri]);
 
   if (!orientation.ready || orientation.exiting) {
     return (
