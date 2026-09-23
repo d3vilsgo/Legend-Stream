@@ -85,14 +85,14 @@ scenario("normal production Home and provider runtime contract is preserved", ()
     { query: true, i18n: true, player: true, catalog: true, media: true, cleanup: true },
   );
   assert.match(layoutSource, /<QueryClientProvider[\s\S]*?<I18nProvider>[\s\S]*?<PlayerProvider>[\s\S]*?<CatalogSyncProvider>[\s\S]*?<MediaLibraryProvider>[\s\S]*?<RootLayoutNav/);
-  assert.match(indexSource, /import ProductShell from "@\\/components\\/ProductShell"/);
-  assert.match(indexSource, /return <ProductShell \\/>/);
-  assert.doesNotMatch(indexSource, /StalkerMainPage|OptimizedHomeScreenV6|provider\\?\\.type/);
-  assert.match(productShellSource, /import StalkerMainPage from "@\\/components\\/StalkerMainPage"/);
-  assert.match(productShellSource, /import OptimizedHomeScreenV6 from "@\\/components\\/OptimizedHomeScreenV6"/);
+  assert.match(indexSource, /import ProductShell from "@\/components\/ProductShell"/);
+  assert.match(indexSource, /return <ProductShell \/>/);
+  assert.doesNotMatch(indexSource, /StalkerMainPage|OptimizedHomeScreenV6|provider\?\.type/);
+  assert.match(productShellSource, /import StalkerMainPage from "@\/components\/StalkerMainPage"/);
+  assert.match(productShellSource, /import OptimizedHomeScreenV6 from "@\/components\/OptimizedHomeScreenV6"/);
   assert.match(
     indexSource,
-    /export default function IndexScreen\\(\\) \\{\\s*if \\(isCatalogBenchmarkBuildEnabled\\(\\)\\) return <Redirect href="\\/catalog-benchmark" \\/>;\\s*return <ProductShell \\/>;\\s*\\}/,
+    /export default function IndexScreen\(\) \{\s*if \(isCatalogBenchmarkBuildEnabled\(\)\) return <Redirect href="\/catalog-benchmark" \/>;\s*return <ProductShell \/>;\s*\}/,
   );
 });
 
