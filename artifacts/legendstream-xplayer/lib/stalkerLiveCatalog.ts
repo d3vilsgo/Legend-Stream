@@ -195,7 +195,7 @@ export function projectStalkerLiveItem(providerId: string, channel: StalkerLiveC
     tvgId: channel.tvgId,
     streamType: "stalker",
     contentType: "live",
-    playbackRef: { type: "stalker-live", portalId: channel.portalId, cmd: channel.cmd },
+    playbackRef: { type: "stalker-live", portalId: channel.portalId },
   };
 }
 

@@ -23,7 +23,11 @@ import {
   type PersistedVodCatalogItem,
 } from "./catalogPersistence";
 import { resolveStalkerLiveCreateLink } from "./stalkerLiveCatalog";
-import { getPersistedStalkerLivePlaybackRef } from "./stalkerLiveCache";
+import { discoverStalkerLiveChannels } from "./stalkerLiveDiscovery";
+import {
+  getCachedStalkerLiveCategories,
+  getPersistedStalkerLivePlaybackRef,
+} from "./stalkerLiveCache";
 import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
 import type { StalkerPortalSession } from "./stalkerPortal";
 import { safeLog } from "./safeLog";
@@ -50,6 +54,8 @@ type CatalogRuntimeDependencies = {
     cmd: string,
     signal?: AbortSignal,
   ) => Promise<string>;
+  getStalkerCategories?: typeof getCachedStalkerLiveCategories;
+  discoverStalkerLive?: typeof discoverStalkerLiveChannels;
 };
 
 function normalizeCatalogRuntimeBaseUrl(value: string) {
@@ -285,7 +291,18 @@ export async function resolveCatalogRuntimeSource(
       portalUrl: credentials.portalUrl,
       mac: credentials.mac,
     });
-    return (dependencies.resolveStalkerLink ?? resolveStalkerLiveCreateLink)(session, playbackRef.cmd, signal);
+    const categories = await (dependencies.getStalkerCategories ?? getCachedStalkerLiveCategories)(ref.providerId);
+    if (signal?.aborted) throw new Error("Cached Stalker playback resolution was cancelled.");
+    const discovery = await (dependencies.discoverStalkerLive ?? discoverStalkerLiveChannels)({
+      session,
+      providerId: ref.providerId,
+      categories,
+      signal,
+    });
+    if (signal?.aborted) throw new Error("Cached Stalker playback resolution was cancelled.");
+    const currentChannel = discovery.rows.find((channel) => channel.portalId === playbackRef.portalId);
+    if (!currentChannel) throw new Error("Cached Stalker channel is no longer available from the active provider.");
+    return (dependencies.resolveStalkerLink ?? resolveStalkerLiveCreateLink)(session, currentChannel.cmd, signal);
   }
   if (ref.kind === "vod-direct") {
     return (await resolveXtreamVodRuntimeRef(ref, provider, signal)).url;

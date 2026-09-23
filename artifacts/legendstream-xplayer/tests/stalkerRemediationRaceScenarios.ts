@@ -126,7 +126,7 @@ function liveItem(providerId: string, itemId: string, category = "news"): Persis
     category,
     categoryName: category,
     contentType: "live",
-    playbackRef: { type: "stalker-live", portalId: itemId, cmd: `ffmpeg http://stream.invalid/${itemId}` },
+    playbackRef: { type: "stalker-live", portalId: itemId },
   };
 }
 

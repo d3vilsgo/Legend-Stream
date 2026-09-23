@@ -21,7 +21,6 @@ export type CatalogPersistenceProviderContext = {
 export type PersistedStalkerLivePlaybackRef = {
   type: "stalker-live";
   portalId: string;
-  cmd: string;
 };
 
 export type PersistedLivePlaybackRef =
@@ -184,8 +183,7 @@ function normalizeLivePlaybackRef(value: unknown): PersistedLivePlaybackRef {
   }
   if (raw.type === "stalker-live") {
     const portalId = nonBlankString(raw.portalId);
-    const cmd = nonBlankString(raw.cmd);
-    if (portalId && cmd) return { type: "stalker-live", portalId, cmd };
+    if (portalId) return { type: "stalker-live", portalId };
   }
   return { type: "unresolved" };
 }
