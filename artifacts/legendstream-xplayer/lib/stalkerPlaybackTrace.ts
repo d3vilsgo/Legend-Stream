@@ -3,6 +3,8 @@ import { safeLog } from "./safeLog";
 export type StalkerTraceDetails = Record<string, string | number | boolean | null | undefined>;
 export type StalkerTraceEntry = { at: number; event: string; details: Record<string, string | number | boolean | null> };
 const MAX_ENTRIES = 180;
+const BUFFER_MILESTONES = [0,25,50,75,100] as const;
+const bufferingMilestoneByTrace = new Map<string, number>();
 const ALLOWED_KEYS = new Set(["traceId","providerPresent","providerType","providerShortId","selectedDelegate","delegateKey","mountGeneration","channelId","itemId","seriesId","seasonId","episodeId","sourceKind","hasRuntimeSource","runtimeSourceKind","activeProviderPresent","refKind","refProviderShortId","providerMatches","found","refType","portalIdHash","hasPortalUrl","hasMac","success","rowCount","targetPortalIdHash","matchedPortalId","matchedChannelId","hasCmd","kind","hasPlayableUrl","resolvedSourceKind","resolved","stage","errorClass","scheme","sourceFingerprint","previousFingerprint","nextFingerprint","reason","previousItemId","nextItemId","bufferPercent","safeNativeCode","requestedPosition","applied","hostHash","pathExtension","hasQuery","queryKeyCount","urlLengthBucket","looksLikeTransportStream","looksLikeHls"]);
 let sequence=0, mountSequence=0, activeTraceId:string|null=null;
 let entries:StalkerTraceEntry[]=[];
@@ -19,6 +21,15 @@ export function classifyStalkerTraceError(error:unknown,signal?:AbortSignal){if(
 export function beginStalkerPlaybackTrace(){sequence+=1;activeTraceId=`S18C2-${String(sequence).padStart(4,"0")}`;return activeTraceId;}
 export function getActiveStalkerTraceId(){return activeTraceId;}
 export function nextStalkerMountGeneration(){mountSequence+=1;return mountSequence;}
+export function shouldTraceStalkerBuffering(traceId:string,bufferPercent?:number){
+  if(!Number.isFinite(bufferPercent)) return false;
+  const value=Math.max(0,Math.min(100,Number(bufferPercent)));
+  const milestone=BUFFER_MILESTONES.reduce((best,current)=>value>=current?current:best,0);
+  const previous=bufferingMilestoneByTrace.get(traceId);
+  if(previous!=null && milestone<=previous) return false;
+  bufferingMilestoneByTrace.set(traceId,milestone);
+  return true;
+}
 export function traceStalker(event:string,details:StalkerTraceDetails={}){const clean:Record<string,string|number|boolean|null>={};for(const[key,value]of Object.entries(details)){if(!ALLOWED_KEYS.has(key)||value===undefined)continue;if(typeof value==="string")clean[key]=value.slice(0,96);else if(typeof value==="number"&&Number.isFinite(value))clean[key]=value;else if(typeof value==="boolean"||value===null)clean[key]=value;}const entry={at:Date.now(),event:event.slice(0,80),details:clean};entries=[...entries.slice(-(MAX_ENTRIES-1)),entry];safeLog.info("R18C2_STALKER_TRACE",entry);for(const listener of listeners)listener();}
 export function getStalkerTraceEntries(){return entries.slice();}
 export function clearStalkerTraceEntries(){entries=[];activeTraceId=null;for(const listener of listeners)listener();}
