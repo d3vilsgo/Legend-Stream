@@ -62,7 +62,8 @@ def main() -> None:
     dismiss_marker = "LegendStream PiP dismiss monitor"
     grace_marker = "LegendStream PiP return grace"
     release_marker = "LegendStream VLC release-state guard"
-    metadata_marker = "LegendStream live video metadata bridge"\n    native_error_marker = "LegendStream credential-safe native error bridge"
+    metadata_marker = "LegendStream live video metadata bridge"
+    native_error_marker = "LegendStream credential-safe native error bridge"
 
     if guard_marker not in java_text:
         fields_marker = "    private final AudioManager audioManager;\n"
