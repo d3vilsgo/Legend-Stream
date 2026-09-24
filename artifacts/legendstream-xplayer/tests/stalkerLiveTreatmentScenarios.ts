@@ -312,12 +312,61 @@ async function main() {
     assert.notEqual(stableStalkerLiveChannelId("a", "7"), stableStalkerLiveChannelId("b", "7"));
   });
 
-  await scenario("26 create_link success returns ephemeral playable URL", async () => {
+  await scenario("26 Live create_link adds Group A params and preserves current runtime CMD verbatim", async () => {
+    const currentCmd = "ffmpeg http://portal.invalid/play/live.php?stream=4242&extension=ts&play_token=synthetic";
     const source = await resolveStalkerLiveCreateLink(portal((params) => {
-      assert.equal(params.action, "create_link");
+      assert.deepEqual(params, {
+        type: "itv",
+        action: "create_link",
+        cmd: currentCmd,
+        forced_storage: 0,
+        disable_ad: 0,
+      });
       return { cmd: "ffmpeg https://stream.invalid/ephemeral-token" };
-    }), "ffmpeg http://canonical.invalid/cmd");
+    }), currentCmd);
     assert.equal(source, "https://stream.invalid/ephemeral-token");
+  });
+
+  await scenario("26b Live create_link keeps JsHttpRequest and existing MAG session headers unchanged", async () => {
+    const currentCmd = "ffmpeg http://portal.invalid/play/live.php?stream=4242&extension=ts&play_token=synthetic";
+    let createLinkUrl: URL | null = null;
+    let createLinkHeaders: Headers | null = null;
+    const session = createStalkerPortalSession({
+      portalUrl: "http://portal.invalid/stalker_portal/",
+      mac: MAC,
+      fetchImpl: async (input, init) => {
+        const url = new URL(String(input));
+        if (url.searchParams.get("action") === "handshake") {
+          return new Response(JSON.stringify({ js: { token: "synthetic-session-token" } }), { status: 200 });
+        }
+        createLinkUrl = url;
+        createLinkHeaders = new Headers(init?.headers);
+        return new Response(JSON.stringify({ js: { cmd: "ffmpeg https://stream.invalid/live/4242.ts" } }), { status: 200 });
+      },
+    });
+    await resolveStalkerLiveCreateLink(session, currentCmd);
+    assert.ok(createLinkUrl);
+    assert.equal(createLinkUrl.searchParams.get("type"), "itv");
+    assert.equal(createLinkUrl.searchParams.get("action"), "create_link");
+    assert.equal(createLinkUrl.searchParams.get("cmd"), currentCmd);
+    assert.equal(createLinkUrl.searchParams.get("forced_storage"), "0");
+    assert.equal(createLinkUrl.searchParams.get("disable_ad"), "0");
+    assert.equal(createLinkUrl.searchParams.get("JsHttpRequest"), "1-xml");
+    assert.ok(createLinkHeaders);
+    assert.equal(createLinkHeaders.get("User-Agent"), "Mozilla/5.0 (Linux; Android 12; SmartTV) AppleWebKit/537.36");
+    assert.equal(createLinkHeaders.get("X-User-Agent"), "Model: MAG250; Link: WiFi");
+    assert.equal(createLinkHeaders.get("Authorization"), "Bearer synthetic-session-token");
+    assert.equal(createLinkHeaders.get("Referer"), null);
+  });
+
+  await scenario("26c Live response parsing does not repair an empty returned stream identity", async () => {
+    const returned = "http://stream.invalid/play/live.php?stream=&extension=ts&play_token=synthetic";
+    const source = await resolveStalkerLiveCreateLink(
+      portal(() => ({ cmd: `ffmpeg ${returned}` })),
+      "ffmpeg http://portal.invalid/play/live.php?stream=4242&extension=ts&play_token=synthetic",
+    );
+    assert.equal(source, returned);
+    assert.equal(new URL(source).searchParams.get("stream"), "");
   });
 
   await scenario("27 create_link uses exactly one re-auth through session", async () => {
