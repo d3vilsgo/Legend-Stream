@@ -345,18 +345,20 @@ async function main() {
       },
     });
     await resolveStalkerLiveCreateLink(session, currentCmd);
-    assert.ok(createLinkUrl);
-    assert.equal(createLinkUrl.searchParams.get("type"), "itv");
-    assert.equal(createLinkUrl.searchParams.get("action"), "create_link");
-    assert.equal(createLinkUrl.searchParams.get("cmd"), currentCmd);
-    assert.equal(createLinkUrl.searchParams.get("forced_storage"), "0");
-    assert.equal(createLinkUrl.searchParams.get("disable_ad"), "0");
-    assert.equal(createLinkUrl.searchParams.get("JsHttpRequest"), "1-xml");
-    assert.ok(createLinkHeaders);
-    assert.equal(createLinkHeaders.get("User-Agent"), "Mozilla/5.0 (Linux; Android 12; SmartTV) AppleWebKit/537.36");
-    assert.equal(createLinkHeaders.get("X-User-Agent"), "Model: MAG250; Link: WiFi");
-    assert.equal(createLinkHeaders.get("Authorization"), "Bearer synthetic-session-token");
-    assert.equal(createLinkHeaders.get("Referer"), null);
+    const observedUrl = createLinkUrl as URL | null;
+    const observedHeaders = createLinkHeaders as Headers | null;
+    assert.ok(observedUrl);
+    assert.equal(observedUrl.searchParams.get("type"), "itv");
+    assert.equal(observedUrl.searchParams.get("action"), "create_link");
+    assert.equal(observedUrl.searchParams.get("cmd"), currentCmd);
+    assert.equal(observedUrl.searchParams.get("forced_storage"), "0");
+    assert.equal(observedUrl.searchParams.get("disable_ad"), "0");
+    assert.equal(observedUrl.searchParams.get("JsHttpRequest"), "1-xml");
+    assert.ok(observedHeaders);
+    assert.equal(observedHeaders.get("User-Agent"), "Mozilla/5.0 (Linux; Android 12; SmartTV) AppleWebKit/537.36");
+    assert.equal(observedHeaders.get("X-User-Agent"), "Model: MAG250; Link: WiFi");
+    assert.equal(observedHeaders.get("Authorization"), "Bearer synthetic-session-token");
+    assert.equal(observedHeaders.get("Referer"), null);
   });
 
   await scenario("26c Live response parsing does not repair an empty returned stream identity", async () => {
