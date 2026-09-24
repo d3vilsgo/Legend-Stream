@@ -455,7 +455,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     const traceId = getActiveStalkerTraceId();
     const payload = eventPayload(event); const rawCode = (payload as any)?.code ?? (payload as any)?.errorCode ?? (payload as any)?.status;
     const safeNativeCode = typeof rawCode === "number" && Number.isFinite(rawCode) ? String(rawCode) : typeof rawCode === "string" && /^[A-Z0-9_-]{1,32}$/i.test(rawCode) ? rawCode : undefined;
-    if (traceId) traceStalker("VLC_ERROR", { traceId, errorClass: classifyStalkerTraceError(new Error("native-vlc-error")), safeNativeCode });
+    if (traceId) traceStalker("VLC_ERROR", { traceId, errorClass: classifyStalkerTraceError(new Error("native-vlc-error")), safeNativeCode, nativeEventType: (payload as any)?.nativeEventType === "EncounteredError" ? "EncounteredError" : undefined, isNetworkSource: typeof (payload as any)?.isNetworkSource === "boolean" ? (payload as any).isNetworkSource : undefined, hasMediaPlayer: typeof (payload as any)?.hasMediaPlayer === "boolean" ? (payload as any).hasMediaPlayer : undefined });
     setPlaybackReady(false);
 
     if (
