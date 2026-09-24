@@ -306,7 +306,7 @@ function playableUrl(payload: unknown) {
 
 export async function resolveStalkerLiveCreateLink(session: Portal, cmd: string, signal?: AbortSignal) {
   if (!cmd.trim()) throw new StalkerPortalError("INVALID_RESPONSE", "Stalker channel has no playback command.");
-  const source = playableUrl(await session.request({ type: "itv", action: "create_link", cmd }, signal));
+  const source = playableUrl(await session.request({ type: "itv", action: "create_link", cmd, forced_storage: 0, disable_ad: 0 }, signal));
   if (!source) throw new StalkerPortalError("INVALID_RESPONSE", "Stalker portal did not return a playable link.");
   try {
     const url = new URL(source);
