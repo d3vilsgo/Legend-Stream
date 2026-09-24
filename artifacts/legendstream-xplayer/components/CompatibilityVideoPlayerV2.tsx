@@ -138,7 +138,7 @@ export function CompatibilityVideoPlayer({
   const lastDownloadUiAt = useRef(0);
   const exitStarted = useRef(false);
   const tracedSourceFingerprint = useRef<string | null>(null);
-  const tracedItemId = useRef<string | null>(liveIdentity?.channelId ?? vodIdentity?.itemId ?? progressRef?.type === "stalker-episode" ? progressRef.episodeId : null);
+  const tracedItemId = useRef<string | null>(liveIdentity?.channelId ?? vodIdentity?.itemId ?? (progressRef?.type === "stalker-episode" ? progressRef.episodeId : null));
 
   const playbackRef = useRef<PlaybackSnapshot>({
     source,
@@ -769,7 +769,7 @@ export function CompatibilityVideoPlayer({
     if (!traceId || !effectiveUri) return;
     const metadata = describePlaybackSourceSafely(effectiveUri);
     const previousFingerprint = tracedSourceFingerprint.current;
-    if (previousFingerprint && previousFingerprint !== metadata.sourceFingerprint) traceStalker("PLAYER_SOURCE_TRANSITION", { traceId, kind: currentKind, previousFingerprint, nextFingerprint: metadata.sourceFingerprint, previousItemId: tracedItemId.current ?? undefined, nextItemId: currentLiveIdentity?.channelId ?? currentVodIdentity?.itemId ?? progressRef?.type === "stalker-episode" ? progressRef.episodeId : undefined, reason: "effective-source-change" });
+    if (previousFingerprint && previousFingerprint !== metadata.sourceFingerprint) traceStalker("PLAYER_SOURCE_TRANSITION", { traceId, kind: currentKind, previousFingerprint, nextFingerprint: metadata.sourceFingerprint, previousItemId: tracedItemId.current ?? undefined, nextItemId: currentLiveIdentity?.channelId ?? currentVodIdentity?.itemId ?? (progressRef?.type === "stalker-episode" ? progressRef.episodeId : undefined), reason: "effective-source-change" });
     tracedSourceFingerprint.current = metadata.sourceFingerprint;
     traceStalker("PLAYER_MOUNT", { traceId, sourceKind: classifyPlaybackSource(effectiveUri), resolved: true });
     traceStalker("VLC_SOURCE_SET", { traceId, kind: currentKind, ...metadata });
