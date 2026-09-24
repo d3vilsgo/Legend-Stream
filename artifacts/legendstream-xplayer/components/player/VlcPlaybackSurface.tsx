@@ -3,7 +3,7 @@ import { ActivityIndicator, PixelRatio, StyleSheet, Text, useWindowDimensions, V
 import { VLCPlayer } from "react-native-vlc-media-player";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { logPlayerDiagnostic } from "@/lib/playerDiagnostics";
-import { classifyStalkerTraceError, getActiveStalkerTraceId, traceStalker } from "@/lib/stalkerPlaybackTrace";
+import { classifyStalkerTraceError, getActiveStalkerTraceId, shouldTraceStalkerBuffering, traceStalker } from "@/lib/stalkerPlaybackTrace";
 import {
   resetPlayerRuntimeInfo,
   updatePlayerRuntimeInfo,
@@ -503,7 +503,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
           onEnd={handleEnd}
           onError={handleError as any}
           {...({
-            onBuffering: (event: any) => { const traceId = getActiveStalkerTraceId(); const payload = eventPayload(event); const raw = Number((payload as any)?.bufferRate ?? (payload as any)?.bufferPercent ?? (payload as any)?.percent); if (traceId) traceStalker("VLC_BUFFERING", { traceId, bufferPercent: Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : undefined }); },
+            onBuffering: (event: any) => { const traceId = getActiveStalkerTraceId(); const payload = eventPayload(event); const raw = Number((payload as any)?.bufferRate ?? (payload as any)?.bufferPercent ?? (payload as any)?.percent); const bufferPercent = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : undefined; if (traceId && shouldTraceStalkerBuffering(traceId, bufferPercent)) traceStalker("VLC_BUFFERING", { traceId, bufferPercent }); },
             onStopped: () => { const traceId = getActiveStalkerTraceId(); if (traceId) traceStalker("VLC_STOPPED", { traceId }); },
           } as any)}
         />
