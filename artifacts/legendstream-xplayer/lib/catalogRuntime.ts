@@ -22,7 +22,7 @@ import {
   type PersistedSeriesCatalogItem,
   type PersistedVodCatalogItem,
 } from "./catalogPersistence";
-import { resolveStalkerLiveCreateLink } from "./stalkerLiveCatalog";
+import { classifyStalkerLiveRuntimeCmd, resolveStalkerLiveRuntimeCmd } from "./stalkerLiveCatalog";
 import type { StalkerLiveCategory } from "./stalkerLiveCatalog";
 import { getPersistedStalkerLivePlaybackRef } from "./stalkerLiveCache";
 import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
@@ -317,17 +317,25 @@ export async function resolveCatalogRuntimeSource(
       stage = "CURRENT_CMD_MISSING";
       if (traceId) traceStalker("STALKER_CURRENT_CMD_RESULT", { traceId, hasCmd: Boolean(currentChannel.cmd?.trim()) });
       if (!currentChannel.cmd?.trim()) throw new Error("Stalker channel has no playback command.");
-      stage = "CREATE_LINK";
-      if (traceId) traceStalker("STALKER_CREATE_LINK_START", { traceId, kind: "live" });
-      const resolved = await (dependencies.resolveStalkerLink ?? resolveStalkerLiveCreateLink)(session, currentChannel.cmd, signal);
-      if (traceId) { traceStalker("STALKER_CREATE_LINK_RESULT", { traceId, kind: "live", success: true, hasPlayableUrl: Boolean(resolved) }); traceStalker("CATALOG_RUNTIME_RESOLVE_SUCCESS", { traceId, resolvedSourceKind: classifyPlaybackSource(resolved) }); }
+      const cmdStage = classifyStalkerLiveRuntimeCmd(currentChannel.cmd);
+      stage = cmdStage === "CREATE_LINK_REQUIRED" ? "CREATE_LINK" : "CMD_STAGE";
+      if (traceId) traceStalker("STALKER_CMD_STAGE", { traceId, stage: cmdStage });
+      if (traceId && cmdStage === "CREATE_LINK_REQUIRED") traceStalker("STALKER_CREATE_LINK_START", { traceId, kind: "live" });
+      const resolved = await resolveStalkerLiveRuntimeCmd(
+        session,
+        currentChannel.cmd,
+        signal,
+        dependencies.resolveStalkerLink,
+      );
+      if (traceId && cmdStage === "CREATE_LINK_REQUIRED") traceStalker("STALKER_CREATE_LINK_RESULT", { traceId, kind: "live", success: true, hasPlayableUrl: Boolean(resolved) });
+      if (traceId) traceStalker("CATALOG_RUNTIME_RESOLVE_SUCCESS", { traceId, resolvedSourceKind: classifyPlaybackSource(resolved) });
       return resolved;
     }
     if (ref.kind === "vod-direct") return (await resolveXtreamVodRuntimeRef(ref, provider, signal)).url;
     return source;
   } catch (caught) {
     if (traceId) {
-      const errorClass = signal?.aborted ? "ABORTED" : stage === "PROVIDER_MISMATCH" ? "PROVIDER_MISMATCH" : stage === "PROVIDER_MISSING" ? "PROVIDER_MISSING" : stage === "CREDENTIAL_STATE_INVALID" ? "CREDENTIAL_STATE_INVALID" : stage === "PLAYBACK_REF_MISSING" ? "PLAYBACK_REF_MISSING" : stage === "SESSION_ACQUIRE" ? "SESSION_ERROR" : stage === "DISCOVERY" ? "DISCOVERY_ERROR" : stage === "PORTAL_ID_MATCH" ? "PORTAL_ID_NOT_FOUND" : stage === "CURRENT_CMD_MISSING" ? "CURRENT_CMD_MISSING" : stage === "CREATE_LINK" ? (/playable.*link/i.test(caught instanceof Error ? caught.message : "") ? "CREATE_LINK_NO_URL" : "CREATE_LINK_ERROR") : "UNKNOWN";
+      const errorClass = signal?.aborted ? "ABORTED" : stage === "PROVIDER_MISMATCH" ? "PROVIDER_MISMATCH" : stage === "PROVIDER_MISSING" ? "PROVIDER_MISSING" : stage === "CREDENTIAL_STATE_INVALID" ? "CREDENTIAL_STATE_INVALID" : stage === "PLAYBACK_REF_MISSING" ? "PLAYBACK_REF_MISSING" : stage === "SESSION_ACQUIRE" ? "SESSION_ERROR" : stage === "DISCOVERY" ? "DISCOVERY_ERROR" : stage === "PORTAL_ID_MATCH" ? "PORTAL_ID_NOT_FOUND" : stage === "CURRENT_CMD_MISSING" ? "CURRENT_CMD_MISSING" : stage === "CMD_STAGE" ? "INVALID_RESPONSE" : stage === "CREATE_LINK" ? (/playable.*link/i.test(caught instanceof Error ? caught.message : "") ? "CREATE_LINK_NO_URL" : "CREATE_LINK_ERROR") : "UNKNOWN";
       if (stage === "CREATE_LINK") traceStalker("STALKER_CREATE_LINK_RESULT", { traceId, kind: "live", success: false, hasPlayableUrl: false, errorClass });
       traceStalker("CATALOG_RUNTIME_FAIL", { traceId, stage, errorClass });
     }

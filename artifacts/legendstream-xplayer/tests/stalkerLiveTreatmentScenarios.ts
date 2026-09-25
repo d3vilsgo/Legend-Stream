@@ -10,7 +10,9 @@ import {
   normalizeStalkerLiveCategories,
   normalizeStalkerLivePage,
   projectStalkerLiveItem,
+  classifyStalkerLiveRuntimeCmd,
   resolveStalkerLiveCreateLink,
+  resolveStalkerLiveRuntimeCmd,
   runStagedStalkerLiveSync,
   stableStalkerLiveChannelId,
   stalkerLivePageCeilingExceeded,
@@ -312,23 +314,21 @@ async function main() {
     assert.notEqual(stableStalkerLiveChannelId("a", "7"), stableStalkerLiveChannelId("b", "7"));
   });
 
-  await scenario("26 Live create_link adds Group A params and preserves current runtime CMD verbatim", async () => {
-    const currentCmd = "ffmpeg http://portal.invalid/play/live.php?stream=4242&extension=ts&play_token=synthetic";
+  await scenario("26 Live create_link preserves unresolved runtime CMD and excludes C3D Group A params", async () => {
+    const currentCmd = "ffmpeg http://localhost/ch/196699_";
     const source = await resolveStalkerLiveCreateLink(portal((params) => {
       assert.deepEqual(params, {
         type: "itv",
         action: "create_link",
         cmd: currentCmd,
-        forced_storage: 0,
-        disable_ad: 0,
       });
-      return { cmd: "ffmpeg https://stream.invalid/ephemeral-token" };
+      return { cmd: "ffmpeg https://stream.invalid/live/196699.ts" };
     }), currentCmd);
-    assert.equal(source, "https://stream.invalid/ephemeral-token");
+    assert.equal(source, "https://stream.invalid/live/196699.ts");
   });
 
   await scenario("26b Live create_link keeps JsHttpRequest and existing MAG session headers unchanged", async () => {
-    const currentCmd = "ffmpeg http://portal.invalid/play/live.php?stream=4242&extension=ts&play_token=synthetic";
+    const currentCmd = "ffmpeg http://localhost/ch/196699_";
     let createLinkUrl: URL | null = null;
     let createLinkHeaders: Headers | null = null;
     const session = createStalkerPortalSession({
@@ -341,7 +341,7 @@ async function main() {
         }
         createLinkUrl = url;
         createLinkHeaders = new Headers(init?.headers);
-        return new Response(JSON.stringify({ js: { cmd: "ffmpeg https://stream.invalid/live/4242.ts" } }), { status: 200 });
+        return new Response(JSON.stringify({ js: { cmd: "ffmpeg https://stream.invalid/live/196699.ts" } }), { status: 200 });
       },
     });
     await resolveStalkerLiveCreateLink(session, currentCmd);
@@ -351,8 +351,8 @@ async function main() {
     assert.equal(observedUrl.searchParams.get("type"), "itv");
     assert.equal(observedUrl.searchParams.get("action"), "create_link");
     assert.equal(observedUrl.searchParams.get("cmd"), currentCmd);
-    assert.equal(observedUrl.searchParams.get("forced_storage"), "0");
-    assert.equal(observedUrl.searchParams.get("disable_ad"), "0");
+    assert.equal(observedUrl.searchParams.has("forced_storage"), false);
+    assert.equal(observedUrl.searchParams.has("disable_ad"), false);
     assert.equal(observedUrl.searchParams.get("JsHttpRequest"), "1-xml");
     assert.ok(observedHeaders);
     assert.equal(observedHeaders.get("User-Agent"), "Mozilla/5.0 (Linux; Android 12; SmartTV) AppleWebKit/537.36");
@@ -361,14 +361,78 @@ async function main() {
     assert.equal(observedHeaders.get("Referer"), null);
   });
 
-  await scenario("26c Live response parsing does not repair an empty returned stream identity", async () => {
-    const returned = "http://stream.invalid/play/live.php?stream=&extension=ts&play_token=synthetic";
-    const source = await resolveStalkerLiveCreateLink(
-      portal(() => ({ cmd: `ffmpeg ${returned}` })),
-      "ffmpeg http://portal.invalid/play/live.php?stream=4242&extension=ts&play_token=synthetic",
+  await scenario("26c resolved Live CMD bypasses create_link and preserves runtime query values", async () => {
+    const cmd = "ffmpeg http://example.invalid/play/live.php?stream=196699&extension=ts&play_token=synthetic-token";
+    let createCalls = 0;
+    const source = await resolveStalkerLiveRuntimeCmd(
+      portal(() => { createCalls += 1; throw new Error("unexpected create_link"); }),
+      cmd,
     );
-    assert.equal(source, returned);
-    assert.equal(new URL(source).searchParams.get("stream"), "");
+    assert.equal(classifyStalkerLiveRuntimeCmd(cmd), "ALREADY_RESOLVED");
+    assert.equal(createCalls, 0);
+    assert.equal(source, "http://example.invalid/play/live.php?stream=196699&extension=ts&play_token=synthetic-token");
+  });
+
+  await scenario("26d resolved Live URL without ffmpeg prefix bypasses create_link", async () => {
+    const cmd = "https://example.invalid/play/live.php?stream=196699&extension=ts&play_token=synthetic-token";
+    let createCalls = 0;
+    const source = await resolveStalkerLiveRuntimeCmd(
+      portal(() => { createCalls += 1; throw new Error("unexpected create_link"); }),
+      cmd,
+    );
+    assert.equal(classifyStalkerLiveRuntimeCmd(cmd), "ALREADY_RESOLVED");
+    assert.equal(createCalls, 0);
+    assert.equal(source, cmd);
+  });
+
+  await scenario("26e resolved Live URL with empty stream fails closed without repair", async () => {
+    const cmd = "ffmpeg http://example.invalid/play/live.php?stream=&extension=ts&play_token=synthetic-token";
+    let createCalls = 0;
+    assert.equal(classifyStalkerLiveRuntimeCmd(cmd), "INVALID_RESOLVED");
+    await expectCode(resolveStalkerLiveRuntimeCmd(
+      portal(() => { createCalls += 1; throw new Error("unexpected create_link"); }),
+      cmd,
+    ), "INVALID_RESPONSE");
+    assert.equal(createCalls, 0);
+  });
+
+  await scenario("26f canonical Live CMD remains on exactly-one create_link path", async () => {
+    const cmd = "ffmpeg http://localhost/ch/196699_";
+    let createCalls = 0;
+    const source = await resolveStalkerLiveRuntimeCmd(portal((params) => {
+      createCalls += 1;
+      assert.equal(params.cmd, cmd);
+      return { cmd: "ffmpeg http://example.invalid/play/live.php?stream=196699&extension=ts&play_token=synthetic-token" };
+    }), cmd);
+    assert.equal(classifyStalkerLiveRuntimeCmd(cmd), "CREATE_LINK_REQUIRED");
+    assert.equal(createCalls, 1);
+    assert.match(source, /stream=196699/);
+  });
+
+  await scenario("26g opaque unresolved CMD remains on exactly-one create_link path", async () => {
+    const cmd = "ffmpeg opaque-196699";
+    let createCalls = 0;
+    const source = await resolveStalkerLiveRuntimeCmd(portal(() => {
+      createCalls += 1;
+      return { cmd: "https://stream.invalid/live/196699.ts" };
+    }), cmd);
+    assert.equal(classifyStalkerLiveRuntimeCmd(cmd), "CREATE_LINK_REQUIRED");
+    assert.equal(createCalls, 1);
+    assert.equal(source, "https://stream.invalid/live/196699.ts");
+  });
+
+  await scenario("26h arbitrary HTTP URL is not a resolved-Stalker false positive", () => {
+    assert.equal(
+      classifyStalkerLiveRuntimeCmd("https://example.invalid/live/196699.ts?stream=196699&play_token=synthetic-token"),
+      "CREATE_LINK_REQUIRED",
+    );
+  });
+
+  await scenario("26i create_link output with empty /play/live.php stream is rejected without injection", async () => {
+    const cmd = "ffmpeg opaque-196699";
+    await expectCode(resolveStalkerLiveRuntimeCmd(portal(() => ({
+      cmd: "ffmpeg http://example.invalid/play/live.php?stream=&extension=ts&play_token=synthetic-token",
+    })), cmd), "INVALID_RESPONSE");
   });
 
   await scenario("27 create_link uses exactly one re-auth through session", async () => {

@@ -304,15 +304,60 @@ function playableUrl(payload: unknown) {
   return row ? stringValue(row.cmd ?? row.url ?? row.link).replace(/^ffmpeg\s+/i, "").trim() : "";
 }
 
-export async function resolveStalkerLiveCreateLink(session: Portal, cmd: string, signal?: AbortSignal) {
-  if (!cmd.trim()) throw new StalkerPortalError("INVALID_RESPONSE", "Stalker channel has no playback command.");
-  const source = playableUrl(await session.request({ type: "itv", action: "create_link", cmd, forced_storage: 0, disable_ad: 0 }, signal));
+export type StalkerLiveRuntimeCmdStage =
+  | "ALREADY_RESOLVED"
+  | "CREATE_LINK_REQUIRED"
+  | "INVALID_RESOLVED";
+
+export function classifyStalkerLiveRuntimeCmd(cmd: string): StalkerLiveRuntimeCmdStage {
+  const source = playableUrl(cmd);
+  if (!source) return "CREATE_LINK_REQUIRED";
+  try {
+    const url = new URL(source);
+    if (!["http:", "https:"].includes(url.protocol)) return "CREATE_LINK_REQUIRED";
+    if (!/\/play\/live\.php$/i.test(url.pathname)) return "CREATE_LINK_REQUIRED";
+    return url.searchParams.get("stream")?.trim()
+      ? "ALREADY_RESOLVED"
+      : "INVALID_RESOLVED";
+  } catch {
+    return "CREATE_LINK_REQUIRED";
+  }
+}
+
+function validateStalkerLivePlaybackUrl(source: string) {
   if (!source) throw new StalkerPortalError("INVALID_RESPONSE", "Stalker portal did not return a playable link.");
   try {
     const url = new URL(source);
     if (!["http:", "https:", "rtsp:", "rtmp:"].includes(url.protocol)) throw new Error("protocol");
-  } catch {
+    if (/\/play\/live\.php$/i.test(url.pathname) && !url.searchParams.get("stream")?.trim()) {
+      throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live playback URL is missing its stream identity.");
+    }
+  } catch (caught) {
+    if (caught instanceof StalkerPortalError) throw caught;
     throw new StalkerPortalError("INVALID_RESPONSE", "Stalker portal did not return a playable link.");
   }
   return source;
+}
+
+export async function resolveStalkerLiveCreateLink(session: Portal, cmd: string, signal?: AbortSignal) {
+  if (!cmd.trim()) throw new StalkerPortalError("INVALID_RESPONSE", "Stalker channel has no playback command.");
+  const source = playableUrl(await session.request({ type: "itv", action: "create_link", cmd }, signal));
+  return validateStalkerLivePlaybackUrl(source);
+}
+
+export async function resolveStalkerLiveRuntimeCmd(
+  session: Portal,
+  cmd: string,
+  signal?: AbortSignal,
+  createLink: typeof resolveStalkerLiveCreateLink = resolveStalkerLiveCreateLink,
+) {
+  if (!cmd.trim()) throw new StalkerPortalError("INVALID_RESPONSE", "Stalker channel has no playback command.");
+  const stage = classifyStalkerLiveRuntimeCmd(cmd);
+  if (stage === "INVALID_RESOLVED") {
+    throw new StalkerPortalError("INVALID_RESPONSE", "Stalker Live resolved command is missing its stream identity.");
+  }
+  if (stage === "ALREADY_RESOLVED") {
+    return validateStalkerLivePlaybackUrl(playableUrl(cmd));
+  }
+  return validateStalkerLivePlaybackUrl(await createLink(session, cmd, signal));
 }
