@@ -200,7 +200,7 @@ async function main() {
 
   await scenario("catalogRuntime uses shared registry plus owned runtime discovery and no private Stalker session", () => {
     assert.match(runtime, /getOrCreateStalkerPortalSession/);
-    assert.match(runtime, /discoverStalkerLiveChannels/);
+    assert.match(runtime, /reacquireStalkerLiveChannel/);
     assert.doesNotMatch(runtime, /createStalkerPortalSession/);
     assert.doesNotMatch(runtime, /get_profile|get_main_info|syncStalkerLiveCatalog/);
   });
@@ -221,7 +221,7 @@ async function main() {
   });
 
   await scenario("resolved Stalker URL remains runtime-only and persisted cmd is not playback authority", () => {
-    assert.match(runtime, /currentChannel = discovery\.rows\.find/);
+    assert.match(runtime, /const currentChannel = reacquired\.channel/);
     assert.match(runtime, /resolveStalkerLiveRuntimeCmd\(\s*session,\s*currentChannel\.cmd,\s*signal/);
     assert.doesNotMatch(runtime, /playbackRef\.cmd/);
     assert.doesNotMatch(runtime, /AsyncStorage|setItem|INSERT|UPDATE|enqueueCatalogDbWrite/);
@@ -238,7 +238,7 @@ async function main() {
 
   await scenario("legacy persisted cmd is ignored and runtime reacquires the current provider command", () => {
     assert.match(runtime, /getStalkerPlaybackRef/);
-    assert.match(runtime, /currentChannel = discovery\.rows\.find/);
+    assert.match(runtime, /const currentChannel = reacquired\.channel/);
     assert.match(runtime, /resolveStalkerLiveRuntimeCmd\(\s*session,\s*currentChannel\.cmd,\s*signal/);
     assert.doesNotMatch(runtime, /playbackRef\.cmd/);
   });

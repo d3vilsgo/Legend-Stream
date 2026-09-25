@@ -63,6 +63,7 @@ import {
   type StalkerProductProviderIdentity,
 } from "@/lib/stalkerProductSession";
 import { resolveStalkerVodHistoryLink } from "@/lib/stalkerVod";
+import { clearStalkerLiveRuntimeLocators } from "@/lib/stalkerLiveRuntimeLocator";
 import {
   resolveStalkerSeriesHistoryEpisode,
   type StalkerSeriesEpisodeIdentity,
@@ -546,8 +547,8 @@ export default function StalkerMainPage() {
               busy={providerSwitchBusy}
               switchingProviderId={switchingProviderId}
               onSwitch={(id) => void switchProvider(id)}
-              onDisconnect={() => void disconnectProvider()}
-              onRemove={(id) => void removeProvider(id)}
+              onDisconnect={() => { clearStalkerLiveRuntimeLocators(); void disconnectProvider(); }}
+              onRemove={(id) => { clearStalkerLiveRuntimeLocators(); void removeProvider(id); }}
             />
           ) : null}
         </ScrollView>

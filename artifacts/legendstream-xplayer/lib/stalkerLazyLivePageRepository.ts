@@ -8,6 +8,7 @@ import {
 import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
 import { fetchStalkerOrderedPage, type StalkerOrderedPage } from "./stalkerPagedCatalog";
 import { StalkerPortalError } from "./stalkerPortal";
+import { registerStalkerLiveRuntimeLocators } from "./stalkerLiveRuntimeLocator";
 import { isStalkerLiveGlobalCategoryId, normalizeStalkerLiveCategoryIntent } from "./stalkerLiveCategoryIntent";
 
 function pageFromCursor(cursor?: string) {
@@ -102,6 +103,7 @@ export async function getStalkerLazyLivePage(options: {
     canonical.set(item.portalId, item);
   }
   const channels = [...canonical.values()];
+  registerStalkerLiveRuntimeLocators(session, provider.id, categoryId, page, channels);
   const projected = channels.map((item) => projectStalkerLiveItem(provider.id, item));
   if (projected.length) {
     await upsertCatalogItems(provider.id, "live", projected, {

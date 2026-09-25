@@ -26,6 +26,7 @@ import { classifyStalkerLiveRuntimeCmd, resolveStalkerLiveRuntimeCmd } from "./s
 import type { StalkerLiveCategory } from "./stalkerLiveCatalog";
 import { getPersistedStalkerLivePlaybackRef } from "./stalkerLiveCache";
 import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
+import { reacquireStalkerLiveChannel } from "./stalkerLiveRuntimeLocator";
 import type { StalkerPortalSession } from "./stalkerPortal";
 import { safeLog } from "./safeLog";
 import { classifyPlaybackSource, getActiveStalkerTraceId, shortSafeId, traceStalker } from "./stalkerPlaybackTrace";
@@ -305,15 +306,19 @@ export async function resolveCatalogRuntimeSource(
       if (traceId) traceStalker("STALKER_SESSION_ACQUIRE_RESULT", { traceId, success: true });
       const categories = dependencies.getStalkerCategories ? await dependencies.getStalkerCategories(ref.providerId) : [];
       if (signal?.aborted) throw new Error("Cached Stalker playback resolution was cancelled.");
-      stage = "DISCOVERY";
-      if (traceId) traceStalker("STALKER_DISCOVERY_START", { traceId, targetPortalIdHash: shortSafeId(playbackRef.portalId) });
-      const discover = dependencies.discoverStalkerLive ?? (await import("./stalkerLiveDiscovery")).discoverStalkerLiveChannels;
-      const discovery = await discover({ session, providerId: ref.providerId, categories, signal });
+      stage = "REACQUIRE";
+      if (traceId) traceStalker("PLAYBACK_REACQUIRE_START", { traceId });
+      const reacquired = await reacquireStalkerLiveChannel(
+        { session, providerId: ref.providerId, portalId: playbackRef.portalId, categories, signal },
+        { fullDiscover: dependencies.discoverStalkerLive },
+      );
       if (signal?.aborted) throw new Error("Cached Stalker playback resolution was cancelled.");
-      stage = "PORTAL_ID_MATCH";
-      const currentChannel = discovery.rows.find((channel) => channel.portalId === playbackRef.portalId);
-      if (traceId) traceStalker("STALKER_DISCOVERY_RESULT", { traceId, success: true, rowCount: discovery.rows.length, targetPortalIdHash: shortSafeId(playbackRef.portalId), matchedPortalId: Boolean(currentChannel) });
-      if (!currentChannel) throw new Error("Cached Stalker channel is no longer available from the active provider.");
+      const currentChannel = reacquired.channel;
+      if (traceId) {
+        traceStalker("PLAYBACK_REACQUIRE_SOURCE", { traceId, source: reacquired.source });
+        traceStalker("PLAYBACK_REACQUIRE_ROWS", { traceId, rowCount: reacquired.rows });
+        traceStalker("PLAYBACK_REACQUIRE_DONE", { traceId, success: true });
+      }
       stage = "CURRENT_CMD_MISSING";
       if (traceId) traceStalker("STALKER_CURRENT_CMD_RESULT", { traceId, hasCmd: Boolean(currentChannel.cmd?.trim()) });
       if (!currentChannel.cmd?.trim()) throw new Error("Stalker channel has no playback command.");
@@ -335,7 +340,7 @@ export async function resolveCatalogRuntimeSource(
     return source;
   } catch (caught) {
     if (traceId) {
-      const errorClass = signal?.aborted ? "ABORTED" : stage === "PROVIDER_MISMATCH" ? "PROVIDER_MISMATCH" : stage === "PROVIDER_MISSING" ? "PROVIDER_MISSING" : stage === "CREDENTIAL_STATE_INVALID" ? "CREDENTIAL_STATE_INVALID" : stage === "PLAYBACK_REF_MISSING" ? "PLAYBACK_REF_MISSING" : stage === "SESSION_ACQUIRE" ? "SESSION_ERROR" : stage === "DISCOVERY" ? "DISCOVERY_ERROR" : stage === "PORTAL_ID_MATCH" ? "PORTAL_ID_NOT_FOUND" : stage === "CURRENT_CMD_MISSING" ? "CURRENT_CMD_MISSING" : stage === "CMD_STAGE" ? "INVALID_RESPONSE" : stage === "CREATE_LINK" ? (/playable.*link/i.test(caught instanceof Error ? caught.message : "") ? "CREATE_LINK_NO_URL" : "CREATE_LINK_ERROR") : "UNKNOWN";
+      const errorClass = signal?.aborted ? "ABORTED" : stage === "PROVIDER_MISMATCH" ? "PROVIDER_MISMATCH" : stage === "PROVIDER_MISSING" ? "PROVIDER_MISSING" : stage === "CREDENTIAL_STATE_INVALID" ? "CREDENTIAL_STATE_INVALID" : stage === "PLAYBACK_REF_MISSING" ? "PLAYBACK_REF_MISSING" : stage === "SESSION_ACQUIRE" ? "SESSION_ERROR" : stage === "REACQUIRE" ? "DISCOVERY_ERROR" : stage === "CURRENT_CMD_MISSING" ? "CURRENT_CMD_MISSING" : stage === "CMD_STAGE" ? "INVALID_RESPONSE" : stage === "CREATE_LINK" ? (/playable.*link/i.test(caught instanceof Error ? caught.message : "") ? "CREATE_LINK_NO_URL" : "CREATE_LINK_ERROR") : "UNKNOWN";
       if (stage === "CREATE_LINK") traceStalker("STALKER_CREATE_LINK_RESULT", { traceId, kind: "live", success: false, hasPlayableUrl: false, errorClass });
       traceStalker("CATALOG_RUNTIME_FAIL", { traceId, stage, errorClass });
     }
