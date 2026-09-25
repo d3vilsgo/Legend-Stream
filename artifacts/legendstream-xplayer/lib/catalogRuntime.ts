@@ -309,7 +309,7 @@ export async function resolveCatalogRuntimeSource(
       stage = "REACQUIRE";
       if (traceId) traceStalker("PLAYBACK_REACQUIRE_START", { traceId });
       const reacquired = await reacquireStalkerLiveChannel(
-        { session, providerId: ref.providerId, portalId: playbackRef.portalId, categories, signal },
+        { session, providerId: ref.providerId, portalId: playbackRef.portalId, categories, signal, traceId },
         { fullDiscover: dependencies.discoverStalkerLive },
       );
       if (signal?.aborted) throw new Error("Cached Stalker playback resolution was cancelled.");

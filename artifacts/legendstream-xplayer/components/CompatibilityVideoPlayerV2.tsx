@@ -59,6 +59,7 @@ import {
   VlcPlaybackSurface,
   VlcProgressEvent,
 } from "@/components/player/VlcPlaybackSurface";
+import { C3HPhysicalTraceOverlay } from "@/components/debug/C3HPhysicalTraceOverlay";
 
 const CODEC_MODE_KEY = "@legendstream/codec-mode-v1";
 const UI_PROGRESS_INTERVAL_MS = 500;
@@ -804,6 +805,10 @@ export function CompatibilityVideoPlayer({
         diagnosticM3ULive={m3uLiveDiagnostic}
         diagnosticM3UUriMetadata={m3uUriMetadata}
       /> : null}
+
+      {provider?.type === "stalker" && currentKind === "live"
+        ? <C3HPhysicalTraceOverlay />
+        : null}
 
       {!pipActive ? (
         <PlayerChrome

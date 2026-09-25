@@ -6,6 +6,7 @@ import {
 } from "./stalkerLiveCatalog";
 import { discoverStalkerLiveChannels } from "./stalkerLiveDiscovery";
 import { fetchStalkerOrderedPage, type StalkerOrderedPage } from "./stalkerPagedCatalog";
+import { traceStalker } from "./stalkerPlaybackTrace";
 
 type Portal = Pick<StalkerPortalSession, "request">;
 type RuntimeChannel = Pick<StalkerLiveChannel, "portalId" | "cmd">;
@@ -143,18 +144,31 @@ export async function reacquireStalkerLiveChannel(
     portalId: string;
     categories?: readonly StalkerLiveCategory[];
     signal?: AbortSignal;
+    traceId?: string;
   },
   dependencies: ReacquireDependencies = {},
 ): Promise<StalkerLiveReacquireResult> {
-  const { session, providerId, portalId, signal } = options;
+  const { session, providerId, portalId, signal, traceId } = options;
   const categories = [...(options.categories ?? [])];
+  const diagnosticSession: Portal = traceId
+    ? {
+        request: (...args: Parameters<Portal["request"]>) => {
+          const action = String((args[0] as Record<string, unknown> | undefined)?.action ?? "");
+          if (action === "get_ordered_list" || action === "get_all_channels") {
+            traceStalker("PLAYBACK_REACQUIRE_LOOKUP", { traceId });
+            if (action === "get_all_channels") traceStalker("PLAYBACK_REACQUIRE_GET_ALL", { traceId });
+          }
+          return session.request(...args);
+        },
+      }
+    : session;
   const fetchOrdered = dependencies.fetchOrderedPage ?? fetchStalkerOrderedPage;
   const discover = dependencies.fullDiscover ?? discoverStalkerLiveChannels;
   const locator = readStalkerLiveRuntimeLocator(session, providerId, portalId);
 
   const fullDiscovery = async (): Promise<StalkerLiveReacquireResult> => {
     assertCurrent(signal);
-    const result = await discover({ session, providerId, categories, signal });
+    const result = await discover({ session: diagnosticSession, providerId, categories, signal });
     assertCurrent(signal);
     const channel = exactTarget(result.rows, portalId);
     if (!channel) throw new Error("Cached Stalker channel is no longer available from the active provider.");
@@ -167,7 +181,7 @@ export async function reacquireStalkerLiveChannel(
   try {
     assertCurrent(signal);
     remembered = await fetchOrdered({
-      session,
+      session: diagnosticSession,
       providerId,
       kind: "itv",
       categoryId: locator.categoryId,
@@ -193,7 +207,7 @@ export async function reacquireStalkerLiveChannel(
       const ordered = page === locator.page
         ? remembered
         : await fetchOrdered({
-            session,
+            session: diagnosticSession,
             providerId,
             kind: "itv",
             categoryId: locator.categoryId,
