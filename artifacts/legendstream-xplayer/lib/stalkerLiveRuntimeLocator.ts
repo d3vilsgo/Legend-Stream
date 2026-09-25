@@ -32,7 +32,7 @@ export type StalkerLiveReacquireResult = {
 type FullDiscover = (input: {
   session: Portal;
   providerId: string;
-  categories: readonly StalkerLiveCategory[];
+  categories: StalkerLiveCategory[];
   signal?: AbortSignal;
 }) => Promise<{ rows: RuntimeChannel[] }>;
 
@@ -147,7 +147,7 @@ export async function reacquireStalkerLiveChannel(
   dependencies: ReacquireDependencies = {},
 ): Promise<StalkerLiveReacquireResult> {
   const { session, providerId, portalId, signal } = options;
-  const categories = options.categories ?? [];
+  const categories = [...(options.categories ?? [])];
   const fetchOrdered = dependencies.fetchOrderedPage ?? fetchStalkerOrderedPage;
   const discover = dependencies.fullDiscover ?? discoverStalkerLiveChannels;
   const locator = readStalkerLiveRuntimeLocator(session, providerId, portalId);
