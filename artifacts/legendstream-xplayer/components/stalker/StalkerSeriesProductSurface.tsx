@@ -28,6 +28,7 @@ import {
 } from "@/lib/stalkerSeriesProduct";
 import { writeStalkerProductCount } from "@/lib/stalkerProductCounts";
 import { writeStalkerSeriesHomePreview } from "@/lib/stalkerHomeSummary";
+import { beginStalkerPlaybackTrace, classifyPlaybackSource, classifyStalkerTraceError, shortSafeId, traceStalker } from "@/lib/stalkerPlaybackTrace";
 
 const visibleError = (caught: unknown, fallback: string) =>
   redactSensitiveText(caught instanceof Error ? caught.message : fallback);
@@ -288,6 +289,9 @@ export function StalkerSeriesProductSurface({
 
   const playEpisode = async (seasonId: string, episodeId: string) => {
     if (!detail) return;
+    const traceId = beginStalkerPlaybackTrace(); traceStalker("STALKER_EPISODE_TAP", { traceId, providerShortId: shortSafeId(provider.id), seriesId: detail.seriesId, seasonId, episodeId });
+    const playbackRefState = controller.inspectEpisodePlaybackRef(detail.seriesId, seasonId, episodeId);
+    traceStalker("STALKER_EPISODE_PLAYBACK_REF_RESULT", { traceId, found: playbackRefState.found, hasCmd: playbackRefState.hasCmd });
     const emitPlayable = onPlayable;
     if (!emitPlayable) {
       setPlaybackError("Üst seviye oynatıcı sahibi kullanılamıyor.");
@@ -301,10 +305,14 @@ export function StalkerSeriesProductSurface({
     setPlaybackLoading(true);
     setPlaybackError(null);
     try {
+      traceStalker("STALKER_EPISODE_CREATE_LINK_START", { traceId, kind: "episode" });
       const source = await controller.resolveEpisode(detail.seriesId, seasonId, episodeId, request.abort.signal);
+      traceStalker("STALKER_EPISODE_CREATE_LINK_RESULT", { traceId, success: true, hasPlayableUrl: Boolean(source), kind: "episode" });
       if (!currentRequest(request.sequence) || !ownership.isCurrent(ticket)) return;
+      traceStalker("STALKER_EPISODE_PLAYER_HANDOFF", { traceId, sourceKind: classifyPlaybackSource(source) });
       emitPlayable(buildStalkerSeriesPlayableIntent(provider.id, detail, seasonId, episodeId, source));
     } catch (caught) {
+      traceStalker("STALKER_EPISODE_CREATE_LINK_RESULT", { traceId, success: false, hasPlayableUrl: false, kind: "episode", errorClass: classifyStalkerTraceError(caught, request.abort.signal) });
       if (!currentRequest(request.sequence) || !ownership.isCurrent(ticket)) return;
       setPlaybackError(visibleError(caught, "Bölüm oynatma bağlantısı alınamadı."));
     } finally {

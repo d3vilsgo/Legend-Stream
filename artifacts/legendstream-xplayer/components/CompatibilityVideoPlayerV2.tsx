@@ -33,6 +33,7 @@ import {
   type LiveChannelIdentity,
 } from "@/lib/playerLiveQueue";
 import { registerEpgChannels } from "@/lib/epgRuntime";
+import { classifyPlaybackSource, classifyStalkerTraceError, describePlaybackSourceSafely, fingerprintPlaybackSource, getActiveStalkerTraceId, traceStalker } from "@/lib/stalkerPlaybackTrace";
 import type { Channel } from "@/lib/iptv";
 import { usePlayerOrientation } from "@/hooks/usePlayerOrientation";
 import {
@@ -58,6 +59,7 @@ import {
   VlcPlaybackSurface,
   VlcProgressEvent,
 } from "@/components/player/VlcPlaybackSurface";
+import { C3HPhysicalTraceOverlay } from "@/components/debug/C3HPhysicalTraceOverlay";
 
 const CODEC_MODE_KEY = "@legendstream/codec-mode-v1";
 const UI_PROGRESS_INTERVAL_MS = 500;
@@ -136,6 +138,8 @@ export function CompatibilityVideoPlayer({
   const lastUiProgressAt = useRef(0);
   const lastDownloadUiAt = useRef(0);
   const exitStarted = useRef(false);
+  const tracedSourceFingerprint = useRef<string | null>(null);
+  const tracedItemId = useRef<string | null>(liveIdentity?.channelId ?? vodIdentity?.itemId ?? (progressRef?.type === "stalker-episode" ? progressRef.episodeId : null));
 
   const playbackRef = useRef<PlaybackSnapshot>({
     source,
@@ -260,13 +264,17 @@ export function CompatibilityVideoPlayer({
       return () => { cancelled = true; };
     }
     const controller = new AbortController();
+    const traceId = getActiveStalkerTraceId();
+    if (traceId) traceStalker("PLAYER_SOURCE_RECEIVED", { traceId, sourceKind: classifyPlaybackSource(currentSource), resolved: false });
     setResolvedSource(null);
     setErrorText(null);
     void resolveCatalogRuntimeSource(currentSource, provider, controller.signal)
       .then((next) => {
         if (!cancelled) setResolvedSource(next);
+        if (!cancelled && traceId) traceStalker("PLAYER_SOURCE_RECEIVED", { traceId, sourceKind: classifyPlaybackSource(next), resolved: true });
       })
-      .catch(() => {
+      .catch((caught) => {
+        if (traceId) traceStalker("PLAYER_SOURCE_RECEIVED", { traceId, sourceKind: "none", resolved: false, errorClass: classifyStalkerTraceError(caught, controller.signal) });
         if (cancelled) return;
         setResolvedSource(null);
         setErrorText("The cached playback address could not be refreshed. Refresh the catalog and try again.");
@@ -511,7 +519,10 @@ export function CompatibilityVideoPlayer({
   const currentMeta = currentSubtitle || queueMeta;
   const canNavigate = selectableItems.length > 1 && currentIndex >= 0;
 
-  const switchTo = useCallback(async (item: PlayerSelectableItem) => {
+  const switchTo = useCallback(async (item: PlayerSelectableItem, reason = "explicit-selection") => {
+    const traceId = getActiveStalkerTraceId();
+    if (traceId) traceStalker("PLAYER_SOURCE_TRANSITION", { traceId, kind: item.isLive ? "live" : inferMediaKind(item.source), previousFingerprint: fingerprintPlaybackSource(effectiveUri || currentSource), nextFingerprint: fingerprintPlaybackSource(item.source), previousItemId: tracedItemId.current ?? undefined, nextItemId: item.id, reason });
+    tracedItemId.current = item.id;
     await persistProgress();
     const kind: PlayerMediaKind = item.isLive ? "live" : inferMediaKind(item.source);
     playbackRef.current = {
@@ -552,13 +563,13 @@ export function CompatibilityVideoPlayer({
     if (item.isLive) void recordWatched(item.id);
     revealControls();
     revealMediaInfo();
-  }, [persistProgress, provider, recordWatched, revealControls, revealMediaInfo]);
+  }, [currentSource, effectiveUri, persistProgress, provider, recordWatched, revealControls, revealMediaInfo]);
 
   const moveRelative = useCallback((delta: number) => {
     if (!canNavigate) return;
     const next = currentIndex + delta;
     if (next < 0 || next >= selectableItems.length) return;
-    void switchTo(selectableItems[next]);
+    void switchTo(selectableItems[next], "relative-navigation");
   }, [canNavigate, currentIndex, selectableItems, switchTo]);
 
   const exitPlayer = useCallback(async () => {
@@ -682,12 +693,17 @@ export function CompatibilityVideoPlayer({
       normalizedDuration > 0
     ) {
       const saved = getProgress(snapshot.source, snapshot.progressRef);
-      if (saved?.position && saved.position > 5) {
-        const ratio = Math.max(0, Math.min(1, saved.position / normalizedDuration));
+      const requestedPosition = saved?.position && saved.position > 5 ? saved.position : 0;
+      let applied = false;
+      if (requestedPosition > 0) {
+        const ratio = Math.max(0, Math.min(1, requestedPosition / normalizedDuration));
         vlcRef.current?.seek?.(ratio);
-        playbackRef.current.position = saved.position;
-        setPosition(saved.position);
+        playbackRef.current.position = requestedPosition;
+        setPosition(requestedPosition);
+        applied = true;
       }
+      const traceId = getActiveStalkerTraceId();
+      if (traceId) traceStalker("PLAYER_PROGRESS_RESTORE", { traceId, kind: snapshot.kind, requestedPosition, applied });
       resumedSource.current = snapshot.source;
     }
   }, [getProgress]);
@@ -749,6 +765,17 @@ export function CompatibilityVideoPlayer({
     revealMediaInfo();
   }, [clearControlsTimer, clearInfoTimer, pipSupported, revealControls, revealMediaInfo, videoSize]);
 
+  useEffect(() => {
+    const traceId = getActiveStalkerTraceId();
+    if (!traceId || !effectiveUri) return;
+    const metadata = describePlaybackSourceSafely(effectiveUri);
+    const previousFingerprint = tracedSourceFingerprint.current;
+    if (previousFingerprint && previousFingerprint !== metadata.sourceFingerprint) traceStalker("PLAYER_SOURCE_TRANSITION", { traceId, kind: currentKind, previousFingerprint, nextFingerprint: metadata.sourceFingerprint, previousItemId: tracedItemId.current ?? undefined, nextItemId: currentLiveIdentity?.channelId ?? currentVodIdentity?.itemId ?? (progressRef?.type === "stalker-episode" ? progressRef.episodeId : undefined), reason: "effective-source-change" });
+    tracedSourceFingerprint.current = metadata.sourceFingerprint;
+    traceStalker("PLAYER_MOUNT", { traceId, sourceKind: classifyPlaybackSource(effectiveUri), resolved: true });
+    traceStalker("VLC_SOURCE_SET", { traceId, kind: currentKind, ...metadata });
+  }, [currentKind, currentLiveIdentity?.channelId, currentVodIdentity?.itemId, effectiveUri, progressRef]);
+
   if (!orientation.ready || orientation.exiting) {
     return (
       <View style={styles.root}>
@@ -778,6 +805,10 @@ export function CompatibilityVideoPlayer({
         diagnosticM3ULive={m3uLiveDiagnostic}
         diagnosticM3UUriMetadata={m3uUriMetadata}
       /> : null}
+
+      {provider?.type === "stalker" && currentKind === "live"
+        ? <C3HPhysicalTraceOverlay />
+        : null}
 
       {!pipActive ? (
         <PlayerChrome
@@ -819,7 +850,7 @@ export function CompatibilityVideoPlayer({
           onSeekRatio={seekToRatio}
           onMoveRelative={moveRelative}
           onTogglePanel={togglePanel}
-          onSwitchTo={(item) => void switchTo(item)}
+          onSwitchTo={(item) => void switchTo(item, "explicit-selection")}
           onSelectSubtitle={(id) => {
             setTextTrack(id);
             setPanel(null);

@@ -22,12 +22,14 @@ import {
   type PersistedSeriesCatalogItem,
   type PersistedVodCatalogItem,
 } from "./catalogPersistence";
-import { resolveStalkerLiveCreateLink } from "./stalkerLiveCatalog";
+import { classifyStalkerLiveRuntimeCmd, resolveStalkerLiveRuntimeCmd } from "./stalkerLiveCatalog";
 import type { StalkerLiveCategory } from "./stalkerLiveCatalog";
-import { getPersistedStalkerLivePlaybackRef } from "./stalkerLiveCache";
+import { getPersistedStalkerLiveCategoryId, getPersistedStalkerLivePlaybackRef } from "./stalkerLiveCache";
 import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
+import { reacquireStalkerLiveChannel } from "./stalkerLiveRuntimeLocator";
 import type { StalkerPortalSession } from "./stalkerPortal";
 import { safeLog } from "./safeLog";
+import { classifyPlaybackSource, getActiveStalkerTraceId, shortSafeId, traceStalker } from "./stalkerPlaybackTrace";
 
 export type CatalogRuntimeProvider = {
   id: string;
@@ -43,6 +45,7 @@ export type CatalogPageRuntimeItem = Channel | XtreamVodItem | XtreamSeriesItem;
 
 type CatalogRuntimeDependencies = {
   getStalkerPlaybackRef?: typeof getPersistedStalkerLivePlaybackRef;
+  getStalkerCategoryHint?: typeof getPersistedStalkerLiveCategoryId;
   acquireStalkerSession?: (
     identity: Parameters<typeof getOrCreateStalkerPortalSession>[0],
   ) => Pick<StalkerPortalSession, "request">;
@@ -281,40 +284,76 @@ export async function resolveCatalogRuntimeSource(
   signal?: AbortSignal,
   dependencies: CatalogRuntimeDependencies = {},
 ): Promise<string> {
-  const ref = parseCatalogRuntimeSource(source);
-  if (!ref) return source;
-  if (!provider || provider.id !== ref.providerId) {
-    throw new Error("Cached playback provider is unavailable.");
+  const traceId = getActiveStalkerTraceId() ?? undefined;
+  let stage = "PARSE_REF";
+  if (traceId) traceStalker("CATALOG_RUNTIME_RESOLVE_START", { traceId, sourceKind: classifyPlaybackSource(source), activeProviderPresent: Boolean(provider), providerShortId: shortSafeId(provider?.id) });
+  try {
+    const ref = parseCatalogRuntimeSource(source);
+    if (!ref) { if (traceId) traceStalker("CATALOG_RUNTIME_FAIL", { traceId, stage: "PARSE_REF", errorClass: "UNKNOWN" }); return source; }
+    if (traceId) traceStalker("CATALOG_RUNTIME_REF_PARSED", { traceId, refKind: ref.kind, refProviderShortId: shortSafeId(ref.providerId), itemId: "itemId" in ref ? ref.itemId : undefined, providerMatches: Boolean(provider && provider.id === ref.providerId) });
+    if (!provider || provider.id !== ref.providerId) { stage = provider ? "PROVIDER_MISMATCH" : "PROVIDER_MISSING"; throw new Error("Cached playback provider is unavailable."); }
+    if (ref.kind === "stalker-live") {
+      stage = "CREDENTIAL_STATE_INVALID";
+      if (traceId) traceStalker("STALKER_CREDENTIAL_STATE", { traceId, hasPortalUrl: Boolean(provider.url || provider.playlistUrl), hasMac: Boolean(provider.mac?.trim()) });
+      const credentials = requireStalkerCredentials(provider);
+      stage = "PLAYBACK_REF_MISSING";
+      if (traceId) traceStalker("STALKER_PLAYBACK_REF_LOOKUP", { traceId });
+      const playbackRef = await (dependencies.getStalkerPlaybackRef ?? getPersistedStalkerLivePlaybackRef)(ref.providerId, ref.itemId);
+      if (traceId) traceStalker("STALKER_PLAYBACK_REF_RESULT", { traceId, found: Boolean(playbackRef), refType: playbackRef?.type ?? "none", portalIdHash: playbackRef ? shortSafeId(playbackRef.portalId) : "none" });
+      if (!playbackRef) throw new Error("Cached Stalker playback reference is unavailable.");
+      stage = "SESSION_ACQUIRE";
+      if (traceId) traceStalker("STALKER_SESSION_ACQUIRE_START", { traceId });
+      const session = (dependencies.acquireStalkerSession ?? getOrCreateStalkerPortalSession)({ providerId: ref.providerId, portalUrl: credentials.portalUrl, mac: credentials.mac });
+      if (traceId) traceStalker("STALKER_SESSION_ACQUIRE_RESULT", { traceId, success: true });
+      const categories = dependencies.getStalkerCategories ? await dependencies.getStalkerCategories(ref.providerId) : [];
+      if (signal?.aborted) throw new Error("Cached Stalker playback resolution was cancelled.");
+      stage = "REACQUIRE";
+      if (traceId) traceStalker("PLAYBACK_REACQUIRE_START", { traceId });
+      const reacquired = await reacquireStalkerLiveChannel(
+        { session, providerId: ref.providerId, portalId: playbackRef.portalId, categories, signal, traceId },
+        {
+          fullDiscover: dependencies.discoverStalkerLive,
+          resolveCategoryHint: () =>
+            (dependencies.getStalkerCategoryHint ?? getPersistedStalkerLiveCategoryId)(
+              ref.providerId,
+              ref.itemId,
+            ),
+        },
+      );
+      if (signal?.aborted) throw new Error("Cached Stalker playback resolution was cancelled.");
+      const currentChannel = reacquired.channel;
+      if (traceId) {
+        traceStalker("PLAYBACK_REACQUIRE_SOURCE", { traceId, source: reacquired.source });
+        traceStalker("PLAYBACK_REACQUIRE_ROWS", { traceId, rowCount: reacquired.rows });
+        traceStalker("PLAYBACK_REACQUIRE_DONE", { traceId, success: true });
+      }
+      stage = "CURRENT_CMD_MISSING";
+      if (traceId) traceStalker("STALKER_CURRENT_CMD_RESULT", { traceId, hasCmd: Boolean(currentChannel.cmd?.trim()) });
+      if (!currentChannel.cmd?.trim()) throw new Error("Stalker channel has no playback command.");
+      const cmdStage = classifyStalkerLiveRuntimeCmd(currentChannel.cmd);
+      stage = cmdStage === "CREATE_LINK_REQUIRED" ? "CREATE_LINK" : "CMD_STAGE";
+      if (traceId) traceStalker("STALKER_CMD_STAGE", { traceId, stage: cmdStage });
+      if (traceId && cmdStage === "CREATE_LINK_REQUIRED") traceStalker("STALKER_CREATE_LINK_START", { traceId, kind: "live" });
+      const resolved = await resolveStalkerLiveRuntimeCmd(
+        session,
+        currentChannel.cmd,
+        signal,
+        dependencies.resolveStalkerLink,
+      );
+      if (traceId && cmdStage === "CREATE_LINK_REQUIRED") traceStalker("STALKER_CREATE_LINK_RESULT", { traceId, kind: "live", success: true, hasPlayableUrl: Boolean(resolved) });
+      if (traceId) traceStalker("CATALOG_RUNTIME_RESOLVE_SUCCESS", { traceId, resolvedSourceKind: classifyPlaybackSource(resolved) });
+      return resolved;
+    }
+    if (ref.kind === "vod-direct") return (await resolveXtreamVodRuntimeRef(ref, provider, signal)).url;
+    return source;
+  } catch (caught) {
+    if (traceId) {
+      const errorClass = signal?.aborted ? "ABORTED" : stage === "PROVIDER_MISMATCH" ? "PROVIDER_MISMATCH" : stage === "PROVIDER_MISSING" ? "PROVIDER_MISSING" : stage === "CREDENTIAL_STATE_INVALID" ? "CREDENTIAL_STATE_INVALID" : stage === "PLAYBACK_REF_MISSING" ? "PLAYBACK_REF_MISSING" : stage === "SESSION_ACQUIRE" ? "SESSION_ERROR" : stage === "REACQUIRE" ? "DISCOVERY_ERROR" : stage === "CURRENT_CMD_MISSING" ? "CURRENT_CMD_MISSING" : stage === "CMD_STAGE" ? "INVALID_RESPONSE" : stage === "CREATE_LINK" ? (/playable.*link/i.test(caught instanceof Error ? caught.message : "") ? "CREATE_LINK_NO_URL" : "CREATE_LINK_ERROR") : "UNKNOWN";
+      if (stage === "CREATE_LINK") traceStalker("STALKER_CREATE_LINK_RESULT", { traceId, kind: "live", success: false, hasPlayableUrl: false, errorClass });
+      traceStalker("CATALOG_RUNTIME_FAIL", { traceId, stage, errorClass });
+    }
+    throw caught;
   }
-  if (ref.kind === "stalker-live") {
-    const credentials = requireStalkerCredentials(provider);
-    const playbackRef = await (dependencies.getStalkerPlaybackRef ?? getPersistedStalkerLivePlaybackRef)(ref.providerId, ref.itemId);
-    if (!playbackRef) throw new Error("Cached Stalker playback reference is unavailable.");
-    const session = (dependencies.acquireStalkerSession ?? getOrCreateStalkerPortalSession)({
-      providerId: ref.providerId,
-      portalUrl: credentials.portalUrl,
-      mac: credentials.mac,
-    });
-    const categories = dependencies.getStalkerCategories
-      ? await dependencies.getStalkerCategories(ref.providerId)
-      : [];
-    if (signal?.aborted) throw new Error("Cached Stalker playback resolution was cancelled.");
-    const discover = dependencies.discoverStalkerLive ?? (await import("./stalkerLiveDiscovery")).discoverStalkerLiveChannels;
-    const discovery = await discover({
-      session,
-      providerId: ref.providerId,
-      categories,
-      signal,
-    });
-    if (signal?.aborted) throw new Error("Cached Stalker playback resolution was cancelled.");
-    const currentChannel = discovery.rows.find((channel) => channel.portalId === playbackRef.portalId);
-    if (!currentChannel) throw new Error("Cached Stalker channel is no longer available from the active provider.");
-    return (dependencies.resolveStalkerLink ?? resolveStalkerLiveCreateLink)(session, currentChannel.cmd, signal);
-  }
-  if (ref.kind === "vod-direct") {
-    return (await resolveXtreamVodRuntimeRef(ref, provider, signal)).url;
-  }
-  return source;
 }
 
 
