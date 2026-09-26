@@ -132,7 +132,64 @@ async function main() {
     assert.equal(result.source, "FULL_DISCOVERY"); assert.equal(ordered, 0);
   });
 
-  await scenario("I targeted API unsupported falls back safely", async () => {
+  await scenario("I no locator uses persisted concrete category hint before full discovery", async () => {
+    const s = session(); const calls: Array<{ categoryId: string; page: number }> = []; let full = 0;
+    const result = await reacquireStalkerLiveChannel(
+      { session: s, providerId: "provider-a", portalId: "101" },
+      {
+        resolveCategoryHint: async () => "10",
+        fetchOrderedPage: async (input) => {
+          calls.push({ categoryId: input.categoryId, page: input.page });
+          return page(input.page, [101], { category: "10", prefix: "hinted" });
+        },
+        fullDiscover: async () => { full += 1; return { rows: [] }; },
+      },
+    );
+    assert.equal(result.source, "CATEGORY");
+    assert.equal(result.channel.cmd, "ffmpeg hinted-101");
+    assert.deepEqual(calls, [{ categoryId: "10", page: 1 }]);
+    assert.equal(full, 0);
+  });
+
+  await scenario("J global aggregate locator failure uses persisted concrete category hint", async () => {
+    const s = session(); const calls: string[] = []; let full = 0;
+    registerStalkerLiveRuntimeLocators(s, "provider-a", "*", 1, [{ portalId: "101" }]);
+    const result = await reacquireStalkerLiveChannel(
+      { session: s, providerId: "provider-a", portalId: "101" },
+      {
+        resolveCategoryHint: async () => "10",
+        fetchOrderedPage: async (input) => {
+          calls.push(`${input.categoryId}:${input.page}`);
+          if (input.categoryId === "*") throw new StalkerPortalError("HTTP_ERROR", "global ordered unsupported", 405);
+          return page(input.page, [101], { category: "10", prefix: "bounded" });
+        },
+        fullDiscover: async () => { full += 1; return { rows: [] }; },
+      },
+    );
+    assert.equal(result.source, "CATEGORY");
+    assert.equal(result.channel.cmd, "ffmpeg bounded-101");
+    assert.deepEqual(calls, ["*:1", "10:1"]);
+    assert.equal(full, 0);
+  });
+
+  await scenario("K category hint miss retains terminal full compatibility fallback", async () => {
+    const s = session(); let full = 0;
+    const result = await reacquireStalkerLiveChannel(
+      { session: s, providerId: "provider-a", portalId: "101" },
+      {
+        resolveCategoryHint: async () => "10",
+        fetchOrderedPage: async () => page(1, [999], { category: "10" }),
+        fullDiscover: async () => {
+          full += 1;
+          return { rows: [{ portalId: "101", cmd: "ffmpeg full-101" }] };
+        },
+      },
+    );
+    assert.equal(result.source, "FULL_DISCOVERY");
+    assert.equal(full, 1);
+  });
+
+  await scenario("L targeted API unsupported falls back safely", async () => {
     const s = session();
     registerStalkerLiveRuntimeLocators(s, "provider-a", "10", 1, [{ portalId: "101" }]);
     const result = await reacquireStalkerLiveChannel(
@@ -145,7 +202,7 @@ async function main() {
     assert.equal(result.source, "FULL_DISCOVERY");
   });
 
-  await scenario("J abort exact page does not continue to fallback", async () => {
+  await scenario("M abort exact page does not continue to fallback", async () => {
     const s = session(); const ac = new AbortController(); let full = 0;
     registerStalkerLiveRuntimeLocators(s, "provider-a", "10", 1, [{ portalId: "101" }]);
     await assert.rejects(reacquireStalkerLiveChannel(
@@ -158,7 +215,7 @@ async function main() {
     assert.equal(full, 0);
   });
 
-  await scenario("K abort category does not continue to full discovery", async () => {
+  await scenario("N abort category does not continue to full discovery", async () => {
     const s = session(); const ac = new AbortController(); let full = 0;
     registerStalkerLiveRuntimeLocators(s, "provider-a", "10", 2, [{ portalId: "101" }]);
     await assert.rejects(reacquireStalkerLiveChannel(
@@ -174,7 +231,7 @@ async function main() {
     assert.equal(full, 0);
   });
 
-  await scenario("L conflicting targeted duplicate portalId fails closed", async () => {
+  await scenario("O conflicting targeted duplicate portalId fails closed", async () => {
     const s = session();
     registerStalkerLiveRuntimeLocators(s, "provider-a", "10", 1, [{ portalId: "101" }]);
     await assert.rejects(reacquireStalkerLiveChannel(
@@ -189,14 +246,14 @@ async function main() {
     ), (e: unknown) => e instanceof StalkerPortalError && e.code === "INVALID_RESPONSE");
   });
 
-  await scenario("M durable playback ref remains portalId only", () => {
+  await scenario("P durable playback ref remains portalId only", () => {
     const normalized = normalizeStalkerLivePage({ data: [{ id: 101, name: "A", tv_genre_id: "10", cmd: "ffmpeg secret" }] }, "provider-a", 1);
     const persisted = projectStalkerLiveItem("provider-a", normalized.items[0]);
     assert.deepEqual(persisted.playbackRef, { type: "stalker-live", portalId: "101" });
     assert.equal(JSON.stringify(persisted).includes("secret"), false);
   });
 
-  await scenario("N C3F resolved targeted CMD bypasses create_link", async () => {
+  await scenario("Q C3F resolved targeted CMD bypasses create_link", async () => {
     let create = 0;
     const url = await resolveStalkerLiveRuntimeCmd(
       { request: async () => { create += 1; return {}; } },
@@ -205,7 +262,7 @@ async function main() {
     assert.equal(create, 0); assert.match(url, /stream=101/);
   });
 
-  await scenario("O C3F unresolved targeted CMD invokes create_link once", async () => {
+  await scenario("R C3F unresolved targeted CMD invokes create_link once", async () => {
     let create = 0;
     const url = await resolveStalkerLiveRuntimeCmd(
       { request: async () => { create += 1; return { cmd: "https://stream.invalid/live.ts" }; } },
@@ -214,14 +271,14 @@ async function main() {
     assert.equal(create, 1); assert.equal(url, "https://stream.invalid/live.ts");
   });
 
-  await scenario("P C3F empty stream remains fail closed", async () => {
+  await scenario("S C3F empty stream remains fail closed", async () => {
     await assert.rejects(resolveStalkerLiveRuntimeCmd(
       { request: async () => ({}) },
       "ffmpeg http://example.invalid/play/live.php?stream=&play_token=synthetic",
     ), (e: unknown) => e instanceof StalkerPortalError && e.code === "INVALID_RESPONSE");
   });
 
-  await scenario("Q locator page remains one-based and is reissued exactly", async () => {
+  await scenario("T locator page remains one-based and is reissued exactly", async () => {
     const s = session(); let observed = 0;
     registerStalkerLiveRuntimeLocators(s, "provider-a", "10", 7, [{ portalId: "101" }]);
     await reacquireStalkerLiveChannel(
@@ -231,7 +288,7 @@ async function main() {
     assert.equal(observed, 7);
   });
 
-  assert.equal(passed, 17);
-  process.stdout.write("stalker live targeted reacquisition scenarios: 17/17 passed\n");
+  assert.equal(passed, 20);
+  process.stdout.write("stalker live targeted reacquisition scenarios: 20/20 passed\n");
 }
 void main().catch((error) => { console.error(error); process.exitCode = 1; });

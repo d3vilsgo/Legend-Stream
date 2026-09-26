@@ -24,7 +24,7 @@ import {
 } from "./catalogPersistence";
 import { classifyStalkerLiveRuntimeCmd, resolveStalkerLiveRuntimeCmd } from "./stalkerLiveCatalog";
 import type { StalkerLiveCategory } from "./stalkerLiveCatalog";
-import { getPersistedStalkerLivePlaybackRef } from "./stalkerLiveCache";
+import { getPersistedStalkerLiveCategoryId, getPersistedStalkerLivePlaybackRef } from "./stalkerLiveCache";
 import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
 import { reacquireStalkerLiveChannel } from "./stalkerLiveRuntimeLocator";
 import type { StalkerPortalSession } from "./stalkerPortal";
@@ -45,6 +45,7 @@ export type CatalogPageRuntimeItem = Channel | XtreamVodItem | XtreamSeriesItem;
 
 type CatalogRuntimeDependencies = {
   getStalkerPlaybackRef?: typeof getPersistedStalkerLivePlaybackRef;
+  getStalkerCategoryHint?: typeof getPersistedStalkerLiveCategoryId;
   acquireStalkerSession?: (
     identity: Parameters<typeof getOrCreateStalkerPortalSession>[0],
   ) => Pick<StalkerPortalSession, "request">;
@@ -310,7 +311,14 @@ export async function resolveCatalogRuntimeSource(
       if (traceId) traceStalker("PLAYBACK_REACQUIRE_START", { traceId });
       const reacquired = await reacquireStalkerLiveChannel(
         { session, providerId: ref.providerId, portalId: playbackRef.portalId, categories, signal, traceId },
-        { fullDiscover: dependencies.discoverStalkerLive },
+        {
+          fullDiscover: dependencies.discoverStalkerLive,
+          resolveCategoryHint: () =>
+            (dependencies.getStalkerCategoryHint ?? getPersistedStalkerLiveCategoryId)(
+              ref.providerId,
+              ref.itemId,
+            ),
+        },
       );
       if (signal?.aborted) throw new Error("Cached Stalker playback resolution was cancelled.");
       const currentChannel = reacquired.channel;

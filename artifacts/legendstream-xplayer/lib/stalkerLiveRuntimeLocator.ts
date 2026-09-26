@@ -6,6 +6,7 @@ import {
 } from "./stalkerLiveCatalog";
 import { discoverStalkerLiveChannels } from "./stalkerLiveDiscovery";
 import { fetchStalkerOrderedPage, type StalkerOrderedPage } from "./stalkerPagedCatalog";
+import { isStalkerLiveGlobalCategoryId } from "./stalkerLiveCategoryIntent";
 import { traceStalker } from "./stalkerPlaybackTrace";
 
 type Portal = Pick<StalkerPortalSession, "request">;
@@ -40,6 +41,7 @@ type FullDiscover = (input: {
 type ReacquireDependencies = {
   fetchOrderedPage?: typeof fetchStalkerOrderedPage;
   fullDiscover?: FullDiscover;
+  resolveCategoryHint?: () => Promise<string | null>;
 };
 
 const MAX_LOCATORS_PER_SESSION = 2_000;
@@ -175,7 +177,75 @@ export async function reacquireStalkerLiveChannel(
     return { channel, source: "FULL_DISCOVERY", rows: result.rows.length };
   };
 
-  if (!locator) return fullDiscovery();
+  const categoryHint = async (preferred?: string | null) => {
+    const direct = preferred?.trim() ?? "";
+    if (direct && !isStalkerLiveGlobalCategoryId(direct)) return direct;
+    if (!dependencies.resolveCategoryHint) return null;
+    try {
+      const persisted = (await dependencies.resolveCategoryHint())?.trim() ?? "";
+      return persisted && !isStalkerLiveGlobalCategoryId(persisted) ? persisted : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const categorySearch = async (
+    categoryId: string,
+    remembered?: { page: StalkerOrderedPage; normalized: ReturnType<typeof normalizeOrdered> },
+  ): Promise<StalkerLiveReacquireResult | null> => {
+    let page = 1;
+    let rows = 0;
+    while (true) {
+      assertCurrent(signal);
+      const canReuse = Boolean(
+        remembered &&
+        remembered.page.categoryId === categoryId &&
+        remembered.page.page === page
+      );
+      const ordered = canReuse
+        ? remembered!.page
+        : await fetchOrdered({
+            session: diagnosticSession,
+            providerId,
+            kind: "itv",
+            categoryId,
+            page,
+            signal,
+            diagnostics: { providerId },
+          });
+      assertCurrent(signal);
+      const normalized = canReuse
+        ? remembered!.normalized
+        : normalizeOrdered(ordered, providerId, categories);
+      rows += normalized.rawCount;
+      const found = exactTarget(normalized.items, portalId);
+      if (found) {
+        registerStalkerLiveRuntimeLocators(session, providerId, categoryId, page, [found]);
+        return { channel: found, source: "CATEGORY", rows };
+      }
+      if (!ordered.hasMore) return null;
+      page += 1;
+    }
+  };
+
+  const boundedFallback = async (
+    preferredCategoryId?: string | null,
+    remembered?: { page: StalkerOrderedPage; normalized: ReturnType<typeof normalizeOrdered> },
+  ) => {
+    const categoryId = await categoryHint(preferredCategoryId);
+    if (!categoryId) return null;
+    try {
+      return await categorySearch(categoryId, remembered);
+    } catch (caught) {
+      if (isCancelled(caught, signal)) throw caught;
+      return null;
+    }
+  };
+
+  if (!locator) {
+    const bounded = await boundedFallback();
+    return bounded ?? fullDiscovery();
+  }
 
   let remembered: StalkerOrderedPage;
   try {
@@ -192,46 +262,17 @@ export async function reacquireStalkerLiveChannel(
     assertCurrent(signal);
   } catch (caught) {
     if (isCancelled(caught, signal)) throw caught;
-    return fullDiscovery();
+    const bounded = await boundedFallback(locator.categoryId);
+    return bounded ?? fullDiscovery();
   }
 
   const rememberedNormalized = normalizeOrdered(remembered, providerId, categories);
   const exact = exactTarget(rememberedNormalized.items, portalId);
   if (exact) return { channel: exact, source: "EXACT_PAGE", rows: rememberedNormalized.rawCount };
 
-  try {
-    let page = 1;
-    let rows = 0;
-    while (true) {
-      assertCurrent(signal);
-      const ordered = page === locator.page
-        ? remembered
-        : await fetchOrdered({
-            session: diagnosticSession,
-            providerId,
-            kind: "itv",
-            categoryId: locator.categoryId,
-            page,
-            signal,
-            diagnostics: { providerId },
-          });
-      assertCurrent(signal);
-      const normalized = page === locator.page
-        ? rememberedNormalized
-        : normalizeOrdered(ordered, providerId, categories);
-      rows += normalized.rawCount;
-      const found = exactTarget(normalized.items, portalId);
-      if (found) {
-        registerStalkerLiveRuntimeLocators(session, providerId, locator.categoryId, page, [found]);
-        return { channel: found, source: "CATEGORY", rows };
-      }
-      if (!ordered.hasMore) break;
-      page += 1;
-    }
-  } catch (caught) {
-    if (isCancelled(caught, signal)) throw caught;
-    return fullDiscovery();
-  }
-
-  return fullDiscovery();
+  const bounded = await boundedFallback(
+    locator.categoryId,
+    { page: remembered, normalized: rememberedNormalized },
+  );
+  return bounded ?? fullDiscovery();
 }
