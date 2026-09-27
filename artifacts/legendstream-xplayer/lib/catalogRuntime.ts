@@ -29,7 +29,7 @@ import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
 import { reacquireStalkerLiveChannel } from "./stalkerLiveRuntimeLocator";
 import type { StalkerPortalSession } from "./stalkerPortal";
 import { safeLog } from "./safeLog";
-import { classifyPlaybackSource, getActiveStalkerTraceId, shortSafeId, traceStalker } from "./stalkerPlaybackTrace";
+import { classifyPlaybackSource, classifyStalkerTraceError, getActiveStalkerTraceId, nextStalkerReacquireInvocationSequence, shortSafeId, traceStalker, type StalkerReacquireTriggerKind } from "./stalkerPlaybackTrace";
 
 export type CatalogRuntimeProvider = {
   id: string;
@@ -283,9 +283,11 @@ export async function resolveCatalogRuntimeSource(
   provider: CatalogRuntimeProvider | null | undefined,
   signal?: AbortSignal,
   dependencies: CatalogRuntimeDependencies = {},
+  diagnostics: { reacquireTriggerKind?: StalkerReacquireTriggerKind } = {},
 ): Promise<string> {
   const traceId = getActiveStalkerTraceId() ?? undefined;
   let stage = "PARSE_REF";
+  let reacquireInvocation: { sequence: number; triggerKind: StalkerReacquireTriggerKind; startedAt: number } | null = null;
   if (traceId) traceStalker("CATALOG_RUNTIME_RESOLVE_START", { traceId, sourceKind: classifyPlaybackSource(source), activeProviderPresent: Boolean(provider), providerShortId: shortSafeId(provider?.id) });
   try {
     const ref = parseCatalogRuntimeSource(source);
@@ -308,9 +310,15 @@ export async function resolveCatalogRuntimeSource(
       const categories = dependencies.getStalkerCategories ? await dependencies.getStalkerCategories(ref.providerId) : [];
       if (signal?.aborted) throw new Error("Cached Stalker playback resolution was cancelled.");
       stage = "REACQUIRE";
-      if (traceId) traceStalker("PLAYBACK_REACQUIRE_START", { traceId });
+      const triggerKind = diagnostics.reacquireTriggerKind ?? "UNKNOWN";
+      const invocationSeq = traceId ? nextStalkerReacquireInvocationSequence(traceId) : undefined;
+      if (traceId && invocationSeq !== undefined) {
+        reacquireInvocation = { sequence: invocationSeq, triggerKind, startedAt: Date.now() };
+        traceStalker("C3L_REACQUIRE_INVOCATION_START", { traceId, invocationSeq, triggerKind });
+        traceStalker("PLAYBACK_REACQUIRE_START", { traceId, invocationSeq });
+      }
       const reacquired = await reacquireStalkerLiveChannel(
-        { session, providerId: ref.providerId, portalId: playbackRef.portalId, categories, signal, traceId },
+        { session, providerId: ref.providerId, portalId: playbackRef.portalId, categories, signal, traceId, invocationSeq },
         {
           fullDiscover: dependencies.discoverStalkerLive,
           resolveCategoryHint: () =>
@@ -323,9 +331,13 @@ export async function resolveCatalogRuntimeSource(
       if (signal?.aborted) throw new Error("Cached Stalker playback resolution was cancelled.");
       const currentChannel = reacquired.channel;
       if (traceId) {
-        traceStalker("PLAYBACK_REACQUIRE_SOURCE", { traceId, source: reacquired.source });
-        traceStalker("PLAYBACK_REACQUIRE_ROWS", { traceId, rowCount: reacquired.rows });
-        traceStalker("PLAYBACK_REACQUIRE_DONE", { traceId, success: true });
+        traceStalker("PLAYBACK_REACQUIRE_SOURCE", { traceId, invocationSeq, source: reacquired.source });
+        traceStalker("PLAYBACK_REACQUIRE_ROWS", { traceId, invocationSeq, rowCount: reacquired.rows });
+        traceStalker("PLAYBACK_REACQUIRE_DONE", { traceId, invocationSeq, success: true });
+        if (reacquireInvocation) {
+          traceStalker("C3L_REACQUIRE_INVOCATION_DONE", { traceId, invocationSeq: reacquireInvocation.sequence, triggerKind: reacquireInvocation.triggerKind, result: "OK", durationMs: Math.max(0, Date.now() - reacquireInvocation.startedAt) });
+          reacquireInvocation = null;
+        }
       }
       stage = "CURRENT_CMD_MISSING";
       if (traceId) traceStalker("STALKER_CURRENT_CMD_RESULT", { traceId, hasCmd: Boolean(currentChannel.cmd?.trim()) });
@@ -348,6 +360,11 @@ export async function resolveCatalogRuntimeSource(
     return source;
   } catch (caught) {
     if (traceId) {
+      if (reacquireInvocation) {
+        const result = classifyStalkerTraceError(caught, signal) === "ABORTED" ? "ABORTED" : "ERROR";
+        traceStalker(result === "ABORTED" ? "C3L_REACQUIRE_INVOCATION_ABORTED" : "C3L_REACQUIRE_INVOCATION_ERROR", { traceId, invocationSeq: reacquireInvocation.sequence, triggerKind: reacquireInvocation.triggerKind, result, durationMs: Math.max(0, Date.now() - reacquireInvocation.startedAt) });
+        reacquireInvocation = null;
+      }
       const errorClass = signal?.aborted ? "ABORTED" : stage === "PROVIDER_MISMATCH" ? "PROVIDER_MISMATCH" : stage === "PROVIDER_MISSING" ? "PROVIDER_MISSING" : stage === "CREDENTIAL_STATE_INVALID" ? "CREDENTIAL_STATE_INVALID" : stage === "PLAYBACK_REF_MISSING" ? "PLAYBACK_REF_MISSING" : stage === "SESSION_ACQUIRE" ? "SESSION_ERROR" : stage === "REACQUIRE" ? "DISCOVERY_ERROR" : stage === "CURRENT_CMD_MISSING" ? "CURRENT_CMD_MISSING" : stage === "CMD_STAGE" ? "INVALID_RESPONSE" : stage === "CREATE_LINK" ? (/playable.*link/i.test(caught instanceof Error ? caught.message : "") ? "CREATE_LINK_NO_URL" : "CREATE_LINK_ERROR") : "UNKNOWN";
       if (stage === "CREATE_LINK") traceStalker("STALKER_CREATE_LINK_RESULT", { traceId, kind: "live", success: false, hasPlayableUrl: false, errorClass });
       traceStalker("CATALOG_RUNTIME_FAIL", { traceId, stage, errorClass });

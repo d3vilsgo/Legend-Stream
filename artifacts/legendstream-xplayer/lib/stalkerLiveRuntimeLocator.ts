@@ -148,10 +148,11 @@ export async function reacquireStalkerLiveChannel(
     categories?: readonly StalkerLiveCategory[];
     signal?: AbortSignal;
     traceId?: string;
+    invocationSeq?: number;
   },
   dependencies: ReacquireDependencies = {},
 ): Promise<StalkerLiveReacquireResult> {
-  const { session, providerId, portalId, signal, traceId } = options;
+  const { session, providerId, portalId, signal, traceId, invocationSeq } = options;
   const categories = [...(options.categories ?? [])];
   let lookupSequence = 0;
   let attemptSequence = 0;
@@ -164,13 +165,14 @@ export async function reacquireStalkerLiveChannel(
     if (attempt.phase === "START") {
       attemptSequence += 1;
       activeAttemptSequence = attemptSequence;
-      traceStalker("C3K_ATTEMPT_START", { traceId, attemptSeq: attemptSequence, attemptKind });
+      traceStalker("C3K_ATTEMPT_START", { traceId, invocationSeq, attemptSeq: attemptSequence, attemptKind });
       return;
     }
     const attemptSeq = activeAttemptSequence;
     if (attemptSeq === null) return;
     traceStalker("C3K_ATTEMPT_DONE", {
       traceId,
+      invocationSeq,
       attemptSeq,
       attemptKind,
       attemptResult: attempt.result ?? "UNKNOWN",
@@ -195,9 +197,9 @@ export async function reacquireStalkerLiveChannel(
             lookupSequence += 1;
             const lookupSeq = lookupSequence;
             lastSequence = lookupSeq;
-            traceStalker("PLAYBACK_REACQUIRE_LOOKUP", { traceId });
-            if (action === "get_all_channels") traceStalker("PLAYBACK_REACQUIRE_GET_ALL", { traceId });
-            traceStalker("C3J_LOOKUP_START", { traceId, lookupSeq, lookupKind });
+            traceStalker("PLAYBACK_REACQUIRE_LOOKUP", { traceId, invocationSeq });
+            if (action === "get_all_channels") traceStalker("PLAYBACK_REACQUIRE_GET_ALL", { traceId, invocationSeq });
+            traceStalker("C3J_LOOKUP_START", { traceId, invocationSeq, lookupSeq, lookupKind });
             const startedAt = stalkerDiagnosticNowMs();
             let networkMs = 0;
             let yieldMs = 0;
@@ -219,6 +221,7 @@ export async function reacquireStalkerLiveChannel(
               );
               traceStalker("C3J_LOOKUP_DONE", {
                 traceId,
+                invocationSeq,
                 lookupSeq,
                 lookupKind,
                 lookupResult: "OK",
@@ -241,6 +244,7 @@ export async function reacquireStalkerLiveChannel(
                         : "ERROR";
               traceStalker("C3J_LOOKUP_DONE", {
                 traceId,
+                invocationSeq,
                 lookupSeq,
                 lookupKind,
                 lookupResult: result,
@@ -260,6 +264,7 @@ export async function reacquireStalkerLiveChannel(
   const traceMatch = (lookupSeq: number | null, found: boolean) => {
     if (traceId && lookupSeq !== null) traceStalker("C3J_LOOKUP_MATCH", {
       traceId,
+      invocationSeq,
       lookupSeq,
       lookupResult: found ? "FOUND" : "MISS",
     });

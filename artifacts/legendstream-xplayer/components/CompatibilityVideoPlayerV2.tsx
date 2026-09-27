@@ -33,7 +33,7 @@ import {
   type LiveChannelIdentity,
 } from "@/lib/playerLiveQueue";
 import { registerEpgChannels } from "@/lib/epgRuntime";
-import { classifyPlaybackSource, classifyStalkerTraceError, describePlaybackSourceSafely, fingerprintPlaybackSource, getActiveStalkerTraceId, traceStalker } from "@/lib/stalkerPlaybackTrace";
+import { classifyPlaybackSource, classifyStalkerTraceError, describePlaybackSourceSafely, fingerprintPlaybackSource, getActiveStalkerTraceId, traceStalker, type StalkerReacquireTriggerKind } from "@/lib/stalkerPlaybackTrace";
 import type { Channel } from "@/lib/iptv";
 import { usePlayerOrientation } from "@/hooks/usePlayerOrientation";
 import {
@@ -140,6 +140,7 @@ export function CompatibilityVideoPlayer({
   const exitStarted = useRef(false);
   const tracedSourceFingerprint = useRef<string | null>(null);
   const tracedItemId = useRef<string | null>(liveIdentity?.channelId ?? vodIdentity?.itemId ?? (progressRef?.type === "stalker-episode" ? progressRef.episodeId : null));
+  const runtimeResolveRef = useRef<{ source: string } | null>(null);
 
   const playbackRef = useRef<PlaybackSnapshot>({
     source,
@@ -259,6 +260,13 @@ export function CompatibilityVideoPlayer({
 
   useEffect(() => {
     let cancelled = false;
+    const previousResolve = runtimeResolveRef.current;
+    const triggerKind: StalkerReacquireTriggerKind = previousResolve === null
+      ? "INITIAL"
+      : previousResolve.source !== currentSource
+        ? "SOURCE_CHANGE"
+        : "DEPENDENCY_REFRESH";
+    runtimeResolveRef.current = { source: currentSource };
     if (!isCatalogRuntimeSource(currentSource)) {
       setResolvedSource(currentSource);
       return () => { cancelled = true; };
@@ -268,7 +276,7 @@ export function CompatibilityVideoPlayer({
     if (traceId) traceStalker("PLAYER_SOURCE_RECEIVED", { traceId, sourceKind: classifyPlaybackSource(currentSource), resolved: false });
     setResolvedSource(null);
     setErrorText(null);
-    void resolveCatalogRuntimeSource(currentSource, provider, controller.signal)
+    void resolveCatalogRuntimeSource(currentSource, provider, controller.signal, {}, { reacquireTriggerKind: triggerKind })
       .then((next) => {
         if (!cancelled) setResolvedSource(next);
         if (!cancelled && traceId) traceStalker("PLAYER_SOURCE_RECEIVED", { traceId, sourceKind: classifyPlaybackSource(next), resolved: true });

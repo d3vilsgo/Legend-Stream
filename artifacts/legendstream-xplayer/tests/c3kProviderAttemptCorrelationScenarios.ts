@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { beginStalkerPlaybackTrace, clearStalkerTraceEntries, getStalkerTraceEntries, traceStalker } from "../lib/stalkerPlaybackTrace";
 import { projectC3HPhysicalTrace } from "../lib/c3hPhysicalTraceProjection";
+import { runC3LScenarios } from "./c3lReacquireInvocationScenarios";
 const ROOT=resolve(dirname(fileURLToPath(import.meta.url)),"..");
 const source=(p:string)=>readFileSync(resolve(ROOT,p),"utf8");
 let passed=0;
@@ -26,5 +27,6 @@ async function main(){
  await scenario("N C3F and VLC remain untouched by C3K",()=>{const loc=source("lib/stalkerLiveRuntimeLocator.ts");assert.doesNotMatch(loc,/classifyStalkerLiveRuntimeCmd|resolveStalkerLiveRuntimeCmd/);const overlay=source("components/debug/C3HPhysicalTraceOverlay.tsx");assert.match(overlay,/C3K ATTEMPTS/);});
  await scenario("O attempt instrumentation exposes no identity fields",()=>{const src=source("lib/c3hPhysicalTraceProjection.ts");assert.doesNotMatch(src,/categoryId|portalId|channelId|streamId|username|password|play_token/);});
  assert.equal(passed,15);console.log("C3K provider attempt correlation scenarios: 15/15 passed");
+ await runC3LScenarios();
 }
 void main().catch(e=>{console.error(e);process.exitCode=1;});
