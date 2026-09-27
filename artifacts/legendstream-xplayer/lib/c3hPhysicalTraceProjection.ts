@@ -5,6 +5,19 @@ export type C3HCmdStage = "ALREADY_RESOLVED" | "CREATE_LINK_REQUIRED" | "INVALID
 export type C3HVlcState = "IDLE" | "OPENING" | "BUFFERING" | "PLAYING" | "ERROR";
 export type C3JLookupKind = "EXACT" | "CATEGORY" | "FULL";
 export type C3JLookupResult = "FOUND" | "MISS" | "OK" | "UNSUPPORTED" | "TIMEOUT" | "ABORTED" | "ERROR" | "PENDING";
+export type C3KAttemptKind = "GENRE_ID" | "GENRE" | "DUAL" | "NONE" | "UNKNOWN";
+export type C3KAttemptResult = "FOUND" | "MISS" | "OK" | "COMPAT_REJECT" | "UNSUPPORTED" | "TIMEOUT" | "AUTH_FAILED" | "ABORTED" | "ERROR" | "PENDING" | "UNKNOWN";
+export type C3KAttemptRow = {
+  sequence: number;
+  kind: C3KAttemptKind;
+  result: C3KAttemptResult;
+  durationMs: number | null;
+  networkMs: number | null;
+  yieldMs: number | null;
+  parseMs: number | null;
+  requestCount: number | null;
+};
+
 export type C3JLookupRow = {
   sequence: number;
   kind: C3JLookupKind;
@@ -29,6 +42,9 @@ export type C3HPhysicalTraceState = {
   createLink: boolean | null;
   vlc: C3HVlcState;
   c3jLookups: C3JLookupRow[];
+  c3kAttempts: C3KAttemptRow[];
+  accountedMs: number | null;
+  unaccountedMs: number | null;
   authRecoveries: number;
   authMs: number;
 };
@@ -50,6 +66,9 @@ export const EMPTY_C3H_PHYSICAL_TRACE_STATE: C3HPhysicalTraceState = {
   createLink: null,
   vlc: "IDLE",
   c3jLookups: [],
+  c3kAttempts: [],
+  accountedMs: null,
+  unaccountedMs: null,
   authRecoveries: 0,
   authMs: 0,
 };
@@ -121,6 +140,28 @@ export function projectC3HPhysicalTrace(entries: readonly StalkerTraceEntry[]): 
       if (result === "FOUND" || result === "MISS") existing.result = result;
     }
   }
+  const attemptRows = new Map<number, C3KAttemptRow>();
+  for (const entry of current) {
+    const sequence = detailNumber(entry, "attemptSeq");
+    if (sequence === null) continue;
+    const existing = attemptRows.get(sequence);
+    if (entry.event === "C3K_ATTEMPT_START") {
+      const kind = detailString(entry, "attemptKind");
+      if (kind === "GENRE_ID" || kind === "GENRE" || kind === "DUAL" || kind === "NONE" || kind === "UNKNOWN") {
+        attemptRows.set(sequence, { sequence, kind, result: "PENDING", durationMs: null, networkMs: null, yieldMs: null, parseMs: null, requestCount: null });
+      }
+      continue;
+    }
+    if (!existing || entry.event !== "C3K_ATTEMPT_DONE") continue;
+    const result = detailString(entry, "attemptResult");
+    if (result === "FOUND" || result === "MISS" || result === "OK" || result === "COMPAT_REJECT" || result === "UNSUPPORTED" || result === "TIMEOUT" || result === "AUTH_FAILED" || result === "ABORTED" || result === "ERROR" || result === "UNKNOWN") existing.result = result;
+    existing.durationMs = detailNumber(entry, "durationMs");
+    existing.networkMs = detailNumber(entry, "networkMs");
+    existing.yieldMs = detailNumber(entry, "yieldMs");
+    existing.parseMs = detailNumber(entry, "parseMs");
+    existing.requestCount = detailNumber(entry, "requestCount");
+  }
+  const c3kAttempts = [...attemptRows.values()].sort((a, b) => a.sequence - b.sequence);
   const authDone = current.filter((entry) => entry.event === "PLAYBACK_REACQUIRE_AUTH_DONE");
   const authMs = authDone.reduce((sum, entry) => sum + (detailNumber(entry, "authMs") ?? 0), 0);
 
@@ -151,13 +192,23 @@ export function projectC3HPhysicalTrace(entries: readonly StalkerTraceEntry[]): 
     lastVlc === "VLC_ERROR" ? "ERROR" :
     "IDLE";
 
+  const reacquireMs = elapsed(reacquireStart, reacquireDone);
+  const completedAttemptDurations = c3kAttempts.map((row) => row.durationMs);
+  const allAttemptsComplete = c3kAttempts.length > 0 && completedAttemptDurations.every((value) => value !== null);
+  const accountedMs = allAttemptsComplete
+    ? completedAttemptDurations.reduce<number>((sum, value) => sum + (value ?? 0), 0)
+    : null;
+  const unaccountedMs = reacquireMs !== null && accountedMs !== null
+    ? Math.max(0, reacquireMs - accountedMs)
+    : null;
+
   return {
     traceId,
     path,
     rows: detailNumber(last("PLAYBACK_REACQUIRE_ROWS"), "rowCount"),
     lookups,
     getAll: sawGetAll ? true : reacquireDone ? false : null,
-    reacquireMs: elapsed(reacquireStart, reacquireDone),
+    reacquireMs,
     c3fMs: elapsed(reacquireDone, runtimeSuccess),
     vlcStartMs: elapsed(vlcSourceSet, vlcPlaying),
     totalMs: elapsed(tap, vlcPlaying),
@@ -165,6 +216,9 @@ export function projectC3HPhysicalTrace(entries: readonly StalkerTraceEntry[]): 
     createLink,
     vlc,
     c3jLookups: [...lookupRows.values()].sort((a, b) => a.sequence - b.sequence),
+    c3kAttempts,
+    accountedMs,
+    unaccountedMs,
     authRecoveries: authDone.length,
     authMs,
   };

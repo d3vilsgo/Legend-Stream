@@ -154,6 +154,34 @@ export async function reacquireStalkerLiveChannel(
   const { session, providerId, portalId, signal, traceId } = options;
   const categories = [...(options.categories ?? [])];
   let lookupSequence = 0;
+  let attemptSequence = 0;
+  let activeAttemptSequence: number | null = null;
+  const traceDialectAttempt = (attempt: import("./stalkerPagedCatalog").StalkerDialectAttemptDiagnostic) => {
+    if (!traceId) return;
+    const attemptKind =
+      attempt.dialect === "genre_id" ? "GENRE_ID" :
+      attempt.dialect === "genre" ? "GENRE" : "DUAL";
+    if (attempt.phase === "START") {
+      attemptSequence += 1;
+      activeAttemptSequence = attemptSequence;
+      traceStalker("C3K_ATTEMPT_START", { traceId, attemptSeq: attemptSequence, attemptKind });
+      return;
+    }
+    const attemptSeq = activeAttemptSequence;
+    if (attemptSeq === null) return;
+    traceStalker("C3K_ATTEMPT_DONE", {
+      traceId,
+      attemptSeq,
+      attemptKind,
+      attemptResult: attempt.result ?? "UNKNOWN",
+      durationMs: attempt.durationMs,
+      networkMs: attempt.networkMs,
+      yieldMs: attempt.yieldMs,
+      parseMs: attempt.parseMs,
+      requestCount: attempt.requestCount,
+    });
+    activeAttemptSequence = null;
+  };
   const diagnosticPortal = (lookupKind: "EXACT" | "CATEGORY" | "FULL") => {
     let lastSequence: number | null = null;
     const portal: Portal = traceId
@@ -286,7 +314,8 @@ export async function reacquireStalkerLiveChannel(
             categoryId,
             page,
             signal,
-            diagnostics: { providerId },
+            diagnostics: { providerId, playbackTraceId: traceId },
+            onDialectAttempt: traceDialectAttempt,
           });
       assertCurrent(signal);
       const normalized = canReuse
@@ -334,7 +363,8 @@ export async function reacquireStalkerLiveChannel(
       categoryId: locator.categoryId,
       page: locator.page,
       signal,
-      diagnostics: { providerId },
+      diagnostics: { providerId, playbackTraceId: traceId },
+            onDialectAttempt: traceDialectAttempt,
     });
     assertCurrent(signal);
   } catch (caught) {

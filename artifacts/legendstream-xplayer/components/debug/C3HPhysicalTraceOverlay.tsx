@@ -56,6 +56,18 @@ function C3HPhysicalTraceOverlayImpl() {
           {lookup.parseMs === null ? "" : ` P${Math.round(lookup.parseMs)}`}
         </Text>
       ))}
+      <Text style={styles.lookupTitle}>C3K ATTEMPTS</Text>
+      {state.c3kAttempts.slice(-5).map((attempt) => (
+        <Text key={attempt.sequence} style={styles.lookupLine}>
+          #{attempt.sequence} {attempt.kind} {attempt.result} {ms(attempt.durationMs)}
+          {attempt.networkMs === null ? "" : ` N${Math.round(attempt.networkMs)}`}
+          {attempt.yieldMs === null ? "" : ` Y${Math.round(attempt.yieldMs)}`}
+          {attempt.parseMs === null ? "" : ` P${Math.round(attempt.parseMs)}`}
+          {attempt.requestCount === null ? "" : ` R${Math.round(attempt.requestCount)}`}
+        </Text>
+      ))}
+      <Text style={styles.lookupLine}>ACCOUNTED: {ms(state.accountedMs)}</Text>
+      <Text style={styles.lookupLine}>UNACCOUNTED: {ms(state.unaccountedMs)}</Text>
       <Text style={styles.lookupLine}>
         AUTH: {state.authRecoveries === 0 ? "NO" : `${state.authRecoveries} / ${Math.round(state.authMs)} ms`}
       </Text>
