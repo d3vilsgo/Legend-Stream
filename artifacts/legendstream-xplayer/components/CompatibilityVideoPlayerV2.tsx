@@ -33,7 +33,7 @@ import {
   type LiveChannelIdentity,
 } from "@/lib/playerLiveQueue";
 import { registerEpgChannels } from "@/lib/epgRuntime";
-import { classifyPlaybackSource, classifyStalkerTraceError, describePlaybackSourceSafely, fingerprintPlaybackSource, getActiveStalkerTraceId, traceStalker, type StalkerReacquireTriggerKind } from "@/lib/stalkerPlaybackTrace";
+import { classifyPlaybackSource, classifyStalkerTraceError, describePlaybackSourceSafely, fingerprintPlaybackSource, getActiveStalkerTraceId, markNextStalkerReacquireTrigger, traceStalker, type StalkerReacquireTriggerKind } from "@/lib/stalkerPlaybackTrace";
 import type { Channel } from "@/lib/iptv";
 import { usePlayerOrientation } from "@/hooks/usePlayerOrientation";
 import {
@@ -274,9 +274,10 @@ export function CompatibilityVideoPlayer({
     const controller = new AbortController();
     const traceId = getActiveStalkerTraceId();
     if (traceId) traceStalker("PLAYER_SOURCE_RECEIVED", { traceId, sourceKind: classifyPlaybackSource(currentSource), resolved: false });
+    if (traceId && provider?.type === "stalker") markNextStalkerReacquireTrigger(traceId, triggerKind);
     setResolvedSource(null);
     setErrorText(null);
-    void resolveCatalogRuntimeSource(currentSource, provider, controller.signal, {}, { reacquireTriggerKind: triggerKind })
+    void resolveCatalogRuntimeSource(currentSource, provider, controller.signal)
       .then((next) => {
         if (!cancelled) setResolvedSource(next);
         if (!cancelled && traceId) traceStalker("PLAYER_SOURCE_RECEIVED", { traceId, sourceKind: classifyPlaybackSource(next), resolved: true });

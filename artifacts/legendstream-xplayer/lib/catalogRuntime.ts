@@ -29,7 +29,7 @@ import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
 import { reacquireStalkerLiveChannel } from "./stalkerLiveRuntimeLocator";
 import type { StalkerPortalSession } from "./stalkerPortal";
 import { safeLog } from "./safeLog";
-import { classifyPlaybackSource, classifyStalkerTraceError, getActiveStalkerTraceId, nextStalkerReacquireInvocationSequence, shortSafeId, traceStalker, type StalkerReacquireTriggerKind } from "./stalkerPlaybackTrace";
+import { classifyPlaybackSource, classifyStalkerTraceError, consumeNextStalkerReacquireTrigger, getActiveStalkerTraceId, nextStalkerReacquireInvocationSequence, shortSafeId, traceStalker, type StalkerReacquireTriggerKind } from "./stalkerPlaybackTrace";
 
 export type CatalogRuntimeProvider = {
   id: string;
@@ -283,9 +283,9 @@ export async function resolveCatalogRuntimeSource(
   provider: CatalogRuntimeProvider | null | undefined,
   signal?: AbortSignal,
   dependencies: CatalogRuntimeDependencies = {},
-  diagnostics: { reacquireTriggerKind?: StalkerReacquireTriggerKind } = {},
 ): Promise<string> {
   const traceId = getActiveStalkerTraceId() ?? undefined;
+  const reacquireTriggerKind: StalkerReacquireTriggerKind = traceId ? consumeNextStalkerReacquireTrigger(traceId) : "UNKNOWN";
   let stage = "PARSE_REF";
   let reacquireInvocation: { sequence: number; triggerKind: StalkerReacquireTriggerKind; startedAt: number } | null = null;
   if (traceId) traceStalker("CATALOG_RUNTIME_RESOLVE_START", { traceId, sourceKind: classifyPlaybackSource(source), activeProviderPresent: Boolean(provider), providerShortId: shortSafeId(provider?.id) });
@@ -310,7 +310,7 @@ export async function resolveCatalogRuntimeSource(
       const categories = dependencies.getStalkerCategories ? await dependencies.getStalkerCategories(ref.providerId) : [];
       if (signal?.aborted) throw new Error("Cached Stalker playback resolution was cancelled.");
       stage = "REACQUIRE";
-      const triggerKind = diagnostics.reacquireTriggerKind ?? "UNKNOWN";
+      const triggerKind = reacquireTriggerKind;
       const invocationSeq = traceId ? nextStalkerReacquireInvocationSequence(traceId) : undefined;
       if (traceId && invocationSeq !== undefined) {
         reacquireInvocation = { sequence: invocationSeq, triggerKind, startedAt: Date.now() };
