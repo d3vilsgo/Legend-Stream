@@ -3,6 +3,16 @@ import type { StalkerTraceEntry } from "./stalkerPlaybackTrace";
 export type C3HTracePath = "EXACT_PAGE" | "CATEGORY" | "FULL_DISCOVERY" | "PENDING" | "UNKNOWN";
 export type C3HCmdStage = "ALREADY_RESOLVED" | "CREATE_LINK_REQUIRED" | "INVALID_RESOLVED" | "UNKNOWN";
 export type C3HVlcState = "IDLE" | "OPENING" | "BUFFERING" | "PLAYING" | "ERROR";
+export type C3JLookupKind = "EXACT" | "CATEGORY" | "FULL";
+export type C3JLookupResult = "FOUND" | "MISS" | "OK" | "UNSUPPORTED" | "TIMEOUT" | "ABORTED" | "ERROR" | "PENDING";
+export type C3JLookupRow = {
+  sequence: number;
+  kind: C3JLookupKind;
+  result: C3JLookupResult;
+  durationMs: number | null;
+  networkMs: number | null;
+  parseMs: number | null;
+};
 
 export type C3HPhysicalTraceState = {
   traceId: string | null;
@@ -17,6 +27,9 @@ export type C3HPhysicalTraceState = {
   cmdStage: C3HCmdStage;
   createLink: boolean | null;
   vlc: C3HVlcState;
+  c3jLookups: C3JLookupRow[];
+  authRecoveries: number;
+  authMs: number;
 };
 
 const SAFE_PATHS = new Set(["EXACT_PAGE", "CATEGORY", "FULL_DISCOVERY"]);
@@ -35,6 +48,9 @@ export const EMPTY_C3H_PHYSICAL_TRACE_STATE: C3HPhysicalTraceState = {
   cmdStage: "UNKNOWN",
   createLink: null,
   vlc: "IDLE",
+  c3jLookups: [],
+  authRecoveries: 0,
+  authMs: 0,
 };
 
 const detailString = (entry: StalkerTraceEntry | undefined, key: string) => {
@@ -69,6 +85,41 @@ export function projectC3HPhysicalTrace(entries: readonly StalkerTraceEntry[]): 
   const stageValue = detailString(last("STALKER_CMD_STAGE"), "stage");
   const lookups = current.filter((entry) => entry.event === "PLAYBACK_REACQUIRE_LOOKUP").length;
   const sawGetAll = current.some((entry) => entry.event === "PLAYBACK_REACQUIRE_GET_ALL");
+  const lookupRows = new Map<number, C3JLookupRow>();
+  for (const entry of current) {
+    const sequence = detailNumber(entry, "lookupSeq");
+    if (sequence === null) continue;
+    const existing = lookupRows.get(sequence);
+    if (entry.event === "C3J_LOOKUP_START") {
+      const kind = detailString(entry, "lookupKind");
+      if (kind === "EXACT" || kind === "CATEGORY" || kind === "FULL") {
+        lookupRows.set(sequence, {
+          sequence,
+          kind,
+          result: "PENDING",
+          durationMs: null,
+          networkMs: null,
+          parseMs: null,
+        });
+      }
+      continue;
+    }
+    if (!existing) continue;
+    if (entry.event === "C3J_LOOKUP_DONE") {
+      const result = detailString(entry, "lookupResult");
+      if (result === "OK" || result === "UNSUPPORTED" || result === "TIMEOUT" || result === "ABORTED" || result === "ERROR") {
+        existing.result = result;
+      }
+      existing.durationMs = detailNumber(entry, "durationMs");
+      existing.networkMs = detailNumber(entry, "networkMs");
+      existing.parseMs = detailNumber(entry, "parseMs");
+    } else if (entry.event === "C3J_LOOKUP_MATCH") {
+      const result = detailString(entry, "lookupResult");
+      if (result === "FOUND" || result === "MISS") existing.result = result;
+    }
+  }
+  const authDone = current.filter((entry) => entry.event === "PLAYBACK_REACQUIRE_AUTH_DONE");
+  const authMs = authDone.reduce((sum, entry) => sum + (detailNumber(entry, "authMs") ?? 0), 0);
 
   let path: C3HTracePath = "UNKNOWN";
   if (sourceValue && SAFE_PATHS.has(sourceValue)) path = sourceValue as C3HTracePath;
@@ -110,5 +161,8 @@ export function projectC3HPhysicalTrace(entries: readonly StalkerTraceEntry[]): 
     cmdStage,
     createLink,
     vlc,
+    c3jLookups: [...lookupRows.values()].sort((a, b) => a.sequence - b.sequence),
+    authRecoveries: authDone.length,
+    authMs,
   };
 }

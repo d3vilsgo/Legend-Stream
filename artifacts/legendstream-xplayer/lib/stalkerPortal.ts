@@ -1,4 +1,5 @@
 import { safeLog } from "./safeLog";
+import { traceStalker } from "./stalkerPlaybackTrace";
 import {
   beginStalkerDiagnosticTimer,
   classifyStalkerDiagnosticAction,
@@ -48,6 +49,7 @@ export type StalkerPortalRequestTiming = {
 export type StalkerPortalDiagnosticsContext = {
   syncRunId?: string;
   providerId?: string;
+  playbackTraceId?: string;
 };
 
 type FetchLike = (
@@ -329,38 +331,50 @@ export class StalkerPortalSession {
 
   async #performHandshake(generation: number, diagnostics: StalkerPortalDiagnosticsContext = {}) {
     const startedAt = Date.now();
-    safeLog.info("LS_STALKER_HANDSHAKE_START", {
-      syncRunId: diagnostics.syncRunId,
-      providerId: diagnostics.providerId ?? this.#providerId,
-      authGeneration: generation,
-      reason: "TOKEN_MISSING",
-    });
-    const payload = await this.#requestOnce(
-      { type: "stb", action: "handshake", token: "" },
-      null,
-      this.#lifecycleController.signal,
-      undefined,
-      diagnostics,
-    );
-    const token = tokenFromHandshake(payload);
-    if (!token) {
-      if (generation === this.#authenticationGeneration) this.invalidateSession();
-      throw new StalkerPortalError(
-        "MISSING_TOKEN",
-        "Stalker portal handshake did not return a session token.",
+    const traceId = diagnostics.playbackTraceId;
+    if (traceId) traceStalker("PLAYBACK_REACQUIRE_AUTH_START", { traceId });
+    let traceSuccess = false;
+    try {
+      safeLog.info("LS_STALKER_HANDSHAKE_START", {
+        syncRunId: diagnostics.syncRunId,
+        providerId: diagnostics.providerId ?? this.#providerId,
+        authGeneration: generation,
+        reason: "TOKEN_MISSING",
+      });
+      const payload = await this.#requestOnce(
+        { type: "stb", action: "handshake", token: "" },
+        null,
+        this.#lifecycleController.signal,
+        undefined,
+        diagnostics,
       );
+      const token = tokenFromHandshake(payload);
+      if (!token) {
+        if (generation === this.#authenticationGeneration) this.invalidateSession();
+        throw new StalkerPortalError(
+          "MISSING_TOKEN",
+          "Stalker portal handshake did not return a session token.",
+        );
+      }
+      if (this.#disposed || generation !== this.#authenticationGeneration) {
+        throw new StalkerPortalError("CANCELLED", "Stalker portal authentication was superseded.");
+      }
+      this.#token = token;
+      safeLog.info("LS_STALKER_HANDSHAKE_SUCCESS", {
+        syncRunId: diagnostics.syncRunId,
+        providerId: diagnostics.providerId ?? this.#providerId,
+        authGeneration: generation,
+        elapsedMs: Math.max(0, Date.now() - startedAt),
+      });
+      traceSuccess = true;
+      return token;
+    } finally {
+      if (traceId) traceStalker("PLAYBACK_REACQUIRE_AUTH_DONE", {
+        traceId,
+        success: traceSuccess,
+        authMs: Math.max(0, Date.now() - startedAt),
+      });
     }
-    if (this.#disposed || generation !== this.#authenticationGeneration) {
-      throw new StalkerPortalError("CANCELLED", "Stalker portal authentication was superseded.");
-    }
-    this.#token = token;
-    safeLog.info("LS_STALKER_HANDSHAKE_SUCCESS", {
-      syncRunId: diagnostics.syncRunId,
-      providerId: diagnostics.providerId ?? this.#providerId,
-      authGeneration: generation,
-      elapsedMs: Math.max(0, Date.now() - startedAt),
-    });
-    return token;
   }
 
   #waitForAuthentication(promise: Promise<string>, signal?: AbortSignal) {

@@ -47,6 +47,17 @@ function C3HPhysicalTraceOverlayImpl() {
       <Text style={styles.line}>CMD STAGE: {state.cmdStage}</Text>
       <Text style={styles.line}>CREATE_LINK: {yesNo(state.createLink)}</Text>
       <Text style={styles.line}>VLC: {state.vlc}</Text>
+      <Text style={styles.lookupTitle}>C3J LOOKUPS</Text>
+      {state.c3jLookups.slice(-4).map((lookup) => (
+        <Text key={lookup.sequence} style={styles.lookupLine}>
+          #{lookup.sequence} {lookup.kind} {lookup.result} {ms(lookup.durationMs)}
+          {lookup.networkMs === null ? "" : ` N${Math.round(lookup.networkMs)}`}
+          {lookup.parseMs === null ? "" : ` P${Math.round(lookup.parseMs)}`}
+        </Text>
+      ))}
+      <Text style={styles.lookupLine}>
+        AUTH: {state.authRecoveries === 0 ? "NO" : `${state.authRecoveries} / ${Math.round(state.authMs)} ms`}
+      </Text>
     </View>
   );
 }
@@ -78,5 +89,19 @@ const styles = StyleSheet.create({
     fontFamily: "monospace",
     fontSize: 10,
     lineHeight: 14,
+  },
+  lookupTitle: {
+    color: "#ffffff",
+    fontFamily: "monospace",
+    fontSize: 10,
+    fontWeight: "700",
+    marginTop: 5,
+    lineHeight: 14,
+  },
+  lookupLine: {
+    color: "#ffffff",
+    fontFamily: "monospace",
+    fontSize: 9,
+    lineHeight: 13,
   },
 });
