@@ -193,8 +193,8 @@ export async function reacquireStalkerLiveChannel(
                 lookupKind,
                 lookupResult: "OK",
                 durationMs: Math.max(0, stalkerDiagnosticNowMs() - startedAt),
-                networkMs,
-                parseMs,
+                networkMs: timingSamples > 0 ? networkMs : undefined,
+                parseMs: timingSamples > 0 ? parseMs : undefined,
                 timingSamples,
               });
               return payload;
@@ -214,8 +214,8 @@ export async function reacquireStalkerLiveChannel(
                 lookupKind,
                 lookupResult: result,
                 durationMs: Math.max(0, stalkerDiagnosticNowMs() - startedAt),
-                networkMs,
-                parseMs,
+                networkMs: timingSamples > 0 ? networkMs : undefined,
+                parseMs: timingSamples > 0 ? parseMs : undefined,
                 timingSamples,
               });
               throw caught;

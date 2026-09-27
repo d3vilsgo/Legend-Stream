@@ -105,6 +105,21 @@ async function main() {
     assert.equal(projected().c3jLookups[0]?.durationMs, null);
   });
 
+  await scenario("H2 unavailable transport subtiming stays unknown instead of fake zero", () => {
+    const traceId = tap();
+    traceStalker("C3J_LOOKUP_START", { traceId, lookupSeq: 1, lookupKind: "EXACT" });
+    traceStalker("C3J_LOOKUP_DONE", {
+      traceId,
+      lookupSeq: 1,
+      lookupKind: "EXACT",
+      lookupResult: "TIMEOUT",
+      durationMs: 20000,
+      timingSamples: 0,
+    });
+    assert.equal(projected().c3jLookups[0]?.networkMs, null);
+    assert.equal(projected().c3jLookups[0]?.parseMs, null);
+  });
+
   await scenario("I PATH semantics remain independent of C3J rows", () => {
     const traceId = tap();
     traceStalker("C3J_LOOKUP_START", { traceId, lookupSeq: 1, lookupKind: "EXACT" });
@@ -188,8 +203,8 @@ async function main() {
     assert.match(runtime, /return bounded \?\? fullDiscovery\(\)/);
   });
 
-  assert.equal(passed, 17);
-  console.log("C3J physical lookup trace scenarios: 17/17 passed");
+  assert.equal(passed, 18);
+  console.log("C3J physical lookup trace scenarios: 18/18 passed");
 }
 
 void main().catch((error) => {
