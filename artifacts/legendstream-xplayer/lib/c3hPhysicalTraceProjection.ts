@@ -11,6 +11,7 @@ export type C3JLookupRow = {
   result: C3JLookupResult;
   durationMs: number | null;
   networkMs: number | null;
+  yieldMs: number | null;
   parseMs: number | null;
 };
 
@@ -99,6 +100,7 @@ export function projectC3HPhysicalTrace(entries: readonly StalkerTraceEntry[]): 
           result: "PENDING",
           durationMs: null,
           networkMs: null,
+          yieldMs: null,
           parseMs: null,
         });
       }
@@ -112,6 +114,7 @@ export function projectC3HPhysicalTrace(entries: readonly StalkerTraceEntry[]): 
       }
       existing.durationMs = detailNumber(entry, "durationMs");
       existing.networkMs = detailNumber(entry, "networkMs");
+      existing.yieldMs = detailNumber(entry, "yieldMs");
       existing.parseMs = detailNumber(entry, "parseMs");
     } else if (entry.event === "C3J_LOOKUP_MATCH") {
       const result = detailString(entry, "lookupResult");

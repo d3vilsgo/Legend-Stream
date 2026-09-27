@@ -33,10 +33,10 @@ async function main() {
   await scenario("A single exact lookup projects one C3J row", () => {
     const traceId = tap();
     traceStalker("C3J_LOOKUP_START", { traceId, lookupSeq: 1, lookupKind: "EXACT" });
-    traceStalker("C3J_LOOKUP_DONE", { traceId, lookupSeq: 1, lookupKind: "EXACT", lookupResult: "OK", durationMs: 218, networkMs: 205, parseMs: 1 });
+    traceStalker("C3J_LOOKUP_DONE", { traceId, lookupSeq: 1, lookupKind: "EXACT", lookupResult: "OK", durationMs: 218, networkMs: 205, yieldMs: 7, parseMs: 1 });
     traceStalker("C3J_LOOKUP_MATCH", { traceId, lookupSeq: 1, lookupResult: "FOUND" });
     assert.deepEqual(projected().c3jLookups, [{
-      sequence: 1, kind: "EXACT", result: "FOUND", durationMs: 218, networkMs: 205, parseMs: 1,
+      sequence: 1, kind: "EXACT", result: "FOUND", durationMs: 218, networkMs: 205, yieldMs: 7, parseMs: 1,
     }]);
   });
 
@@ -117,6 +117,7 @@ async function main() {
       timingSamples: 0,
     });
     assert.equal(projected().c3jLookups[0]?.networkMs, null);
+    assert.equal(projected().c3jLookups[0]?.yieldMs, null);
     assert.equal(projected().c3jLookups[0]?.parseMs, null);
   });
 

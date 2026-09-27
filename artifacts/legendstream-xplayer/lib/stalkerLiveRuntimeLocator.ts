@@ -172,11 +172,13 @@ export async function reacquireStalkerLiveChannel(
             traceStalker("C3J_LOOKUP_START", { traceId, lookupSeq, lookupKind });
             const startedAt = stalkerDiagnosticNowMs();
             let networkMs = 0;
+            let yieldMs = 0;
             let parseMs = 0;
             let timingSamples = 0;
             const timing = (sample: StalkerPortalRequestTiming) => {
               timingSamples += 1;
               networkMs += Math.max(0, sample.fetchWaitMs) + Math.max(0, sample.bodyReadWaitMs);
+              yieldMs += Math.max(0, sample.postBodyYieldMs);
               parseMs += Math.max(0, sample.jsonParseMs);
               originalTiming?.(sample);
             };
@@ -194,6 +196,7 @@ export async function reacquireStalkerLiveChannel(
                 lookupResult: "OK",
                 durationMs: Math.max(0, stalkerDiagnosticNowMs() - startedAt),
                 networkMs: timingSamples > 0 ? networkMs : undefined,
+                yieldMs: timingSamples > 0 ? yieldMs : undefined,
                 parseMs: timingSamples > 0 ? parseMs : undefined,
                 timingSamples,
               });
@@ -215,6 +218,7 @@ export async function reacquireStalkerLiveChannel(
                 lookupResult: result,
                 durationMs: Math.max(0, stalkerDiagnosticNowMs() - startedAt),
                 networkMs: timingSamples > 0 ? networkMs : undefined,
+                yieldMs: timingSamples > 0 ? yieldMs : undefined,
                 parseMs: timingSamples > 0 ? parseMs : undefined,
                 timingSamples,
               });

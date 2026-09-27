@@ -52,6 +52,7 @@ function C3HPhysicalTraceOverlayImpl() {
         <Text key={lookup.sequence} style={styles.lookupLine}>
           #{lookup.sequence} {lookup.kind} {lookup.result} {ms(lookup.durationMs)}
           {lookup.networkMs === null ? "" : ` N${Math.round(lookup.networkMs)}`}
+          {lookup.yieldMs === null ? "" : ` Y${Math.round(lookup.yieldMs)}`}
           {lookup.parseMs === null ? "" : ` P${Math.round(lookup.parseMs)}`}
         </Text>
       ))}
