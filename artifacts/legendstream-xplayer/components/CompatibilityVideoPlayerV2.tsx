@@ -33,7 +33,7 @@ import {
   type LiveChannelIdentity,
 } from "@/lib/playerLiveQueue";
 import { registerEpgChannels } from "@/lib/epgRuntime";
-import { classifyPlaybackSource, classifyStalkerTraceError, describeC3MSource, sameC3MCatalogIdentity, nextC3MPlayerInstanceSequence, describePlaybackSourceSafely, fingerprintPlaybackSource, getActiveStalkerTraceId, markNextStalkerReacquireTrigger, traceStalker, type StalkerReacquireTriggerKind } from "@/lib/stalkerPlaybackTrace";
+import { classifyPlaybackSource, classifyStalkerTraceError, describePlaybackSourceSafely, fingerprintPlaybackSource, getActiveStalkerTraceId, traceStalker } from "@/lib/stalkerPlaybackTrace";
 import type { Channel } from "@/lib/iptv";
 import { usePlayerOrientation } from "@/hooks/usePlayerOrientation";
 import {
@@ -59,7 +59,6 @@ import {
   VlcPlaybackSurface,
   VlcProgressEvent,
 } from "@/components/player/VlcPlaybackSurface";
-import { C3HPhysicalTraceOverlay } from "@/components/debug/C3HPhysicalTraceOverlay";
 
 const CODEC_MODE_KEY = "@legendstream/codec-mode-v1";
 const UI_PROGRESS_INTERVAL_MS = 500;
@@ -140,11 +139,6 @@ export function CompatibilityVideoPlayer({
   const exitStarted = useRef(false);
   const tracedSourceFingerprint = useRef<string | null>(null);
   const tracedItemId = useRef<string | null>(liveIdentity?.channelId ?? vodIdentity?.itemId ?? (progressRef?.type === "stalker-episode" ? progressRef.episodeId : null));
-  const runtimeResolveRef = useRef<{ source: string } | null>(null);
-  const c3mPlayerInstanceRef = useRef<number | null>(null);
-  if (c3mPlayerInstanceRef.current === null) c3mPlayerInstanceRef.current = nextC3MPlayerInstanceSequence();
-  const c3mPlayerInstance = c3mPlayerInstanceRef.current;
-  const c3mProducer = useRef<"INITIAL" | "PLAYER_SELECTION" | "UNKNOWN">("INITIAL");
 
   const playbackRef = useRef<PlaybackSnapshot>({
     source,
@@ -264,23 +258,6 @@ export function CompatibilityVideoPlayer({
 
   useEffect(() => {
     let cancelled = false;
-    const previousResolve = runtimeResolveRef.current;
-    const triggerKind: StalkerReacquireTriggerKind = previousResolve === null
-      ? "INITIAL"
-      : previousResolve.source !== currentSource
-        ? "SOURCE_CHANGE"
-        : "DEPENDENCY_REFRESH";
-    runtimeResolveRef.current = { source: currentSource };
-    const c3mTraceId = getActiveStalkerTraceId();
-    if (c3mTraceId && provider?.type === "stalker") traceStalker("C3M_SOURCE_TRANSITION", {
-      traceId: c3mTraceId, playerInstanceSeq: c3mPlayerInstance, triggerKind,
-      fromKind: describeC3MSource(previousResolve?.source), toKind: describeC3MSource(currentSource),
-      sameKind: previousResolve ? describeC3MSource(previousResolve.source) === describeC3MSource(currentSource) : false,
-      sameCatalogIdentity: sameC3MCatalogIdentity(previousResolve?.source, currentSource),
-      sameUri: previousResolve ? previousResolve.source === currentSource : false,
-      sourceProducer: c3mProducer.current,
-    });
-    c3mProducer.current = "UNKNOWN";
     if (!isCatalogRuntimeSource(currentSource)) {
       setResolvedSource(currentSource);
       return () => { cancelled = true; };
@@ -288,7 +265,6 @@ export function CompatibilityVideoPlayer({
     const controller = new AbortController();
     const traceId = getActiveStalkerTraceId();
     if (traceId) traceStalker("PLAYER_SOURCE_RECEIVED", { traceId, sourceKind: classifyPlaybackSource(currentSource), resolved: false });
-    if (traceId && provider?.type === "stalker") markNextStalkerReacquireTrigger(traceId, triggerKind);
     setResolvedSource(null);
     setErrorText(null);
     void resolveCatalogRuntimeSource(currentSource, provider, controller.signal)
@@ -556,7 +532,6 @@ export function CompatibilityVideoPlayer({
       position: 0,
       duration: 0,
     };
-    c3mProducer.current = "PLAYER_SELECTION";
     setCurrentSource(item.source);
     setCurrentTitle(item.title);
     setCurrentSubtitle(item.subtitle);
@@ -829,10 +804,6 @@ export function CompatibilityVideoPlayer({
         diagnosticM3ULive={m3uLiveDiagnostic}
         diagnosticM3UUriMetadata={m3uUriMetadata}
       /> : null}
-
-      {provider?.type === "stalker" && currentKind === "live"
-        ? <C3HPhysicalTraceOverlay />
-        : null}
 
       {!pipActive ? (
         <PlayerChrome

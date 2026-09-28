@@ -1,5 +1,4 @@
-import { StalkerPortalError, type StalkerPortalRequestTiming, type StalkerPortalSession } from "./stalkerPortal";
-import { stalkerDiagnosticNowMs } from "./stalkerDiagnostics";
+import { StalkerPortalError, type StalkerPortalSession } from "./stalkerPortal";
 import {
   normalizeStalkerLivePage,
   type StalkerLiveCategory,
@@ -8,7 +7,6 @@ import {
 import { discoverStalkerLiveChannels } from "./stalkerLiveDiscovery";
 import { fetchStalkerOrderedPage, type StalkerOrderedPage } from "./stalkerPagedCatalog";
 import { isStalkerLiveGlobalCategoryId } from "./stalkerLiveCategoryIntent";
-import { traceStalker } from "./stalkerPlaybackTrace";
 
 type Portal = Pick<StalkerPortalSession, "request">;
 type RuntimeChannel = Pick<StalkerLiveChannel, "portalId" | "cmd">;
@@ -148,138 +146,20 @@ export async function reacquireStalkerLiveChannel(
     categories?: readonly StalkerLiveCategory[];
     signal?: AbortSignal;
     traceId?: string;
-    invocationSeq?: number;
   },
   dependencies: ReacquireDependencies = {},
 ): Promise<StalkerLiveReacquireResult> {
-  const { session, providerId, portalId, signal, traceId, invocationSeq } = options;
+  const { session, providerId, portalId, signal, traceId } = options;
   const categories = [...(options.categories ?? [])];
-  let lookupSequence = 0;
-  let attemptSequence = 0;
-  let activeAttemptSequence: number | null = null;
-  const traceDialectAttempt = (attempt: import("./stalkerPagedCatalog").StalkerDialectAttemptDiagnostic) => {
-    if (!traceId) return;
-    const attemptKind =
-      attempt.dialect === "genre_id" ? "GENRE_ID" :
-      attempt.dialect === "genre" ? "GENRE" : "DUAL";
-    if (attempt.phase === "START") {
-      attemptSequence += 1;
-      activeAttemptSequence = attemptSequence;
-      traceStalker("C3K_ATTEMPT_START", { traceId, invocationSeq, attemptSeq: attemptSequence, attemptKind });
-      return;
-    }
-    const attemptSeq = activeAttemptSequence;
-    if (attemptSeq === null) return;
-    traceStalker("C3K_ATTEMPT_DONE", {
-      traceId,
-      invocationSeq,
-      attemptSeq,
-      attemptKind,
-      attemptResult: attempt.result ?? "UNKNOWN",
-      durationMs: attempt.durationMs,
-      networkMs: attempt.networkMs,
-      yieldMs: attempt.yieldMs,
-      parseMs: attempt.parseMs,
-      requestCount: attempt.requestCount,
-    });
-    activeAttemptSequence = null;
-  };
-  const diagnosticPortal = (lookupKind: "EXACT" | "CATEGORY" | "FULL") => {
-    let lastSequence: number | null = null;
-    const portal: Portal = traceId
-      ? {
-          request: async (...args: Parameters<Portal["request"]>) => {
-            const [params, requestSignal, originalTiming, diagnostics] = args;
-            const action = String((params as Record<string, unknown> | undefined)?.action ?? "");
-            if (action !== "get_ordered_list" && action !== "get_all_channels") {
-              return session.request(...args);
-            }
-            lookupSequence += 1;
-            const lookupSeq = lookupSequence;
-            lastSequence = lookupSeq;
-            traceStalker("PLAYBACK_REACQUIRE_LOOKUP", { traceId, invocationSeq });
-            if (action === "get_all_channels") traceStalker("PLAYBACK_REACQUIRE_GET_ALL", { traceId, invocationSeq });
-            traceStalker("C3J_LOOKUP_START", { traceId, invocationSeq, lookupSeq, lookupKind });
-            const startedAt = stalkerDiagnosticNowMs();
-            let networkMs = 0;
-            let yieldMs = 0;
-            let parseMs = 0;
-            let timingSamples = 0;
-            const timing = (sample: StalkerPortalRequestTiming) => {
-              timingSamples += 1;
-              networkMs += Math.max(0, sample.fetchWaitMs) + Math.max(0, sample.bodyReadWaitMs);
-              yieldMs += Math.max(0, sample.postBodyYieldMs);
-              parseMs += Math.max(0, sample.jsonParseMs);
-              originalTiming?.(sample);
-            };
-            try {
-              const payload = await session.request(
-                params,
-                requestSignal,
-                timing,
-                { ...(diagnostics ?? {}), playbackTraceId: traceId },
-              );
-              traceStalker("C3J_LOOKUP_DONE", {
-                traceId,
-                invocationSeq,
-                lookupSeq,
-                lookupKind,
-                lookupResult: "OK",
-                durationMs: Math.max(0, stalkerDiagnosticNowMs() - startedAt),
-                networkMs: timingSamples > 0 ? networkMs : undefined,
-                yieldMs: timingSamples > 0 ? yieldMs : undefined,
-                parseMs: timingSamples > 0 ? parseMs : undefined,
-                timingSamples,
-              });
-              return payload;
-            } catch (caught) {
-              const result =
-                requestSignal?.aborted || (caught instanceof StalkerPortalError && caught.code === "CANCELLED")
-                  ? "ABORTED"
-                  : caught instanceof StalkerPortalError && caught.code === "TIMEOUT"
-                    ? "TIMEOUT"
-                    : caught instanceof StalkerPortalError && caught.code === "HTTP_ERROR"
-                      && [400, 404, 405, 422].includes(caught.status ?? 0)
-                        ? "UNSUPPORTED"
-                        : "ERROR";
-              traceStalker("C3J_LOOKUP_DONE", {
-                traceId,
-                invocationSeq,
-                lookupSeq,
-                lookupKind,
-                lookupResult: result,
-                durationMs: Math.max(0, stalkerDiagnosticNowMs() - startedAt),
-                networkMs: timingSamples > 0 ? networkMs : undefined,
-                yieldMs: timingSamples > 0 ? yieldMs : undefined,
-                parseMs: timingSamples > 0 ? parseMs : undefined,
-                timingSamples,
-              });
-              throw caught;
-            }
-          },
-        }
-      : session;
-    return { portal, lastSequence: () => lastSequence };
-  };
-  const traceMatch = (lookupSeq: number | null, found: boolean) => {
-    if (traceId && lookupSeq !== null) traceStalker("C3J_LOOKUP_MATCH", {
-      traceId,
-      invocationSeq,
-      lookupSeq,
-      lookupResult: found ? "FOUND" : "MISS",
-    });
-  };
   const fetchOrdered = dependencies.fetchOrderedPage ?? fetchStalkerOrderedPage;
   const discover = dependencies.fullDiscover ?? discoverStalkerLiveChannels;
   const locator = readStalkerLiveRuntimeLocator(session, providerId, portalId);
 
   const fullDiscovery = async (): Promise<StalkerLiveReacquireResult> => {
     assertCurrent(signal);
-    const diagnostic = diagnosticPortal("FULL");
-    const result = await discover({ session: diagnostic.portal, providerId, categories, signal });
+    const result = await discover({ session, providerId, categories, signal });
     assertCurrent(signal);
     const channel = exactTarget(result.rows, portalId);
-    traceMatch(diagnostic.lastSequence(), Boolean(channel));
     if (!channel) throw new Error("Cached Stalker channel is no longer available from the active provider.");
     return { channel, source: "FULL_DISCOVERY", rows: result.rows.length };
   };
@@ -302,7 +182,6 @@ export async function reacquireStalkerLiveChannel(
   ): Promise<StalkerLiveReacquireResult | null> => {
     let page = 1;
     let rows = 0;
-    const diagnostic = diagnosticPortal("CATEGORY");
     while (true) {
       assertCurrent(signal);
       const canReuse = Boolean(
@@ -313,14 +192,13 @@ export async function reacquireStalkerLiveChannel(
       const ordered = canReuse
         ? remembered!.page
         : await fetchOrdered({
-            session: diagnostic.portal,
+            session,
             providerId,
             kind: "itv",
             categoryId,
             page,
             signal,
             diagnostics: { providerId, playbackTraceId: traceId },
-            onDialectAttempt: traceDialectAttempt,
           });
       assertCurrent(signal);
       const normalized = canReuse
@@ -328,7 +206,6 @@ export async function reacquireStalkerLiveChannel(
         : normalizeOrdered(ordered, providerId, categories);
       rows += normalized.rawCount;
       const found = exactTarget(normalized.items, portalId);
-      if (!canReuse) traceMatch(diagnostic.lastSequence(), Boolean(found));
       if (found) {
         registerStalkerLiveRuntimeLocators(session, providerId, categoryId, page, [found]);
         return { channel: found, source: "CATEGORY", rows };
@@ -357,19 +234,17 @@ export async function reacquireStalkerLiveChannel(
     return bounded ?? fullDiscovery();
   }
 
-  const exactDiagnostic = diagnosticPortal("EXACT");
   let remembered: StalkerOrderedPage;
   try {
     assertCurrent(signal);
     remembered = await fetchOrdered({
-      session: exactDiagnostic.portal,
+      session,
       providerId,
       kind: "itv",
       categoryId: locator.categoryId,
       page: locator.page,
       signal,
       diagnostics: { providerId, playbackTraceId: traceId },
-            onDialectAttempt: traceDialectAttempt,
     });
     assertCurrent(signal);
   } catch (caught) {
@@ -380,7 +255,6 @@ export async function reacquireStalkerLiveChannel(
 
   const rememberedNormalized = normalizeOrdered(remembered, providerId, categories);
   const exact = exactTarget(rememberedNormalized.items, portalId);
-  traceMatch(exactDiagnostic.lastSequence(), Boolean(exact));
   if (exact) return { channel: exact, source: "EXACT_PAGE", rows: rememberedNormalized.rawCount };
 
   const bounded = await boundedFallback(

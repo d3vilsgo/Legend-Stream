@@ -28,17 +28,6 @@ export type StalkerOrderedPage = {
 
 type Portal = Pick<StalkerPortalSession, "request">;
 
-export type StalkerDialectAttemptDiagnostic = {
-  phase: "START" | "DONE";
-  dialect: StalkerCategoryDialect;
-  result?: "OK" | "COMPAT_REJECT" | "UNSUPPORTED" | "TIMEOUT" | "ABORTED" | "ERROR";
-  durationMs?: number;
-  networkMs?: number;
-  yieldMs?: number;
-  parseMs?: number;
-  requestCount?: number;
-};
-
 type FetchOrderedPageOptions = {
   session: Portal;
   providerId: string;
@@ -49,7 +38,6 @@ type FetchOrderedPageOptions = {
   diagnostics?: StalkerPortalDiagnosticsContext;
   maxPages?: number;
   compatibilityFallback?: (signal?: AbortSignal) => Promise<StalkerOrderedPage>;
-  onDialectAttempt?: (attempt: StalkerDialectAttemptDiagnostic) => void;
 };
 
 const MAX_STALKER_ORDERED_PAGES = 5_000;
@@ -185,57 +173,28 @@ export async function fetchStalkerOrderedPage(options: FetchOrderedPageOptions):
 
   let lastProbeError: unknown = null;
   for (const dialect of dialectCandidates(options.providerId, categoryId)) {
-    const attemptStartedAt = Date.now();
-    let networkMs = 0;
-    let yieldMs = 0;
-    let parseMs = 0;
-    let requestCount = 0;
-    let attemptDone = false;
-    const finishAttempt = (result: NonNullable<StalkerDialectAttemptDiagnostic["result"]>) => {
-      if (attemptDone) return;
-      attemptDone = true;
-      options.onDialectAttempt?.({
-        phase: "DONE",
-        dialect,
-        result,
-        durationMs: Math.max(0, Date.now() - attemptStartedAt),
-        networkMs,
-        yieldMs,
-        parseMs,
-        requestCount,
-      });
-    };
-    options.onDialectAttempt?.({ phase: "START", dialect });
     try {
       const payload = await options.session.request({
         type: options.kind,
         action: "get_ordered_list",
         p: page,
         ...categoryParams(dialect, categoryId),
-      }, options.signal, (sample) => {
-        requestCount += 1;
-        networkMs += Math.max(0, sample.fetchWaitMs) + Math.max(0, sample.bodyReadWaitMs);
-        yieldMs += Math.max(0, sample.postBodyYieldMs);
-        parseMs += Math.max(0, sample.jsonParseMs);
-      }, {
+      }, options.signal, undefined, {
         syncRunId: options.diagnostics?.syncRunId,
         providerId: options.providerId,
         playbackTraceId: options.diagnostics?.playbackTraceId,
       });
       if (options.signal?.aborted) {
-        finishAttempt("ABORTED");
         throw new StalkerPortalError("CANCELLED", "Stalker ordered-list request was cancelled.");
       }
       const rows = payloadRows(payload);
       try {
         assertOrderedPageCategory(rows, categoryId);
       } catch (caught) {
-        finishAttempt("COMPAT_REJECT");
         throw caught;
       }
       const metadata = pageMetadata(payload);
       dialectByProvider.set(options.providerId, dialect);
-      finishAttempt("OK");
       return {
         kind: options.kind,
         categoryId,
@@ -264,7 +223,6 @@ export async function fetchStalkerOrderedPage(options: FetchOrderedPageOptions):
                 && [400, 404, 405, 422].includes(caught.status ?? 0)
                   ? "UNSUPPORTED"
                   : "ERROR";
-      finishAttempt(result);
       if (result === "ABORTED") throw caught;
       lastProbeError = caught;
       if (caught instanceof StalkerCategoryDialectMismatchError) {
