@@ -169,6 +169,21 @@ export async function getCachedStalkerLiveCategories(providerId: string): Promis
   }));
 }
 
+export async function getPersistedStalkerLiveCategoryId(
+  providerId: string,
+  itemId: string,
+): Promise<string | null> {
+  const db = await database();
+  const row = await db.getFirstAsync<{ category_id: string | null }>(
+    `SELECT category_id FROM catalog_items
+      WHERE provider_id = ? AND kind = 'live' AND item_id = ? LIMIT 1`,
+    providerId,
+    itemId,
+  );
+  const categoryId = row?.category_id?.trim() ?? "";
+  return categoryId || null;
+}
+
 export async function getPersistedStalkerLivePlaybackRef(
   providerId: string,
   itemId: string,

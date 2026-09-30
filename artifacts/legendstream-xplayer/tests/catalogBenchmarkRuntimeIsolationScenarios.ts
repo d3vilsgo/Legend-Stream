@@ -11,6 +11,7 @@ import {
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const layoutSource = readFileSync(resolve(ROOT, "app/_layout.tsx"), "utf8");
 const indexSource = readFileSync(resolve(ROOT, "app/(tabs)/index.tsx"), "utf8");
+const productShellSource = readFileSync(resolve(ROOT, "components/ProductShell.tsx"), "utf8");
 const benchmarkRootSource = layoutSource.match(
   /if \(appRuntime\.kind === "benchmark"\) \{([\s\S]*?)\n  \}\n\n  if \(!queryClient\)/,
 )?.[1];
@@ -84,13 +85,14 @@ scenario("normal production Home and provider runtime contract is preserved", ()
     { query: true, i18n: true, player: true, catalog: true, media: true, cleanup: true },
   );
   assert.match(layoutSource, /<QueryClientProvider[\s\S]*?<I18nProvider>[\s\S]*?<PlayerProvider>[\s\S]*?<CatalogSyncProvider>[\s\S]*?<MediaLibraryProvider>[\s\S]*?<RootLayoutNav/);
+  assert.match(indexSource, /import ProductShell from "@\/components\/ProductShell"/);
+  assert.match(indexSource, /return <ProductShell \/>/);
+  assert.doesNotMatch(indexSource, /StalkerMainPage|OptimizedHomeScreenV6|provider\?\.type/);
+  assert.match(productShellSource, /import StalkerMainPage from "@\/components\/StalkerMainPage"/);
+  assert.match(productShellSource, /import OptimizedHomeScreenV6 from "@\/components\/OptimizedHomeScreenV6"/);
   assert.match(
     indexSource,
-    /function ProviderMainPageRouter\(\) \{[\s\S]*?const \{ provider \} = usePlayer\(\);[\s\S]*?return provider\?\.type === "stalker" \? <StalkerMainPage \/> : <OptimizedHomeScreenV6 \/>;[\s\S]*?\}/,
-  );
-  assert.match(
-    indexSource,
-    /export default function IndexScreen\(\) \{\s*if \(isCatalogBenchmarkBuildEnabled\(\)\) return <Redirect href="\/catalog-benchmark" \/>;\s*return <ProviderMainPageRouter \/>;\s*\}/,
+    /export default function IndexScreen\(\) \{\s*if \(isCatalogBenchmarkBuildEnabled\(\)\) return <Redirect href="\/catalog-benchmark" \/>;\s*return <ProductShell \/>;\s*\}/,
   );
 });
 

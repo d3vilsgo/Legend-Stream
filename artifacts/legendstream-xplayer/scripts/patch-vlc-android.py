@@ -63,6 +63,7 @@ def main() -> None:
     grace_marker = "LegendStream PiP return grace"
     release_marker = "LegendStream VLC release-state guard"
     metadata_marker = "LegendStream live video metadata bridge"
+    native_error_marker = "LegendStream credential-safe native error bridge"
 
     if guard_marker not in java_text:
         fields_marker = "    private final AudioManager audioManager;\n"
@@ -342,6 +343,30 @@ def main() -> None:
         print("Applied live resolution/FPS metadata bridge")
     else:
         print("Live resolution/FPS metadata bridge already present")
+
+    if native_error_marker not in java_text:
+        error_case = """                case MediaPlayer.Event.EncounteredError:
+                    map.putString("type", "Error");
+                    eventEmitter.sendEvent(map, VideoEventEmitter.EVENT_ON_ERROR);
+
+                    break;"""
+        if error_case not in java_text:
+            fail("Could not locate VLC EncounteredError bridge for safe native diagnostics")
+        error_replacement = """                case MediaPlayer.Event.EncounteredError:
+                    // LegendStream credential-safe native error bridge: LibVLC 3.6.3
+                    // exposes EncounteredError here without HTTP/access/demux detail.
+                    // Export only stable non-source state; never export URI/log text.
+                    map.putString("type", "Error");
+                    map.putString("nativeEventType", "EncounteredError");
+                    map.putBoolean("isNetworkSource", netStrTag);
+                    map.putBoolean("hasMediaPlayer", mMediaPlayer != null);
+                    eventEmitter.sendEvent(map, VideoEventEmitter.EVENT_ON_ERROR);
+
+                    break;"""
+        java_text = java_text.replace(error_case, error_replacement, 1)
+        print("Applied credential-safe VLC native error bridge")
+    else:
+        print("Credential-safe VLC native error bridge already present")
 
     player_view.write_text(java_text, encoding="utf-8")
 

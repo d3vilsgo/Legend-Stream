@@ -5,6 +5,7 @@ import {
 } from "./stalkerPortal";
 import { yieldToUi } from "./cooperative";
 import { safeLog } from "./safeLog";
+import { clearStalkerLiveRuntimeLocatorSession } from "./stalkerLiveRuntimeLocator";
 
 type FetchLike = (
   input: string | URL | Request,
@@ -61,6 +62,7 @@ export function getOrCreateStalkerPortalSession(
       : current.mac !== mac
         ? "MAC_CHANGED"
         : "OTHER";
+  if (current) clearStalkerLiveRuntimeLocatorSession(current.session);
   current?.session.dispose();
   const sessionGeneration = ++sessionGenerationSequence;
   const session = createStalkerPortalSession({
@@ -88,6 +90,7 @@ export function releaseStalkerPortalSession(providerId: string) {
   const current = sessions.get(key);
   if (!current) return false;
   sessions.delete(key);
+  clearStalkerLiveRuntimeLocatorSession(current.session);
   current.session.dispose();
   return true;
 }

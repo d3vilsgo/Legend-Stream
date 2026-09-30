@@ -182,12 +182,17 @@ export async function fetchStalkerOrderedPage(options: FetchOrderedPageOptions):
       }, options.signal, undefined, {
         syncRunId: options.diagnostics?.syncRunId,
         providerId: options.providerId,
+        playbackTraceId: options.diagnostics?.playbackTraceId,
       });
       if (options.signal?.aborted) {
         throw new StalkerPortalError("CANCELLED", "Stalker ordered-list request was cancelled.");
       }
       const rows = payloadRows(payload);
-      assertOrderedPageCategory(rows, categoryId);
+      try {
+        assertOrderedPageCategory(rows, categoryId);
+      } catch (caught) {
+        throw caught;
+      }
       const metadata = pageMetadata(payload);
       dialectByProvider.set(options.providerId, dialect);
       return {
@@ -207,7 +212,18 @@ export async function fetchStalkerOrderedPage(options: FetchOrderedPageOptions):
         compatibilityFallback: false,
       };
     } catch (caught) {
-      if (options.signal?.aborted || (caught instanceof StalkerPortalError && caught.code === "CANCELLED")) throw caught;
+      const result =
+        options.signal?.aborted || (caught instanceof StalkerPortalError && caught.code === "CANCELLED")
+          ? "ABORTED"
+          : caught instanceof StalkerCategoryDialectMismatchError
+            ? "COMPAT_REJECT"
+            : caught instanceof StalkerPortalError && caught.code === "TIMEOUT"
+              ? "TIMEOUT"
+              : caught instanceof StalkerPortalError && caught.code === "HTTP_ERROR"
+                && [400, 404, 405, 422].includes(caught.status ?? 0)
+                  ? "UNSUPPORTED"
+                  : "ERROR";
+      if (result === "ABORTED") throw caught;
       lastProbeError = caught;
       if (caught instanceof StalkerCategoryDialectMismatchError) {
         if (dialectByProvider.get(options.providerId) === dialect) dialectByProvider.delete(options.providerId);
