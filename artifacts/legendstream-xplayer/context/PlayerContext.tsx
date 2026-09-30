@@ -39,10 +39,11 @@ import {
   type ProviderLoadRequestOwnership,
 } from "@/lib/catalogAvailability";
 import {
-  resolveM3UTransport,
+  parseXtreamGetPhp,
+  resolveProviderTransport,
   resolvedProviderTransport,
-  type M3UTransportResolutionReason,
   type ProviderTransport,
+  type RoutedProvider,
 } from "@/lib/m3uTransportRouting";
 import { safeLog } from "@/lib/safeLog";
 import {
@@ -152,7 +153,6 @@ const EPG_START_DELAY_MS = 1_200;
 const M3U_BACKGROUND_REFRESH_DELAY_MS = 1_250;
 const LARGE_PROVIDER_CHANNEL_THRESHOLD = 1_000;
 const LARGE_PROVIDER_INITIAL_EPG_CHANNELS = 48;
-const XTREAM_PROBE_TIMEOUT_MS = 7_000;
 const PROVIDER_CONNECT_TIMEOUT_MS = 30_000;
 const STORAGE_KEY = "@legendstream/player-state-v3";
 const LEGACY_STORAGE_KEY = "@legendstream/player-state-v2";
@@ -252,12 +252,6 @@ const emptyState: PlayerState = {
 
 const PlayerContext = createContext<PlayerContextValue | null>(null);
 
-type RoutedProvider = Provider & {
-  declaredType?: ProviderType;
-  transport?: ProviderTransport;
-  playlistUrl?: string;
-};
-
 const toProvider = (provider: RoutedProvider): ProviderConfig => ({
   ...provider,
   declaredType: provider.declaredType ?? provider.type,
@@ -291,123 +285,6 @@ const fromProvider = (provider: ProviderConfig): RoutedProvider => ({
 
 const normalizeUrl = (value: string) =>
   value.trim().replace(/\/+$/, "").toLowerCase();
-
-function logProviderTransport(
-  providerType: ProviderType,
-  resolvedTransport: string | undefined,
-  resolutionReason: M3UTransportResolutionReason,
-) {
-  safeLog.info("LS_PROVIDER_TRANSPORT", {
-    providerType,
-    resolvedTransport: resolvedTransport ?? "unknown",
-    resolutionReason,
-  });
-}
-
-// Transport diagnostics above are deliberately identity-free and credential-free.
-// Keep source locations, account fields, and endpoint details outside that event payload.
-
-function parseXtreamGetPhp(value: string) {
-  try {
-    const url = new URL(value.trim());
-    if (!/\/get\.php$/i.test(url.pathname)) return null;
-    const username = url.searchParams.get("username")?.trim();
-    const password = url.searchParams.get("password") ?? "";
-    const type = url.searchParams.get("type")?.toLowerCase();
-    if (!username || !password || (type && type !== "m3u_plus")) return null;
-    const path = url.pathname.replace(/\/get\.php$/i, "").replace(/\/+$/, "");
-    return {
-      baseUrl: `${url.origin}${path}`,
-      username,
-      password,
-    };
-  } catch {
-    return null;
-  }
-}
-
-type ParsedGetPhp = NonNullable<ReturnType<typeof parseXtreamGetPhp>>;
-
-async function probeXtreamApi(parsed: ParsedGetPhp) {
-  try {
-    const apiUrl = new URL("player_api.php", `${parsed.baseUrl}/`);
-    apiUrl.searchParams.set("username", parsed.username);
-    apiUrl.searchParams.set("password", parsed.password);
-    const response = await fetch(apiUrl.toString(), {
-      headers: { Accept: "application/json,*/*" },
-      signal: AbortSignal.timeout(XTREAM_PROBE_TIMEOUT_MS),
-    });
-    if (!response.ok) return false;
-    const text = await response.text();
-    const payload = JSON.parse(text) as {
-      user_info?: { auth?: number | string; status?: string };
-    };
-    const userInfo = payload?.user_info;
-    if (!userInfo || typeof userInfo !== "object") return false;
-    const auth = userInfo.auth;
-    if (auth === 0 || auth === "0") return false;
-    const status = String(userInfo.status ?? "").toLowerCase();
-    if (["disabled", "banned", "expired"].includes(status)) return false;
-    return auth === 1 || auth === "1" || status === "active";
-  } catch {
-    return false;
-  }
-}
-
-async function resolveProviderTransport(provider: RoutedProvider): Promise<RoutedProvider> {
-  const declaredType = provider.declaredType ?? provider.type;
-  if (declaredType === "m3u") {
-    const source = provider.playlistUrl || provider.url;
-    const resolution = await resolveM3UTransport(source);
-    logProviderTransport(resolution.declaredType, resolution.transport, resolution.reason);
-    if (resolution.transport === "xtream" && resolution.credentials) {
-      return {
-        ...provider,
-        type: "xtream",
-        declaredType: "m3u",
-        transport: "xtream",
-        url: resolution.credentials.baseUrl,
-        playlistUrl: source,
-        username: resolution.credentials.username,
-        password: resolution.credentials.password,
-      };
-    }
-    return {
-      ...provider,
-      type: "m3u",
-      declaredType: "m3u",
-      transport: "m3u",
-      url: source,
-      playlistUrl: source,
-      username: undefined,
-      password: undefined,
-    };
-  }
-
-  if (declaredType !== "xtream") return { ...provider, declaredType };
-  const parsed = parseXtreamGetPhp(provider.url);
-  if (!parsed) {
-    return { ...provider, type: "xtream", declaredType: "xtream", transport: "xtream" };
-  }
-  if (await probeXtreamApi(parsed)) {
-    return {
-      ...provider,
-      type: "xtream",
-      declaredType: "xtream",
-      transport: "xtream",
-      username: parsed.username,
-      password: parsed.password,
-    };
-  }
-  return {
-    ...provider,
-    type: "m3u",
-    declaredType: "xtream",
-    transport: "m3u",
-    username: undefined,
-    password: undefined,
-  };
-}
 
 function toXtreamLoadProvider(provider: RoutedProvider): Provider {
   const parsed = parseXtreamGetPhp(provider.url);
