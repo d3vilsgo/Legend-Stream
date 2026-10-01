@@ -199,6 +199,7 @@ jobs:
           set -euo pipefail
           history="$(pnpm --filter @workspace/legendstream-xplayer test:live-history 2>&1 | tee /dev/stderr)"
           grep -F 'live history scenarios: 32/32 passed' <<<"$history"
+          grep -F 'live history owner scenarios: 9/9 passed' <<<"$history"
       - name: R18-C unified product shell contract
         shell: bash
         run: |

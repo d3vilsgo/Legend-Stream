@@ -241,3 +241,49 @@ export function clearLiveHistoryProvider(
     unscoped: history.unscoped,
   };
 }
+
+/** Owns the verified Live History snapshot and its serialized mutations. */
+export class LiveHistoryOwner {
+  private snapshot = emptyLiveHistoryV2();
+  private readonly mutations = new LiveHistoryMutationQueue();
+
+  constructor(
+    private readonly storage: LiveHistoryStorageAdapter,
+    private readonly activeProviderId: () => string | null,
+    private readonly publishActiveHistory: (history: string[]) => Promise<void>,
+  ) {}
+
+  async hydrate(legacyHistory: unknown | undefined, deleteLegacy: () => Promise<void>) {
+    this.snapshot = await migrateLiveHistoryStorage(this.storage, legacyHistory, deleteLegacy);
+  }
+
+  forProvider(providerId?: string | null) {
+    return historyForProvider(this.snapshot, providerId);
+  }
+
+  private mutate(providerId: string, mutation: LiveHistoryMutation) {
+    return this.mutations.run({
+      storage: this.storage,
+      current: () => this.snapshot,
+      mutate: mutation,
+      publish: async (verified) => {
+        this.snapshot = verified;
+        if (this.activeProviderId() === providerId) {
+          await this.publishActiveHistory(this.forProvider(providerId));
+        }
+      },
+    });
+  }
+
+  record(providerId: string, channelId: string) {
+    return this.mutate(providerId, (history) => recordLiveHistory(history, providerId, channelId));
+  }
+
+  remove(providerId: string, channelId: string) {
+    return this.mutate(providerId, (history) => removeLiveHistory(history, providerId, channelId));
+  }
+
+  clear(providerId: string) {
+    return this.mutate(providerId, (history) => clearLiveHistoryProvider(history, providerId));
+  }
+}
