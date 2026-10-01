@@ -92,16 +92,8 @@ import {
   safeProviderSwitchError,
 } from "@/lib/providerSwitchUx";
 import {
-  LiveHistoryMutationQueue,
-  clearLiveHistoryProvider,
-  emptyLiveHistoryV2,
-  historyForProvider,
-  migrateLiveHistoryStorage,
+  LiveHistoryOwner,
   providerIdFromChannelId,
-  recordLiveHistory,
-  removeLiveHistory,
-  type LiveHistoryMutation,
-  type LiveHistoryV2,
 } from "@/lib/liveHistory";
 import {
   LegacyCatalogFallbackAttemptGuard,
@@ -533,20 +525,17 @@ async function saveProviderSecrets(provider: ProviderConfig) {
   await saveCredentials(provider.id, secrets);
 }
 
-type HydratedState = { state: PlayerState; liveHistory: LiveHistoryV2 };
-
-const readState = async (): Promise<HydratedState> => {
+const readState = async (liveHistory: LiveHistoryOwner): Promise<PlayerState> => {
   const [v3Raw, v2Raw] = await Promise.all([
     AsyncStorage.getItem(STORAGE_KEY),
     AsyncStorage.getItem(LEGACY_STORAGE_KEY),
   ]);
   if (v3Raw === null && v2Raw === null) {
-    const liveHistory = await migrateLiveHistoryStorage(
-      liveHistoryStorage,
+    await liveHistory.hydrate(
       undefined,
       stripLegacyHistoryFields,
     );
-    return { state: emptyState, liveHistory };
+    return emptyState;
   }
 
   const v3Saved = parseStoredPlayerState(v3Raw, "Current");
@@ -606,8 +595,7 @@ const readState = async (): Promise<HydratedState> => {
     : Array.isArray(v2Saved?.history)
       ? v2Saved.history
       : undefined;
-  const liveHistory = await migrateLiveHistoryStorage(
-    liveHistoryStorage,
+  await liveHistory.hydrate(
     hasLegacyHistory ? historySource : undefined,
     stripLegacyHistoryFields,
   );
@@ -617,7 +605,7 @@ const readState = async (): Promise<HydratedState> => {
     channels: [],
     epg: [],
     favorites: favoritesSource.slice(0, 500),
-    history: historyForProvider(liveHistory, provider?.id),
+    history: liveHistory.forProvider(provider?.id),
     activeProviderId: activeProviderId ?? provider?.id,
   };
 
@@ -648,7 +636,7 @@ const readState = async (): Promise<HydratedState> => {
   if (migratedLegacy) {
     await AsyncStorage.setItem(LEGACY_STORAGE_KEY, JSON.stringify(migratedLegacy));
   }
-  return { state: next, liveHistory };
+  return next;
 };
 
 function decodeBase64Utf8(value: string) {
@@ -830,8 +818,18 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const connectAttemptGateRef = useRef(new ProviderConnectAttemptGate());
   const connectBusyOwnerRef = useRef<{ attemptId: number; busyId: number } | null>(null);
   const connectPersistenceQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const liveHistoryRef = useRef<LiveHistoryV2>(emptyLiveHistoryV2());
-  const liveHistoryMutationQueueRef = useRef(new LiveHistoryMutationQueue());
+  const liveHistoryOwnerRef = useRef<LiveHistoryOwner | null>(null);
+  if (!liveHistoryOwnerRef.current) {
+    liveHistoryOwnerRef.current = new LiveHistoryOwner(
+      liveHistoryStorage,
+      () => stateRef.current.provider?.id ?? null,
+      async (history) => {
+        const latest = stateRef.current;
+        await persist({ ...latest, history });
+      },
+    );
+  }
+  const liveHistoryOwner = liveHistoryOwnerRef.current;
   const epgCacheRef = useRef(
     new Map<string, { loadedAt: number; channelCount: number; inputKey?: string; sourceKey?: string }>(),
   );
@@ -938,9 +936,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [state]);
 
   useEffect(() => {
-    readState()
-      .then(({ state: saved, liveHistory }) => {
-        liveHistoryRef.current = liveHistory;
+    readState(liveHistoryOwner)
+      .then((saved) => {
         applyPlayerState(saved);
         setIsHydrating(false);
       })
@@ -1033,22 +1030,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     });
   };
 
-  const persistLiveHistory = async (providerId: string, mutate: LiveHistoryMutation) => {
+  const persistLiveHistory = async (providerId: string, operation: () => Promise<unknown>) => {
     try {
-      const committed = await liveHistoryMutationQueueRef.current.run({
-        storage: liveHistoryStorage,
-        current: () => liveHistoryRef.current,
-        mutate,
-        publish: async (verified) => {
-          liveHistoryRef.current = verified;
-          const latest = stateRef.current;
-          if (latest.provider?.id !== providerId) return;
-          await persist({
-            ...latest,
-            history: historyForProvider(verified, providerId),
-          });
-        },
-      });
+      const committed = await operation();
       setScopedError((current) => current?.domain === "live-history" && current.providerId === providerId ? null : current);
       return committed;
     } catch (caught) {
@@ -1095,7 +1079,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       channels: current.channels.filter((channel) => !importedIds.has(channel.providerId)),
       epg: current.epg.filter((program) => !removedChannelIds.has(program.channelId)),
       favorites: current.favorites.filter((id) => !removedChannelIds.has(id)),
-      history: historyForProvider(liveHistoryRef.current, provider?.id),
+      history: liveHistoryOwner.forProvider(provider?.id),
     };
     const serialized = serializedPlayerState(next);
     const prepareMs = Date.now() - prepareStartedAt;
@@ -1244,7 +1228,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         providers,
         provider: savedProvider,
         activeProviderId: savedProvider.id,
-        history: historyForProvider(liveHistoryRef.current, savedProvider.id),
+        history: liveHistoryOwner.forProvider(savedProvider.id),
         channels: [
           ...latest.channels.filter(
             (channel) => channel.providerId !== savedProvider.id,
@@ -1504,7 +1488,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           ...current,
           provider: existing,
           activeProviderId: providerId,
-          history: historyForProvider(liveHistoryRef.current, providerId),
+          history: liveHistoryOwner.forProvider(providerId),
           channels: removeLegacyStalkerCatalogChannels(current.channels, providerId),
         });
         return true;
@@ -1525,7 +1509,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
           ...current,
           provider: existing,
           activeProviderId: providerId,
-          history: historyForProvider(liveHistoryRef.current, providerId),
+          history: liveHistoryOwner.forProvider(providerId),
           channels: cachedLive.length
             ? [
                 ...current.channels.filter((channel) => channel.providerId !== providerId),
@@ -1549,7 +1533,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         ...stateRef.current,
         provider: updated,
         activeProviderId: providerId,
-        history: historyForProvider(liveHistoryRef.current, providerId),
+        history: liveHistoryOwner.forProvider(providerId),
         providers: stateRef.current.providers.map((item) =>
           item.id === providerId ? updated : item,
         ),
@@ -1599,7 +1583,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         nextProvider?.id ?? (providers.length ? providers[0].id : LOGGED_OUT),
       channels,
       favorites: current.favorites.filter((id) => channelIds.has(id)),
-      history: historyForProvider(liveHistoryRef.current, nextProvider?.id),
+      history: liveHistoryOwner.forProvider(nextProvider?.id),
       epg: current.epg.filter((program) => channelIds.has(program.channelId)),
     });
     try {
@@ -2000,30 +1984,21 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const current = stateRef.current;
     const providerId = providerIdFromChannelId(channelId) ?? current.provider?.id;
     if (!providerId) return;
-    await persistLiveHistory(
-      providerId,
-      (history) => recordLiveHistory(history, providerId, channelId),
-    );
+    await persistLiveHistory(providerId, () => liveHistoryOwner.record(providerId, channelId));
   };
 
   const removeWatched = async (channelId: string) => {
     const current = stateRef.current;
     const providerId = providerIdFromChannelId(channelId) ?? current.provider?.id;
     if (!providerId) return;
-    await persistLiveHistory(
-      providerId,
-      (history) => removeLiveHistory(history, providerId, channelId),
-    );
+    await persistLiveHistory(providerId, () => liveHistoryOwner.remove(providerId, channelId));
   };
 
   const clearHistory = async () => {
     const current = stateRef.current;
     const providerId = current.provider?.id;
     if (!providerId) return;
-    await persistLiveHistory(
-      providerId,
-      (history) => clearLiveHistoryProvider(history, providerId),
-    );
+    await persistLiveHistory(providerId, () => liveHistoryOwner.clear(providerId));
   };
 
   const epgByChannel = useMemo(() => {
