@@ -10,6 +10,7 @@ import {
   View,
 } from "react-native";
 import { StalkerCategoryPager } from "@/components/stalker/StalkerCategoryPager";
+import { StalkerEpgProbeControl } from "@/components/catalog/StalkerEpgProbeControl";
 import type { EpgProgram } from "@/context/PlayerContext";
 import { selectProgramsAt, usePlayer } from "@/context/PlayerContext";
 import { useCatalogPage } from "@/hooks/useCatalogPage";
@@ -183,6 +184,7 @@ export function StalkerLiveCatalog({
             </Text>
           </Pressable>
         </View>
+        <StalkerEpgProbeControl provider={provider} channel={page.items[0]} />
         <View style={[styles.search, { borderColor: colors.border, backgroundColor: colors.card }]}>
           <Text style={{ color: colors.mutedForeground }}>⌕</Text>
           <TextInput

@@ -82,6 +82,8 @@ jobs:
           set -euo pipefail
           node scripts/check-console-usage.mjs --self-test
           node scripts/check-console-usage.mjs
+      - name: R18-E0P temporary Stalker EPG probe safety
+        run: pnpm --filter @workspace/legendstream-xplayer test:stalker-epg-probe
       - name: EPG runtime regressions (12/12 + UTF-8 required)
         shell: bash
         run: |
