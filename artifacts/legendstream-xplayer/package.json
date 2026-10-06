@@ -10,6 +10,8 @@
     "test:backup": "tsx tests/providerBackupScenarios.ts",
     "test:logging": "tsx tests/logRedactionScenarios.ts && tsx tests/m3uDiagnosticsK4Scenarios.ts",
     "test:epg": "tsx tests/epgRuntimeScenarios.ts && tsx tests/manualEpgIsolationScenarios.ts && tsx tests/epgOwnedLifecycleScenarios.ts && node scripts/verify-epg-utf8.mjs",
+    "test:xtream-xmltv-parser": "tsx tests/xtreamXmltvParserScenarios.ts",
+    "test:r18-b-product-contract": "tsx tests/r18BProductContractScenarios.ts",
     "test:m3u-diagnostics": "tsx tests/m3uDiagnosticsScenarios.ts",
     "test:m3u-classification": "tsx tests/m3uClassificationScenarios.ts",
     "test:m3u-playback-ref": "tsx tests/m3uPlaybackRefScenarios.ts",
