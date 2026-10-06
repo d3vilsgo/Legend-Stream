@@ -212,9 +212,10 @@ function PageFooter({ loading }: { loading: boolean }) {
   </View>;
 }
 
-function CatalogLoadingSkeleton({ text }: { text: string }) {
+function CatalogLoadingSkeleton({ text, children }: { text: string; children?: React.ReactNode }) {
   const colors = useColors();
   return <View style={s.skeletonRoot}>
+    {children}
     <ActivityIndicator size="small" color={colors.primary} />
     <Text style={{ color: colors.mutedForeground, fontWeight: "600" }}>{text}</Text>
   </View>;
@@ -610,8 +611,8 @@ export function PagedLiveCatalog({
   }, [epgSeedKey, provider.id]);
   const initialEmpty = shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search);
   const diagnostic = renderDiagnostic?.(page.items[0]) ?? null;
-  if (stalkerLive && !categoriesReady) return <View style={{ flex: 1 }}>{diagnostic}<CatalogLoadingSkeleton text={t("loading")} /></View>;
-  if (initialEmpty) return <View style={{ flex: 1 }}>{diagnostic}<CatalogLoadingSkeleton text={t("loading")} /></View>;
+  if (stalkerLive && !categoriesReady) return <CatalogLoadingSkeleton text={t("loading")}>{diagnostic}</CatalogLoadingSkeleton>;
+  if (initialEmpty) return <CatalogLoadingSkeleton text={t("loading")}>{diagnostic}</CatalogLoadingSkeleton>;
 
   return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
     <FlatList

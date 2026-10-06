@@ -24,8 +24,8 @@ export async function runStalkerEpgSurfaceWiringScenarios() {
   });
 
   scenario("loading and no-channel state keep the diagnostic surface mounted", () => {
-    assert.match(paged, /if \(stalkerLive && !categoriesReady\) return <View style=\{\{ flex: 1 \}\}>\{diagnostic\}<CatalogLoadingSkeleton/);
-    assert.match(paged, /if \(initialEmpty\) return <View style=\{\{ flex: 1 \}\}>\{diagnostic\}<CatalogLoadingSkeleton/);
+    assert.match(paged, /if \(stalkerLive && !categoriesReady\) return <CatalogLoadingSkeleton[^>]*>\{diagnostic\}<\/CatalogLoadingSkeleton>/);
+    assert.match(paged, /if \(initialEmpty\) return <CatalogLoadingSkeleton[^>]*>\{diagnostic\}<\/CatalogLoadingSkeleton>/);
     assert.match(paged, /renderDiagnostic\?: \(channel\?: Channel\) => React\.ReactNode;/);
   });
 
