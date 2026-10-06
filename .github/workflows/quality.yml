@@ -76,6 +76,12 @@ jobs:
           grep -F 'm3u diagnostics K4 scenarios: 6/6 passed' <<<"$mobile"
           api="$(pnpm --filter @workspace/legendstream-xplayer exec tsx "$GITHUB_WORKSPACE/artifacts/api-server/src/lib/logRedaction.test.ts" 2>&1 | tee /dev/stderr)"
           grep -F 'API log redaction scenarios: 4/4 passed' <<<"$api"
+      - name: API proxy client IP rate limit (2/2 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          proxy="$(pnpm --filter @workspace/legendstream-xplayer exec tsx "$GITHUB_WORKSPACE/artifacts/api-server/src/middlewares/xtreamRateLimit.test.ts" 2>&1 | tee /dev/stderr)"
+          grep -F 'API trust proxy rate limit scenarios: 2/2 passed' <<<"$proxy"
       - name: Console usage guard (fail-closed)
         shell: bash
         run: |
