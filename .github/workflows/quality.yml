@@ -84,6 +84,12 @@ jobs:
           node scripts/check-console-usage.mjs
       - name: R18-E0P temporary Stalker EPG probe safety
         run: pnpm --filter @workspace/legendstream-xplayer test:stalker-epg-probe
+      - name: R18-E0P-V1 on-screen diagnostic observability (12/12 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(pnpm --filter @workspace/legendstream-xplayer test:stalker-epg-observability 2>&1 | tee /dev/stderr)"
+          grep -F 'R18-E0P observability scenarios: 12/12 passed' <<<"$output"
       - name: EPG runtime regressions (12/12 + UTF-8 required)
         shell: bash
         run: |

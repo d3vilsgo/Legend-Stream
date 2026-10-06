@@ -105,7 +105,8 @@ async function main() {
       const work = f.owner.run(f.options); await started.promise;
       mock.timers.tick(65_000); await work;
       assert.equal(f.calls.length, 1);
-      assert.equal(f.logs.at(-1)?.fields.errorClass, "ABORT");
+      assert.equal(f.logs.at(-2)?.fields.errorClass, "TIMEOUT");
+      assert.equal(f.logs.at(-1)?.event, "R18_E0P_TIMEOUT");
     } finally { mock.timers.reset(); }
   });
   await scenario("closed schema handles array, data, keyed bulk, null and malformed shapes", () => {
@@ -172,8 +173,8 @@ async function main() {
     assert.match(source, /provider\.type !== "stalker"/);
     assert.match(source, /getOrCreateStalkerPortalSession\(/);
     assert.match(source, /getPersistedStalkerLivePlaybackRef\(provider\.id, channel\.id\)/);
-    assert.match(source, /probe\.cancel\(\)/);
-    assert.match(source, /generation\.current === current/);
+    assert.match(source, /observable\.abort\(\)/);
+    assert.match(source, /observable\.press\(Boolean\(channel\), probe/);
     assert.doesNotMatch(source, /refreshEpg|epgByChannel|setEpg|fetch\(|handshake\(|Authorization|Cookie/);
     for (const path of ["../context/PlayerContext.tsx", "../components/catalog/ManualEpgControl.tsx", "../components/catalog/PagedCatalogViews.tsx"]) {
       assert.doesNotMatch(readFileSync(new NodeURL(path, import.meta.url), "utf8"), /StalkerEpgProbe|R18_E0P/);

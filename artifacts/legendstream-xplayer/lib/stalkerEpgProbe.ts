@@ -4,13 +4,14 @@ const FIELDS = ["id", "ch_id", "channel_id", "real_id", "name", "title", "descr"
 const TIMES = ["start", "end", "time", "time_to", "start_timestamp", "stop_timestamp", "duration"] as const;
 type Identity = { portalId?: string; tvgId?: string };
 type Session = {
-  request(params: Record<string, string | number>, signal?: AbortSignal): Promise<unknown>;
+  request(params: Record<string, string | number>, signal?: AbortSignal, onTiming?: (timing: { fetchWaitMs: number; bodyReadWaitMs: number }) => void): Promise<unknown>;
   isAuthenticated(): boolean;
 };
 type ProbeOptions = {
   getSession: () => Session;
   getIdentity: () => Promise<Identity>;
   log: (event: string, fields: Record<string, unknown>) => void;
+  observe?: (event: string, fields: Record<string, unknown>) => void;
 };
 const object = (value: unknown): Row | null => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : null;
 const present = (value: unknown) => typeof value === "string" && value.length > 0;
@@ -116,13 +117,15 @@ export class StalkerEpgProbe {
     const attempt = ++this.sequence;
     const emit = (event: string, fields: Record<string, unknown>) => {
       try { options.log(`R18_E0P_${event}`, { attempt, ...fields }); } catch { /* Observation is fail-open. */ }
+      try { options.observe?.(event, fields); } catch { /* Observation is fail-open. */ }
     };
     const current = () => {
       if (controller.signal.aborted) throw { code: "CANCELLED" };
     };
     const clock = () => globalThis.performance?.now?.() ?? Date.now();
     // Diagnostic-only ceiling; the shared session retains its existing timeout/auth policy.
-    const timer = setTimeout(() => controller.abort(), 65_000);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; controller.abort(); }, 65_000);
     const promise = Promise.resolve().then(async () => {
       try {
         current();
@@ -145,7 +148,9 @@ export class StalkerEpgProbe {
             if (action === "get_short_epg") params.ch_id = identity.portalId!;
             // Server source: Itv::getEpgInfo defaults period; getShortEpg accepts
             // ch_id and defaults to current + five. No guessed identity variants.
-            const payload = await session.request(params, controller.signal);
+            const payload = await session.request(params, controller.signal, (timing) => {
+              emit("FETCH_DONE", { probeId, fetchWaitMs: timing.fetchWaitMs });
+            });
             current();
             const { timeShapes, fieldTypes, ...summary } = inspectEpgProbeResponse(payload, identity);
             emit("RESPONSE", { probeId, elapsedMs: Math.max(0, Math.round(clock() - started)), httpStatus: "NOT_EXPOSED", wrapper: "UNWRAPPED_BY_SESSION", ...summary });
@@ -172,7 +177,8 @@ export class StalkerEpgProbe {
           emit("RESULT", { status: observed ? "SUPPORTED_SHAPE" : "INCONCLUSIVE", capability: "get_short_epg", timeSemantics: "AMBIGUOUS" });
         }
       } catch (error) {
-        emit("RESULT", { status: "FAILED", errorClass: failure(error, controller.signal.aborted) });
+        emit("RESULT", { status: "FAILED", errorClass: timedOut ? "TIMEOUT" : failure(error, controller.signal.aborted) });
+        if (timedOut) emit("TIMEOUT", {});
       } finally {
         clearTimeout(timer);
         if (this.running?.controller === controller) this.running = null;
