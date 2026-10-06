@@ -1,30 +1,26 @@
 # LegendStream mobile player architecture
 
-## Runtime layers
+## Active route
 
-1. `CompatibilityVideoPlayer.tsx` — playback orchestration only. Owns source switching, resume, codec mode, download state and throttled playback telemetry.
-2. `components/player/VlcPlaybackSurface.tsx` — memoized native VLC surface. It must not be reconciled for clock/progress/chrome-only React state updates.
-3. `components/player/PlayerChrome.tsx` — touch/UI layer. Owns the tap catcher, transient media HUD, seek bar, controls and virtualized selection panels.
-4. `hooks/usePlayerOrientation.ts` — orientation lifecycle. VLC is not mounted until the first landscape layout is ready, preventing portrait-to-landscape stretch during player startup.
-5. `MediaLibraryContext.tsx` — persistent resume/history storage with stable callbacks and redundant-write suppression.
+1. `app/(tabs)/index.tsx` mounts `components/ProductShell.tsx`.
+2. `ProductShell` chooses `StalkerMainPage` for Stalker and `OptimizedHomeScreenV6` for other providers or no provider. `OptimizedHomeScreenV6` re-exports `OptimizedHomeScreenPaged`; this is the active paged home implementation.
+3. Both surfaces mount `NativeVideoPlayer` for a playable item. `NativeVideoPlayer` re-exports `CompatibilityVideoPlayerV2`; the older `CompatibilityVideoPlayer.tsx` remains in the tree but is not the entrypoint for these surfaces.
+4. `CompatibilityVideoPlayerV2` coordinates source, playback state, orientation and media progress. It renders the memoized `components/player/VlcPlaybackSurface.tsx` and the `components/player/PlayerChrome.tsx` wrapper, which delegates the main controls to `PlayerChromeV2.tsx`.
+5. `hooks/usePlayerOrientation.ts` owns the orientation lifecycle; `context/MediaLibraryContext.tsx` owns persistent media progress/history.
 
-## Performance invariants
+## Performance and ownership invariants
 
-- Never call `setState` for every native VLC progress event. UI clock/progress updates are throttled.
-- Never persist resume position on every progress event. Persistence is periodic and lifecycle based.
-- Do not allow React chrome updates to reconstruct/reconcile the VLC native view.
-- Large channel/VOD/episode selectors must be virtualized (`FlatList`), not rendered as hundreds of `Pressable` rows in a `ScrollView`.
-- VLC receives no touch events. A React tap layer above the native surface owns show/hide behavior so hidden controls can always be restored with one tap.
-- The player mounts behind a black orientation gate and enters landscape before the native video surface is created.
-- AUTO/HW/SW codec mode is a VLC decode policy; it is independent of the React control layer.
+- Native VLC progress does not require a React state update for every event; UI clock/progress work is throttled.
+- Resume progress persists periodically and at lifecycle boundaries, not at every native event.
+- Chrome updates should not reconstruct the native VLC view. The native surface stays memoized.
+- Large channel, VOD and episode selectors use virtualized lists.
+- React controls/tap handling sit over VLC; the player enters landscape behind an orientation gate before mounting the video surface.
+- AUTO/HW/SW is a decode policy and is separate from chrome state.
 
 ## Android compatibility baseline
 
-- Minimum Android: API 24 / Android 7.
-- Native player: libVLC through `react-native-vlc-media-player`.
-- Architecture: legacy/Paper for VLC compatibility.
-- Avoid adding Reanimated/keyboard native engines globally unless a feature demonstrably requires them; login forms use Android `adjustResize` plus native React Native keyboard primitives.
+- Minimum Android API 24 (Android 7).
+- Native playback uses libVLC through `react-native-vlc-media-player` and the legacy/Paper architecture.
+- Avoid global native engines for features that can use React Native's platform primitives.
 
-## Legacy cleanup
-
-V1–V4 home screens and the old Media3 `UnifiedVideoPlayer` were removed after V5 + VLC became the only active mobile path. New playback work should extend the layers above rather than adding another parallel player implementation.
+Older V5 and compatibility files may remain for migration history or tests. Their presence does not make them the active route. Any deletion needs an import and source-reading-test audit (Issue #50).
