@@ -98,6 +98,10 @@ function failure(error: unknown, aborted: boolean) {
   if (aborted) return "ABORT";
   const code = object(error)?.code;
   if (code === "CANCELLED") return "ABORT";
+  if (code === "MISSING_MAC") return "PRE_NETWORK_MISSING_MAC";
+  if (code === "INVALID_URL") return "PRE_NETWORK_INVALID_URL";
+  if (code === "NETWORK_ERROR") return "NETWORK";
+  if (code === "PORTAL_RATE_LIMITED_OR_ANTI_DDOS") return "PORTAL_PROTECTION";
   if (code === "AUTH_FAILED" || code === "MISSING_TOKEN") return "AUTH";
   if (code === "TIMEOUT") return "TIMEOUT";
   if (code === "HTTP_ERROR") return "HTTP";

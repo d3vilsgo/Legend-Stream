@@ -4,7 +4,9 @@ import type { StalkerEpgProbe } from "./stalkerEpgProbe";
 // allowlists enter the screen or clipboard; provider and programme values cannot.
 const shapes = new Set(["array", "object", "string", "number", "boolean", "null", "undefined"]);
 const fields = new Set(["id", "ch_id", "channel_id", "real_id", "name", "title", "descr", "description", "start", "end", "time", "time_to", "start_timestamp", "stop_timestamp", "duration"]);
-const classes = new Set(["ABORT", "AUTH", "TIMEOUT", "HTTP", "INVALID_SHAPE", "UNKNOWN"]);
+const classes = new Set(["ABORT", "AUTH", "TIMEOUT", "HTTP", "INVALID_SHAPE", "UNKNOWN", "PRE_NETWORK_MISSING_MAC", "PRE_NETWORK_INVALID_URL", "NETWORK", "PORTAL_PROTECTION"]);
+const networkEvidence = (errorClass: unknown) => ["HTTP", "PORTAL_PROTECTION", "INVALID_SHAPE"].includes(String(errorClass)) ? "YES"
+  : ["PRE_NETWORK_MISSING_MAC", "PRE_NETWORK_INVALID_URL"].includes(String(errorClass)) ? "NO" : "UNPROVEN";
 const actions = new Set(["get_epg_info", "get_short_epg"]);
 const reasons = new Set(["NO_CANONICAL_CHANNEL_IDENTITY"]);
 const kinds = new Set(["number", "numeric_string", "ISO_like_string", "datetime_string", "null", "unknown"]);
@@ -69,7 +71,10 @@ export class StalkerEpgObservability {
       const samples = Array.isArray(value.samples) ? value.samples.flatMap((sample) => sample && typeof sample === "object" ? [sample as { kind?: unknown; magnitude?: unknown }] : []) : [];
       if (typeof value.field === "string" && fields.has(value.field)) this.structural.push(`timeShape.${value.field}=${samples.map((sample) => `${choice(sample.kind, kinds)}:${choice(sample.magnitude, magnitudes)}`).join(",")}`);
     }
-    if (event === "ERROR") this.add(`PROBE_${id}_ERROR_${choice(value.errorClass, classes)} http=${typeof value.httpStatus === "number" && value.httpStatus >= 100 && value.httpStatus <= 599 ? Math.floor(value.httpStatus) : "NOT_EXPOSED"}`);
+    if (event === "ERROR") {
+      const errorClass = choice(value.errorClass, classes);
+      this.add(`PROBE_${id}_ERROR_${errorClass} http=${typeof value.httpStatus === "number" && value.httpStatus >= 100 && value.httpStatus <= 599 ? Math.floor(value.httpStatus) : "NOT_EXPOSED"} net=${networkEvidence(errorClass)}`);
+    }
     if (event === "TIMEOUT") this.add("TIMEOUT_65S");
     if (event === "RESULT") {
       if (value.status === "SUPPORTED_SHAPE") this.add(`RESULT_SUPPORTED_${choice(value.capability, actions)}`);
@@ -84,5 +89,10 @@ export class StalkerEpgObservability {
     const safeCode = typeof versionCode === "number" && Number.isSafeInteger(versionCode) ? versionCode : "unknown";
     const safeSha = typeof sha === "string" && /^[a-f0-9]{7,12}$/i.test(sha) ? sha : "unavailable";
     return [`R18_E0P version=${safeVersion} versionCode=${safeCode} sha=${safeSha}`, ...this.lines, ...this.structural.slice(-30)].join("\n");
+  }
+
+  async copy(write: (content: string) => Promise<unknown>, version?: unknown, versionCode?: unknown, sha?: unknown): Promise<"KOPYALANDI" | "KOPYALAMA_BASARISIZ"> {
+    try { await write(this.summary(version, versionCode, sha)); return "KOPYALANDI"; }
+    catch { return "KOPYALAMA_BASARISIZ"; }
   }
 }

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useSyncExternalStore } from "react";
+import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Pressable, Text, View } from "react-native";
 import * as Clipboard from "expo-clipboard";
 import Constants from "expo-constants";
@@ -19,6 +19,8 @@ export function StalkerEpgProbeControl({ provider, channel }: {
   const colors = useColors();
   const observable = useRef(new StalkerEpgObservability()).current;
   const history = useSyncExternalStore(observable.subscribe, observable.getSnapshot, observable.getSnapshot);
+  const [copyFeedback, setCopyFeedback] = useState("");
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const owner = useRef<StalkerEpgProbe | null>(null);
   useEffect(() => {
     const probe = new StalkerEpgProbe();
@@ -30,12 +32,14 @@ export function StalkerEpgProbeControl({ provider, channel }: {
     };
   }, [provider.id, provider.type, provider.url, provider.mac]);
   useEffect(() => { observable.setReady(Boolean(channel)); }, [channel, observable]);
+  useEffect(() => () => { if (copyTimer.current) clearTimeout(copyTimer.current); }, []);
 
   if (provider.type !== "stalker") return null;
   return <View style={{ paddingVertical: 8 }}><Pressable
     accessibilityRole="button"
     accessibilityLabel="EPG Yükle · E0P"
     onPress={() => {
+      setCopyFeedback("");
       const probe = owner.current;
       observable.press(Boolean(channel), probe, {
         getSession: () => getOrCreateStalkerPortalSession({
@@ -58,7 +62,11 @@ export function StalkerEpgProbeControl({ provider, channel }: {
   </Pressable>
   <Text selectable style={{ color: colors.foreground, fontSize: 11, fontFamily: "monospace" }}>{history}</Text>
   <Pressable accessibilityRole="button" accessibilityLabel="E0P tanısını kopyala" onPress={() => {
-    void Clipboard.setStringAsync(observable.summary(Constants.expoConfig?.version, Constants.expoConfig?.android?.versionCode, process.env.EXPO_PUBLIC_GIT_SHA)).catch(() => { /* best effort */ });
-  }} style={{ paddingVertical: 8 }}><Text style={{ color: colors.foreground }}>Kopyala</Text></Pressable>
+    void observable.copy(Clipboard.setStringAsync, Constants.expoConfig?.version, Constants.expoConfig?.android?.versionCode, process.env.EXPO_PUBLIC_GIT_SHA).then((feedback) => {
+      setCopyFeedback(feedback);
+      if (copyTimer.current) clearTimeout(copyTimer.current);
+      copyTimer.current = setTimeout(() => setCopyFeedback(""), 3000);
+    });
+  }} style={{ paddingVertical: 8 }}><Text style={{ color: colors.foreground }}>Kopyala {copyFeedback}</Text></Pressable>
   </View>;
 }

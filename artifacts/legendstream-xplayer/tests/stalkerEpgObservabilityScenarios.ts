@@ -22,6 +22,24 @@ async function main() {
   await scenario("no portal identity still probes first action once", async () => { const f = setup([], {}); f.screen.press(true, f.owner, f.options); await settled(); assert.match(f.screen.getSnapshot(), /IDENTITY_NO_PORTAL_ID[\s\S]*PROBE_1_REQUEST_CALLED[\s\S]*RESULT_INCONCLUSIVE_NO_CANONICAL_CHANNEL_IDENTITY/); assert.equal(f.requests, 1); });
   await scenario("timing marker appears only after observer is invoked", async () => { const f = setup(); f.screen.press(true, f.owner, f.options); await settled(); assert.ok(!f.screen.getSnapshot().includes("FETCH_DONE")); f.timing?.({ fetchWaitMs: 412, bodyReadWaitMs: 1 }); assert.match(f.screen.getSnapshot(), /PROBE_1_FETCH_DONE 412ms/); });
   await scenario("error class and status are sanitized", async () => { const f = setup(); f.options.getSession = () => ({ isAuthenticated: () => true, request: async () => { throw { code: "AUTH_FAILED", message: "SECRET_PROGRAMME", status: 401 }; } }); f.screen.press(true, f.owner, f.options); await settled(); assert.match(f.screen.getSnapshot(), /PROBE_1_ERROR_AUTH http=401[\s\S]*RESULT_FAILED_AUTH/); assert.ok(!f.screen.summary().includes("SECRET_PROGRAMME")); });
+  for (const [code, expected, evidence] of [
+    ["MISSING_MAC", "PRE_NETWORK_MISSING_MAC", "NO"],
+    ["INVALID_URL", "PRE_NETWORK_INVALID_URL", "NO"],
+    ["NETWORK_ERROR", "NETWORK", "UNPROVEN"],
+    ["PORTAL_RATE_LIMITED_OR_ANTI_DDOS", "PORTAL_PROTECTION", "YES"],
+  ] as const) {
+    await scenario(`${code} is classified with network evidence`, async () => {
+      const f = setup(); f.options.getSession = () => ({ isAuthenticated: () => true, request: async () => { throw { code, message: "SECRET_PROGRAMME" }; } });
+      f.screen.press(true, f.owner, f.options); await settled();
+      assert.ok(f.screen.getSnapshot().includes(`PROBE_1_ERROR_${expected} http=NOT_EXPOSED net=${evidence}`));
+      assert.ok(f.screen.getSnapshot().includes(`RESULT_FAILED_${expected}`));
+      assert.ok(!f.screen.summary().includes("SECRET_PROGRAMME"));
+    });
+  }
+  await scenario("HTTP and invalid shape explicitly mark network evidence", () => { const f = setup(); for (const errorClass of ["HTTP", "INVALID_SHAPE"]) { f.screen.observe("ERROR", { probeId: 1, errorClass }); assert.match(f.screen.getSnapshot().split("\n").at(-1)!, /net=YES$/); } });
+  await scenario("timeout and unknown errors do not assert network evidence", () => { const f = setup(); for (const errorClass of ["TIMEOUT", "UNKNOWN", "NETWORK"]) { f.screen.observe("ERROR", { probeId: 1, errorClass }); assert.match(f.screen.getSnapshot().split("\n").at(-1)!, /net=UNPROVEN$/); } });
+  await scenario("copy confirmation follows clipboard resolution", async () => { const f = setup(); let finish!: () => void; const pending = new Promise<void>((resolve) => { finish = resolve; }); const work = f.screen.copy(async (content) => { assert.match(content, /R18_E0P/); await pending; }); let resolved = false; void work.then(() => { resolved = true; }); await settled(); assert.equal(resolved, false); finish(); assert.equal(await work, "KOPYALANDI"); });
+  await scenario("copy failure is a fixed visible label", async () => { const f = setup(); assert.equal(await f.screen.copy(async () => { throw Error("SECRET_PROGRAMME"); }), "KOPYALAMA_BASARISIZ"); });
   await scenario("timeout and abort stage projection", () => { const f = setup(); f.screen.observe("TIMEOUT", {}); f.screen.observe("RESULT", { status: "FAILED", errorClass: "TIMEOUT" }); assert.match(f.screen.getSnapshot(), /TIMEOUT_65S\nRESULT_FAILED_TIMEOUT$/); f.screen.observe("RESULT", { status: "FAILED", errorClass: "ABORT" }); assert.match(f.screen.getSnapshot(), /ABORTED$/); });
   await scenario("repeated press stays single-flight", async () => { const f = setup(); f.screen.press(true, f.owner, f.options); f.screen.press(true, f.owner, f.options); assert.match(f.screen.getSnapshot(), /^PRESSED\nALREADY_RUNNING$/); await settled(); assert.equal(f.requests, 1); });
   await scenario("provider switch or unmount cancels pending request", async () => { const f = setup(); let signal: AbortSignal | undefined; let resolve!: (value: unknown) => void; const wait = new Promise<unknown>((done) => { resolve = done; }); f.options.getSession = () => ({ isAuthenticated: () => true, request: async (_: Record<string, string | number>, s?: AbortSignal) => { signal = s; return wait; } }); f.screen.press(true, f.owner, f.options); await settled(); f.screen.abort(); assert.equal(signal?.aborted, true); assert.match(f.screen.getSnapshot(), /ABORTED$/); resolve([programme]); await settled(); assert.ok(!f.screen.getSnapshot().includes("RESULT_SUPPORTED")); });
