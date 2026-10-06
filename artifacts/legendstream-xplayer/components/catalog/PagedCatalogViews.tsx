@@ -505,6 +505,7 @@ export function PagedLiveCatalog({
   onOpen,
   onFavorite,
   onDrawerVisibilityChange,
+  renderDiagnostic,
 }: {
   provider: ProviderConfig;
   snapshotCount: SnapshotCount;
@@ -518,6 +519,7 @@ export function PagedLiveCatalog({
   onOpen: (channel: Channel) => void;
   onFavorite: (id: string) => void;
   onDrawerVisibilityChange: (visible: boolean) => void;
+  renderDiagnostic?: (channel?: Channel) => React.ReactNode;
 }) {
   const colors = useColors();
   const { t } = useI18n();
@@ -607,8 +609,9 @@ export function PagedLiveCatalog({
     registerEpgChannels(provider.id, seed);
   }, [epgSeedKey, provider.id]);
   const initialEmpty = shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search);
-  if (stalkerLive && !categoriesReady) return <CatalogLoadingSkeleton text={t("loading")} />;
-  if (initialEmpty) return <CatalogLoadingSkeleton text={t("loading")} />;
+  const diagnostic = renderDiagnostic?.(page.items[0]) ?? null;
+  if (stalkerLive && !categoriesReady) return <View style={{ flex: 1 }}>{diagnostic}<CatalogLoadingSkeleton text={t("loading")} /></View>;
+  if (initialEmpty) return <View style={{ flex: 1 }}>{diagnostic}<CatalogLoadingSkeleton text={t("loading")} /></View>;
 
   return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
     <FlatList
@@ -632,6 +635,7 @@ export function PagedLiveCatalog({
           });
         }}
       >
+        {diagnostic}
         <ManualEpgControl providerId={provider.id} enabled={page.items.length > 0} />
         {provider.type === "m3u" && page.countKnown && hasMeaningfulM3ULiveGroups === false
           ? <Text style={[s.m3uHint, { color: colors.mutedForeground }]}>{t("m3uNoGroups")}</Text>

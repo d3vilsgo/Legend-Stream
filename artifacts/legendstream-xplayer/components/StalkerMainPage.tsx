@@ -21,6 +21,7 @@ import { FocusButton } from "@/components/FocusButton";
 import { HomeDiscovery, type HomeContentView } from "@/components/home/HomeDiscovery";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
 import { PagedLiveCatalog } from "@/components/catalog/PagedCatalogViews";
+import { StalkerEpgProbeControl } from "@/components/catalog/StalkerEpgProbeControl";
 import {
   StalkerGoldenMoviesCatalog,
   type StalkerMoviePlayable,
@@ -476,6 +477,7 @@ export default function StalkerMainPage() {
           onOpen={openLive}
           onFavorite={(id) => void toggleFavorite(id)}
           onDrawerVisibilityChange={setCatalogDrawerOpen}
+          renderDiagnostic={(channel) => <StalkerEpgProbeControl provider={provider} channel={channel} />}
         />
       ) : null}
 

@@ -5,6 +5,7 @@ import { mock } from "node:test";
 import { StalkerEpgProbe, inspectEpgProbeResponse, epgProbeTimeShape } from "../lib/stalkerEpgProbe";
 import { getOrCreateStalkerPortalSession, releaseStalkerPortalSession } from "../lib/stalkerPortalRuntime";
 import { sanitizeLogValue } from "../lib/safeLog";
+import { runStalkerEpgSurfaceWiringScenarios } from "./stalkerEpgSurfaceWiringScenarios";
 
 const programme = { id: "synthetic-programme", ch_id: "101", name: "Synthetic programme", start_timestamp: "1791000000", stop_timestamp: "1791001800" };
 type Log = { event: string; fields: Record<string, unknown> };
@@ -181,5 +182,6 @@ async function main() {
     }
   });
   console.log(`R18-E0P diagnostic scenarios: ${passed}/${passed} passed`);
+  await runStalkerEpgSurfaceWiringScenarios();
 }
 main().catch(() => { console.error("R18-E0P diagnostic scenario failed (details suppressed)"); process.exitCode = 1; });
