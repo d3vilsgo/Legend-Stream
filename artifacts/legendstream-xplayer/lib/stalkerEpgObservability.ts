@@ -16,6 +16,8 @@ const choice = (value: unknown, allowed: Set<string>, fallback = "UNKNOWN") => t
 const count = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(99999, Math.round(value))) : 0;
 const yes = (value: unknown) => value === true ? "YES" : "NO";
 const probeNumber = (value: unknown) => value === 2 ? 2 : 1;
+const touchStages = new Set(["TOUCH_DOWN", "TOUCH_UP", "PRESS", "LONG_PRESS"]);
+export type StalkerEpgTouchStage = "TOUCH_DOWN" | "TOUCH_UP" | "PRESS" | "LONG_PRESS";
 
 export class StalkerEpgObservability {
   private lines: string[] = ["READY"];
@@ -31,12 +33,13 @@ export class StalkerEpgObservability {
   private add(line: string) { this.lines = [...this.lines.slice(-19), line]; this.notify(); }
   setReady(hasChannel: boolean) { if (!this.running && this.lines.length === 1 && ["READY", "NO_CHANNEL"].includes(this.lines[0])) { this.lines = [hasChannel ? "READY" : "NO_CHANNEL"]; this.structural = []; this.notify(); } }
   abort() { this.generation++; this.active?.cancel(); this.active = null; if (this.running) this.add("ABORTED"); this.running = false; }
+  touch(stage: StalkerEpgTouchStage) { if (touchStages.has(stage)) this.add(stage); }
 
   press(channelAvailable: boolean, owner: StalkerEpgProbe | null, options: Parameters<StalkerEpgProbe["run"]>[0]) {
     if (this.running) { this.add("ALREADY_RUNNING"); return; }
     if (!channelAvailable) { this.add("NO_CHANNEL"); return; }
     if (!owner) { this.add("NO_PROBE_OWNER"); return; }
-    this.lines = []; this.structural = []; this.add("PRESSED"); // synchronous, before the probe's first await
+    this.lines = this.lines.filter((line) => touchStages.has(line)); this.structural = []; this.add("PRESSED"); // synchronous, before the probe's first await
     this.running = true;
     this.active = owner;
     const generation = ++this.generation;

@@ -38,7 +38,12 @@ export function StalkerEpgProbeControl({ provider, channel }: {
   return <View style={{ paddingVertical: 8 }}><Pressable
     accessibilityRole="button"
     accessibilityLabel="EPG Yükle · E0P"
+    hitSlop={10}
+    onPressIn={() => observable.touch("TOUCH_DOWN")}
+    onPressOut={() => observable.touch("TOUCH_UP")}
+    onLongPress={() => observable.touch("LONG_PRESS")}
     onPress={() => {
+      observable.touch("PRESS");
       setCopyFeedback("");
       const probe = owner.current;
       observable.press(Boolean(channel), probe, {
@@ -56,9 +61,18 @@ export function StalkerEpgProbeControl({ provider, channel }: {
         log: (event, fields) => safeLog.info(event, JSON.stringify(fields)),
       });
     }}
-    style={{ paddingVertical: 8 }}
+    style={({ pressed }) => ({
+      minHeight: 44,
+      justifyContent: "center",
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      borderWidth: 1,
+      borderRadius: 8,
+      borderColor: colors.primary,
+      backgroundColor: pressed ? colors.secondary : colors.card,
+    })}
   >
-    <Text style={{ color: colors.foreground }}>EPG Yükle · E0P</Text>
+    <Text style={{ color: colors.foreground, fontWeight: "800" }}>EPG Yükle · E0P</Text>
   </Pressable>
   <Text selectable style={{ color: colors.foreground, fontSize: 11, fontFamily: "monospace" }}>{history}</Text>
   <Pressable accessibilityRole="button" accessibilityLabel="E0P tanısını kopyala" onPress={() => {
