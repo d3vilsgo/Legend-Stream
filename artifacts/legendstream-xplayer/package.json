@@ -9,6 +9,7 @@
     "test:credentials": "rm -rf .credential-tests && tsc --module commonjs --target ES2020 --moduleResolution node --skipLibCheck --outDir .credential-tests lib/providerCredentialState.ts tests/credentialStorageScenarios.ts && node .credential-tests/tests/credentialStorageScenarios.js && rm -rf .credential-tests",
     "test:backup": "tsx tests/providerBackupScenarios.ts",
     "test:logging": "tsx tests/logRedactionScenarios.ts && tsx tests/m3uDiagnosticsK4Scenarios.ts",
+    "test:stalker-epg-mapping": "tsx tests/stalkerEpgMappingScenarios.ts",
     "test:stalker-epg-probe": "tsx tests/stalkerEpgProbeScenarios.ts",
     "test:stalker-epg-observability": "tsx tests/stalkerEpgObservabilityScenarios.ts",
     "test:epg": "tsx tests/epgRuntimeScenarios.ts && tsx tests/manualEpgIsolationScenarios.ts && tsx tests/epgOwnedLifecycleScenarios.ts && node scripts/verify-epg-utf8.mjs",

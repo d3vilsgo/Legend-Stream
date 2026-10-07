@@ -78,6 +78,20 @@ export class StalkerEpgObservability {
       const errorClass = choice(value.errorClass, classes);
       this.add(`PROBE_${id}_ERROR_${errorClass} http=${typeof value.httpStatus === "number" && value.httpStatus >= 100 && value.httpStatus <= 599 ? Math.floor(value.httpStatus) : "NOT_EXPOSED"} net=${networkEvidence(errorClass)}`);
     }
+    if (event === "MAPPING") {
+      const mappingChoices = new Set(["YES", "NO", "UNKNOWN", "UNPROVEN"]);
+      const relationChoices = new Set(["ALL", "SOME", "NONE", "UNKNOWN"]);
+      const match = (key: string) => choice(value[key], mappingChoices);
+      this.add(`MAPPING key=${match("portalKey")} ch_id=${match("portalChId")} real_id=${match("portalRealId")}`);
+      this.add(`MAPPING scope=${choice(value.scanScope, new Set(["COMPLETE", "BOUNDED", "UNSUPPORTED"]))}`);
+      this.structural.push(
+        `mapping.container=${choice(value.container, new Set(["ROOT_ARRAY", "ROOT_OBJECT", "DATA_ARRAY", "DATA_OBJECT", "UNSUPPORTED"]))} portalKey=${match("portalKey")} tvgKey=${match("tvgKey")}`,
+        `mapping.selectedGroup=${choice(value.selectedGroup, new Set(["ARRAY", "ABSENT", "OTHER"]))} rows=${count(value.selectedRows)} complete=${match("selectedComplete")} ch_id=${choice(value.selectedChId, relationChoices)} real_id=${choice(value.selectedRealId, relationChoices)}`,
+        `mapping.scanScope=${choice(value.scanScope, new Set(["COMPLETE", "BOUNDED", "UNSUPPORTED"]))} groups=${count(value.scannedGroups)} rows=${count(value.scannedRows)}`,
+        `mapping.portal ch_id=${match("portalChId")} real_id=${match("portalRealId")} row_id=${match("portalRowId")}`,
+        `mapping.tvg ch_id=${match("tvgChId")} real_id=${match("tvgRealId")}`,
+      );
+    }
     if (event === "TIMEOUT") this.add("TIMEOUT_65S");
     if (event === "RESULT") {
       if (value.status === "SUPPORTED_SHAPE") this.add(`RESULT_SUPPORTED_${choice(value.capability, actions)}`);

@@ -90,6 +90,12 @@ jobs:
           set -euo pipefail
           output="$(pnpm --filter @workspace/legendstream-xplayer test:stalker-epg-observability 2>&1 | tee /dev/stderr)"
           grep -F 'R18-E0P observability scenarios: 20/20 passed' <<<"$output"
+      - name: R18-E1 sanitized mapping diagnostic (16/16 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(pnpm --filter @workspace/legendstream-xplayer test:stalker-epg-mapping 2>&1 | tee /dev/stderr)"
+          grep -F 'R18-E1 mapping diagnostic scenarios: 16/16 passed' <<<"$output"
       - name: EPG runtime regressions (12/12 + UTF-8 required)
         shell: bash
         run: |

@@ -1,3 +1,5 @@
+import { inspectStalkerEpgMapping } from "./stalkerEpgMappingProbe";
+
 // Temporary R18-E0P: structural evidence only; never returns programme data.
 type Row = Record<string, unknown>;
 const FIELDS = ["id", "ch_id", "channel_id", "real_id", "name", "title", "descr", "description", "start", "end", "time", "time_to", "start_timestamp", "stop_timestamp", "duration"] as const;
@@ -160,6 +162,7 @@ export class StalkerEpgProbe {
             emit("RESPONSE", { probeId, elapsedMs: Math.max(0, Math.round(clock() - started)), httpStatus: "NOT_EXPOSED", wrapper: "UNWRAPPED_BY_SESSION", ...summary });
             emit("FIELDS", { probeId, fieldTypes });
             for (const time of timeShapes) emit("TIME", { probeId, ...time, timeSemantics: "AMBIGUOUS" });
+            if (action === "get_epg_info") emit("MAPPING", inspectStalkerEpgMapping(payload, identity));
             return summary.usableShape;
           } catch (error) {
             const errorClass = failure(error, controller.signal.aborted);
