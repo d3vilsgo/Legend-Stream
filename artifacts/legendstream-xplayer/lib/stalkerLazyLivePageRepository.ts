@@ -10,6 +10,7 @@ import { fetchStalkerOrderedPage, type StalkerOrderedPage } from "./stalkerPaged
 import { StalkerPortalError } from "./stalkerPortal";
 import { registerStalkerLiveRuntimeLocators } from "./stalkerLiveRuntimeLocator";
 import { isStalkerLiveGlobalCategoryId, normalizeStalkerLiveCategoryIntent } from "./stalkerLiveCategoryIntent";
+import { retainStalkerCatalogBridge } from "./stalkerEpgCatalogBridge";
 
 function pageFromCursor(cursor?: string) {
   if (!cursor) return 1;
@@ -114,6 +115,8 @@ export async function getStalkerLazyLivePage(options: {
   }
   if (signal?.aborted) throw new StalkerPortalError("CANCELLED", "Stalker lazy Live page was cancelled.");
 
+  // Temporary diagnostic capture only; excludes get_all_channels compatibility data.
+  retainStalkerCatalogBridge(session, provider.id, ordered.rows, normalized.items, !ordered.compatibilityFallback);
   return {
     items: projected.map((item) => liveRuntimeItem(item, provider)),
     totalCount: ordered.totalItems,

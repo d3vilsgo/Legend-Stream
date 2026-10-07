@@ -10,6 +10,7 @@ import { StalkerEpgProbe } from "@/lib/stalkerEpgProbe";
 import { StalkerEpgObservability } from "@/lib/stalkerEpgObservability";
 import { getPersistedStalkerLivePlaybackRef } from "@/lib/stalkerLiveCache";
 import { getOrCreateStalkerPortalSession } from "@/lib/stalkerPortalRuntime";
+import { snapshotStalkerCatalogBridge } from "@/lib/stalkerEpgCatalogBridge";
 
 // Temporary explicit-action diagnostic. No common EPG setters or playback access.
 export function StalkerEpgProbeControl({ provider, channel }: {
@@ -58,6 +59,7 @@ export function StalkerEpgProbeControl({ provider, channel }: {
             return { portalId: ref?.portalId, tvgId: channel.tvgId };
           } catch { return { tvgId: channel.tvgId }; }
         },
+        getCatalogEvidence: (session) => snapshotStalkerCatalogBridge(session, provider.id, channel?.id ?? ""),
         log: (event, fields) => safeLog.info(event, JSON.stringify(fields)),
       });
     }}

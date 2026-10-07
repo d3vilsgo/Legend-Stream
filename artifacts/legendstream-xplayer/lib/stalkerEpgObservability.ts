@@ -1,5 +1,6 @@
 import type { StalkerEpgProbe } from "./stalkerEpgProbe";
 import { GROUP_CONSTANTS, GROUP_RELATIONS } from "./stalkerEpgGroupRelations";
+import { BRIDGE_RELATIONS, BRIDGE_SAMPLE_FIELDS, CATALOG_RELATIONS } from "./stalkerEpgCatalogBridge";
 
 // Temporary, bounded in-memory diagnostic state. Only fixed labels and structural
 // allowlists enter the screen or clipboard; provider and programme values cannot.
@@ -24,6 +25,7 @@ export class StalkerEpgObservability {
   private lines: string[] = ["READY"];
   private structural: string[] = [];
   private groupStructural: string[] = [];
+  private bridgeStructural: string[] = [];
   private listeners = new Set<() => void>();
   private running = false;
   private generation = 0;
@@ -33,7 +35,7 @@ export class StalkerEpgObservability {
   getSnapshot = () => this.lines.join("\n");
   private notify() { for (const listener of this.listeners) { try { listener(); } catch { /* diagnostic only */ } } }
   private add(line: string) { this.lines = [...this.lines.slice(-19), line]; this.notify(); }
-  setReady(hasChannel: boolean) { if (!this.running && this.lines.length === 1 && ["READY", "NO_CHANNEL"].includes(this.lines[0])) { this.lines = [hasChannel ? "READY" : "NO_CHANNEL"]; this.structural = []; this.groupStructural = []; this.notify(); } }
+  setReady(hasChannel: boolean) { if (!this.running && this.lines.length === 1 && ["READY", "NO_CHANNEL"].includes(this.lines[0])) { this.lines = [hasChannel ? "READY" : "NO_CHANNEL"]; this.structural = []; this.groupStructural = []; this.bridgeStructural = []; this.notify(); } }
   abort() { this.generation++; this.active?.cancel(); this.active = null; if (this.running) this.add("ABORTED"); this.running = false; }
   touch(stage: StalkerEpgTouchStage) { if (touchStages.has(stage)) this.add(stage); }
 
@@ -41,7 +43,7 @@ export class StalkerEpgObservability {
     if (this.running) { this.add("ALREADY_RUNNING"); return; }
     if (!channelAvailable) { this.add("NO_CHANNEL"); return; }
     if (!owner) { this.add("NO_PROBE_OWNER"); return; }
-    this.lines = this.lines.filter((line) => touchStages.has(line)); this.structural = []; this.groupStructural = []; this.add("PRESSED"); // synchronous, before the probe's first await
+    this.lines = this.lines.filter((line) => touchStages.has(line)); this.structural = []; this.groupStructural = []; this.bridgeStructural = []; this.add("PRESSED"); // synchronous, before the probe's first await
     this.running = true;
     this.active = owner;
     const generation = ++this.generation;
@@ -55,7 +57,7 @@ export class StalkerEpgObservability {
   observe(event: string, value: Record<string, unknown>) {
     const id = probeNumber(value.probeId);
     if (event === "BEGIN") this.add(`BEGIN auth=${yes(value.authenticatedAtStart)}`);
-    if (event === "BEGIN") this.groupStructural = [];
+    if (event === "BEGIN") { this.groupStructural = []; this.bridgeStructural = []; }
     if (event === "IDENTITY") this.add(value.hasPortalId === true ? "IDENTITY_OK" : "IDENTITY_NO_PORTAL_ID");
     if (event === "PROBE") this.add(`PROBE_${id}_REQUEST_CALLED`);
     if (event === "FETCH_DONE") this.add(`PROBE_${id}_FETCH_DONE ${count(value.fetchWaitMs)}ms`);
@@ -114,6 +116,28 @@ export class StalkerEpgObservability {
       ];
       this.add(header);
     }
+    if (event === "CATALOG_BRIDGE") {
+      const record = (v: unknown): Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
+      const selected = record(value.selected);
+      const aggregates = record(value.aggregates);
+      const truths = new Set(["YES", "NO", "UNKNOWN"]);
+      const confidences = new Set(["BOUNDED_ALL_OBSERVED", "BOUNDED_NONE_OBSERVED", "MIXED", "UNKNOWN"]);
+      const source = choice(selected.portalId_source, new Set(["ID", "CH_ID", "STREAM_ID", "UNKNOWN"]));
+      const header = `BRIDGE_SAMPLE channels=${Math.min(32, count(value.channels))} scope=BOUNDED`;
+      this.bridgeStructural = ["CATALOG_IDENTITY",
+        ...CATALOG_RELATIONS.map((field) => `catalog.${field}=${choice(selected[field], truths)}`),
+        `catalog.portalId_source=${source}`,
+        ...BRIDGE_RELATIONS.map((field) => `bridge.${field}=${choice(selected[field], truths)}`),
+        "bridge.rowComparisonScope=EXACT_CANDIDATE_GROUP_FIRST_64",
+        header,
+        ...BRIDGE_SAMPLE_FIELDS.map((field) => {
+          const row = record(aggregates[field]);
+          return `sample.${field} YES=${Math.min(32, count(row.YES))} NO=${Math.min(32, count(row.NO))} UNKNOWN=${Math.min(32, count(row.UNKNOWN))} confidence=${choice(row.confidence, confidences)}`;
+        }),
+      ];
+      this.add(`CATALOG_IDENTITY source=${source} id_eq_ch_id=${choice(selected.id_eq_ch_id, truths)}`);
+      this.add(header);
+    }
     if (event === "RESULT") {
       if (value.status === "SUPPORTED_SHAPE") this.add(`RESULT_SUPPORTED_${choice(value.capability, actions)}`);
       else if (value.status === "INCONCLUSIVE") this.add(`RESULT_INCONCLUSIVE_${choice(value.reason, reasons, value.capability === "get_short_epg" ? "get_short_epg" : "UNKNOWN")}`);
@@ -126,7 +150,7 @@ export class StalkerEpgObservability {
     const safeVersion = typeof version === "string" && /^\d+\.\d+\.\d+$/.test(version) ? version : "unknown";
     const safeCode = typeof versionCode === "number" && Number.isSafeInteger(versionCode) ? versionCode : "unknown";
     const safeSha = typeof sha === "string" && /^[a-f0-9]{7,12}$/i.test(sha) ? sha : "unavailable";
-    return [`R18_E0P version=${safeVersion} versionCode=${safeCode} sha=${safeSha}`, ...this.lines, ...this.structural.slice(-30), ...this.groupStructural].join("\n");
+    return [`R18_E0P version=${safeVersion} versionCode=${safeCode} sha=${safeSha}`, ...this.lines, ...this.structural.slice(-30), ...this.groupStructural, ...this.bridgeStructural].join("\n");
   }
 
   async copy(write: (content: string) => Promise<unknown>, version?: unknown, versionCode?: unknown, sha?: unknown): Promise<"KOPYALANDI" | "KOPYALAMA_BASARISIZ"> {

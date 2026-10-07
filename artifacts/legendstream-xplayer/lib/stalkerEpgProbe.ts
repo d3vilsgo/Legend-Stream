@@ -1,5 +1,6 @@
 import { inspectStalkerEpgMapping } from "./stalkerEpgMappingProbe";
 import { inspectStalkerEpgGroupRelations } from "./stalkerEpgGroupRelations";
+import { inspectStalkerCatalogBridge, type CatalogBridgeSample } from "./stalkerEpgCatalogBridge";
 
 // Temporary R18-E0P: structural evidence only; never returns programme data.
 type Row = Record<string, unknown>;
@@ -13,6 +14,7 @@ type Session = {
 type ProbeOptions = {
   getSession: () => Session;
   getIdentity: () => Promise<Identity>;
+  getCatalogEvidence?: (session: Session) => CatalogBridgeSample;
   log: (event: string, fields: Record<string, unknown>) => void;
   observe?: (event: string, fields: Record<string, unknown>) => void;
 };
@@ -140,6 +142,8 @@ export class StalkerEpgProbe {
         emit("BEGIN", { providerType: "stalker", authenticatedAtStart: session.isAuthenticated(), sessionAuthority: "EXISTING_RUNTIME" });
         const identity = await options.getIdentity();
         current();
+        let catalogEvidence: CatalogBridgeSample = { rows: [] };
+        try { catalogEvidence = options.getCatalogEvidence?.(session) ?? catalogEvidence; } catch { /* Best effort local evidence only. */ }
         emit("IDENTITY", {
           hasPortalId: Boolean(identity.portalId), hasPlaybackPortalId: Boolean(identity.portalId), hasTvgId: Boolean(identity.tvgId),
           candidateIdentitySource: identity.portalId ? "PERSISTED_PLAYBACK_PORTAL_ID" : "NONE",
@@ -165,6 +169,7 @@ export class StalkerEpgProbe {
             for (const time of timeShapes) emit("TIME", { probeId, ...time, timeSemantics: "AMBIGUOUS" });
             if (action === "get_epg_info") emit("MAPPING", inspectStalkerEpgMapping(payload, identity));
             if (action === "get_epg_info") emit("GROUP_RELATION", inspectStalkerEpgGroupRelations(payload));
+            if (action === "get_epg_info" && options.getCatalogEvidence) emit("CATALOG_BRIDGE", inspectStalkerCatalogBridge(payload, catalogEvidence, identity.portalId));
             return summary.usableShape;
           } catch (error) {
             const errorClass = failure(error, controller.signal.aborted);

@@ -102,6 +102,12 @@ jobs:
           set -euo pipefail
           output="$(pnpm --filter @workspace/legendstream-xplayer test:stalker-epg-group-relations 2>&1 | tee /dev/stderr)"
           grep -F 'R18-E1B group relation scenarios: 24/24 passed' <<<"$output"
+      - name: R18-E1C catalog to EPG identity bridge (29/29 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(pnpm --filter @workspace/legendstream-xplayer test:stalker-epg-catalog-bridge 2>&1 | tee /dev/stderr)"
+          grep -F 'R18-E1C catalog bridge scenarios: 29/29 passed' <<<"$output"
       - name: EPG runtime regressions (12/12 + UTF-8 required)
         shell: bash
         run: |
