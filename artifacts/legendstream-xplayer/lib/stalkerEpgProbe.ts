@@ -1,4 +1,5 @@
 import { inspectStalkerEpgMapping } from "./stalkerEpgMappingProbe";
+import { inspectStalkerEpgGroupRelations } from "./stalkerEpgGroupRelations";
 
 // Temporary R18-E0P: structural evidence only; never returns programme data.
 type Row = Record<string, unknown>;
@@ -163,6 +164,7 @@ export class StalkerEpgProbe {
             emit("FIELDS", { probeId, fieldTypes });
             for (const time of timeShapes) emit("TIME", { probeId, ...time, timeSemantics: "AMBIGUOUS" });
             if (action === "get_epg_info") emit("MAPPING", inspectStalkerEpgMapping(payload, identity));
+            if (action === "get_epg_info") emit("GROUP_RELATION", inspectStalkerEpgGroupRelations(payload));
             return summary.usableShape;
           } catch (error) {
             const errorClass = failure(error, controller.signal.aborted);
