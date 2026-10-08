@@ -14,6 +14,7 @@
     "test:stalker-epg-mapping": "tsx tests/stalkerEpgMappingScenarios.ts",
     "test:stalker-epg-probe": "tsx tests/stalkerEpgProbeScenarios.ts",
     "test:stalker-epg-observability": "tsx tests/stalkerEpgObservabilityScenarios.ts",
+    "test:stalker-product-epg": "tsx tests/stalkerProductEpgScenarios.ts",
     "test:epg": "tsx tests/epgRuntimeScenarios.ts && tsx tests/manualEpgIsolationScenarios.ts && tsx tests/epgOwnedLifecycleScenarios.ts && node scripts/verify-epg-utf8.mjs",
     "test:m3u-diagnostics": "tsx tests/m3uDiagnosticsScenarios.ts",
     "test:m3u-classification": "tsx tests/m3uClassificationScenarios.ts",
