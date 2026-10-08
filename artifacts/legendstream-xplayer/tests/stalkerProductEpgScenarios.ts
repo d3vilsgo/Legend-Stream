@@ -236,11 +236,12 @@ export async function runStalkerProductEpgScenarios() {
   await scenario("normal product control remains shared and Stalker surface wiring remains isolated", () => {
     const manual = source("../components/catalog/ManualEpgControl.tsx");
     const paged = source("../components/catalog/PagedCatalogViews.tsx");
-    const probe = source("../components/catalog/StalkerEpgProbeControl.tsx");
+    const main = source("../components/StalkerMainPage.tsx");
     assert.match(manual, /loadEpgManually\(providerId\)/);
     assert.match(manual, /EPG Yükleniyor/);
     assert.match(paged, /<ManualEpgControl providerId=\{provider\.id\} enabled=\{page\.items\.length > 0\} \/>/);
-    assert.match(probe, /StalkerEpgObservability/);
+    assert.doesNotMatch(paged, /renderDiagnostic|StalkerEpgProbeControl|EPG Yükle · E0P|E0P tanısını kopyala/);
+    assert.doesNotMatch(main, /renderDiagnostic|StalkerEpgProbeControl|EPG Yükle · E0P|E0P tanısını kopyala/);
     assert.doesNotMatch(manual, /get_epg_info|get_short_epg|StalkerEpgProbe/);
   });
 
