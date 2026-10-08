@@ -114,6 +114,7 @@ import {
   syncStalkerCatalogForLifecycle,
 } from "@/lib/stalkerLiveCatalogRouting";
 import type { StalkerLiveSyncOwner } from "@/lib/stalkerLiveSync";
+import { loadStalkerProductEpg } from "@/lib/stalkerProductEpg";
 
 export { ProviderType };
 export type { Channel, EpgProgram };
@@ -750,6 +751,12 @@ async function loadBulkProviderEpg(
   diagnosticAttemptId?: number,
   isCurrentEpg?: () => boolean,
 ): Promise<EpgProgram[]> {
+  if (provider.type === "stalker") {
+    await yieldToUi();
+    if (signal?.aborted) return [];
+    return loadStalkerProductEpg(provider, channels, signal);
+  }
+
   const xtreamProvider = toXtreamLoadProvider(fromProvider(provider));
   const diagnosticMode = provider.type === "xtream"
     ? getXtreamEpgDiagnosticSnapshot().mode : "FULL_PIPELINE";
@@ -1603,7 +1610,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       );
       if (!provider) return;
       const registeredChannels = getRegisteredEpgChannels<Channel>(resolvedProviderId);
-      const boundedProvider = provider.type === "m3u" || provider.type === "xtream";
+      const boundedProvider = provider.type === "m3u" || provider.type === "xtream" || provider.type === "stalker";
       const fallbackChannels = snapshot.channels.filter(
         (channel) => channel.providerId === resolvedProviderId,
       );
@@ -1920,7 +1927,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
 
   const loadEpgManually = useCallback(async (providerId: string) => {
     const provider = stateRef.current.provider;
-    if (provider?.id !== providerId || (provider.type !== "m3u" && provider.type !== "xtream")) return;
+    if (provider?.id !== providerId || (provider.type !== "m3u" && provider.type !== "xtream" && provider.type !== "stalker")) return;
     if (!beginManualEpg(providerId)) return;
     manualEpgResultRef.current.delete(providerId);
     try {

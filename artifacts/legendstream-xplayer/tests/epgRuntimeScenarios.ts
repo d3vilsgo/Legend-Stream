@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { tokenizeM3ULinesCooperatively } from "../lib/cooperative";
+import { runStalkerProductEpgScenarios } from "./stalkerProductEpgScenarios";
 import {
   EPG_BACKGROUND_BUDGET_MS,
   EPG_PAGED_SEED_LIMIT,
@@ -427,6 +428,7 @@ async function main() {
   process.stdout.write("epg runtime scenarios: 12/12 passed\n");
   process.stdout.write("epg Z2RA non-blocking contract scenarios: 2/2 passed\n");
   process.stdout.write("epg Z2RB ownership/liveness scenarios: 8/8 passed\n");
+  await runStalkerProductEpgScenarios();
 }
 
 void main().catch((error) => {

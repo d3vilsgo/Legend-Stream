@@ -212,9 +212,10 @@ function PageFooter({ loading }: { loading: boolean }) {
   </View>;
 }
 
-function CatalogLoadingSkeleton({ text }: { text: string }) {
+function CatalogLoadingSkeleton({ text, children }: { text: string; children?: React.ReactNode }) {
   const colors = useColors();
   return <View style={s.skeletonRoot}>
+    {children}
     <ActivityIndicator size="small" color={colors.primary} />
     <Text style={{ color: colors.mutedForeground, fontWeight: "600" }}>{text}</Text>
   </View>;

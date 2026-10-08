@@ -88,6 +88,7 @@ jobs:
           set -euo pipefail
           epg="$(pnpm --filter @workspace/legendstream-xplayer test:epg 2>&1 | tee /dev/stderr)"
           grep -F 'epg runtime scenarios: 12/12 passed' <<<"$epg"
+          grep -F 'Stalker product EPG scenarios: 20/20 passed' <<<"$epg"
           grep -F 'EPG UTF-8 regression samples passed.' <<<"$epg"
       - name: M3U shape diagnostics regressions (8/8 required)
         shell: bash

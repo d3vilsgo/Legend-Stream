@@ -1,0 +1,160 @@
+import type { StalkerEpgProbe } from "./stalkerEpgProbe";
+import { GROUP_CONSTANTS, GROUP_RELATIONS } from "./stalkerEpgGroupRelations";
+import { BRIDGE_RELATIONS, BRIDGE_SAMPLE_FIELDS, CATALOG_RELATIONS } from "./stalkerEpgCatalogBridge";
+
+// Temporary, bounded in-memory diagnostic state. Only fixed labels and structural
+// allowlists enter the screen or clipboard; provider and programme values cannot.
+const shapes = new Set(["array", "object", "string", "number", "boolean", "null", "undefined"]);
+const fields = new Set(["id", "ch_id", "channel_id", "real_id", "name", "title", "descr", "description", "start", "end", "time", "time_to", "start_timestamp", "stop_timestamp", "duration"]);
+const classes = new Set(["ABORT", "AUTH", "TIMEOUT", "HTTP", "INVALID_SHAPE", "UNKNOWN", "PRE_NETWORK_MISSING_MAC", "PRE_NETWORK_INVALID_URL", "NETWORK", "PORTAL_PROTECTION"]);
+const networkEvidence = (errorClass: unknown) => ["HTTP", "PORTAL_PROTECTION", "INVALID_SHAPE"].includes(String(errorClass)) ? "YES"
+  : ["PRE_NETWORK_MISSING_MAC", "PRE_NETWORK_INVALID_URL"].includes(String(errorClass)) ? "NO" : "UNPROVEN";
+const actions = new Set(["get_epg_info", "get_short_epg"]);
+const reasons = new Set(["NO_CANONICAL_CHANNEL_IDENTITY"]);
+const kinds = new Set(["number", "numeric_string", "ISO_like_string", "datetime_string", "null", "unknown"]);
+const magnitudes = new Set(["unix_seconds_candidate", "unix_milliseconds_candidate", "unknown"]);
+const textShapes = new Set(["mixed_candidate", "base64_candidate", "plain_text_candidate", "unknown"]);
+const choice = (value: unknown, allowed: Set<string>, fallback = "UNKNOWN") => typeof value === "string" && allowed.has(value) ? value : fallback;
+const count = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(99999, Math.round(value))) : 0;
+const yes = (value: unknown) => value === true ? "YES" : "NO";
+const probeNumber = (value: unknown) => value === 2 ? 2 : 1;
+const touchStages = new Set(["TOUCH_DOWN", "TOUCH_UP", "PRESS", "LONG_PRESS"]);
+export type StalkerEpgTouchStage = "TOUCH_DOWN" | "TOUCH_UP" | "PRESS" | "LONG_PRESS";
+
+export class StalkerEpgObservability {
+  private lines: string[] = ["READY"];
+  private structural: string[] = [];
+  private groupStructural: string[] = [];
+  private bridgeStructural: string[] = [];
+  private listeners = new Set<() => void>();
+  private running = false;
+  private generation = 0;
+  private active: StalkerEpgProbe | null = null;
+
+  subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
+  getSnapshot = () => this.lines.join("\n");
+  private notify() { for (const listener of this.listeners) { try { listener(); } catch { /* diagnostic only */ } } }
+  private add(line: string) { this.lines = [...this.lines.slice(-19), line]; this.notify(); }
+  setReady(hasChannel: boolean) { if (!this.running && this.lines.length === 1 && ["READY", "NO_CHANNEL"].includes(this.lines[0])) { this.lines = [hasChannel ? "READY" : "NO_CHANNEL"]; this.structural = []; this.groupStructural = []; this.bridgeStructural = []; this.notify(); } }
+  abort() { this.generation++; this.active?.cancel(); this.active = null; if (this.running) this.add("ABORTED"); this.running = false; }
+  touch(stage: StalkerEpgTouchStage) { if (touchStages.has(stage)) this.add(stage); }
+
+  press(channelAvailable: boolean, owner: StalkerEpgProbe | null, options: Parameters<StalkerEpgProbe["run"]>[0]) {
+    if (this.running) { this.add("ALREADY_RUNNING"); return; }
+    if (!channelAvailable) { this.add("NO_CHANNEL"); return; }
+    if (!owner) { this.add("NO_PROBE_OWNER"); return; }
+    this.lines = this.lines.filter((line) => touchStages.has(line)); this.structural = []; this.groupStructural = []; this.bridgeStructural = []; this.add("PRESSED"); // synchronous, before the probe's first await
+    this.running = true;
+    this.active = owner;
+    const generation = ++this.generation;
+    void owner.run({ ...options, observe: (event, details) => {
+      if (this.generation === generation) this.observe(event, details);
+    } }).finally(() => {
+      if (this.generation === generation) { this.running = false; this.active = null; this.notify(); }
+    });
+  }
+
+  observe(event: string, value: Record<string, unknown>) {
+    const id = probeNumber(value.probeId);
+    if (event === "BEGIN") this.add(`BEGIN auth=${yes(value.authenticatedAtStart)}`);
+    if (event === "BEGIN") { this.groupStructural = []; this.bridgeStructural = []; }
+    if (event === "IDENTITY") this.add(value.hasPortalId === true ? "IDENTITY_OK" : "IDENTITY_NO_PORTAL_ID");
+    if (event === "PROBE") this.add(`PROBE_${id}_REQUEST_CALLED`);
+    if (event === "FETCH_DONE") this.add(`PROBE_${id}_FETCH_DONE ${count(value.fetchWaitMs)}ms`);
+    if (event === "RESPONSE") {
+      this.add(`PROBE_${id}_RESPONSE ${choice(value.dataShape, shapes)} items=${count(value.itemCount)} usable=${yes(value.usableShape)}`);
+      this.structural.push(`dataShape=${choice(value.dataShape, shapes)} itemCount=${count(value.itemCount)} countScope=${value.countScope === "SAMPLED_GROUPS" ? "SAMPLED_GROUPS" : "EXACT"}`);
+      this.structural.push(`responseHasChannelIdentity=${yes(value.responseHasChannelIdentity)} responseMatchesPortalId=${value.responseMatchesPortalId === "YES" || value.responseMatchesPortalId === "NO" ? value.responseMatchesPortalId : "UNKNOWN"}`);
+      this.structural.push(`fieldNames=${Array.isArray(value.fieldNames) ? value.fieldNames.filter((f) => fields.has(f)).join(",") : ""} textShape=${choice(value.textShape, textShapes)}`);
+    }
+    if (event === "FIELDS") {
+      const types = Array.isArray(value.fieldTypes) ? value.fieldTypes.flatMap((entry) => {
+        if (!entry || typeof entry !== "object") return [];
+        const row = entry as { field?: unknown; types?: unknown };
+        return typeof row.field === "string" && fields.has(row.field) && Array.isArray(row.types) ? [`${row.field}:${row.types.filter((type) => typeof type === "string" && shapes.has(type)).join("|")}`] : [];
+      }) : [];
+      this.structural.push(`fieldTypes=${types.join(",")}`);
+    }
+    if (event === "TIME") {
+      const samples = Array.isArray(value.samples) ? value.samples.flatMap((sample) => sample && typeof sample === "object" ? [sample as { kind?: unknown; magnitude?: unknown }] : []) : [];
+      if (typeof value.field === "string" && fields.has(value.field)) this.structural.push(`timeShape.${value.field}=${samples.map((sample) => `${choice(sample.kind, kinds)}:${choice(sample.magnitude, magnitudes)}`).join(",")}`);
+    }
+    if (event === "ERROR") {
+      const errorClass = choice(value.errorClass, classes);
+      this.add(`PROBE_${id}_ERROR_${errorClass} http=${typeof value.httpStatus === "number" && value.httpStatus >= 100 && value.httpStatus <= 599 ? Math.floor(value.httpStatus) : "NOT_EXPOSED"} net=${networkEvidence(errorClass)}`);
+    }
+    if (event === "MAPPING") {
+      const mappingChoices = new Set(["YES", "NO", "UNKNOWN", "UNPROVEN"]);
+      const relationChoices = new Set(["ALL", "SOME", "NONE", "UNKNOWN"]);
+      const match = (key: string) => choice(value[key], mappingChoices);
+      this.add(`MAPPING key=${match("portalKey")} ch_id=${match("portalChId")} real_id=${match("portalRealId")}`);
+      this.add(`MAPPING scope=${choice(value.scanScope, new Set(["COMPLETE", "BOUNDED", "UNSUPPORTED"]))}`);
+      this.structural.push(
+        `mapping.container=${choice(value.container, new Set(["ROOT_ARRAY", "ROOT_OBJECT", "DATA_ARRAY", "DATA_OBJECT", "UNSUPPORTED"]))} portalKey=${match("portalKey")} tvgKey=${match("tvgKey")}`,
+        `mapping.selectedGroup=${choice(value.selectedGroup, new Set(["ARRAY", "ABSENT", "OTHER"]))} rows=${count(value.selectedRows)} complete=${match("selectedComplete")} ch_id=${choice(value.selectedChId, relationChoices)} real_id=${choice(value.selectedRealId, relationChoices)}`,
+        `mapping.scanScope=${choice(value.scanScope, new Set(["COMPLETE", "BOUNDED", "UNSUPPORTED"]))} groups=${count(value.scannedGroups)} rows=${count(value.scannedRows)}`,
+        `mapping.portal ch_id=${match("portalChId")} real_id=${match("portalRealId")} row_id=${match("portalRowId")}`,
+        `mapping.tvg ch_id=${match("tvgChId")} real_id=${match("tvgRealId")}`,
+      );
+    }
+    if (event === "TIMEOUT") this.add("TIMEOUT_65S");
+    if (event === "GROUP_RELATION") {
+      const record = (v: unknown): Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
+      const relations = record(value.relations);
+      const constants = record(value.constants);
+      const classifications = new Set(["GLOBAL_ALL_OBSERVED", "GLOBAL_NONE_OBSERVED", "MIXED", "UNKNOWN", "BOUNDED_ALL_OBSERVED", "BOUNDED_NONE_OBSERVED"]);
+      const header = `GROUP_RELATION scope=${value.scope === "COMPLETE" ? "COMPLETE" : "BOUNDED"} groups=${count(value.groups)} rows=${count(value.rows)}`;
+      this.groupStructural = [header,
+        ...GROUP_RELATIONS.map((field) => {
+          const row = record(relations[field]);
+          return `group.${field}=${choice(row.classification, classifications)} ALL=${count(row.ALL)} SOME=${count(row.SOME)} NONE=${count(row.NONE)} UNKNOWN=${count(row.UNKNOWN)}`;
+        }),
+        ...GROUP_CONSTANTS.map((field) => {
+          const row = record(constants[field]);
+          return `group.constant_${field} YES=${count(row.YES)} NO=${count(row.NO)} UNKNOWN=${count(row.UNKNOWN)}`;
+        }),
+      ];
+      this.add(header);
+    }
+    if (event === "CATALOG_BRIDGE") {
+      const record = (v: unknown): Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
+      const selected = record(value.selected);
+      const aggregates = record(value.aggregates);
+      const truths = new Set(["YES", "NO", "UNKNOWN"]);
+      const confidences = new Set(["BOUNDED_ALL_OBSERVED", "BOUNDED_NONE_OBSERVED", "MIXED", "UNKNOWN"]);
+      const source = choice(selected.portalId_source, new Set(["ID", "CH_ID", "STREAM_ID", "UNKNOWN"]));
+      const header = `BRIDGE_SAMPLE channels=${Math.min(32, count(value.channels))} scope=BOUNDED`;
+      this.bridgeStructural = ["CATALOG_IDENTITY",
+        ...CATALOG_RELATIONS.map((field) => `catalog.${field}=${choice(selected[field], truths)}`),
+        `catalog.portalId_source=${source}`,
+        ...BRIDGE_RELATIONS.map((field) => `bridge.${field}=${choice(selected[field], truths)}`),
+        "bridge.rowComparisonScope=EXACT_CANDIDATE_GROUP_FIRST_64",
+        header,
+        ...BRIDGE_SAMPLE_FIELDS.map((field) => {
+          const row = record(aggregates[field]);
+          return `sample.${field} YES=${Math.min(32, count(row.YES))} NO=${Math.min(32, count(row.NO))} UNKNOWN=${Math.min(32, count(row.UNKNOWN))} confidence=${choice(row.confidence, confidences)}`;
+        }),
+      ];
+      this.add(`CATALOG_IDENTITY source=${source} id_eq_ch_id=${choice(selected.id_eq_ch_id, truths)}`);
+      this.add(header);
+    }
+    if (event === "RESULT") {
+      if (value.status === "SUPPORTED_SHAPE") this.add(`RESULT_SUPPORTED_${choice(value.capability, actions)}`);
+      else if (value.status === "INCONCLUSIVE") this.add(`RESULT_INCONCLUSIVE_${choice(value.reason, reasons, value.capability === "get_short_epg" ? "get_short_epg" : "UNKNOWN")}`);
+      else if (value.errorClass === "ABORT") this.add("ABORTED");
+      else this.add(`RESULT_FAILED_${choice(value.errorClass, classes)}`);
+    }
+  }
+
+  summary(version?: unknown, versionCode?: unknown, sha?: unknown) {
+    const safeVersion = typeof version === "string" && /^\d+\.\d+\.\d+$/.test(version) ? version : "unknown";
+    const safeCode = typeof versionCode === "number" && Number.isSafeInteger(versionCode) ? versionCode : "unknown";
+    const safeSha = typeof sha === "string" && /^[a-f0-9]{7,12}$/i.test(sha) ? sha : "unavailable";
+    return [`R18_E0P version=${safeVersion} versionCode=${safeCode} sha=${safeSha}`, ...this.lines, ...this.structural.slice(-30), ...this.groupStructural, ...this.bridgeStructural].join("\n");
+  }
+
+  async copy(write: (content: string) => Promise<unknown>, version?: unknown, versionCode?: unknown, sha?: unknown): Promise<"KOPYALANDI" | "KOPYALAMA_BASARISIZ"> {
+    try { await write(this.summary(version, versionCode, sha)); return "KOPYALANDI"; }
+    catch { return "KOPYALAMA_BASARISIZ"; }
+  }
+}
