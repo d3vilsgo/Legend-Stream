@@ -222,6 +222,12 @@ jobs:
             exit 1
           fi
           echo 'Repository hygiene guard passed.'
+      - name: R18-F1 responsive catalog geometry
+        shell: bash
+        run: |
+          set -euo pipefail
+          layout="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/catalogGridLayoutScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'R18-F1 catalog grid layout scenarios passed.' <<<"$layout"
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references
