@@ -40,11 +40,11 @@ jobs:
           ref: ${{ github.head_ref }}
       - uses: pnpm/action-setup@v4
         with:
-          version: 10
+          version: 10.28.1
           run_install: false
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version-file: .nvmrc
           cache: pnpm
       - name: Install dependencies from committed lockfile
         run: pnpm install --frozen-lockfile
@@ -76,6 +76,12 @@ jobs:
           grep -F 'm3u diagnostics K4 scenarios: 6/6 passed' <<<"$mobile"
           api="$(pnpm --filter @workspace/legendstream-xplayer exec tsx "$GITHUB_WORKSPACE/artifacts/api-server/src/lib/logRedaction.test.ts" 2>&1 | tee /dev/stderr)"
           grep -F 'API log redaction scenarios: 4/4 passed' <<<"$api"
+      - name: API proxy client IP rate limit (2/2 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          proxy="$(pnpm --filter @workspace/legendstream-xplayer exec tsx "$GITHUB_WORKSPACE/artifacts/api-server/src/middlewares/xtreamRateLimit.test.ts" 2>&1 | tee /dev/stderr)"
+          grep -F 'API trust proxy rate limit scenarios: 2/2 passed' <<<"$proxy"
       - name: Console usage guard (fail-closed)
         shell: bash
         run: |
@@ -90,6 +96,18 @@ jobs:
           grep -F 'epg runtime scenarios: 12/12 passed' <<<"$epg"
           grep -F 'Stalker product EPG scenarios: 20/20 passed' <<<"$epg"
           grep -F 'EPG UTF-8 regression samples passed.' <<<"$epg"
+      - name: Xtream XMLTV parser behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          xmltv="$(pnpm --filter @workspace/legendstream-xplayer test:xtream-xmltv-parser 2>&1 | tee /dev/stderr)"
+          grep -F 'xtream XMLTV parser equivalence, malformed input, yields, and cancellation: PASS' <<<"$xmltv"
+      - name: R18-B product contract behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          contract="$(pnpm --filter @workspace/legendstream-xplayer test:r18-b-product-contract 2>&1 | tee /dev/stderr)"
+          grep -F 'R18-B product contract scenarios passed.' <<<"$contract"
       - name: M3U shape diagnostics regressions (8/8 required)
         shell: bash
         run: |
