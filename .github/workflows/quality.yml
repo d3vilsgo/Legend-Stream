@@ -213,6 +213,12 @@ jobs:
           set -euo pipefail
           trace="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/r18C2StalkerTraceScenarios.ts 2>&1 | tee /dev/stderr)"
           grep -F 'R18-C2 credential-safe trace scenarios passed.' <<<"$trace"
+      - name: Home hero responsive layout regressions (8/8 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          home_hero="$(pnpm --filter @workspace/legendstream-xplayer test:home-hero-layout 2>&1 | tee /dev/stderr)"
+          grep -F 'home hero layout scenarios: 8/8 passed' <<<"$home_hero"
       - name: Repository hygiene guard
         shell: bash
         run: |
