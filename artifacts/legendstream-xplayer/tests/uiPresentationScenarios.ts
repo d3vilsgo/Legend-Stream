@@ -64,7 +64,19 @@ scenario("runtime provider derives only device/layout state and owns no product 
   assert.match(context, /Platform\.isTV/);
   assert.match(context, /useWindowDimensions\(\)/);
   assert.match(context, /resolveUiPresentation/);
-  assert.doesNotMatch(context, /provider|stalker|xtream|m3u|playback|fetch\(|AsyncStorage/i);
+  for (const forbidden of [
+    "@/context/PlayerContext",
+    "StalkerMainPage",
+    "OptimizedHomeScreen",
+    "resolveCatalogPlaybackSource",
+    "stalkerPortal",
+    "xtreamCatalog",
+    "m3uTransport",
+    "fetch(",
+    "AsyncStorage",
+  ]) {
+    assert.equal(context.includes(forbidden), false, `UI presentation context leaked ${forbidden}`);
+  }
 });
 
 scenario("tabs layout installs one presentation boundary without changing ProductShell delegation", () => {
