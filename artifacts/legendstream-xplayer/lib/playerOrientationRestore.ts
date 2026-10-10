@@ -1,5 +1,9 @@
 export type PlayerOrientationSnapshot = "portrait" | "landscape" | "unknown";
 export type PlayerOrientationRestoreTarget = "portrait" | "landscape" | "unlock";
+export type PlayerOrientationLockPolicy = "free" | "portrait" | "landscape" | "unknown";
+export type PlayerOrientationRestoreStep =
+  | { type: "lock"; target: "portrait" | "landscape" }
+  | { type: "unlock" };
 
 export function orientationSnapshotFromDimensions(
   width: number,
@@ -25,4 +29,33 @@ export function resolvePlayerOrientationRestoreTarget({
     return initialOrientation;
   }
   return "unlock";
+}
+
+export function resolvePlayerOrientationRestorePlan({
+  launchLayout,
+  initialOrientation,
+  initialLock,
+}: {
+  launchLayout: PlayerOrientationSnapshot;
+  initialOrientation: PlayerOrientationSnapshot;
+  initialLock: PlayerOrientationLockPolicy;
+}): PlayerOrientationRestoreStep[] {
+  const visualTarget = resolvePlayerOrientationRestoreTarget({ launchLayout, initialOrientation });
+  const steps: PlayerOrientationRestoreStep[] = [];
+
+  if (visualTarget === "portrait" || visualTarget === "landscape") {
+    steps.push({ type: "lock", target: visualTarget });
+  } else {
+    steps.push({ type: "unlock" });
+  }
+
+  if (initialLock === "free" || initialLock === "unknown") {
+    if (visualTarget !== "unlock") steps.push({ type: "unlock" });
+    return steps;
+  }
+
+  if (visualTarget !== initialLock) {
+    steps.push({ type: "lock", target: initialLock });
+  }
+  return steps;
 }

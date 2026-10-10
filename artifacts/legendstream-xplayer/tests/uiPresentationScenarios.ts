@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { resolveUiPresentation } from "../lib/uiPresentation";
 import {
   orientationSnapshotFromDimensions,
+  resolvePlayerOrientationRestorePlan,
   resolvePlayerOrientationRestoreTarget,
 } from "../lib/playerOrientationRestore";
 
@@ -136,9 +137,11 @@ scenario("player orientation owner stays outside product protocol and playback s
   assert.match(orientation, /useWindowDimensions\(\)/);
   assert.match(orientation, /orientationSnapshotFromDimensions\(width, height\)/);
   assert.match(orientation, /resolvePlayerOrientationRestoreTarget/);
+  assert.match(orientation, /await ScreenOrientation\.getOrientationLockAsync\(\)/);
+  assert.match(orientation, /resolvePlayerOrientationRestorePlan/);
   assert.match(orientation, /await ScreenOrientation\.unlockAsync\(\)/);
-  assert.match(orientation, /await ScreenOrientation\.lockAsync\(ScreenOrientation\.OrientationLock\.PORTRAIT_UP\)/);
-  assert.match(orientation, /await ScreenOrientation\.lockAsync\(ScreenOrientation\.OrientationLock\.LANDSCAPE\)/);
+  assert.match(orientation, /ScreenOrientation\.OrientationLock\.PORTRAIT_UP/);
+  assert.match(orientation, /ScreenOrientation\.OrientationLock\.LANDSCAPE/);
   assert.match(player, /await orientation\.restore\(\)/);
   assert.match(player, /onFullscreenExit\?\.\(\)/);
   for (const forbidden of [
@@ -180,5 +183,49 @@ scenario("player restore falls back to the system orientation when launch dimens
   }), "unlock");
 });
 
-assert.equal(passed, 14);
-console.log("ui presentation scenarios: 14/14 passed");
+scenario("player restore releases portrait launch back to free rotation", () => {
+  assert.deepEqual(resolvePlayerOrientationRestorePlan({
+    launchLayout: "portrait",
+    initialOrientation: "landscape",
+    initialLock: "free",
+  }), [
+    { type: "lock", target: "portrait" },
+    { type: "unlock" },
+  ]);
+});
+
+scenario("player restore releases landscape launch back to free rotation", () => {
+  assert.deepEqual(resolvePlayerOrientationRestorePlan({
+    launchLayout: "landscape",
+    initialOrientation: "portrait",
+    initialLock: "free",
+  }), [
+    { type: "lock", target: "landscape" },
+    { type: "unlock" },
+  ]);
+});
+
+scenario("player restore preserves a fixed pre-player portrait policy", () => {
+  assert.deepEqual(resolvePlayerOrientationRestorePlan({
+    launchLayout: "landscape",
+    initialOrientation: "landscape",
+    initialLock: "portrait",
+  }), [
+    { type: "lock", target: "landscape" },
+    { type: "lock", target: "portrait" },
+  ]);
+});
+
+scenario("player restore treats unknown pre-player lock as free rotation", () => {
+  assert.deepEqual(resolvePlayerOrientationRestorePlan({
+    launchLayout: "unknown",
+    initialOrientation: "portrait",
+    initialLock: "unknown",
+  }), [
+    { type: "lock", target: "portrait" },
+    { type: "unlock" },
+  ]);
+});
+
+assert.equal(passed, 18);
+console.log("ui presentation scenarios: 18/18 passed");
