@@ -5,8 +5,9 @@ import StalkerMainPage from "@/components/StalkerMainPage";
 import { usePlayer } from "@/context/PlayerContext";
 import { deriveProductCapabilities } from "@/lib/productContract";
 import { selectTransitionalProductSurface } from "@/lib/productShell";
+import { UiPresentationProvider } from "@/context/UiPresentationContext";
 
-export default function ProductShell() {
+function ProductShellContent() {
   const { provider } = usePlayer();
 
   traceStalker("PRODUCT_SHELL_RENDER", { providerPresent: Boolean(provider), providerType: provider?.type ?? "none", providerShortId: shortSafeId(provider?.id), selectedDelegate: provider ? selectTransitionalProductSurface(deriveProductCapabilities(provider.type)) : "paged", delegateKey: provider ? shortSafeId(provider.id) : "none" });
@@ -24,4 +25,13 @@ export default function ProductShell() {
   return surface === "stalker"
     ? <StalkerMainPage key={provider.id} />
     : <OptimizedHomeScreenV6 key={provider.id} />;
+}
+
+
+export default function ProductShell() {
+  return (
+    <UiPresentationProvider>
+      <ProductShellContent />
+    </UiPresentationProvider>
+  );
 }

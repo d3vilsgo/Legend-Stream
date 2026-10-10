@@ -79,15 +79,62 @@ scenario("runtime provider derives only device/layout state and owns no product 
   }
 });
 
-scenario("tabs layout installs one presentation boundary without changing ProductShell delegation", () => {
+scenario("router Stack stays outside the dimension-reactive presentation provider", () => {
   const tabs = source("app/(tabs)/_layout.tsx");
   const shell = source("components/ProductShell.tsx");
-  assert.match(tabs, /UiPresentationProvider/);
-  assert.match(tabs, /<Stack screenOptions=/);
-  assert.match(shell, /<StalkerMainPage key=\{provider\.id\}/);
-  assert.match(shell, /<OptimizedHomeScreenV6 key=\{provider\.id\}/);
-  assert.doesNotMatch(shell, /UiPresentationProvider|useWindowDimensions|Platform\.isTV/);
+  assert.doesNotMatch(tabs, /UiPresentationProvider|useWindowDimensions|Platform\.isTV/);
+  assert.match(tabs, /return <Stack screenOptions=/);
+  assert.match(shell, /UiPresentationProvider/);
+  assert.match(shell, /<ProductShellContent \/>/);
 });
 
-assert.equal(passed, 8);
-console.log("ui presentation scenarios: 8/8 passed");
+scenario("portrait landscape portrait transitions keep one stable product delegate boundary", () => {
+  const portrait = resolveUiPresentation({
+    preference: "auto", nativeTv: false, width: 412, height: 915,
+  });
+  const landscape = resolveUiPresentation({
+    preference: "auto", nativeTv: false, width: 915, height: 412,
+  });
+  const portraitAgain = resolveUiPresentation({
+    preference: "auto", nativeTv: false, width: 412, height: 915,
+  });
+  assert.deepEqual(
+    [portrait.mode, landscape.mode, portraitAgain.mode],
+    ["mobilePortrait", "mobileLandscape", "mobilePortrait"],
+  );
+  const shell = source("components/ProductShell.tsx");
+  assert.match(shell, /<StalkerMainPage key=\{provider\.id\}/);
+  assert.match(shell, /<OptimizedHomeScreenV6 key=\{provider\.id\}/);
+});
+
+scenario("repeated orientation changes update mode without changing product navigation ownership", () => {
+  const sequence = [
+    [412, 915],
+    [915, 412],
+    [412, 915],
+    [915, 412],
+  ].map(([width, height]) => resolveUiPresentation({
+    preference: "auto", nativeTv: false, width, height,
+  }).mode);
+  assert.deepEqual(sequence, [
+    "mobilePortrait",
+    "mobileLandscape",
+    "mobilePortrait",
+    "mobileLandscape",
+  ]);
+  const shell = source("components/ProductShell.tsx");
+  assert.doesNotMatch(shell, /setView\(|router\.|navigation\./);
+});
+
+scenario("player orientation owner and restore path remain unchanged by presentation foundation", () => {
+  const orientation = source("hooks/usePlayerOrientation.ts");
+  const player = source("components/CompatibilityVideoPlayerV2.tsx");
+  assert.match(orientation, /useWindowDimensions\(\)/);
+  assert.match(orientation, /await ScreenOrientation\.unlockAsync\(\)/);
+  assert.match(orientation, /await ScreenOrientation\.lockAsync\(ScreenOrientation\.OrientationLock\.PORTRAIT_UP\)/);
+  assert.match(player, /await orientation\.restore\(\)/);
+  assert.match(player, /onFullscreenExit\?\.\(\)/);
+});
+
+assert.equal(passed, 11);
+console.log("ui presentation scenarios: 11/11 passed");
