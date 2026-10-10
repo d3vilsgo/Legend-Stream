@@ -67,12 +67,14 @@ scenario("runtime provider derives only device/layout state and owns no product 
   assert.doesNotMatch(context, /provider|stalker|xtream|m3u|playback|fetch\(|AsyncStorage/i);
 });
 
-scenario("ProductShell installs one presentation boundary without changing provider delegation", () => {
+scenario("tabs layout installs one presentation boundary without changing ProductShell delegation", () => {
+  const tabs = source("app/(tabs)/_layout.tsx");
   const shell = source("components/ProductShell.tsx");
-  assert.match(shell, /UiPresentationProvider/);
+  assert.match(tabs, /UiPresentationProvider/);
+  assert.match(tabs, /<Stack screenOptions=/);
   assert.match(shell, /<StalkerMainPage key=\{provider\.id\}/);
   assert.match(shell, /<OptimizedHomeScreenV6 key=\{provider\.id\}/);
-  assert.doesNotMatch(shell, /useWindowDimensions|Platform\.isTV/);
+  assert.doesNotMatch(shell, /UiPresentationProvider|useWindowDimensions|Platform\.isTV/);
 });
 
 assert.equal(passed, 8);

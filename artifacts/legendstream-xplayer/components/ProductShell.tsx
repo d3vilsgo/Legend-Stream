@@ -5,7 +5,6 @@ import StalkerMainPage from "@/components/StalkerMainPage";
 import { usePlayer } from "@/context/PlayerContext";
 import { deriveProductCapabilities } from "@/lib/productContract";
 import { selectTransitionalProductSurface } from "@/lib/productShell";
-import { UiPresentationProvider } from "@/context/UiPresentationContext";
 
 export default function ProductShell() {
   const { provider } = usePlayer();
@@ -13,11 +12,7 @@ export default function ProductShell() {
   traceStalker("PRODUCT_SHELL_RENDER", { providerPresent: Boolean(provider), providerType: provider?.type ?? "none", providerShortId: shortSafeId(provider?.id), selectedDelegate: provider ? selectTransitionalProductSurface(deriveProductCapabilities(provider.type)) : "paged", delegateKey: provider ? shortSafeId(provider.id) : "none" });
 
   if (!provider) {
-    return (
-      <UiPresentationProvider>
-        <OptimizedHomeScreenV6 />
-      </UiPresentationProvider>
-    );
+    return <OptimizedHomeScreenV6 />;
   }
 
   const capabilities = deriveProductCapabilities(provider.type);
@@ -26,11 +21,7 @@ export default function ProductShell() {
   // Keying the delegate by provider prevents product/player view state from
   // surviving a provider switch. Existing provider-switch generation/abort
   // guards remain authoritative below this boundary.
-  return (
-    <UiPresentationProvider>
-      {surface === "stalker"
-        ? <StalkerMainPage key={provider.id} />
-        : <OptimizedHomeScreenV6 key={provider.id} />}
-    </UiPresentationProvider>
-  );
+  return surface === "stalker"
+    ? <StalkerMainPage key={provider.id} />
+    : <OptimizedHomeScreenV6 key={provider.id} />;
 }
