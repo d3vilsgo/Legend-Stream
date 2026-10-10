@@ -3,6 +3,10 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveUiPresentation } from "../lib/uiPresentation";
+import {
+  orientationSnapshotFromDimensions,
+  resolvePlayerOrientationRestoreTarget,
+} from "../lib/playerOrientationRestore";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const source = (path: string) => readFileSync(resolve(ROOT, path), "utf8");
@@ -126,15 +130,55 @@ scenario("repeated orientation changes update mode without changing product navi
   assert.doesNotMatch(shell, /setView\(|router\.|navigation\./);
 });
 
-scenario("player orientation owner and restore path remain unchanged by presentation foundation", () => {
+scenario("player orientation owner stays outside product protocol and playback source", () => {
   const orientation = source("hooks/usePlayerOrientation.ts");
   const player = source("components/CompatibilityVideoPlayerV2.tsx");
   assert.match(orientation, /useWindowDimensions\(\)/);
+  assert.match(orientation, /orientationSnapshotFromDimensions\(width, height\)/);
+  assert.match(orientation, /resolvePlayerOrientationRestoreTarget/);
   assert.match(orientation, /await ScreenOrientation\.unlockAsync\(\)/);
   assert.match(orientation, /await ScreenOrientation\.lockAsync\(ScreenOrientation\.OrientationLock\.PORTRAIT_UP\)/);
+  assert.match(orientation, /await ScreenOrientation\.lockAsync\(ScreenOrientation\.OrientationLock\.LANDSCAPE\)/);
   assert.match(player, /await orientation\.restore\(\)/);
   assert.match(player, /onFullscreenExit\?\.\(\)/);
+  for (const forbidden of [
+    "resolveCatalogPlaybackSource",
+    "StalkerPortalSession",
+    "get_epg_info",
+    "vlcRef.current?.seek",
+    "effectiveUri",
+  ]) {
+    assert.equal(orientation.includes(forbidden), false, `orientation owner leaked ${forbidden}`);
+  }
 });
 
-assert.equal(passed, 11);
-console.log("ui presentation scenarios: 11/11 passed");
+scenario("player restore prefers launch portrait layout over fullscreen orientation side effects", () => {
+  assert.equal(orientationSnapshotFromDimensions(390, 844), "portrait");
+  assert.equal(resolvePlayerOrientationRestoreTarget({
+    launchLayout: "portrait",
+    initialOrientation: "landscape",
+  }), "portrait");
+});
+
+scenario("player restore preserves launch landscape layout when leaving fullscreen", () => {
+  assert.equal(orientationSnapshotFromDimensions(844, 390), "landscape");
+  assert.equal(resolvePlayerOrientationRestoreTarget({
+    launchLayout: "landscape",
+    initialOrientation: "portrait",
+  }), "landscape");
+});
+
+scenario("player restore falls back to the system orientation when launch dimensions are unavailable", () => {
+  assert.equal(orientationSnapshotFromDimensions(0, 0), "unknown");
+  assert.equal(resolvePlayerOrientationRestoreTarget({
+    launchLayout: "unknown",
+    initialOrientation: "landscape",
+  }), "landscape");
+  assert.equal(resolvePlayerOrientationRestoreTarget({
+    launchLayout: "unknown",
+    initialOrientation: "unknown",
+  }), "unlock");
+});
+
+assert.equal(passed, 14);
+console.log("ui presentation scenarios: 14/14 passed");

@@ -206,7 +206,7 @@ jobs:
         run: |
           set -euo pipefail
           ui="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/uiPresentationScenarios.ts 2>&1 | tee /dev/stderr)"
-          grep -F 'ui presentation scenarios: 11/11 passed' <<<"$ui"
+          grep -F 'ui presentation scenarios: 14/14 passed' <<<"$ui"
       - name: R18-C unified product shell contract
         shell: bash
         run: |

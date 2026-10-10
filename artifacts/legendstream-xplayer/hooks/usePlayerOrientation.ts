@@ -10,6 +10,11 @@ import {
   recordM3UOrientationUnlockBegin,
   recordM3UOrientationUnlockEnd,
 } from "@/lib/m3uInAppDiagnostics";
+import {
+  orientationSnapshotFromDimensions,
+  resolvePlayerOrientationRestoreTarget,
+  type PlayerOrientationSnapshot,
+} from "@/lib/playerOrientationRestore";
 
 const isLandscapeOrientation = (orientation: ScreenOrientation.Orientation) =>
   orientation === ScreenOrientation.Orientation.LANDSCAPE_LEFT ||
@@ -18,6 +23,15 @@ const isLandscapeOrientation = (orientation: ScreenOrientation.Orientation) =>
 const isPortraitOrientation = (orientation: ScreenOrientation.Orientation) =>
   orientation === ScreenOrientation.Orientation.PORTRAIT_UP ||
   orientation === ScreenOrientation.Orientation.PORTRAIT_DOWN;
+
+const orientationSnapshotFromScreenOrientation = (
+  orientation: ScreenOrientation.Orientation | null,
+): PlayerOrientationSnapshot => {
+  if (!orientation) return "unknown";
+  if (isPortraitOrientation(orientation)) return "portrait";
+  if (isLandscapeOrientation(orientation)) return "landscape";
+  return "unknown";
+};
 
 /**
  * Fullscreen/system-UI owner for the player.
@@ -31,6 +45,9 @@ const isPortraitOrientation = (orientation: ScreenOrientation.Orientation) =>
 export function usePlayerOrientation(followDevice = true, diagnosticM3ULive = false) {
   const { width, height } = useWindowDimensions();
   const initialOrientation = useRef<ScreenOrientation.Orientation | null>(null);
+  const launchLayout = useRef<PlayerOrientationSnapshot>(
+    orientationSnapshotFromDimensions(width, height),
+  );
   const mounted = useRef(true);
   const exitingRef = useRef(false);
   const [ready, setReady] = useState(false);
@@ -115,12 +132,15 @@ export function usePlayerOrientation(followDevice = true, diagnosticM3ULive = fa
   }, [hideStatusBar]);
 
   const restore = useCallback(async () => {
-    const original = initialOrientation.current;
+    const target = resolvePlayerOrientationRestoreTarget({
+      launchLayout: launchLayout.current,
+      initialOrientation: orientationSnapshotFromScreenOrientation(initialOrientation.current),
+    });
     try { StatusBar.setHidden(false, "fade"); } catch { /* best effort */ }
     try {
-      if (original && isPortraitOrientation(original)) {
+      if (target === "portrait") {
         await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP);
-      } else if (original && isLandscapeOrientation(original)) {
+      } else if (target === "landscape") {
         await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE);
       } else {
         await ScreenOrientation.unlockAsync();
