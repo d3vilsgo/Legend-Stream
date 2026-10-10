@@ -201,6 +201,12 @@ jobs:
           history="$(pnpm --filter @workspace/legendstream-xplayer test:live-history 2>&1 | tee /dev/stderr)"
           grep -F 'live history scenarios: 32/32 passed' <<<"$history"
           grep -F 'live history owner scenarios: 9/9 passed' <<<"$history"
+      - name: Adaptive UI presentation foundation (18/18 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ui="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/uiPresentationScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'ui presentation scenarios: 18/18 passed' <<<"$ui"
       - name: R18-C unified product shell contract
         shell: bash
         run: |
