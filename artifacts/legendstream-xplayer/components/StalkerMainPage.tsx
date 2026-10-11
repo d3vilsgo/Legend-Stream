@@ -18,6 +18,8 @@ import {
 } from "@/components/CredentialDiagnosticsPanel";
 import { DownloadsView } from "@/components/DownloadsView";
 import { FocusButton } from "@/components/FocusButton";
+import { CompactLandscapeNavButton } from "@/components/navigation/CompactLandscapeNavButton";
+import { useUiPresentation } from "@/context/UiPresentationContext";
 import { HomeDiscovery, type HomeContentView } from "@/components/home/HomeDiscovery";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
 import { PagedLiveCatalog } from "@/components/catalog/PagedCatalogViews";
@@ -126,6 +128,7 @@ function isStalkerProductProvider(
  */
 export default function StalkerMainPage() {
   const colors = useColors();
+  const { mode } = useUiPresentation();
   const insets = useSafeAreaInsets();
   const { t } = useI18n();
   const {
@@ -440,14 +443,10 @@ export default function StalkerMainPage() {
           <ProviderSubscriptionChip provider={provider} />
         </View>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.nav}>
-          {nav.map((item) => (
-            <FocusButton
-              key={item.key}
-              label={item.label}
-              icon={item.icon}
-              variant={presentedView === item.key ? "secondary" : "ghost"}
-              onPress={() => navigate(item.key)}
-            />
+          {nav.map((item) => mode === "mobileLandscape" ? (
+            <CompactLandscapeNavButton key={item.key} label={item.label} icon={item.icon} active={presentedView === item.key} onPress={() => navigate(item.key)} />
+          ) : (
+            <FocusButton key={item.key} label={item.label} icon={item.icon} variant={presentedView === item.key ? "secondary" : "ghost"} onPress={() => navigate(item.key)} />
           ))}
         </ScrollView>
       </View>
