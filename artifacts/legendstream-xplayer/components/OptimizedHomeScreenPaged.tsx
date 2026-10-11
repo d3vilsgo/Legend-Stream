@@ -18,6 +18,8 @@ import { ContinueWatchingView } from "@/components/ContinueWatchingView";
 import { CredentialDiagnosticsPanel, useCredentialDiagnosticsStartup } from "@/components/CredentialDiagnosticsPanel";
 import { DownloadsView } from "@/components/DownloadsView";
 import { FocusButton } from "@/components/FocusButton";
+import { CompactLandscapeNavButton } from "@/components/navigation/CompactLandscapeNavButton";
+import { useUiPresentation } from "@/context/UiPresentationContext";
 import { HomeDiscovery, type HomeContentView } from "@/components/home/HomeDiscovery";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
 import {
@@ -125,6 +127,7 @@ function snapshotCount(providerId: string, snapshotProviderId: string | undefine
 
 export default function OptimizedHomeScreenPaged() {
   const colors = useColors();
+  const { mode } = useUiPresentation();
   const insets = useSafeAreaInsets();
   const { t } = useI18n();
   const {
@@ -465,7 +468,11 @@ export default function OptimizedHomeScreenPaged() {
   return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
     <View style={[s.header, { borderColor: colors.border }, view === "home" ? s.homeHeaderPremium : null]}>
       <View style={s.headerTop}><Text style={[s.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text><ProviderSubscriptionChip provider={provider} /></View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.nav}>{nav.map((item) => <FocusButton key={item.key} label={item.label} icon={item.icon} variant={view === item.key ? "secondary" : "ghost"} onPress={() => navigate(item.key)} />)}</ScrollView>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.nav}>{nav.map((item) => mode === "mobileLandscape" ? (
+            <CompactLandscapeNavButton key={item.key} label={item.label} icon={item.icon} active={view === item.key} onPress={() => navigate(item.key)} />
+          ) : (
+            <FocusButton key={item.key} label={item.label} icon={item.icon} variant={view === item.key ? "secondary" : "ghost"} onPress={() => navigate(item.key)} />
+          ))}</ScrollView>
     </View>
     {error || catalogError || visibleScopedError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}><Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError || visibleScopedError)}</Text><Pressable onPress={() => { clearError(); clearScopedError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable></View> : null}
 
