@@ -207,6 +207,12 @@ jobs:
           set -euo pipefail
           ui="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/uiPresentationScenarios.ts 2>&1 | tee /dev/stderr)"
           grep -F 'ui presentation scenarios: 23/23 passed' <<<"$ui"
+      - name: Responsive content navigation (10/10 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          nav="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/responsiveContentNavScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'responsive content nav scenarios: 10/10 passed' <<<"$nav"
       - name: R18-C unified product shell contract
         shell: bash
         run: |

@@ -5,13 +5,14 @@ import { useColors } from "@/hooks/useColors";
 
 type Props = {
   label: string;
+  shortLabel?: string;
   icon: keyof typeof Feather.glyphMap;
   active: boolean;
   onPress: () => void;
 };
 
-/** Compact phone-landscape navigation; native TV retains its existing focus controls. */
-export function CompactLandscapeNavButton({ label, icon, active, onPress }: Props) {
+/** Compact icon tab used by ResponsiveContentNav and kept for PR #124 compatibility. */
+export function CompactLandscapeNavButton({ label, shortLabel, icon, active, onPress }: Props) {
   const colors = useColors();
   return (
     <Pressable
@@ -23,7 +24,7 @@ export function CompactLandscapeNavButton({ label, icon, active, onPress }: Prop
     >
       <Feather name={icon} size={19} color={active ? colors.primary : colors.foreground} />
       {active ? (
-        <Text numberOfLines={1} style={[styles.label, { color: colors.foreground }]}>{label}</Text>
+        <Text numberOfLines={1} style={[styles.label, { color: colors.foreground }]}>{shortLabel ?? label}</Text>
       ) : null}
     </Pressable>
   );

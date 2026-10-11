@@ -121,18 +121,20 @@ async function main() {
     const navigateBlock = screenSource.slice(navigateStart, navigateEnd);
     assert.match(navigateBlock, /setView\(target\)/);
     assert.doesNotMatch(navigateBlock, /provider\.type|isLoading|isSyncing|isRefreshing|busy|disabled/);
-    // Both visual variants must navigate immediately, even while background hydration runs.
-    assert.match(screenSource, /nav\.map\(\(item\) => mode === "mobileLandscape" \? \(/);
-    assert.match(screenSource, /<CompactLandscapeNavButton[^>]*onPress=\{\(\) => navigate\(item\.key\)\}/);
-    assert.match(screenSource, /<FocusButton[^>]*onPress=\{\(\) => navigate\(item\.key\)\}/);
-    // Restrict the disabled check to the actual nav render, not unrelated buttons elsewhere in the screen.
-    const navRenderStart = screenSource.indexOf("{nav.map((item) => mode === \"mobileLandscape\"");
-    const navRenderEnd = screenSource.indexOf("</ScrollView>", navRenderStart);
+    // Shared responsive navigation must navigate immediately, even while background hydration runs.
+    assert.match(screenSource, /<ResponsiveContentNav items=\{nav\} activeKey=\{view\} onSelect=\{navigate\}/);
+    const navComponentSource = source("components/navigation/ResponsiveContentNav.tsx");
+    assert.match(navComponentSource, /onPress=\{\(\) => onSelect\(item\.key\)\}/);
+    assert.match(navComponentSource, /<FocusButton[\s\S]*onPress=\{\(\) => onSelect\(item\.key\)\}/);
+    assert.match(navComponentSource, /<CompactLandscapeNavButton[\s\S]*onPress=\{\(\) => onSelect\(item\.key\)\}/);
+    // Restrict the disabled check to the actual shared nav render, not unrelated buttons elsewhere.
+    const navRenderStart = navComponentSource.indexOf("items.map((item) =>");
+    const navRenderEnd = navComponentSource.indexOf("</ScrollView>", navRenderStart);
     assert.ok(navRenderStart >= 0 && navRenderEnd > navRenderStart);
-    const navRender = screenSource.slice(navRenderStart, navRenderEnd);
+    const navRender = navComponentSource.slice(navRenderStart, navRenderEnd);
     assert.doesNotMatch(navRender, /\bdisabled\s*=/);
     for (const target of ["live", "movies", "series", "history", "downloads", "settings"]) {
-      assert.match(screenSource, new RegExp(`key: "${target}" as const`));
+      assert.match(screenSource, new RegExp(`key: "${target}"`));
     }
     assert.match(screenSource, /view === "live" && \(provider\.type === "m3u" \|\| provider\.type === "xtream"\)/);
     assert.match(screenSource, /view === "movies" && \(provider\.type === "m3u" \|\| provider\.type === "xtream"\)/);
