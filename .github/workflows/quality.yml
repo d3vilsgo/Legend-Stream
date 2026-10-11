@@ -2,7 +2,9 @@ name: Quality
 
 on:
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - feature/premium-design-system-foundation
   push:
     branches: [main]
 
