@@ -4,9 +4,13 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { resolveUiPresentation } from "../lib/uiPresentation";
 import {
+  armPendingPlayerOrientationPolicyRestore,
+  clearPendingPlayerOrientationPolicyRestore,
   orientationSnapshotFromDimensions,
+  releasePendingPlayerOrientationPolicyRestoreForLayout,
   resolvePlayerOrientationRestorePlan,
   resolvePlayerOrientationRestoreTarget,
+  setPendingPlayerOrientationPolicyRestore,
 } from "../lib/playerOrientationRestore";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -69,6 +73,7 @@ scenario("runtime provider derives only device/layout state and owns no product 
   assert.match(context, /Platform\.isTV/);
   assert.match(context, /useWindowDimensions\(\)/);
   assert.match(context, /resolveUiPresentation/);
+  assert.match(context, /releasePendingPlayerOrientationPolicyRestoreForLayout/);
   for (const forbidden of [
     "@/context/PlayerContext",
     "StalkerMainPage",
@@ -144,6 +149,7 @@ scenario("player orientation owner stays outside product protocol and playback s
   assert.match(orientation, /ScreenOrientation\.OrientationLock\.LANDSCAPE/);
   assert.match(player, /await orientation\.restore\(\)/);
   assert.match(player, /onFullscreenExit\?\.\(\)/);
+  assert.match(player, /orientation\.releaseWhenLayoutReady\(\)/);
   for (const forbidden of [
     "resolveCatalogPlaybackSource",
     "StalkerPortalSession",
@@ -227,5 +233,60 @@ scenario("player restore treats unknown pre-player lock as free rotation", () =>
   ]);
 });
 
-assert.equal(passed, 18);
-console.log("ui presentation scenarios: 18/18 passed");
+scenario("player exit policy release waits until it is armed", () => {
+  const calls: string[] = [];
+  clearPendingPlayerOrientationPolicyRestore();
+  setPendingPlayerOrientationPolicyRestore({
+    target: "landscape",
+    release: () => { calls.push("released"); },
+  });
+  assert.equal(releasePendingPlayerOrientationPolicyRestoreForLayout({ width: 915, height: 412 }), false);
+  assert.deepEqual(calls, []);
+  clearPendingPlayerOrientationPolicyRestore();
+});
+
+scenario("player exit policy release waits for matching landscape catalog layout", () => {
+  const calls: string[] = [];
+  clearPendingPlayerOrientationPolicyRestore();
+  setPendingPlayerOrientationPolicyRestore({
+    target: "landscape",
+    release: () => { calls.push("released"); },
+  });
+  armPendingPlayerOrientationPolicyRestore();
+  assert.equal(releasePendingPlayerOrientationPolicyRestoreForLayout({ width: 390, height: 844 }), false);
+  assert.deepEqual(calls, []);
+  assert.equal(releasePendingPlayerOrientationPolicyRestoreForLayout({ width: 844, height: 390 }), true);
+  assert.deepEqual(calls, ["released"]);
+  clearPendingPlayerOrientationPolicyRestore();
+});
+
+scenario("player exit policy release waits for matching portrait catalog layout", () => {
+  const calls: string[] = [];
+  clearPendingPlayerOrientationPolicyRestore();
+  setPendingPlayerOrientationPolicyRestore({
+    target: "portrait",
+    release: () => { calls.push("released"); },
+  });
+  armPendingPlayerOrientationPolicyRestore();
+  assert.equal(releasePendingPlayerOrientationPolicyRestoreForLayout({ width: 844, height: 390 }), false);
+  assert.deepEqual(calls, []);
+  assert.equal(releasePendingPlayerOrientationPolicyRestoreForLayout({ width: 390, height: 844 }), true);
+  assert.deepEqual(calls, ["released"]);
+  clearPendingPlayerOrientationPolicyRestore();
+});
+
+scenario("player close arms policy release after fullscreen exit request", () => {
+  const v2 = source("components/CompatibilityVideoPlayerV2.tsx");
+  const legacy = source("components/CompatibilityVideoPlayer.tsx");
+  for (const player of [v2, legacy]) {
+    const restoreIndex = player.indexOf("await orientation.restore()");
+    const exitIndex = player.indexOf("onFullscreenExit?.()");
+    const releaseIndex = player.indexOf("orientation.releaseWhenLayoutReady()");
+    assert.ok(restoreIndex >= 0);
+    assert.ok(exitIndex > restoreIndex);
+    assert.ok(releaseIndex > exitIndex);
+  }
+});
+
+assert.equal(passed, 22);
+console.log("ui presentation scenarios: 22/22 passed");

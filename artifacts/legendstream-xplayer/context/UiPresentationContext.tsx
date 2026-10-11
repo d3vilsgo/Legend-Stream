@@ -1,10 +1,11 @@
-import React, { createContext, type ReactNode, useContext, useMemo } from "react";
+import React, { createContext, type ReactNode, useContext, useEffect, useMemo } from "react";
 import { Platform, useWindowDimensions } from "react-native";
 import {
   resolveUiPresentation,
   type UiModePreference,
   type UiPresentation,
 } from "@/lib/uiPresentation";
+import { releasePendingPlayerOrientationPolicyRestoreForLayout } from "@/lib/playerOrientationRestore";
 
 const UiPresentationContext = createContext<UiPresentation | null>(null);
 
@@ -25,6 +26,10 @@ export function UiPresentationProvider({
     }),
     [preference, width, height],
   );
+
+  useEffect(() => {
+    releasePendingPlayerOrientationPolicyRestoreForLayout({ width, height });
+  }, [height, width]);
 
   return (
     <UiPresentationContext.Provider value={presentation}>

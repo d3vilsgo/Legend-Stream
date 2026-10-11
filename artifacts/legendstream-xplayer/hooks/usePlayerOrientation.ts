@@ -11,9 +11,12 @@ import {
   recordM3UOrientationUnlockEnd,
 } from "@/lib/m3uInAppDiagnostics";
 import {
+  armPendingPlayerOrientationPolicyRestore,
+  clearPendingPlayerOrientationPolicyRestore,
   orientationSnapshotFromDimensions,
   resolvePlayerOrientationRestorePlan,
   resolvePlayerOrientationRestoreTarget,
+  setPendingPlayerOrientationPolicyRestore,
   type PlayerOrientationLockPolicy,
   type PlayerOrientationSnapshot,
   type PlayerOrientationRestoreStep,
@@ -186,14 +189,30 @@ export function usePlayerOrientation(followDevice = true, diagnosticM3ULive = fa
       initialOrientation: initialOrientationSnapshot,
       initialLock: orientationLockPolicyFromScreenLock(initialOrientationLock.current),
     });
+    const [visualRestoreStep, ...policyRestoreSteps] = restorePlan;
     try { StatusBar.setHidden(false, "fade"); } catch { /* best effort */ }
     try {
-      for (const step of restorePlan) await applyRestoreStep(step);
+      if (visualRestoreStep) await applyRestoreStep(visualRestoreStep);
+      if (policyRestoreSteps.length) {
+        setPendingPlayerOrientationPolicyRestore({
+          target,
+          release: async () => {
+            for (const step of policyRestoreSteps) await applyRestoreStep(step);
+          },
+        });
+      } else {
+        clearPendingPlayerOrientationPolicyRestore();
+      }
     } catch {
+      clearPendingPlayerOrientationPolicyRestore();
       try { await ScreenOrientation.unlockAsync(); } catch { /* best effort */ }
     }
     void logPlayerDiagnostic("player_fullscreen_restore", { target });
   }, [applyRestoreStep]);
+
+  const releaseWhenLayoutReady = useCallback(() => {
+    armPendingPlayerOrientationPolicyRestore();
+  }, []);
 
   const beginExit = useCallback(() => {
     exitingRef.current = true;
@@ -209,5 +228,6 @@ export function usePlayerOrientation(followDevice = true, diagnosticM3ULive = fa
     rotate,
     beginExit,
     restore,
+    releaseWhenLayoutReady,
   };
 }

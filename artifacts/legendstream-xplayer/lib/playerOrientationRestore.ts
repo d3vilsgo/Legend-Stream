@@ -4,6 +4,7 @@ export type PlayerOrientationLockPolicy = "free" | "portrait" | "landscape" | "u
 export type PlayerOrientationRestoreStep =
   | { type: "lock"; target: "portrait" | "landscape" }
   | { type: "unlock" };
+export type PlayerOrientationLayoutSnapshot = { width: number; height: number };
 
 export function orientationSnapshotFromDimensions(
   width: number,
@@ -58,4 +59,44 @@ export function resolvePlayerOrientationRestorePlan({
     steps.push({ type: "lock", target: initialLock });
   }
   return steps;
+}
+
+let pendingPolicyRestore:
+  | {
+      armed: boolean;
+      target: PlayerOrientationRestoreTarget;
+      release: () => void | Promise<void>;
+    }
+  | null = null;
+
+export function setPendingPlayerOrientationPolicyRestore({
+  target,
+  release,
+}: {
+  target: PlayerOrientationRestoreTarget;
+  release: () => void | Promise<void>;
+}) {
+  pendingPolicyRestore = { armed: false, target, release };
+}
+
+export function armPendingPlayerOrientationPolicyRestore() {
+  if (pendingPolicyRestore) pendingPolicyRestore.armed = true;
+}
+
+export function clearPendingPlayerOrientationPolicyRestore() {
+  pendingPolicyRestore = null;
+}
+
+export function releasePendingPlayerOrientationPolicyRestoreForLayout(
+  layout: PlayerOrientationLayoutSnapshot,
+): boolean {
+  const pending = pendingPolicyRestore;
+  if (!pending || !pending.armed) return false;
+
+  const currentLayout = orientationSnapshotFromDimensions(layout.width, layout.height);
+  if (pending.target !== "unlock" && currentLayout !== pending.target) return false;
+
+  pendingPolicyRestore = null;
+  void pending.release();
+  return true;
 }
