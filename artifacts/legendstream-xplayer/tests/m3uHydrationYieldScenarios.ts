@@ -121,8 +121,12 @@ async function main() {
     const navigateBlock = screenSource.slice(navigateStart, navigateEnd);
     assert.match(navigateBlock, /setView\(target\)/);
     assert.doesNotMatch(navigateBlock, /provider\.type|isLoading|isSyncing|isRefreshing|busy|disabled/);
-    assert.match(screenSource, /nav\.map\(\(item\) => <FocusButton[\s\S]*onPress=\{\(\) => navigate\(item\.key\)\}/);
-    assert.doesNotMatch(screenSource, /nav\.map\(\(item\) => <FocusButton[^>]*disabled=/);
+    // Both visual variants must navigate immediately, even while background hydration runs.
+    assert.match(screenSource, /nav\.map\(\(item\) => mode === "mobileLandscape" \? \(/);
+    assert.match(screenSource, /<CompactLandscapeNavButton[^>]*onPress=\{\(\) => navigate\(item\.key\)\}/);
+    assert.match(screenSource, /<FocusButton[^>]*onPress=\{\(\) => navigate\(item\.key\)\}/);
+    assert.doesNotMatch(screenSource, /<CompactLandscapeNavButton[^>]*disabled=/);
+    assert.doesNotMatch(screenSource, /<FocusButton[^>]*disabled=/);
     for (const target of ["live", "movies", "series", "history", "downloads", "settings"]) {
       assert.match(screenSource, new RegExp(`key: "${target}" as const`));
     }
