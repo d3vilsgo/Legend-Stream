@@ -24,6 +24,7 @@ import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { useCatalogPage } from "@/hooks/useCatalogPage";
 import { shouldUseWholeCatalogLoadingSkeleton } from "@/lib/catalogSearchPresentation";
+import { computePosterGridLayout } from "@/lib/catalogGridLayout";
 import {
   recordM3ULivePress,
   recordM3ULivePressIn,
@@ -244,10 +245,12 @@ function CatalogHeader({
 }) {
   const colors = useColors();
   const { t } = useI18n();
-  return <View style={s.catalogHeaderRoot}>
-    <View style={s.catalogHead}>
+  const { width } = useWindowDimensions();
+  const compact = width >= 700;
+  return <View style={[s.catalogHeaderRoot, compact ? s.catalogHeaderCompact : null]}>
+    <View style={[s.catalogHead, compact ? s.catalogHeadCompact : null]}>
       <View>
-        <Text style={[s.title, { color: colors.foreground }]}>{title}</Text>
+        <Text style={[s.title, compact ? s.titleCompact : null, { color: colors.foreground }]}>{title}</Text>
         <Text style={{ color: colors.mutedForeground }}>{detail}</Text>
       </View>
       <FocusButton
@@ -258,7 +261,7 @@ function CatalogHeader({
         disabled={loading}
       />
     </View>
-    <View style={[s.search, { borderColor: colors.border, backgroundColor: colors.card }]}>
+    <View style={[s.search, compact ? s.searchCompact : null, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Feather name="search" size={18} color={colors.mutedForeground} />
       <TextInput
         value={search}
@@ -488,7 +491,7 @@ function GridCard({ title, image, onPress }: { title: string; image?: string; on
         : <View style={[s.posterBig, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}>
             <Feather name="play-circle" size={30} color={colors.primary} />
           </View>}
-      <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", padding: 9 }}>{title}</Text>
+      <Text numberOfLines={2} style={[s.gridCardTitle, { color: colors.foreground }]}>{title}</Text>
     </View>
   </Pressable>;
 }
@@ -747,7 +750,8 @@ export function PagedMoviesCatalog({
   });
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const gridLayout = useMemo(() => computePosterGridLayout(width), [width]);
+  const columns = gridLayout.columns;
 
   useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
@@ -757,7 +761,7 @@ export function PagedMoviesCatalog({
     <FlatList
       key={`movies-${columns}`}
       style={{ flex: 1 }}
-      contentContainerStyle={s.gridListContent}
+      contentContainerStyle={[s.gridListContent, { width: gridLayout.contentWidth, paddingHorizontal: gridLayout.outerPadding }]}
       data={page.items}
       numColumns={columns}
       keyExtractor={(item) => String(item.stream_id)}
@@ -782,7 +786,7 @@ export function PagedMoviesCatalog({
         : <View style={s.emptyGrid}><Text>—</Text></View>}
       onEndReached={page.loadMore}
       onEndReachedThreshold={0.55}
-      renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
+      renderItem={({ item }) => <View style={{ width: gridLayout.columnWidth }}>
         <GridCard title={item.name} image={item.stream_icon} onPress={() => onOpen(item)} />
       </View>}
       initialNumToRender={Math.max(8, columns * 3)}
@@ -859,7 +863,8 @@ export function GoldenSeriesCatalog({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const gridLayout = useMemo(() => computePosterGridLayout(width), [width]);
+  const columns = gridLayout.columns;
   const orderedSeasons = useMemo(
     () => orderGoldenSeriesSeasons(detail?.seasons ?? []),
     [detail],
@@ -965,7 +970,7 @@ export function GoldenSeriesCatalog({
     <FlatList
       key={`golden-series-${columns}`}
       style={{ flex: 1 }}
-      contentContainerStyle={s.gridListContent}
+      contentContainerStyle={[s.gridListContent, { width: gridLayout.contentWidth, paddingHorizontal: gridLayout.outerPadding }]}
       data={items}
       numColumns={columns}
       keyExtractor={(item) => item.id}
@@ -990,7 +995,7 @@ export function GoldenSeriesCatalog({
           : <View style={s.emptyGrid}><Text>—</Text></View>}
       onEndReached={onLoadMore}
       onEndReachedThreshold={0.55}
-      renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
+      renderItem={({ item }) => <View style={{ width: gridLayout.columnWidth }}>
         <GridCard title={item.title} image={item.image} onPress={() => onOpen(item.id)} />
       </View>}
       initialNumToRender={Math.max(8, columns * 3)}
@@ -1112,18 +1117,22 @@ export function PagedSeriesCatalog({
 
 const s = StyleSheet.create({
   catalogHeaderRoot: { paddingBottom: 4 },
+  catalogHeaderCompact: { paddingBottom: 0 },
   m3uHint: { marginTop: 10, fontSize: 13 },
   catalogHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 12 },
+  catalogHeadCompact: { marginBottom: 6 },
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },
+  titleCompact: { fontSize: 24, marginBottom: 2 },
   section: { fontSize: 20, fontWeight: "800" },
   search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
+  searchCompact: { minHeight: 42 },
   activeCategoryChip: { alignSelf: "flex-start", maxWidth: "100%", borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, flexDirection: "row", alignItems: "center", gap: 7 },
-  sortDropdownWrap: { paddingTop: 10, paddingBottom: 10, alignSelf: "stretch" },
+  sortDropdownWrap: { paddingTop: 7, paddingBottom: 7, alignSelf: "stretch" },
   sortDropdownButton: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
   sortDropdownMenu: { marginTop: 6, borderWidth: 1, borderRadius: 12, padding: 6, gap: 3 },
   sortDropdownItem: { minHeight: 42, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 9 },
   liveListContent: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center", gap: 8 },
-  gridListContent: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
+  gridListContent: { paddingVertical: 18, paddingBottom: 40, maxWidth: 1500, alignSelf: "center" },
   liveRow: { borderWidth: 1, borderRadius: 14, padding: 8, flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   liveMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
   liveProgram: { fontSize: 12.5, marginTop: 3 },
@@ -1134,13 +1143,14 @@ const s = StyleSheet.create({
   card: { padding: 6 },
   media: { borderWidth: 1, borderRadius: 14, overflow: "hidden" },
   posterBig: { width: "100%", aspectRatio: 2 / 3 },
+  gridCardTitle: { height: 54, paddingHorizontal: 9, paddingVertical: 8, fontWeight: "700", lineHeight: 18 },
   pageFooter: { height: 64, alignItems: "center", justifyContent: "center" },
   pageFooterSpacer: { height: 20 },
   skeletonRoot: { flex: 1, minHeight: 220, alignItems: "center", justifyContent: "center", gap: 10, padding: 24 },
   emptyGrid: { padding: 30, alignItems: "center" },
   catalogError: { margin: 18, borderWidth: 1, borderRadius: 12, padding: 14, flexDirection: "row", alignItems: "center", gap: 10 },
-  seriesDetail: { flex: 1, padding: 18, maxWidth: 1500, width: "100%", alignSelf: "center" },
-  seriesDetailList: { flex: 1, maxWidth: 1500, width: "100%", alignSelf: "center" },
+  seriesDetail: { flex: 1, padding: 18, maxWidth: 960, width: "100%", alignSelf: "center" },
+  seriesDetailList: { flex: 1, maxWidth: 960, width: "100%", alignSelf: "center" },
   seriesEpisodeListContent: { padding: 18, paddingBottom: 40 },
   seriesDetailMessage: { paddingVertical: 32, textAlign: "center", fontSize: 16 },
   seasonSelectorContent: { gap: 8, paddingVertical: 10, paddingRight: 18 },
