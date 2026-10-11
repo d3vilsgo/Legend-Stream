@@ -242,6 +242,8 @@ scenario("player exit policy release waits until it is armed", () => {
   });
   assert.equal(releasePendingPlayerOrientationPolicyRestoreForLayout({ width: 915, height: 412 }), false);
   assert.deepEqual(calls, []);
+  assert.equal(armPendingPlayerOrientationPolicyRestore(), true);
+  assert.deepEqual(calls, ["released"]);
   clearPendingPlayerOrientationPolicyRestore();
 });
 
@@ -252,6 +254,7 @@ scenario("player exit policy release waits for matching landscape catalog layout
     target: "landscape",
     release: () => { calls.push("released"); },
   });
+  assert.equal(releasePendingPlayerOrientationPolicyRestoreForLayout({ width: 390, height: 844 }), false);
   armPendingPlayerOrientationPolicyRestore();
   assert.equal(releasePendingPlayerOrientationPolicyRestoreForLayout({ width: 390, height: 844 }), false);
   assert.deepEqual(calls, []);
@@ -267,6 +270,7 @@ scenario("player exit policy release waits for matching portrait catalog layout"
     target: "portrait",
     release: () => { calls.push("released"); },
   });
+  assert.equal(releasePendingPlayerOrientationPolicyRestoreForLayout({ width: 844, height: 390 }), false);
   armPendingPlayerOrientationPolicyRestore();
   assert.equal(releasePendingPlayerOrientationPolicyRestoreForLayout({ width: 844, height: 390 }), false);
   assert.deepEqual(calls, []);
@@ -288,5 +292,18 @@ scenario("player close arms policy release after fullscreen exit request", () =>
   }
 });
 
-assert.equal(passed, 22);
-console.log("ui presentation scenarios: 22/22 passed");
+scenario("player policy restore can recover when layout ready happened before exit arm", () => {
+  const calls: string[] = [];
+  clearPendingPlayerOrientationPolicyRestore();
+  assert.equal(releasePendingPlayerOrientationPolicyRestoreForLayout({ width: 844, height: 390 }), false);
+  setPendingPlayerOrientationPolicyRestore({
+    target: "landscape",
+    release: () => { calls.push("released"); },
+  });
+  assert.equal(armPendingPlayerOrientationPolicyRestore(), true);
+  assert.deepEqual(calls, ["released"]);
+  clearPendingPlayerOrientationPolicyRestore();
+});
+
+assert.equal(passed, 23);
+console.log("ui presentation scenarios: 23/23 passed");

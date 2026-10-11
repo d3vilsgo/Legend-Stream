@@ -68,6 +68,22 @@ let pendingPolicyRestore:
       release: () => void | Promise<void>;
     }
   | null = null;
+let lastObservedLayout: PlayerOrientationLayoutSnapshot | null = null;
+
+const tryReleasePendingPlayerOrientationPolicyRestore = () => {
+  const pending = pendingPolicyRestore;
+  if (!pending || !pending.armed || !lastObservedLayout) return false;
+
+  const currentLayout = orientationSnapshotFromDimensions(
+    lastObservedLayout.width,
+    lastObservedLayout.height,
+  );
+  if (pending.target !== "unlock" && currentLayout !== pending.target) return false;
+
+  pendingPolicyRestore = null;
+  void pending.release();
+  return true;
+};
 
 export function setPendingPlayerOrientationPolicyRestore({
   target,
@@ -80,7 +96,9 @@ export function setPendingPlayerOrientationPolicyRestore({
 }
 
 export function armPendingPlayerOrientationPolicyRestore() {
-  if (pendingPolicyRestore) pendingPolicyRestore.armed = true;
+  if (!pendingPolicyRestore) return false;
+  pendingPolicyRestore.armed = true;
+  return tryReleasePendingPlayerOrientationPolicyRestore();
 }
 
 export function clearPendingPlayerOrientationPolicyRestore() {
@@ -90,13 +108,6 @@ export function clearPendingPlayerOrientationPolicyRestore() {
 export function releasePendingPlayerOrientationPolicyRestoreForLayout(
   layout: PlayerOrientationLayoutSnapshot,
 ): boolean {
-  const pending = pendingPolicyRestore;
-  if (!pending || !pending.armed) return false;
-
-  const currentLayout = orientationSnapshotFromDimensions(layout.width, layout.height);
-  if (pending.target !== "unlock" && currentLayout !== pending.target) return false;
-
-  pendingPolicyRestore = null;
-  void pending.release();
-  return true;
+  lastObservedLayout = layout;
+  return tryReleasePendingPlayerOrientationPolicyRestore();
 }
