@@ -124,7 +124,7 @@ async function main() {
       assert.match(goldenCatalogSource, new RegExp(`function ${marker}|export function ${marker}`));
       assert.match(stalkerMoviesSource, new RegExp(`function ${marker}|export function ${marker}`));
     }
-    assert.match(stalkerMoviesSource, /const columns = width >= 900 \? 5 : width >= 650 \? 4 : width >= 420 \? 3 : 2/);
+    assert.match(stalkerMoviesSource, /computePosterGridLayout\(width, height, Platform\.isTV\)\.columns/);
     assert.match(stalkerMoviesSource, /onEndReachedThreshold=\{0\.55\}/);
     assert.match(stalkerMoviesSource, /shouldUseWholeCatalogLoadingSkeleton\(catalog\.loadingInitial, catalog\.visibleItems\.length, catalog\.search\)/);
     assert.match(stalkerMoviesSource, /ListEmptyComponent=\{catalog\.loadingInitial \|\| catalog\.searching[\s\S]*?<CatalogLoadingSkeleton text=\{t\("loadingMovies"\)\} \/>[\s\S]*?: <View style=\{s\.emptyGrid\}><Text>—<\/Text><\/View>\}/);
