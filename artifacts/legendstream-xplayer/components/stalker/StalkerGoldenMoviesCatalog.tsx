@@ -20,6 +20,7 @@ import { FocusButton } from "@/components/FocusButton";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { shouldUseWholeCatalogLoadingSkeleton } from "@/lib/catalogSearchPresentation";
+import { computePosterGridLayout } from "@/lib/catalogGridLayout";
 import {
   useStalkerMoviesCatalog,
   type StalkerMoviePlayable,
@@ -44,7 +45,7 @@ export function StalkerGoldenMoviesCatalog({
   onDrawerVisibilityChange: (visible: boolean) => void;
 }) {
   const { t } = useI18n();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const [sort, setSort] = useState<CatalogSortMode>("default");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const catalog = useStalkerMoviesCatalog({ provider, moviesLabel: t("movies"), onPlayable });
@@ -73,7 +74,7 @@ export function StalkerGoldenMoviesCatalog({
     category.id === catalog.selectedCategoryId && category.id !== globalCategoryId,
   )?.title;
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const columns = computePosterGridLayout(width, height, Platform.isTV).columns;
 
   if (shouldUseWholeCatalogLoadingSkeleton(catalog.loadingInitial, catalog.visibleItems.length, catalog.search)) {
     return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
