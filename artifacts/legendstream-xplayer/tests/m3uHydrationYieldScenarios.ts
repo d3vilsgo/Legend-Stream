@@ -125,8 +125,12 @@ async function main() {
     assert.match(screenSource, /nav\.map\(\(item\) => mode === "mobileLandscape" \? \(/);
     assert.match(screenSource, /<CompactLandscapeNavButton[^>]*onPress=\{\(\) => navigate\(item\.key\)\}/);
     assert.match(screenSource, /<FocusButton[^>]*onPress=\{\(\) => navigate\(item\.key\)\}/);
-    assert.doesNotMatch(screenSource, /<CompactLandscapeNavButton[^>]*disabled=/);
-    assert.doesNotMatch(screenSource, /<FocusButton[^>]*disabled=/);
+    // Restrict the disabled check to the actual nav render, not unrelated buttons elsewhere in the screen.
+    const navRenderStart = screenSource.indexOf("{nav.map((item) => mode === \"mobileLandscape\"");
+    const navRenderEnd = screenSource.indexOf("</ScrollView>", navRenderStart);
+    assert.ok(navRenderStart >= 0 && navRenderEnd > navRenderStart);
+    const navRender = screenSource.slice(navRenderStart, navRenderEnd);
+    assert.doesNotMatch(navRender, /\bdisabled\s*=/);
     for (const target of ["live", "movies", "series", "history", "downloads", "settings"]) {
       assert.match(screenSource, new RegExp(`key: "${target}" as const`));
     }
