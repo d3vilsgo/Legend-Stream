@@ -2,7 +2,9 @@ name: Quality
 
 on:
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - feature/premium-design-system-foundation
   push:
     branches: [main]
 
@@ -234,6 +236,12 @@ jobs:
             exit 1
           fi
           echo 'Repository hygiene guard passed.'
+      - name: R18 responsive catalog grid density
+        shell: bash
+        run: |
+          set -euo pipefail
+          grid="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/catalogGridLayoutScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'R18 premium catalog grid layout scenarios passed.' <<<"$grid"
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references

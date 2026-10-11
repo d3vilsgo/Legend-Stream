@@ -24,6 +24,7 @@ import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { useCatalogPage } from "@/hooks/useCatalogPage";
 import { shouldUseWholeCatalogLoadingSkeleton } from "@/lib/catalogSearchPresentation";
+import { computePosterGridLayout } from "@/lib/catalogGridLayout";
 import {
   recordM3ULivePress,
   recordM3ULivePressIn,
@@ -727,7 +728,7 @@ export function PagedMoviesCatalog({
   onDrawerVisibilityChange: (visible: boolean) => void;
 }) {
   const { t } = useI18n();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "vod", provider.type === "m3u");
@@ -747,7 +748,7 @@ export function PagedMoviesCatalog({
   });
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const columns = computePosterGridLayout(width, height, Platform.isTV).columns;
 
   useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
@@ -855,11 +856,11 @@ export function GoldenSeriesCatalog({
 }) {
   const colors = useColors();
   const { t } = useI18n();
-  const { width } = useWindowDimensions();
+  const { width, height } = useWindowDimensions();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const columns = computePosterGridLayout(width, height, Platform.isTV).columns;
   const orderedSeasons = useMemo(
     () => orderGoldenSeriesSeasons(detail?.seasons ?? []),
     [detail],
