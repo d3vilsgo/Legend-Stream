@@ -580,6 +580,7 @@ export function CompatibilityVideoPlayer({
     await persistProgress();
     await orientation.restore();
     onFullscreenExit?.();
+    orientation.releaseWhenLayoutReady();
   }, [clearControlsTimer, clearInfoTimer, onFullscreenExit, orientation, persistProgress]);
 
   useEffect(() => {
