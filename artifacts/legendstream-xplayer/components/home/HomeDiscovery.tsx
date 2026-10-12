@@ -9,6 +9,8 @@ import { useMediaLibrary } from "@/context/MediaLibraryContext";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { normalizeImageUrl } from "@/lib/imageUrl";
+import { resolvePremiumScreenProfile } from "@/lib/design/screenProfiles";
+import { computePremiumHomeHeroMetrics } from "@/lib/design/layoutMetrics";
 import { visibleProgressRatio } from "@/lib/historyPresentation";
 import type { Channel } from "@/lib/iptv";
 import type { XtreamSeriesItem, XtreamVodItem } from "@/lib/xtreamCatalog";
@@ -320,8 +322,13 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
   loading?: boolean;
 }) {
   const colors = useColors();
-  const { width } = useWindowDimensions();
-  const cardWidth = Math.max(280, Math.min(width - 36, 1464));
+  const { width, height } = useWindowDimensions();
+  const inLandscapePhone = !Platform.isTV && width > height;
+  const heroMetrics = useMemo(() => {
+    const mode = Platform.isTV ? "tv" : inLandscapePhone ? "mobileLandscape" : "mobilePortrait";
+    return computePremiumHomeHeroMetrics(resolvePremiumScreenProfile({ mode, width, height }));
+  }, [width, height, inLandscapePhone]);
+  const cardWidth = Math.max(1, Math.min(width - 36, heroMetrics.width));
   const listRef = useRef<FlatList<HomeHeroEntry>>(null);
   const [index, setIndex] = useState(0);
 
@@ -339,7 +346,7 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
 
   if (!items.length) {
     if (loading) {
-      return <View style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}> 
+      return <View style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }, inLandscapePhone ? { height: heroMetrics.height, minHeight: 0, aspectRatio: undefined, padding: 14 } : null]}> 
         <LinearGradient colors={["rgba(0,212,255,0.10)", "rgba(5,9,20,0.02)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
         <View style={{ flex: 1, justifyContent: "flex-end", gap: 10 }}>
           <View style={[s.homeSkeletonLine, { width: "28%", backgroundColor: colors.muted }]} />
@@ -372,13 +379,13 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
         preferredFocus={itemIndex === 0}
         onPress={() => onOpen(item)}
         onFocus={() => listRef.current?.scrollToIndex({ index: itemIndex, animated: true })}
-        style={[s.homeHeroCard, { width: cardWidth, borderColor: "transparent" }]}
+        style={[s.homeHeroCard, { width: cardWidth, borderColor: "transparent" }, inLandscapePhone ? { height: heroMetrics.height, minHeight: 0, aspectRatio: undefined } : null]}
       >
         <ResilientCatalogImage uri={item.image} resizeMode="cover" style={StyleSheet.absoluteFill} />
         <LinearGradient colors={["rgba(2,6,16,0.02)", "rgba(2,6,16,0.18)", "rgba(2,6,16,0.92)"]} locations={[0, 0.5, 1]} style={StyleSheet.absoluteFill} pointerEvents="none" />
-        <View style={s.homeHeroCaption}>
+        <View style={[s.homeHeroCaption, inLandscapePhone ? { paddingHorizontal: 14, paddingVertical: 10, maxWidth: heroMetrics.captionMaxWidth } : null]}>
           <Text style={[s.homeHeroEyebrow, { color: colors.primary }]}>{eyebrow}</Text>
-          <Text numberOfLines={2} style={s.homeHeroImageTitle}>{item.title}</Text>
+          <Text numberOfLines={2} style={[s.homeHeroImageTitle, inLandscapePhone ? { fontSize: 20, lineHeight: 24 } : null]}>{item.title}</Text>
           <Text numberOfLines={1} style={s.homeHeroImageMeta}>{item.subtitle}</Text>
         </View>
       </TvFocusPressable>}
