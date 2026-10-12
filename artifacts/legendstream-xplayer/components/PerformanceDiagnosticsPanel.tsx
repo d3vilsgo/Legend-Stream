@@ -19,6 +19,7 @@ export function PerformanceDiagnosticsPanel() {
   );
   const [message, setMessage] = useState<string | null>(null);
   const report = formatPerformanceDiagnostics(snapshot);
+  const hasReport = snapshot.startups.length > 0 || snapshot.playback.length > 0;
 
   return <View style={{ gap: 10 }}>
     <Text style={{ color: colors.foreground, fontSize: 16, fontWeight: "800" }}>
@@ -38,7 +39,7 @@ export function PerformanceDiagnosticsPanel() {
     <FocusButton
       label="Performans Raporunu Kopyala"
       icon="copy"
-      disabled={!snapshot.enabled}
+      disabled={!snapshot.preferenceLoaded || (!snapshot.enabled && !hasReport)}
       onPress={() => void Clipboard.setStringAsync(report)
         .then(() => setMessage("Redakte edilmiş performans raporu panoya kopyalandı."))
         .catch(() => setMessage("Performans raporu kopyalanamadı."))}
@@ -49,7 +50,7 @@ export function PerformanceDiagnosticsPanel() {
       style={{ maxHeight: 420, borderWidth: 1, borderColor: colors.border, borderRadius: 12, padding: 12 }}
     >
       <Text selectable style={{ color: colors.foreground, fontFamily: "monospace", fontSize: 12 }}>
-        {snapshot.enabled ? report : "Tanılama kapalı. Etkinleştirdikten sonra uygulamayı tamamen kapatıp yeniden açın."}
+        {snapshot.enabled || hasReport ? report : "Tanılama kapalı. Etkinleştirdikten sonra uygulamayı tamamen kapatıp yeniden açın."}
       </Text>
     </ScrollView>
   </View>;
