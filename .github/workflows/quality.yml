@@ -2,7 +2,9 @@ name: Quality
 
 on:
   pull_request:
-    branches: [main]
+    branches:
+      - main
+      - feature/premium-design-system-foundation
   push:
     branches: [main]
 
@@ -234,6 +236,11 @@ jobs:
             exit 1
           fi
           echo 'Repository hygiene guard passed.'
+      - name: R18 premium compact Home hero
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @workspace/legendstream-xplayer exec tsx tests/premiumHomeHeroScenarios.ts
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references
