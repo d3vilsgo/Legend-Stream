@@ -5,6 +5,12 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 
 const app: Express = express();
+const trustProxyHops = Number(process.env.TRUST_PROXY_HOPS ?? "1");
+if (!Number.isSafeInteger(trustProxyHops) || trustProxyHops < 0) {
+  throw new Error("TRUST_PROXY_HOPS must be a non-negative integer");
+}
+app.set("trust proxy", trustProxyHops);
+app.disable("x-powered-by");
 
 app.use(
   pinoHttp({
