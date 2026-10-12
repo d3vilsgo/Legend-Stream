@@ -24,6 +24,7 @@ import {
   createProductionQueryClient,
   resolveCatalogAppRuntime,
 } from "@/lib/catalogBenchmarkEntry";
+import { markRootMount } from "@/lib/performanceDiagnostics";
 
 const abortSignalCtor = globalThis.AbortSignal as typeof AbortSignal & {
   timeout?: (milliseconds: number) => AbortSignal;
@@ -60,6 +61,7 @@ function RootLayoutNav() {
 }
 
 export default function RootLayout() {
+  markRootMount();
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
     Inter_500Medium,

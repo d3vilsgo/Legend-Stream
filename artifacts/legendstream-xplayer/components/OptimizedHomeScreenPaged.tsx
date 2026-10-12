@@ -67,6 +67,7 @@ import {
 } from "@/lib/providerSwitchUx";
 import { redactSensitiveText, safeLog } from "@/lib/safeLog";
 import { resolveCatalogPlaybackSource } from "@/lib/catalogRuntime";
+import { beginPlaybackAttempt, type ProviderKind } from "@/lib/performanceDiagnostics";
 import {
   recordM3UBusyState as recordM3UBusyDiagnosticState,
   recordM3UHeartbeat,
@@ -365,6 +366,7 @@ export default function OptimizedHomeScreenPaged() {
   }
 
   const openLive = (channel: Channel) => {
+    beginPlaybackAttempt(provider.type as ProviderKind);
     if (m3uDiagnosticEnabled) recordM3UOpenLiveEnter();
 
     if (provider.type === "stalker") {
@@ -391,6 +393,7 @@ export default function OptimizedHomeScreenPaged() {
   };
 
   const openMovie = (item: XtreamVodItem) => {
+    beginPlaybackAttempt(provider.type as ProviderKind);
     const requestProviderId = provider.id;
     void resolveCatalogPlaybackSource({ kind: "movie", item }, provider)
       .then(({ url }) => {
@@ -427,6 +430,7 @@ export default function OptimizedHomeScreenPaged() {
 
   const playEpisode = (episode: XtreamEpisode) => {
     if (!selectedSeries) return;
+    beginPlaybackAttempt(provider.type as ProviderKind);
     const requestProviderId = provider.id;
     const title = episode.title || selectedSeries.name;
     const subtitle = selectedSeries.name;

@@ -34,6 +34,7 @@ import {
 } from "@/lib/playerLiveQueue";
 import { registerEpgChannels } from "@/lib/epgRuntime";
 import { classifyPlaybackSource, classifyStalkerTraceError, describePlaybackSourceSafely, fingerprintPlaybackSource, getActiveStalkerTraceId, traceStalker } from "@/lib/stalkerPlaybackTrace";
+import { markPlaybackEvent } from "@/lib/performanceDiagnostics";
 import type { Channel } from "@/lib/iptv";
 import { usePlayerOrientation } from "@/hooks/usePlayerOrientation";
 import {
@@ -574,6 +575,7 @@ export function CompatibilityVideoPlayer({
   const exitPlayer = useCallback(async () => {
     if (exitStarted.current) return;
     exitStarted.current = true;
+    markPlaybackEvent("PLAYER_EXIT");
     orientation.beginExit();
     clearControlsTimer();
     clearInfoTimer();
@@ -767,7 +769,9 @@ export function CompatibilityVideoPlayer({
 
   useEffect(() => {
     const traceId = getActiveStalkerTraceId();
-    if (!traceId || !effectiveUri) return;
+    if (!effectiveUri) return;
+    markPlaybackEvent("SOURCE_SET");
+    if (!traceId) return;
     const metadata = describePlaybackSourceSafely(effectiveUri);
     const previousFingerprint = tracedSourceFingerprint.current;
     if (previousFingerprint && previousFingerprint !== metadata.sourceFingerprint) traceStalker("PLAYER_SOURCE_TRANSITION", { traceId, kind: currentKind, previousFingerprint, nextFingerprint: metadata.sourceFingerprint, previousItemId: tracedItemId.current ?? undefined, nextItemId: currentLiveIdentity?.channelId ?? currentVodIdentity?.itemId ?? (progressRef?.type === "stalker-episode" ? progressRef.episodeId : undefined), reason: "effective-source-change" });

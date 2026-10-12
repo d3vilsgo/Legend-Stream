@@ -32,6 +32,7 @@
     "test:player-live-queue": "tsx tests/playerLiveQueueScenarios.ts",
     "test:media-progress": "tsx tests/mediaProgressScenarios.ts",
     "test:live-history": "tsx tests/liveHistoryScenarios.ts && tsx tests/liveHistoryConcurrencyScenarios.ts && tsx tests/liveHistoryOwnerScenarios.ts"
+    ,"test:performance-diagnostics": "node --import tsx tests/performanceDiagnosticsScenarios.ts"
   },
   "expo": {
     "autolinking": {
