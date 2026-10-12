@@ -2,7 +2,7 @@ name: Quality
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, feature/r18-device-presentation-foundation]
   push:
     branches: [main]
 
@@ -233,6 +233,12 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --filter @workspace/legendstream-xplayer exec tsx tests/devicePresentationScenarios.ts
+      - name: Presentation orientation lifecycle (14/14 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          lifecycle="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/presentationLifecycleScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'presentation lifecycle scenarios: 14/14 passed' <<<"$lifecycle"
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references
