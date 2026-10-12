@@ -21,6 +21,10 @@ import {
   type PlayerOrientationSnapshot,
   type PlayerOrientationRestoreStep,
 } from "@/lib/playerOrientationRestore";
+import {
+  acquirePlayerOrientationOwnership,
+  handoffPlayerOrientationToCatalog,
+} from "@/lib/orientationOwnership";
 
 const isLandscapeOrientation = (orientation: ScreenOrientation.Orientation) =>
   orientation === ScreenOrientation.Orientation.LANDSCAPE_LEFT ||
@@ -75,10 +79,14 @@ const orientationLockPolicyFromScreenLock = (
  * explicit one-shot orientation lock when the user wants to force the opposite
  * orientation.
  */
-export function usePlayerOrientation(followDevice = true, diagnosticM3ULive = false) {
+export function usePlayerOrientation(
+  followDevice = true,
+  diagnosticM3ULive = false,
+) {
   const { width, height } = useWindowDimensions();
   const initialOrientation = useRef<ScreenOrientation.Orientation | null>(null);
-  const initialOrientationLock = useRef<ScreenOrientation.OrientationLock | null>(null);
+  const initialOrientationLock =
+    useRef<ScreenOrientation.OrientationLock | null>(null);
   const launchLayout = useRef<PlayerOrientationSnapshot>(
     orientationSnapshotFromDimensions(width, height),
   );
@@ -91,7 +99,11 @@ export function usePlayerOrientation(followDevice = true, diagnosticM3ULive = fa
 
   const hideStatusBar = useCallback(() => {
     if (exitingRef.current) return;
-    try { StatusBar.setHidden(true, "none"); } catch { /* best effort */ }
+    try {
+      StatusBar.setHidden(true, "none");
+    } catch {
+      /* best effort */
+    }
   }, []);
 
   useEffect(() => {
@@ -107,15 +119,19 @@ export function usePlayerOrientation(followDevice = true, diagnosticM3ULive = fa
     });
 
     const statusGuard = setInterval(() => {
-      if (AppState.currentState === "active" && !exitingRef.current) hideStatusBar();
+      if (AppState.currentState === "active" && !exitingRef.current)
+        hideStatusBar();
     }, 1000);
 
     const prepare = async () => {
       const startedAt = globalThis.performance?.now?.() ?? Date.now();
       if (diagnosticM3ULive) recordM3UOrientationBegin();
       try {
-        initialOrientation.current = await ScreenOrientation.getOrientationAsync();
-        initialOrientationLock.current = await ScreenOrientation.getOrientationLockAsync();
+        await acquirePlayerOrientationOwnership();
+        initialOrientation.current =
+          await ScreenOrientation.getOrientationAsync();
+        initialOrientationLock.current =
+          await ScreenOrientation.getOrientationLockAsync();
         if (diagnosticM3ULive) recordM3UOrientationGetCompleted();
         if (followDevice) {
           if (diagnosticM3ULive) recordM3UOrientationUnlockBegin();
@@ -141,7 +157,11 @@ export function usePlayerOrientation(followDevice = true, diagnosticM3ULive = fa
       mounted.current = false;
       appState.remove();
       clearInterval(statusGuard);
-      try { StatusBar.setHidden(false, "fade"); } catch { /* best effort */ }
+      try {
+        StatusBar.setHidden(false, "fade");
+      } catch {
+        /* best effort */
+      }
     };
   }, [diagnosticM3ULive, followDevice, hideStatusBar]);
 
@@ -166,20 +186,25 @@ export function usePlayerOrientation(followDevice = true, diagnosticM3ULive = fa
     }
   }, [hideStatusBar]);
 
-  const applyRestoreStep = useCallback(async (step: PlayerOrientationRestoreStep) => {
-    if (step.type === "unlock") {
-      await ScreenOrientation.unlockAsync();
-      return;
-    }
-    await ScreenOrientation.lockAsync(
-      step.target === "portrait"
-        ? ScreenOrientation.OrientationLock.PORTRAIT_UP
-        : ScreenOrientation.OrientationLock.LANDSCAPE,
-    );
-  }, []);
+  const applyRestoreStep = useCallback(
+    async (step: PlayerOrientationRestoreStep) => {
+      if (step.type === "unlock") {
+        await ScreenOrientation.unlockAsync();
+        return;
+      }
+      await ScreenOrientation.lockAsync(
+        step.target === "portrait"
+          ? ScreenOrientation.OrientationLock.PORTRAIT_UP
+          : ScreenOrientation.OrientationLock.LANDSCAPE,
+      );
+    },
+    [],
+  );
 
   const restore = useCallback(async () => {
-    const initialOrientationSnapshot = orientationSnapshotFromScreenOrientation(initialOrientation.current);
+    const initialOrientationSnapshot = orientationSnapshotFromScreenOrientation(
+      initialOrientation.current,
+    );
     const target = resolvePlayerOrientationRestoreTarget({
       launchLayout: launchLayout.current,
       initialOrientation: initialOrientationSnapshot,
@@ -187,11 +212,24 @@ export function usePlayerOrientation(followDevice = true, diagnosticM3ULive = fa
     const restorePlan = resolvePlayerOrientationRestorePlan({
       launchLayout: launchLayout.current,
       initialOrientation: initialOrientationSnapshot,
-      initialLock: orientationLockPolicyFromScreenLock(initialOrientationLock.current),
+      initialLock: orientationLockPolicyFromScreenLock(
+        initialOrientationLock.current,
+      ),
     });
     const [visualRestoreStep, ...policyRestoreSteps] = restorePlan;
-    try { StatusBar.setHidden(false, "fade"); } catch { /* best effort */ }
     try {
+      StatusBar.setHidden(false, "fade");
+    } catch {
+      /* best effort */
+    }
+    try {
+      if (await handoffPlayerOrientationToCatalog()) {
+        clearPendingPlayerOrientationPolicyRestore();
+        void logPlayerDiagnostic("player_fullscreen_restore", {
+          target: "catalog-policy",
+        });
+        return;
+      }
       if (visualRestoreStep) await applyRestoreStep(visualRestoreStep);
       if (policyRestoreSteps.length) {
         setPendingPlayerOrientationPolicyRestore({
@@ -205,7 +243,11 @@ export function usePlayerOrientation(followDevice = true, diagnosticM3ULive = fa
       }
     } catch {
       clearPendingPlayerOrientationPolicyRestore();
-      try { await ScreenOrientation.unlockAsync(); } catch { /* best effort */ }
+      try {
+        await ScreenOrientation.unlockAsync();
+      } catch {
+        /* best effort */
+      }
     }
     void logPlayerDiagnostic("player_fullscreen_restore", { target });
   }, [applyRestoreStep]);
@@ -217,7 +259,11 @@ export function usePlayerOrientation(followDevice = true, diagnosticM3ULive = fa
   const beginExit = useCallback(() => {
     exitingRef.current = true;
     setExiting(true);
-    try { StatusBar.setHidden(false, "fade"); } catch { /* best effort */ }
+    try {
+      StatusBar.setHidden(false, "fade");
+    } catch {
+      /* best effort */
+    }
     void logPlayerDiagnostic("player_exit_requested");
   }, []);
 
