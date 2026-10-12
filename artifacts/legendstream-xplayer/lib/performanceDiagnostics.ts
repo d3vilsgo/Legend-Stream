@@ -33,7 +33,7 @@ export type PlaybackAttempt = {
 export type PerformanceDiagnosticsSnapshot = {
   enabled: boolean;
   preferenceLoaded: boolean;
-  startup: StartupSession | null;
+  startups: StartupSession[];
   playback: PlaybackAttempt[];
 };
 
@@ -45,6 +45,7 @@ type ControllerOptions = {
 };
 
 const MAX_PLAYBACK_ATTEMPTS = 8;
+const MAX_STARTUP_SESSIONS = 5;
 const monotonicNow = () => globalThis.performance.now();
 const randomId = () => {
   const uuid = globalThis.crypto?.randomUUID?.();
@@ -56,7 +57,9 @@ export function createPerformanceDiagnostics(options: ControllerOptions = {}) {
   const makeId = options.randomId ?? randomId;
   let enabled = options.initialEnabled ?? false;
   let preferenceLoaded = options.preferenceLoaded ?? true;
-  let startup: StartupSession | null = null;
+  let startups: StartupSession[] = [];
+  let coldStartupId: string | null = null;
+  let activeStartupId: string | null = null;
   let playback: PlaybackAttempt[] = [];
   let activePlaybackId: string | null = null;
   let cachedSnapshot: PerformanceDiagnosticsSnapshot | null = null;
@@ -66,42 +69,92 @@ export function createPerformanceDiagnostics(options: ControllerOptions = {}) {
   const safeId = () => makeId().replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || "session";
   const safeProviderKind = (value: ProviderKind): ProviderKind =>
     value === "m3u" || value === "xtream" || value === "stalker" ? value : "unknown";
+  const retainStartupSessions = (items: StartupSession[]) => {
+    const cold = items.find((session) => session.kind === "cold");
+    const warm = items.filter((session) => session.kind === "warm").slice(-(MAX_STARTUP_SESSIONS - (cold ? 1 : 0)));
+    return cold ? [cold, ...warm] : warm;
+  };
 
   const setPreference = (next: boolean, loaded = true) => {
+    const wasEnabled = enabled;
     enabled = next;
     preferenceLoaded = loaded;
     if (!next && loaded) {
-      startup = null;
-      playback = [];
-      activePlaybackId = null;
+      startups = startups.filter((session) =>
+        session.kind !== "cold" || session.events.some((event) => event.name === "HOME_FIRST_USABLE_RENDER"),
+      );
+      if (!startups.some((session) => session.id === coldStartupId)) coldStartupId = null;
+      activeStartupId = null;
+    } else if (next && loaded && !wasEnabled) {
+      activeStartupId = beginStartup("warm", null, "unknown");
     }
     emit();
   };
   const beginStartup = (kind: StartupKind, providerGeneration: number | null = null, providerKind: ProviderKind = "unknown") => {
     if (!canCapture()) return null;
-    if (kind === "cold" && startup?.kind === "cold") return startup.id;
-    if (kind === "warm" && startup?.kind === "warm" && startup.providerGeneration === providerGeneration && startup.providerKind === providerKind) return startup.id;
-    startup = { id: `startup-${safeId()}`, kind, providerGeneration, providerKind: safeProviderKind(providerKind), events: [] };
+    if (kind === "cold" && coldStartupId) return coldStartupId;
+    const active = startups.find((session) => session.id === activeStartupId);
+    if (kind === "warm" && active?.kind === "warm" && active.providerGeneration === providerGeneration && active.providerKind === safeProviderKind(providerKind)) return active.id;
+    const session: StartupSession = { id: `startup-${safeId()}`, kind, providerGeneration, providerKind: safeProviderKind(providerKind), events: [] };
+    startups = retainStartupSessions([...startups, session]);
+    if (kind === "cold") coldStartupId = session.id;
+    activeStartupId = session.id;
     emit();
-    return startup.id;
+    return session.id;
   };
   const bindStartupProvider = (providerGeneration: number, providerKind: ProviderKind) => {
     if (!canCapture()) return null;
-    if (!startup) beginStartup("warm", providerGeneration, providerKind);
-    else if (startup.providerGeneration === null) {
-      startup = { ...startup, providerGeneration, providerKind: safeProviderKind(providerKind) };
-      emit();
-    } else if (startup.providerGeneration !== providerGeneration || startup.providerKind !== providerKind) {
-      beginStartup("warm", providerGeneration, providerKind);
+    const safeKind = safeProviderKind(providerKind);
+    let active = startups.find((session) => session.id === activeStartupId);
+    if (!active && !coldStartupId) {
+      const id = beginStartup("cold");
+      active = startups.find((session) => session.id === id);
     }
-    return startup?.id ?? null;
+    const cold = startups.find((session) => session.id === coldStartupId);
+    if (cold && cold.providerGeneration === null && !cold.events.some((event) => event.name === "HOME_FIRST_USABLE_RENDER")) {
+      startups = startups.map((session) => session.id === cold.id
+        ? { ...session, providerGeneration, providerKind: safeKind }
+        : session);
+      activeStartupId = cold.id;
+      emit();
+      return cold.id;
+    }
+    active = startups.find((session) => session.id === activeStartupId);
+    if (active?.kind === "warm" && active.providerGeneration === null) {
+      startups = startups.map((session) => session.id === active.id
+        ? { ...session, providerGeneration, providerKind: safeKind }
+        : session);
+      emit();
+      return active.id;
+    }
+    if (active?.providerGeneration === providerGeneration && active.providerKind === safeKind) return active.id;
+    return beginStartup("warm", providerGeneration, safeKind);
   };
   const markStartup = (name: StartupEventName) => {
     if (!canCapture()) return;
-    if (!startup) beginStartup("cold");
+    if (!activeStartupId && (!coldStartupId || startups.find((session) => session.id === coldStartupId)?.events.some((event) => event.name === "HOME_FIRST_USABLE_RENDER"))) {
+      beginStartup(coldStartupId ? "warm" : "cold");
+    }
+    const cold = startups.find((session) => session.id === coldStartupId);
+    const coldMilestone = (name === "SNAPSHOT_PUBLISH" || name === "HOME_FIRST_USABLE_RENDER") &&
+      cold && !cold.events.some((event) => event.name === "HOME_FIRST_USABLE_RENDER");
+    const targetIds = coldMilestone
+      ? [cold.id]
+      : activeStartupId ? [activeStartupId] : coldStartupId ? [coldStartupId] : [];
     const repeatable = name.endsWith("_BEGIN") || name.endsWith("_END");
-    if (!startup || (!repeatable && startup.events.some((event) => event.name === name))) return;
-    startup = { ...startup, events: [...startup.events, { name, atMs: now() }] };
+    let changed = false;
+    startups = startups.map((session) => {
+      if (!targetIds.includes(session.id) || (!repeatable && session.events.some((event) => event.name === name))) return session;
+      changed = true;
+      return { ...session, events: [...session.events, { name, atMs: now() }] };
+    });
+    if (!changed) return;
+    if (name === "HOME_FIRST_USABLE_RENDER" && coldStartupId && targetIds.includes(coldStartupId)) {
+      // The cold session remains in history as a completed measurement.
+      const active = startups.find((session) => session.id === activeStartupId);
+      if (active?.kind === "warm") activeStartupId = active.id;
+      else activeStartupId = coldStartupId;
+    }
     emit();
   };
   const beginPlayback = (providerKind: ProviderKind) => {
@@ -126,7 +179,7 @@ export function createPerformanceDiagnostics(options: ControllerOptions = {}) {
     if (!cachedSnapshot) cachedSnapshot = {
       enabled,
       preferenceLoaded,
-      startup: startup ? { ...startup, events: startup.events.slice() } : null,
+      startups: startups.map((session) => ({ ...session, events: session.events.slice() })),
       playback: playback.map((attempt) => ({ ...attempt, events: attempt.events.slice() })),
     };
     return cachedSnapshot;
@@ -183,10 +236,10 @@ const elapsed = (events: Array<TimedEvent<string>>, from: string, to: string) =>
 
 export function formatPerformanceDiagnostics(snapshot = runtime.snapshot()) {
   const lines = ["LEGENDSTREAM_PERFORMANCE_DIAGNOSTICS_V1", `enabled=${snapshot.enabled}`];
-  const startup = snapshot.startup;
-  if (!startup) lines.push("startup=NOT_OBSERVED");
-  else {
-    lines.push(`startup.session=${startup.id}`, `startup.kind=${startup.kind}`, `startup.provider=${startup.providerKind}`, `startup.generation=${startup.providerGeneration ?? "NOT_OBSERVED"}`);
+  if (!snapshot.startups.length) lines.push("startup=NOT_OBSERVED");
+  else snapshot.startups.forEach((startup, index) => {
+    const prefix = `startup[${index}]`;
+    lines.push(`${prefix}.session=${startup.id}`, `${prefix}.kind=${startup.kind}`, `${prefix}.status=${startup.events.some((event) => event.name === "HOME_FIRST_USABLE_RENDER") ? "COMPLETE" : "IN_PROGRESS"}`, `${prefix}.provider=${startup.providerKind}`, `${prefix}.generation=${startup.providerGeneration ?? "NOT_OBSERVED"}`);
     const spans: Array<[string, StartupEventName, StartupEventName]> = [
       ["player_hydration", "PLAYER_HYDRATION_BEGIN", "PLAYER_HYDRATION_END"],
       ["catalog_db_open", "CATALOG_DB_OPEN_BEGIN", "CATALOG_DB_OPEN_END"],
@@ -199,8 +252,8 @@ export function formatPerformanceDiagnostics(snapshot = runtime.snapshot()) {
       ["root_to_snapshot", "ROOT_MOUNT", "SNAPSHOT_PUBLISH"],
       ["root_to_first_usable", "ROOT_MOUNT", "HOME_FIRST_USABLE_RENDER"],
     ];
-    for (const [label, from, to] of spans) lines.push(`startup.${label}=${elapsed(startup.events, from, to)}`);
-  }
+    for (const [label, from, to] of spans) lines.push(`${prefix}.${label}=${elapsed(startup.events, from, to)}`);
+  });
   if (!snapshot.playback.length) lines.push("playback=NOT_OBSERVED");
   for (const attempt of snapshot.playback) {
     lines.push(`playback.attempt=${attempt.id}`, `playback.provider=${attempt.providerKind}`);
