@@ -9,6 +9,7 @@ import React, {
   useRef,
   useState,
 } from "react";
+import { markStartupEvent } from "@/lib/performanceDiagnostics";
 import {
   Channel,
   EpgProgram,
@@ -943,12 +944,16 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   }, [state]);
 
   useEffect(() => {
+    markStartupEvent("PLAYER_HYDRATION_BEGIN");
     readState(liveHistoryOwner)
       .then((saved) => {
         applyPlayerState(saved);
+        markStartupEvent("PLAYER_HYDRATION_END");
+        markStartupEvent("PROVIDER_READY");
         setIsHydrating(false);
       })
       .catch(() => {
+        markStartupEvent("PLAYER_HYDRATION_END");
         setError("Credential storage could not be read.");
         setIsHydrating(false);
       });

@@ -2,7 +2,7 @@ name: Quality
 
 on:
   pull_request:
-    branches: [main, feature/r18-device-presentation-foundation]
+    branches: [main, feature/r18-device-presentation-foundation, feature/r18-presentation-foundation-1b]
   push:
     branches: [main]
 
@@ -239,6 +239,12 @@ jobs:
           set -euo pipefail
           lifecycle="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/presentationLifecycleScenarios.ts 2>&1 | tee /dev/stderr)"
           grep -F 'presentation lifecycle scenarios: 14/14 passed' <<<"$lifecycle"
+      - name: Performance diagnostics regressions (10/10 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          diagnostics="$(pnpm --filter @workspace/legendstream-xplayer test:performance-diagnostics 2>&1 | tee /dev/stderr)"
+          grep -F 'performance diagnostics scenarios: 10/10 passed' <<<"$diagnostics"
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references

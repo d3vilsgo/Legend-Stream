@@ -4,6 +4,7 @@ import { VLCPlayer } from "react-native-vlc-media-player";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { logPlayerDiagnostic } from "@/lib/playerDiagnostics";
 import { classifyStalkerTraceError, getActiveStalkerTraceId, shouldTraceStalkerBuffering, traceStalker } from "@/lib/stalkerPlaybackTrace";
+import { markPlaybackEvent } from "@/lib/performanceDiagnostics";
 import {
   resetPlayerRuntimeInfo,
   updatePlayerRuntimeInfo,
@@ -352,6 +353,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [isLikelyWindowSurface]);
 
   const handleLoad = useCallback((event: VlcLoadEvent) => {
+    markPlaybackEvent("VLC_OPENING");
     const traceId = getActiveStalkerTraceId(); if (traceId) traceStalker("VLC_OPENING", { traceId });
     setFirstFramePending(false);
     const previous = lastLoadEvent.current;
@@ -424,6 +426,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [acceptRuntimeMetrics, onLoad, onProgress]);
 
   const handlePlaying = useCallback(() => {
+    markPlaybackEvent("VLC_PLAYING");
     const traceId = getActiveStalkerTraceId(); if (traceId) traceStalker("VLC_PLAYING", { traceId });
     setFirstFramePending(false);
     setPlaybackReady(true);
@@ -452,6 +455,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [onEnd]);
 
   const handleError = useCallback((event?: Record<string, unknown>) => {
+    markPlaybackEvent("VLC_ERROR");
     const traceId = getActiveStalkerTraceId();
     const payload = eventPayload(event); const rawCode = (payload as any)?.code ?? (payload as any)?.errorCode ?? (payload as any)?.status;
     const safeNativeCode = typeof rawCode === "number" && Number.isFinite(rawCode) ? String(rawCode) : typeof rawCode === "string" && /^[A-Z0-9_-]{1,32}$/i.test(rawCode) ? rawCode : undefined;
@@ -503,7 +507,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
           onEnd={handleEnd}
           onError={handleError as any}
           {...({
-            onBuffering: (event: any) => { const traceId = getActiveStalkerTraceId(); const payload = eventPayload(event); const raw = Number((payload as any)?.bufferRate ?? (payload as any)?.bufferPercent ?? (payload as any)?.percent); const bufferPercent = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : undefined; if (traceId && shouldTraceStalkerBuffering(traceId, bufferPercent)) traceStalker("VLC_BUFFERING", { traceId, bufferPercent }); },
+            onBuffering: (event: any) => { markPlaybackEvent("VLC_BUFFERING"); const traceId = getActiveStalkerTraceId(); const payload = eventPayload(event); const raw = Number((payload as any)?.bufferRate ?? (payload as any)?.bufferPercent ?? (payload as any)?.percent); const bufferPercent = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : undefined; if (traceId && shouldTraceStalkerBuffering(traceId, bufferPercent)) traceStalker("VLC_BUFFERING", { traceId, bufferPercent }); },
             onStopped: () => { const traceId = getActiveStalkerTraceId(); if (traceId) traceStalker("VLC_STOPPED", { traceId }); },
           } as any)}
         />
