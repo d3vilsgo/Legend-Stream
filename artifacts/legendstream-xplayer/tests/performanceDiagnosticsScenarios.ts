@@ -129,6 +129,8 @@ scenario("hydration sırasındaki generation değişimi cold veriyi korur", () =
   const sessions = controller.snapshot().startups;
   assert.equal(sessions[0]?.events[0]?.name, "ROOT_MOUNT");
   assert.equal(sessions[0]?.events[1]?.name, "PLAYER_HYDRATION_BEGIN");
+  controller.markStartup("PLAYER_HYDRATION_END");
+  assert.equal(controller.snapshot().startups[0]?.events[2]?.name, "PLAYER_HYDRATION_END");
   assert.equal(sessions[0]?.providerGeneration, 1);
   assert.equal(sessions[1]?.providerGeneration, 2);
 });

@@ -138,7 +138,11 @@ export function createPerformanceDiagnostics(options: ControllerOptions = {}) {
     const cold = startups.find((session) => session.id === coldStartupId);
     const coldMilestone = (name === "SNAPSHOT_PUBLISH" || name === "HOME_FIRST_USABLE_RENDER") &&
       cold && !cold.events.some((event) => event.name === "HOME_FIRST_USABLE_RENDER");
-    const targetIds = coldMilestone
+    const processEvent = name === "ROOT_MOUNT" || name === "PLAYER_HYDRATION_BEGIN" ||
+      name === "PLAYER_HYDRATION_END" || name === "PROVIDER_READY" ||
+      name === "CATALOG_DB_OPEN_BEGIN" || name === "CATALOG_DB_OPEN_END" ||
+      name === "STAGING_CLEANUP_BEGIN" || name === "STAGING_CLEANUP_END";
+    const targetIds = (coldMilestone || processEvent) && cold
       ? [cold.id]
       : activeStartupId ? [activeStartupId] : coldStartupId ? [coldStartupId] : [];
     const repeatable = name.endsWith("_BEGIN") || name.endsWith("_END");
