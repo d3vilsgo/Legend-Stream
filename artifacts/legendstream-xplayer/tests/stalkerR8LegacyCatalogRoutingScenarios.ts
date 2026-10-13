@@ -200,7 +200,7 @@ async function main() {
     const coordinator = blockBetween(syncContext, "const refreshCatalog = useCallback", "const cancelInitialSync = useCallback");
     assert.match(coordinator, /provider\?\.type === "stalker"\) await runStalkerSync\("manual"\)/);
 
-    const stalkerRefresh = blockBetween(syncContext, "const runStalkerSync = useCallback", "const runStalkerActivationLifecycle");
+    const stalkerRefresh = blockBetween(syncContext, "const runStalkerSync = useCallback", "const runM3URefresh = useCallback");
     assert.match(stalkerRefresh, /executeStalkerCatalogLifecycleSync/);
     assert.match(stalkerRefresh, /sync:\s*syncStalkerLiveCatalog/);
     assert.match(stalkerRefresh, /signal:\s*controller\.signal/);
