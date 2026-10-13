@@ -8,7 +8,7 @@ type Props = {
   shortLabel?: string;
   icon: keyof typeof Feather.glyphMap;
   active: boolean;
-  minTarget?: 44 | 48;
+  minTarget?: 44 | 48 | 56;
   onPress: () => void;
 };
 
