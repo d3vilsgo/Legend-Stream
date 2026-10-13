@@ -1,6 +1,6 @@
 import { Feather } from '@expo/vector-icons';
 import React, { ReactNode, useRef, useState } from 'react';
-import { Animated, Platform, Pressable, StyleProp, StyleSheet, Text, ViewStyle } from 'react-native';
+import { type AccessibilityRole, type AccessibilityState, Animated, Platform, Pressable, StyleProp, StyleSheet, Text, ViewStyle } from 'react-native';
 import { useColors } from '@/hooks/useColors';
 
 interface FocusButtonProps {
@@ -13,6 +13,9 @@ interface FocusButtonProps {
   children?: ReactNode;
   testID?: string;
   hasTVPreferredFocus?: boolean;
+  accessibilityRole?: AccessibilityRole;
+  accessibilityState?: AccessibilityState;
+  onFocusChange?: (focused: boolean) => void;
 }
 
 export function FocusButton({
@@ -25,6 +28,9 @@ export function FocusButton({
   children,
   testID,
   hasTVPreferredFocus = false,
+  accessibilityRole = 'button',
+  accessibilityState,
+  onFocusChange,
 }: FocusButtonProps) {
   const colors = useColors();
   const [focused, setFocused] = useState(false);
@@ -40,6 +46,7 @@ export function FocusButton({
 
   const animateFocus = (next: boolean) => {
     setFocused(next);
+    onFocusChange?.(next);
     if (!Platform.isTV) return;
     Animated.spring(scale, {
       toValue: next ? 1.055 : 1,
@@ -71,7 +78,8 @@ export function FocusButton({
           tvFocused ? { shadowColor: colors.primary } : null,
           style,
         ]}
-        accessibilityRole="button"
+        accessibilityRole={accessibilityRole}
+        accessibilityState={accessibilityState}
         accessibilityLabel={label}
       >
         {icon ? <Feather name={icon} size={18} color={foregroundColor} /> : null}
