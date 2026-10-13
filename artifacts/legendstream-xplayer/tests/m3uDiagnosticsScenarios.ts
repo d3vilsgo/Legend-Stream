@@ -49,6 +49,7 @@ const orientationSource = readFileSync(resolve(ROOT, "hooks/usePlayerOrientation
 const vlcSource = readFileSync(resolve(ROOT, "components/player/VlcPlaybackSurface.tsx"), "utf8");
 const pageRepoSource = readFileSync(resolve(ROOT, "lib/catalogPageRepository.ts"), "utf8");
 const playerSource = readFileSync(resolve(ROOT, "context/PlayerContext.tsx"), "utf8");
+const catalogSyncSource = readFileSync(resolve(ROOT, "context/CatalogSyncContext.tsx"), "utf8");
 
 let passed = 0;
 const scenario = (name: string, run: () => void) => {
@@ -358,11 +359,11 @@ function main() {
     assert.match(pagedSource, /onPressIn=\{\(\) => \{[\s\S]*recordM3ULivePressIn\(\)[\s\S]*onPress=\{\(\) => \{\s*if \(provider\.type === "m3u"\) recordM3ULivePress\(\);\s*onOpen\(channel\);[\s\S]*onPressOut=\{\(\) => \{[\s\S]*recordM3ULivePressOut\(\)/);
   });
 
-  scenario("Z2O background refresh markers remain intact under Z2R non-blocking EPG ownership", () => {
-    assert.match(playerSource, /const M3U_BACKGROUND_REFRESH_DELAY_MS = 1_250/);
-    assert.match(playerSource, /setTimeout\(\(\) => \{\s*if \(!cancelled\) void refreshProviderInBackground\(providerId\);\s*\}, M3U_BACKGROUND_REFRESH_DELAY_MS\)/);
+  scenario("Z2O background refresh markers remain policy-owned under Z2R non-blocking EPG ownership", () => {
     assert.match(playerSource, /recordM3UBackgroundRefreshBegin\(\);[\s\S]*await loadProviderSmart\(fromProvider\(existing\), \{ persistM3U: false \}\);[\s\S]*recordM3UBackgroundRefreshLoadEnd/);
     assert.match(playerSource, /recordM3UBackgroundRefreshEnd\([\s\S]*if \(!persistenceOwnsRequest\) providerLoadGateRef\.current\.finish\(ownership\)/);
+    assert.doesNotMatch(playerSource, /M3U_BACKGROUND_REFRESH_DELAY_MS|consumeM3UCacheActivation/);
+    assert.match(catalogSyncSource, /activeTransport === "m3u"\) void runM3URefresh\("background"\)/);
     assert.match(playerSource, /const EPG_START_DELAY_MS = 1_200/);
     assert.match(playerSource, /const boundedProvider = provider\.type === "m3u" \|\| provider\.type === "xtream"/);
     assert.match(playerSource, /const existingWork = bulkEpgPromiseRef\.current\.get\(resolvedProviderId\);\s*if \(existingWork\) \{\s*if \(boundedProvider && !force\) return;\s*if \(boundedProvider\) \{\s*cancelOwnedEpg\(resolvedProviderId\);/);
@@ -400,8 +401,8 @@ function main() {
     assert.match(pagedSource, /if \(provider\.type === "m3u"\) recordM3ULivePressIn\(\)/);
     assert.match(pagedSource, /if \(provider\.type === "m3u"\) recordM3ULivePressOut\(\)/);
     assert.doesNotMatch(pagedSource, /disabled=\{provider\.type === "m3u"/);
-    const backgroundDelay = playerSource.match(/const M3U_BACKGROUND_REFRESH_DELAY_MS = ([0-9_]+);/);
-    assert.equal(backgroundDelay?.[1], "1_250");
+    assert.doesNotMatch(playerSource, /M3U_BACKGROUND_REFRESH_DELAY_MS|consumeM3UCacheActivation/);
+    assert.match(catalogSyncSource, /refreshPolicy\.automaticRefreshEnabled[\s\S]*activeTransport === "m3u"\) void runM3URefresh\("background"\)/);
   });
 
   scenario("Z2Q ingest markers are placed on the exact M3U full-load boundaries", () => {

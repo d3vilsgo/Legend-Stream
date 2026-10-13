@@ -130,10 +130,10 @@ export default function OptimizedHomeScreenPaged() {
   const { t } = useI18n();
   const {
     provider, providers, channels, epgByChannel, favorites, history, isHydrating, isLoading, isEpgLoading,
-    error, scopedError, m3uCatalogCommit, connectProvider, cancelProviderConnect, refreshProvider, recoverLegacyCatalogFallback, toggleFavorite, recordWatched,
+    error, scopedError, m3uCatalogCommit, connectProvider, cancelProviderConnect, recoverLegacyCatalogFallback, toggleFavorite, recordWatched,
     removeWatched, resolveProviderForSwitch, setActiveProvider, removeProvider, disconnectProvider, clearError, clearScopedError,
   } = usePlayer();
-  const { snapshot, hasUsableCache, isSyncing, isRefreshing, refreshSnapshot, refreshCatalog } = useCatalogSync();
+  const { snapshot, hasUsableCache, isSyncing, isRefreshing, refreshSnapshot, refreshCatalog, refreshPolicy, refreshPolicyReady, lastSuccessfulAt, setRefreshPolicy, syncState } = useCatalogSync();
   useCredentialDiagnosticsStartup();
 
   const [view, setView] = useState<ViewName>("home");
@@ -227,9 +227,9 @@ export default function OptimizedHomeScreenPaged() {
   const refreshPagedCatalog = async () => {
     if (!provider) return;
     try {
-      if (provider.type === "xtream") await refreshCatalog();
-      else if (provider.type === "m3u") { await refreshProvider(); await yieldToUi(); await refreshSnapshot(); }
-      else if (provider.type === "stalker") await refreshProvider();
+      await refreshCatalog();
+      await yieldToUi();
+      await refreshSnapshot();
     } finally { setCategoryMetadataRefresh((value) => value + 1); }
   };
 
@@ -508,7 +508,7 @@ export default function OptimizedHomeScreenPaged() {
         onRemoveLive={(id) => void removeWatched(id)}
       /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
-      {view === "settings" ? <Settings provider={provider} providers={providers} busy={providerSwitchBusy} switchingProviderId={switchingProviderId} onEdit={() => setEditingProviderId(provider.id)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
+      {view === "settings" ? <Settings provider={provider} providers={providers} busy={providerSwitchBusy} switchingProviderId={switchingProviderId} refreshPolicy={refreshPolicy} refreshPolicyReady={refreshPolicyReady} lastSuccessfulAt={lastSuccessfulAt} syncing={isSyncing || isRefreshing || isLoading} syncPhase={snapshot.providerId === provider.id ? syncState?.phase ?? null : null} onRefreshNow={() => refreshPagedCatalog()} onSetRefreshPolicy={setRefreshPolicy} onEdit={() => setEditingProviderId(provider.id)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
     </ScrollView> : null}
 
   </View>;
@@ -622,12 +622,21 @@ function HistoryView({ providerId, channels, favorites, history, onOpen, onOpenM
   />;
 }
 
-function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAdd, onSwitch, onDisconnect, onRemove }: {
+function Settings({ provider, providers, busy, switchingProviderId, refreshPolicy, refreshPolicyReady, lastSuccessfulAt, syncing, syncPhase, onRefreshNow, onSetRefreshPolicy, onEdit, onAdd, onSwitch, onDisconnect, onRemove }: {
   provider: ProviderConfig; providers: ProviderConfig[]; busy: boolean; switchingProviderId: string | null;
+  refreshPolicy: ReturnType<typeof useCatalogSync>["refreshPolicy"];
+  refreshPolicyReady: boolean; lastSuccessfulAt: number | null; syncing: boolean; syncPhase: string | null;
+  onRefreshNow: () => void; onSetRefreshPolicy: (policy: typeof refreshPolicy) => Promise<void>;
   onEdit: () => void; onAdd: () => void; onSwitch: (id: string) => void; onDisconnect: () => void; onRemove: (id: string) => void;
 }) {
   const colors = useColors();
   const { t, language, languages, setLanguage } = useI18n();
+  const [policySaveFailed, setPolicySaveFailed] = useState(false);
+  const updatePolicy = (patch: Partial<typeof refreshPolicy>) => {
+    setPolicySaveFailed(false);
+    void onSetRefreshPolicy({ ...refreshPolicy, ...patch }).catch(() => setPolicySaveFailed(true));
+  };
+  const status = syncing ? t("catalogUpdating") : syncPhase === "error" ? t("catalogUpdateFailed") : syncPhase === "ready" || syncPhase === "cache-ready" ? t("catalogReady") : t("catalogIdle");
   return <View>
     <Text style={[s.title, { color: colors.foreground }]}>{t("settings")}</Text>
     <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}>
@@ -637,6 +646,23 @@ function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAd
       <View style={s.row}><FocusButton label={t("editSource")} icon="edit-2" onPress={onEdit} /><FocusButton label={t("addAccount")} icon="plus" onPress={onAdd} /><FocusButton label={t("disconnect")} icon="log-out" variant="ghost" onPress={onDisconnect} /></View>
     </View>
     <View style={{ marginTop: 24 }}><Text style={[s.section, { color: colors.foreground }]}>{t("language")}</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.rail}>{languages.map((item) => <FocusButton key={item.code} label={item.label} variant={language === item.code ? "secondary" : "ghost"} onPress={() => void setLanguage(item.code)} />)}</ScrollView></View>
+    <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card, marginTop: 18 }]}>
+      <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16 }}>{t("catalogManagement")}</Text>
+      <Text style={{ color: colors.mutedForeground }}>{t("automaticCatalogRefresh")}</Text>
+      <View style={s.row}>
+        <FocusButton label={refreshPolicy.automaticRefreshEnabled ? t("enabled") : t("disabled")} icon={refreshPolicy.automaticRefreshEnabled ? "check-circle" : "slash"} variant={refreshPolicy.automaticRefreshEnabled ? "secondary" : "ghost"} disabled={!refreshPolicyReady} onPress={() => updatePolicy({ automaticRefreshEnabled: !refreshPolicy.automaticRefreshEnabled })} />
+      </View>
+      <Text style={{ color: colors.mutedForeground }}>{t("catalogRefreshInterval")}</Text>
+      <View style={s.row}>
+        <FocusButton label={t("hours24")} variant={refreshPolicy.refreshIntervalHours === 24 ? "secondary" : "ghost"} disabled={!refreshPolicyReady} onPress={() => updatePolicy({ refreshIntervalHours: 24 })} />
+        <FocusButton label={t("days3")} variant={refreshPolicy.refreshIntervalHours === 72 ? "secondary" : "ghost"} disabled={!refreshPolicyReady} onPress={() => updatePolicy({ refreshIntervalHours: 72 })} />
+      </View>
+      <FocusButton label={syncing ? t("catalogUpdating") : t("updateNow")} icon="refresh-cw" disabled={syncing || busy || !refreshPolicyReady} onPress={onRefreshNow} />
+      <Text style={{ color: colors.mutedForeground }}>{t("lastSuccessfulCatalogUpdate")}: {lastSuccessfulAt ? new Date(lastSuccessfulAt).toLocaleString(language) : t("never")}</Text>
+      <Text style={{ color: colors.mutedForeground }}>{t("catalogUpdateStatus")}: {status}</Text>
+      {provider.type === "stalker" ? <Text style={{ color: colors.mutedForeground }}>{t("stalkerRefreshScope")}</Text> : null}
+      {policySaveFailed ? <Text accessibilityRole="alert" style={{ color: colors.destructive }}>{t("catalogPolicySaveFailed")}</Text> : null}
+    </View>
     <PlayerChromeTimeoutSetting />
     <ProviderBackupPanel />
     <CredentialDiagnosticsPanel />
