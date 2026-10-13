@@ -129,5 +129,7 @@ scenario("TV nav buttons are not clipped into a focus trap and closed menus unmo
   assert.ok(nav.includes("{open ? ("));
   assert.ok(nav.includes("BackHandler"));
   assert.ok(nav.includes("hardwareBackPress"));
+  assert.ok(nav.includes("if (!navigationFocusedRef.current) return false;"));
+  assert.ok(nav.includes("onFocusChange={(focused) => { navigationFocusedRef.current = focused; }}"));
 });
 console.log(`premium adaptive navigation scenarios: ${passed}/${passed} passed`);

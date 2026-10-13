@@ -1,5 +1,5 @@
 import { Feather } from "@expo/vector-icons";
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { BackHandler, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FocusButton } from "@/components/FocusButton";
@@ -34,6 +34,8 @@ export function ResponsiveContentNav<Key extends string>({
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
   const [open, setOpen] = useState(Platform.isTV);
+  const [preferInitialFocus, setPreferInitialFocus] = useState(Platform.isTV);
+  const navigationFocusedRef = useRef(false);
   const profile = useMemo(() => resolvePremiumCatalogProfile({
     width,
     height,
@@ -51,9 +53,14 @@ export function ResponsiveContentNav<Key extends string>({
   const homeKey = items[0]?.key;
 
   useEffect(() => {
+    setPreferInitialFocus(false);
+  }, []);
+
+  useEffect(() => {
     if (!model.nativeTv || !backEnabled || !model.backTarget) return;
     const backTarget = model.backTarget;
     const back = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (!navigationFocusedRef.current) return false;
       onSelect(backTarget);
       return true;
     });
@@ -82,7 +89,8 @@ export function ResponsiveContentNav<Key extends string>({
             variant={activeKey === item.key ? "secondary" : "ghost"}
             accessibilityRole="tab"
             accessibilityState={{ selected: activeKey === item.key }}
-            hasTVPreferredFocus={activeKey === item.key && activeKey === homeKey}
+            hasTVPreferredFocus={preferInitialFocus && activeKey === item.key && activeKey === homeKey}
+            onFocusChange={(focused) => { navigationFocusedRef.current = focused; }}
             onPress={() => select(item.key)}
             style={styles.tvTarget}
           />

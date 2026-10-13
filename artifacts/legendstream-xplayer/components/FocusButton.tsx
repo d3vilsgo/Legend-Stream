@@ -15,6 +15,7 @@ interface FocusButtonProps {
   hasTVPreferredFocus?: boolean;
   accessibilityRole?: AccessibilityRole;
   accessibilityState?: AccessibilityState;
+  onFocusChange?: (focused: boolean) => void;
 }
 
 export function FocusButton({
@@ -29,6 +30,7 @@ export function FocusButton({
   hasTVPreferredFocus = false,
   accessibilityRole = 'button',
   accessibilityState,
+  onFocusChange,
 }: FocusButtonProps) {
   const colors = useColors();
   const [focused, setFocused] = useState(false);
@@ -44,6 +46,7 @@ export function FocusButton({
 
   const animateFocus = (next: boolean) => {
     setFocused(next);
+    onFocusChange?.(next);
     if (!Platform.isTV) return;
     Animated.spring(scale, {
       toValue: next ? 1.055 : 1,
