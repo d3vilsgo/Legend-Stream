@@ -121,10 +121,11 @@ async function main() {
     const navigateBlock = screenSource.slice(navigateStart, navigateEnd);
     assert.match(navigateBlock, /setView\(target\)/);
     assert.doesNotMatch(navigateBlock, /provider\.type|isLoading|isSyncing|isRefreshing|busy|disabled/);
-    assert.match(screenSource, /nav\.map\(\(item\) => <FocusButton[\s\S]*onPress=\{\(\) => navigate\(item\.key\)\}/);
-    assert.doesNotMatch(screenSource, /nav\.map\(\(item\) => <FocusButton[^>]*disabled=/);
-    for (const target of ["live", "movies", "series", "history", "downloads", "settings"]) {
-      assert.match(screenSource, new RegExp(`key: "${target}" as const`));
+    assert.match(screenSource, /const nav: ResponsiveContentNavItem<ContentView>\[\] = \[/);
+    assert.match(screenSource, /<ResponsiveContentNav items=\{nav\} activeKey=\{view\} onSelect=\{navigate\}/);
+    assert.doesNotMatch(screenSource, /ResponsiveContentNav[^>]*disabled=/);
+    for (const target of ["home", "live", "movies", "series", "history", "downloads", "settings"]) {
+      assert.match(screenSource, new RegExp(`key: "${target}"`));
     }
     assert.match(screenSource, /view === "live" && \(provider\.type === "m3u" \|\| provider\.type === "xtream"\)/);
     assert.match(screenSource, /view === "movies" && \(provider\.type === "m3u" \|\| provider\.type === "xtream"\)/);
