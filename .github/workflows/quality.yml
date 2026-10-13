@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [main, feature/r18-device-presentation-foundation, feature/r18-presentation-foundation-1b]
   push:
-    branches: [main]
+    branches: [main, feature/cache-first-catalog-policy]
 
 # Deterministic, read-only CI: dependency resolution must match pnpm-lock.yaml exactly.
 # Storage security gate: 6 credential scenarios + 24 backup scenarios must all pass.
@@ -37,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10
