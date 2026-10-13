@@ -233,6 +233,11 @@ jobs:
         run: |
           set -euo pipefail
           pnpm --filter @workspace/legendstream-xplayer exec tsx tests/devicePresentationScenarios.ts
+      - name: Cache-first catalog refresh policy scenarios
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @workspace/legendstream-xplayer test:catalog-refresh-policy
       - name: Presentation orientation lifecycle (14/14 required)
         shell: bash
         run: |
