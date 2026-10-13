@@ -125,9 +125,9 @@ scenario("the navigation surface uses device profiles independently of orientati
 });
 scenario("TV nav buttons are not clipped into a focus trap and closed menus unmount tabs", () => {
   const nav = source("components/navigation/ResponsiveContentNav.tsx");
-  assert.match(nav, /showsHorizontalScrollIndicator={false}/);
-  assert.match(nav, /{open ? (/);
-  assert.match(nav, /BackHandler/);
-  assert.match(nav, /hardwareBackPress/);
+  assert.ok(nav.includes("showsHorizontalScrollIndicator={false}"));
+  assert.ok(nav.includes("{open ? ("));
+  assert.ok(nav.includes("BackHandler"));
+  assert.ok(nav.includes("hardwareBackPress"));
 });
 console.log(`premium adaptive navigation scenarios: ${passed}/${passed} passed`);
