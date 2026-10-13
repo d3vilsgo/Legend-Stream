@@ -18,6 +18,7 @@ import {
 } from "@/components/CredentialDiagnosticsPanel";
 import { DownloadsView } from "@/components/DownloadsView";
 import { FocusButton } from "@/components/FocusButton";
+import { ResponsiveContentNav, type ResponsiveContentNavItem } from "@/components/navigation/ResponsiveContentNav";
 import { HomeDiscovery, type HomeContentView } from "@/components/home/HomeDiscovery";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
 import { PagedLiveCatalog } from "@/components/catalog/PagedCatalogViews";
@@ -400,7 +401,7 @@ export default function StalkerMainPage() {
 
   const presentedView = view === "player" ? playable?.returnTo ?? "home" : view;
 
-  const nav = [
+  const nav: ResponsiveContentNavItem<StalkerContentView>[] = [
     { key: "home" as const, label: t("home"), icon: "home" as const },
     { key: "live" as const, label: t("liveTv"), icon: "radio" as const },
     { key: "movies" as const, label: t("movies"), icon: "film" as const },
@@ -439,17 +440,7 @@ export default function StalkerMainPage() {
           </Text>
           <ProviderSubscriptionChip provider={provider} />
         </View>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.nav}>
-          {nav.map((item) => (
-            <FocusButton
-              key={item.key}
-              label={item.label}
-              icon={item.icon}
-              variant={presentedView === item.key ? "secondary" : "ghost"}
-              onPress={() => navigate(item.key)}
-            />
-          ))}
-        </ScrollView>
+        <ResponsiveContentNav items={nav} activeKey={presentedView} onSelect={navigate} backEnabled={view !== "player"} />
       </View>
 
       {error || catalogError || visibleScopedError ? (
@@ -734,7 +725,6 @@ const s = StyleSheet.create({
   header: { borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingBottom: 8 },
   homeHeaderPremium: { paddingHorizontal: 18, paddingTop: 6, paddingBottom: 10 },
   headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 48 },
-  nav: { gap: 6, paddingVertical: 4 },
   brand: { fontSize: 18, fontWeight: "900", letterSpacing: 1 },
   error: { margin: 12, borderWidth: 1, borderRadius: 12, padding: 10, flexDirection: "row", gap: 8, alignItems: "center" },
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },

@@ -18,6 +18,7 @@ import { ContinueWatchingView } from "@/components/ContinueWatchingView";
 import { CredentialDiagnosticsPanel, useCredentialDiagnosticsStartup } from "@/components/CredentialDiagnosticsPanel";
 import { DownloadsView } from "@/components/DownloadsView";
 import { FocusButton } from "@/components/FocusButton";
+import { ResponsiveContentNav, type ResponsiveContentNavItem } from "@/components/navigation/ResponsiveContentNav";
 import { HomeDiscovery, type HomeContentView } from "@/components/home/HomeDiscovery";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
 import {
@@ -447,7 +448,7 @@ export default function OptimizedHomeScreenPaged() {
     {playable ? <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => setView(playable.returnTo)} /> : null}
   </View>;
 
-  const nav = [
+  const nav: ResponsiveContentNavItem<ContentView>[] = [
     { key: "home" as const, label: t("home"), icon: "home" as const },
     { key: "live" as const, label: t("liveTv"), icon: "radio" as const },
     { key: "movies" as const, label: t("movies"), icon: "film" as const },
@@ -465,7 +466,7 @@ export default function OptimizedHomeScreenPaged() {
   return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
     <View style={[s.header, { borderColor: colors.border }, view === "home" ? s.homeHeaderPremium : null]}>
       <View style={s.headerTop}><Text style={[s.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text><ProviderSubscriptionChip provider={provider} /></View>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.nav}>{nav.map((item) => <FocusButton key={item.key} label={item.label} icon={item.icon} variant={view === item.key ? "secondary" : "ghost"} onPress={() => navigate(item.key)} />)}</ScrollView>
+      <ResponsiveContentNav items={nav} activeKey={view} onSelect={navigate} backEnabled={view !== "player"} />
     </View>
     {error || catalogError || visibleScopedError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}><Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError || visibleScopedError)}</Text><Pressable onPress={() => { clearError(); clearScopedError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable></View> : null}
 
@@ -665,7 +666,6 @@ const s = StyleSheet.create({
   header: { borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingBottom: 8 },
   homeHeaderPremium: { paddingHorizontal: 18, paddingTop: 6, paddingBottom: 10 },
   headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 48 },
-  nav: { gap: 6, paddingVertical: 4 },
   brand: { fontSize: 18, fontWeight: "900", letterSpacing: 1 },
   brandLarge: { fontSize: 28, fontWeight: "900", letterSpacing: 1 },
   error: { margin: 12, borderWidth: 1, borderRadius: 12, padding: 10, flexDirection: "row", gap: 8, alignItems: "center" },

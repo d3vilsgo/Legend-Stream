@@ -5,7 +5,7 @@ import { premiumDesignTokens } from "../lib/design/tokens";
 import { computePosterGridLayout } from "../lib/catalogGridLayout";
 import { resolveDevicePresentation } from "../lib/devicePresentation";
 
-const check: (condition: unknown, message: string) => asserts condition = (condition, message) => { if (!condition) throw new Error(message); };
+const check = (condition: unknown, message: string): asserts condition => { if (!condition) throw new Error(message); };
 let passed = 0;
 const scenario = (name: string, run: () => void) => { run(); passed += 1; console.log(`ok premium tablet ${passed} - ${name}`); };
 
