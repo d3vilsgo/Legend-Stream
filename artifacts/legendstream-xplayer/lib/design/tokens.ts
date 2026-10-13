@@ -175,6 +175,9 @@ export const premiumDesignTokens = {
   focus: {
     ringWidth: {
       mobilePortrait: 1,
+      phonePortrait: 1,
+      tabletPortrait: 1,
+      tabletLandscape: 1,
       mobileLandscape: 1,
       tv: 3,
     } satisfies ModeScale,

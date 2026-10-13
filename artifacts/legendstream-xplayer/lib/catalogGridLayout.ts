@@ -1,5 +1,5 @@
 import { computePremiumPosterGridMetrics } from "./design/layoutMetrics";
-import { resolvePremiumCatalogProfile, type PremiumSafeAreaInsets, type PremiumNavState } from "./design/screenProfiles";
+import { resolvePremiumCatalogProfile, resolvePremiumScreenProfile, type PremiumSafeAreaInsets, type PremiumNavState } from "./design/screenProfiles";
 
 export type PosterGridLayout = {
   columns: number;
@@ -15,11 +15,14 @@ export function computePosterGridLayout(
   options: { tvPreview?: boolean; safeArea?: PremiumSafeAreaInsets; navState?: PremiumNavState; density?: number } = {},
 ): PosterGridLayout {
   const profile = resolvePremiumCatalogProfile({ width, height, nativeTv, ...options });
-  const metrics = computePremiumPosterGridMetrics(profile);
+  const layoutProfile = profile.deviceClass === "phone" && width > height
+    ? resolvePremiumScreenProfile({ mode: "mobileLandscape", width, height, ...options })
+    : profile;
+  const metrics = computePremiumPosterGridMetrics(layoutProfile);
   return {
     columns: metrics.columns,
     columnWidth: metrics.posterWidth,
-    contentWidth: profile.effectiveContentWidth,
-    outerPadding: profile.horizontalPadding,
+    contentWidth: layoutProfile.effectiveContentWidth,
+    outerPadding: layoutProfile.horizontalPadding,
   };
 }

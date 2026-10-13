@@ -138,12 +138,12 @@ jobs:
           set -euo pipefail
           runtime="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-benchmark-runtime 2>&1 | tee /dev/stderr)"
           grep -F 'catalog benchmark runtime isolation scenarios: 9/9 passed' <<<"$runtime"
-      - name: Catalog persistence invariants (10/10 required)
+      - name: Catalog persistence invariants (11/11 required)
         shell: bash
         run: |
           set -euo pipefail
           catalog="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-persistence 2>&1 | tee /dev/stderr)"
-          grep -F 'catalog persistence scenarios: 10/10 passed' <<<"$catalog"
+          grep -F 'catalog persistence scenarios: 11/11 passed' <<<"$catalog"
       - name: Paged catalog parity regressions (12/12 + 4/4 + 12/12 required)
         shell: bash
         run: |
