@@ -32,6 +32,8 @@ assert.equal(shouldStartCatalogRefresh({ mode: "automatic", hasUsableCache: true
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const playerContext = readFileSync(resolve(root, "context/PlayerContext.tsx"), "utf8");
 const catalogContext = readFileSync(resolve(root, "context/CatalogSyncContext.tsx"), "utf8");
-assert.doesNotMatch(playerContext, /refreshProviderInBackground|M3U_BACKGROUND_REFRESH_DELAY_MS/);
-assert.match(catalogContext, /resolvedProviderTransport\(provider\) === "m3u"\) await runM3URefresh\(\)/);
+assert.match(playerContext, /const refreshProviderInBackground = async/);
+assert.doesNotMatch(playerContext, /M3U_BACKGROUND_REFRESH_DELAY_MS|consumeM3UCacheActivation/);
+assert.match(catalogContext, /resolvedProviderTransport\(provider\) === "m3u"\) await runM3URefresh\("manual"\)/);
+assert.match(catalogContext, /activeTransport === "m3u"\) void runM3URefresh\("background"\)/);
 console.log("catalog refresh policy scenarios passed.");

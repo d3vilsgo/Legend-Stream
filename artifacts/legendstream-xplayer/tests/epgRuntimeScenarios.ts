@@ -216,7 +216,7 @@ async function main() {
   assert.match(iptvSource, /bytes\.subarray\(offset, end\)/);
   assert.match(iptvSource, /if \(end < bytes\.length\) await yieldToUi\(\)/);
   const bgStart = playerContextSource.indexOf("const refreshProviderInBackground");
-  const bgEnd = playerContextSource.indexOf("useEffect(() => {", bgStart);
+  const bgEnd = playerContextSource.indexOf("const recoverLegacyCatalogFallback", bgStart);
   const bgSource = playerContextSource.slice(bgStart, bgEnd);
   assert.match(bgSource, /existing\.epgUrl[\s\S]*updated\.epgUrl[\s\S]*invalidateEpgFreshness\(providerId\)/);
   assert.doesNotMatch(bgSource, /clearRegisteredEpgChannels|clearEpgProviderCache/);

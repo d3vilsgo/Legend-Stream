@@ -433,7 +433,9 @@ async function main() {
     assert.match(refreshSource, /observeM3UCacheWrite\(providerId, generation, cacheWriteTask, ownership\)/);
     assert.match(refreshSource, /catch \(caught\) \{\s*if \(!isCurrentProviderLoad\(ownership\)\) return false;[\s\S]*setError\(message\)/);
     assert.match(refreshSource, /finishProviderLoad\(ownership, persistenceOwnsRequest, busyId\)/);
-    assert.doesNotMatch(playerSource, /refreshProviderInBackground|M3U_BACKGROUND_REFRESH_DELAY_MS/);
+    assert.match(playerSource, /const refreshProviderInBackground = async/);
+    assert.doesNotMatch(playerSource, /M3U_BACKGROUND_REFRESH_DELAY_MS|consumeM3UCacheActivation/);
+    assert.match(contextSource, /refreshProviderInBackground\(active\.id\)/);
     assert.match(fallbackSource, /beginBackground\(providerId\)/);
     assert.match(playerSource, /requestOwnership && !isCurrentProviderLoad\(requestOwnership\)/);
     assert.match(playerSource, /providerLoadGateRef\.current\.invalidateAll\(\)/);

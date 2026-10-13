@@ -197,6 +197,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     m3uCatalogCommit,
     recoverLegacyCatalogFallback,
     refreshProvider,
+    refreshProviderInBackground,
   } = usePlayer();
   const colors = useColors();
   const { language } = useI18n();
@@ -324,11 +325,12 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
       !m3uCatalogCommit ||
       m3uCatalogCommit.providerId !== active.id
     ) return;
-    const generation = ++generationRef.current;
-    const ownership: CatalogSyncOwnership = {
-      providerId: active.id,
-      generation,
-    };
+    const currentRun = runningRef.current;
+    const ownership = currentRun &&
+      currentRun.ownership.providerId === active.id &&
+      isCatalogSyncOwnershipCurrent(latestProviderIdRef.current, generationRef.current, currentRun.ownership)
+      ? currentRun.ownership
+      : { providerId: active.id, generation: ++generationRef.current };
     void refreshSnapshotFor(active, ownership);
   }, [m3uCatalogCommit, refreshSnapshotFor]);
 
@@ -839,7 +841,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     return task;
   }, [provider, refreshSnapshotFor]);
 
-  const runM3URefresh = useCallback(async () => {
+  const runM3URefresh = useCallback(async (mode: "manual" | "background" = "manual") => {
     const active = provider;
     if (!active || resolvedProviderTransport(active) !== "m3u" || active.id !== latestProviderIdRef.current) return;
     const running = runningRef.current;
@@ -852,15 +854,14 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
       setIsRefreshing(true);
       setSyncStateLocal({ providerId: active.id, phase: "syncing", completed: 0, total: 1, message: "Catalog update started", updatedAt: Date.now() });
       try {
-        const committed = await refreshProvider(active.id);
+        const committed = mode === "background"
+          ? await refreshProviderInBackground(active.id)
+          : await refreshProvider(active.id);
         if (!isCatalogSyncOwnershipCurrent(latestProviderIdRef.current, generationRef.current, ownership)) return;
         if (committed) {
-          await refreshSnapshotFor(active, ownership);
+          setSyncStateLocal({ providerId: active.id, phase: "ready", completed: 1, total: 1, message: "Catalog update ready", updatedAt: Date.now() });
         } else {
-          await refreshSnapshotFor(active, ownership);
-          if (isCatalogSyncOwnershipCurrent(latestProviderIdRef.current, generationRef.current, ownership)) {
-            setSyncStateLocal({ providerId: active.id, phase: "error", completed: 0, total: 1, message: "Catalog update failed.", updatedAt: Date.now() });
-          }
+          setSyncStateLocal({ providerId: active.id, phase: "error", completed: 0, total: 1, message: "Catalog update failed.", updatedAt: Date.now() });
         }
       } finally {
         if (isCatalogSyncOwnershipCurrent(latestProviderIdRef.current, generationRef.current, ownership)) setIsRefreshing(false);
@@ -870,10 +871,10 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     const release = () => { if (runningRef.current?.task === task) runningRef.current = null; };
     void task.then(release, release);
     return task;
-  }, [provider, refreshProvider, refreshSnapshotFor]);
+  }, [provider, refreshProvider, refreshProviderInBackground, refreshSnapshotFor]);
 
   const refreshCatalog = useCallback(async () => {
-    if (provider && resolvedProviderTransport(provider) === "m3u") await runM3URefresh();
+    if (provider && resolvedProviderTransport(provider) === "m3u") await runM3URefresh("manual");
     else if (provider?.type === "stalker") await runStalkerSync("manual");
     else await runSync("manual");
   }, [provider, runM3URefresh, runStalkerSync, runSync]);
@@ -1028,7 +1029,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
         now: Date.now(),
       })) return;
       automaticStartedRef.current = runKey;
-      if (activeTransport === "m3u") void runM3URefresh();
+      if (activeTransport === "m3u") void runM3URefresh("background");
       else if (active.type === "stalker") void runStalkerSync("background");
       else void runSync("background");
     }, delay);

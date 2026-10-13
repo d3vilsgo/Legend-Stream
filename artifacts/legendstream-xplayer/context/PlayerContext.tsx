@@ -64,6 +64,9 @@ import {
   resetXtreamEpgDiagnosticRun,
 } from "@/lib/xtreamEpgDiagnostics";
 import {
+  recordM3UBackgroundRefreshBegin,
+  recordM3UBackgroundRefreshEnd,
+  recordM3UBackgroundRefreshLoadEnd,
   recordM3UEpgBegin,
   recordM3UEpgEnd,
   recordM3UEpgGenerationCurrent,
@@ -217,6 +220,7 @@ interface PlayerContextValue extends PlayerState {
   removeProvider: (providerId?: string) => Promise<void>;
   disconnectProvider: () => Promise<void>;
   refreshProvider: (providerId?: string) => Promise<boolean>;
+  refreshProviderInBackground: (providerId: string) => Promise<boolean>;
   recoverLegacyCatalogFallback: (providerId: string, error: unknown) => Promise<boolean>;
   refreshEpg: (providerId?: string, channelId?: string) => Promise<void>;
   loadEpgManually: (providerId: string) => Promise<void>;
@@ -1337,6 +1341,61 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  // CatalogSync owns the refresh policy and is the only caller for automatic work.
+  // Keep M3U background ownership/cache publication separate from foreground manual refresh.
+  const refreshProviderInBackground = async (providerId: string): Promise<boolean> => {
+    const current = stateRef.current;
+    const existing = current.providers.find((item) => item.id === providerId);
+    if (!existing || resolvedProviderTransport(existing) !== "m3u") return false;
+    if (playerBusyOwnerRef.current !== null) return false;
+    const ownership = providerLoadGateRef.current.beginBackground(providerId);
+    if (!ownership) return false;
+    let persistenceOwnsRequest = false;
+    const diagnosticStartedAt = globalThis.performance?.now?.() ?? Date.now();
+    recordM3UBackgroundRefreshBegin();
+    try {
+      const smart = await loadProviderSmart(fromProvider(existing), { persistM3U: false });
+      const diagnosticLoadEndedAt = globalThis.performance?.now?.() ?? Date.now();
+      recordM3UBackgroundRefreshLoadEnd(diagnosticLoadEndedAt - diagnosticStartedAt);
+      if (!isCurrentProviderLoad(ownership)) return false;
+      const updated = toProvider({
+        ...smart.provider,
+        lastLoadedAt: Date.now(),
+        channelCount: smart.catalogCount,
+        epgUrl: smart.provider.epgUrl || smart.loaded.epgUrl,
+        loadError: undefined,
+      });
+      if (!isCurrentProviderLoad(ownership)) return false;
+      await saveProviderSecrets(updated);
+      if (!isCurrentProviderLoad(ownership)) return false;
+      if ((existing.epgUrl?.trim() || "") !== (updated.epgUrl?.trim() || "")) {
+        invalidateEpgFreshness(providerId);
+      }
+      const latest = stateRef.current;
+      const generation = await persist({
+        ...latest,
+        provider: latest.provider?.id === providerId ? updated : latest.provider,
+        providers: latest.providers.map((item) => item.id === providerId ? updated : item),
+        channels: [
+          ...latest.channels.filter((channel) => channel.providerId !== providerId),
+          ...smart.loaded.channels,
+        ],
+      });
+      if (!isCurrentProviderLoad(ownership)) return false;
+      const cacheWriteTask = persistM3ULoadInBackground(smart.provider, smart.loaded);
+      if (!cacheWriteTask) return false;
+      persistenceOwnsRequest = true;
+      const published = await observeM3UCacheWrite(providerId, generation, cacheWriteTask, ownership);
+      return published && isCurrentProviderLoad(ownership);
+    } catch {
+      return false;
+    } finally {
+      const diagnosticEndedAt = globalThis.performance?.now?.() ?? Date.now();
+      recordM3UBackgroundRefreshEnd(diagnosticEndedAt - diagnosticStartedAt);
+      if (!persistenceOwnsRequest) providerLoadGateRef.current.finish(ownership);
+    }
+  };
+
   const recoverLegacyCatalogFallback = async (providerId: string, caught: unknown) => {
     const current = stateRef.current;
     const existing = current.providers.find((item) => item.id === providerId);
@@ -1969,6 +2028,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       removeProvider,
       disconnectProvider,
       refreshProvider,
+      refreshProviderInBackground,
       recoverLegacyCatalogFallback,
       refreshEpg,
       loadEpgManually,
