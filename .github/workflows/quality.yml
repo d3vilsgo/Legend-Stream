@@ -138,12 +138,12 @@ jobs:
           set -euo pipefail
           runtime="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-benchmark-runtime 2>&1 | tee /dev/stderr)"
           grep -F 'catalog benchmark runtime isolation scenarios: 9/9 passed' <<<"$runtime"
-      - name: Catalog persistence invariants (11/11 required)
+      - name: Catalog persistence invariants (10/10 required)
         shell: bash
         run: |
           set -euo pipefail
           catalog="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-persistence 2>&1 | tee /dev/stderr)"
-          grep -F 'catalog persistence scenarios: 11/11 passed' <<<"$catalog"
+          grep -F 'catalog persistence scenarios: 10/10 passed' <<<"$catalog"
       - name: Paged catalog parity regressions (12/12 + 4/4 + 12/12 required)
         shell: bash
         run: |
@@ -245,12 +245,12 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/catalogGridLayoutScenarios.ts
       - name: Premium Home hero scenarios
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/premiumHomeHeroScenarios.ts
-      - name: Premium tablet design foundation scenarios (10/10 required)
+      - name: Premium tablet design foundation scenarios (11/11 required)
         shell: bash
         run: |
           set -euo pipefail
           result="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tabletDesignFoundationScenarios.ts 2>&1 | tee /dev/stderr)"
-          grep -F 'premium tablet design foundation scenarios: 10/10 passed' <<<"$result"
+          grep -F 'premium tablet design foundation scenarios: 11/11 passed' <<<"$result"
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references
