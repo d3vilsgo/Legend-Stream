@@ -96,8 +96,8 @@ scenario("M3U and Xtream shell routes remain wired through their existing naviga
 scenario("Stalker keeps its separate product surfaces and player return selection", () => {
   const shell = source("components/StalkerMainPage.tsx");
   assert.match(shell, /<ResponsiveContentNav items={nav} activeKey={presentedView} onSelect={navigate}/);
-  assert.match(shell, /StalkerLiveCatalog/);
-  assert.match(shell, /StalkerVodSurface/);
+  assert.match(shell, /<PagedLiveCatalog/);
+  assert.match(shell, /StalkerGoldenMoviesCatalog/);
   assert.match(shell, /StalkerSeriesProductSurface/);
   assert.match(shell, /const presentedView = view === "player" \? playable\?\.returnTo \?\? "home" : view/);
 });
