@@ -104,9 +104,17 @@ scenario("Stalker keeps its separate product surfaces and player return selectio
 scenario("TV focus targets use FocusButton rather than touch-only Pressable tabs", () => {
   const nav = source("components/navigation/ResponsiveContentNav.tsx");
   assert.match(nav, /<FocusButton/);
-  assert.match(nav, /focusable/);
+  assert.match(source("components/FocusButton.tsx"), /focusable={!disabled}/);
   assert.match(nav, /hasTVPreferredFocus/);
   assert.match(nav, /accessibilityRole=\"tab\"/);
+});
+scenario("visible active tab retains its translated accessible label and selected state", () => {
+  const nav = source("components/navigation/ResponsiveContentNav.tsx");
+  const button = source("components/navigation/CompactLandscapeNavButton.tsx");
+  assert.match(button, /accessibilityRole="tab"/);
+  assert.match(button, /accessibilityLabel={label}/);
+  assert.match(button, /accessibilityState={{ selected: active }}/);
+  assert.match(nav, /activeKey === item.key/);
 });
 scenario("the navigation surface uses device profiles independently of orientation ownership", () => {
   const nav = source("components/navigation/ResponsiveContentNav.tsx");

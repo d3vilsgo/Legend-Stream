@@ -1,6 +1,6 @@
 import { Feather } from '@expo/vector-icons';
 import React, { ReactNode, useRef, useState } from 'react';
-import { AccessibilityRole, AccessibilityState, Animated, Platform, Pressable, StyleProp, StyleSheet, Text, ViewStyle } from 'react-native';
+import { type AccessibilityRole, type AccessibilityState, Animated, Platform, Pressable, StyleProp, StyleSheet, Text, ViewStyle } from 'react-native';
 import { useColors } from '@/hooks/useColors';
 
 interface FocusButtonProps {

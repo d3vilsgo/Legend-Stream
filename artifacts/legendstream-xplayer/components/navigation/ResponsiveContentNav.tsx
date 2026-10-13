@@ -51,13 +51,14 @@ export function ResponsiveContentNav<Key extends string>({
   const homeKey = items[0]?.key;
 
   useEffect(() => {
-    if (!model.nativeTv || !backEnabled || !homeKey || activeKey === homeKey) return;
+    if (!model.nativeTv || !backEnabled || !model.backTarget) return;
+    const backTarget = model.backTarget;
     const back = BackHandler.addEventListener("hardwareBackPress", () => {
-      onSelect(homeKey);
+      onSelect(backTarget);
       return true;
     });
     return () => back.remove();
-  }, [activeKey, backEnabled, homeKey, model.nativeTv, onSelect]);
+  }, [activeKey, backEnabled, homeKey, model.backTarget, model.nativeTv, onSelect]);
 
   const select = (key: Key) => {
     onSelect(key);
