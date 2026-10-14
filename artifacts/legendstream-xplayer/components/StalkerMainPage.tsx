@@ -31,6 +31,8 @@ import { StalkerSeriesProductSurface } from "@/components/stalker/StalkerSeriesP
 import { PlayerChromeTimeoutSetting } from "@/components/PlayerChromeTimeoutSetting";
 import { ProviderBackupPanel } from "@/components/ProviderBackupPanel";
 import { ProviderSubscriptionChip } from "@/components/ProviderSubscriptionChip";
+import { TVPreviewSetting } from "@/components/tvPreview/TVPreviewSetting";
+import { useTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
 import {
   type Channel,
   type ProviderConfig,
@@ -160,6 +162,7 @@ export default function StalkerMainPage() {
   }, [provider?.id, provider?.type]);
 
   const [view, setView] = useState<StalkerViewName>("home");
+  const { setBackAction } = useTVPreviewFocus();
   const [playable, setPlayable] = useState<Playable | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
@@ -196,13 +199,18 @@ export default function StalkerMainPage() {
     historyPlaybackSequenceRef.current += 1;
   }, [provider?.id]);
 
-  if (!provider || !isStalkerProductProvider(provider)) return null;
-
   const navigate = (target: StalkerContentView) => {
     setCatalogError(null);
     if (target !== "live") clearScopedError("live-history");
     setView(target);
   };
+
+  useEffect(() => {
+    setBackAction(() => { if (view !== "home") navigate("home"); });
+    return () => setBackAction(null);
+  }, [navigate, setBackAction, view]);
+
+  if (!provider || !isStalkerProductProvider(provider)) return null;
 
   const openResolvedPlayable = (next: Playable) => {
     if (next.kind !== "live") clearScopedError("live-history");
@@ -419,7 +427,7 @@ export default function StalkerMainPage() {
   return (
     <View
       style={[
-        s.screen,
+      s.screen,
         {
           backgroundColor: colors.background,
           paddingTop: top,
@@ -500,7 +508,7 @@ export default function StalkerMainPage() {
 
       {presentedView !== "live" && presentedView !== "movies" && presentedView !== "series" && presentedView !== "history" ? (
         <ScrollView
-          style={{ flex: 1 }}
+          style={{ flex: 1, minHeight: 0 }}
           contentContainerStyle={s.content}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -648,6 +656,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onSwitch, on
   return (
     <View>
       <Text style={[s.title, { color: colors.foreground }]}>{t("settings")}</Text>
+      <TVPreviewSetting />
       <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}>
         <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16 }}>{t("activeConnection")}</Text>
         <Text style={{ color: colors.foreground }}>{provider.name}</Text>
@@ -719,7 +728,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onSwitch, on
 }
 
 const s = StyleSheet.create({
-  screen: { flex: 1 },
+  screen: { flex: 1, minHeight: 0 },
   fullPlayer: { ...StyleSheet.absoluteFillObject, zIndex: 100, backgroundColor: "#000" },
   content: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
   header: { borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingBottom: 8 },

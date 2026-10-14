@@ -7,6 +7,7 @@ import { CompactLandscapeNavButton } from "@/components/navigation/CompactLandsc
 import { useColors } from "@/hooks/useColors";
 import { resolveAdaptiveNavigationModel } from "@/lib/adaptiveNavigation";
 import { resolvePremiumCatalogProfile } from "@/lib/design/screenProfiles";
+import { useUiPresentation } from "@/context/UiPresentationContext";
 
 export type ResponsiveContentNavItem<Key extends string> = {
   key: Key;
@@ -33,16 +34,18 @@ export function ResponsiveContentNav<Key extends string>({
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
-  const [open, setOpen] = useState(Platform.isTV);
+  const presentation = useUiPresentation();
+  const [open, setOpen] = useState(Platform.isTV || presentation.tvPreview);
   const [preferInitialFocus, setPreferInitialFocus] = useState(Platform.isTV);
   const navigationFocusedRef = useRef(false);
   const profile = useMemo(() => resolvePremiumCatalogProfile({
     width,
     height,
     nativeTv: Platform.isTV,
+    tvPreview: presentation.tvPreview,
     safeArea: { top: insets.top, right: insets.right, bottom: insets.bottom, left: insets.left },
     navState: open ? "open" : "closed",
-  }), [height, insets.bottom, insets.left, insets.right, insets.top, open, width]);
+  }), [height, insets.bottom, insets.left, insets.right, insets.top, open, presentation.tvPreview, width]);
   const model = resolveAdaptiveNavigationModel({
     profile,
     open,
@@ -55,6 +58,10 @@ export function ResponsiveContentNav<Key extends string>({
   useEffect(() => {
     setPreferInitialFocus(false);
   }, []);
+
+  useEffect(() => {
+    if (presentation.tvPreview) setOpen(true);
+  }, [presentation.tvPreview]);
 
   useEffect(() => {
     if (!model.nativeTv || !backEnabled || !model.backTarget) return;
@@ -97,6 +104,21 @@ export function ResponsiveContentNav<Key extends string>({
         ))}
       </ScrollView>
     );
+  }
+
+  if (presentation.tvPreview) {
+    return <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.tvNav, { paddingHorizontal: Math.max(profile.horizontalPadding, insets.left, insets.right) }]} accessibilityLabel="TV önizleme gezinmesi">
+      {items.map((item) => <CompactLandscapeNavButton
+        key={item.key}
+        label={item.label}
+        shortLabel={item.shortLabel}
+        icon={item.icon}
+        active={activeKey === item.key}
+        showLabel
+        minTarget={56}
+        onPress={() => select(item.key)}
+      />)}
+    </ScrollView>;
   }
 
   return (

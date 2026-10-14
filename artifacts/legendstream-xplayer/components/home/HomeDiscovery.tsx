@@ -10,6 +10,7 @@ import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { normalizeImageUrl } from "@/lib/imageUrl";
 import { visibleProgressRatio } from "@/lib/historyPresentation";
+import { TVPreviewPressable } from "@/components/tvPreview/TVPreviewFocus";
 import type { Channel } from "@/lib/iptv";
 import type { XtreamSeriesItem, XtreamVodItem } from "@/lib/xtreamCatalog";
 
@@ -249,9 +250,9 @@ export function HomeDiscovery({
       loading={effectiveLoading}
     />
     <View style={s.homeCompactStats}>
-      <HomeCountCard icon="radio" label={t("liveTv")} value={liveValue} accent={colors.primary} preferredFocus={!heroItems.length} onPress={() => onNavigate("live")} />
-      <HomeCountCard icon="film" label={t("movies")} value={movieValue} accent="#49B9FF" onPress={() => onNavigate("movies")} />
-      <HomeCountCard icon="tv" label={t("series")} value={seriesValue} accent="#8C8CFF" onPress={() => onNavigate("series")} />
+      <HomeCountCard focusId="home:live" icon="radio" label={t("liveTv")} value={liveValue} accent={colors.primary} preferredFocus={!heroItems.length} onPress={() => onNavigate("live")} />
+      <HomeCountCard focusId="home:movies" icon="film" label={t("movies")} value={movieValue} accent="#49B9FF" onPress={() => onNavigate("movies")} />
+      <HomeCountCard focusId="home:series" icon="tv" label={t("series")} value={seriesValue} accent="#8C8CFF" onPress={() => onNavigate("series")} />
     </View>
     {continueShelf.length || !mediaLibraryLoaded ? <HomeShelf title={copy.continue} seeAll={copy.seeAll} items={continueShelf} onSeeAll={() => onNavigate("history")} loading={!mediaLibraryLoaded} /> : null}
     {recentShelf.length ? <HomeShelf title={copy.recent} seeAll={copy.seeAll} items={recentShelf} onSeeAll={() => onNavigate("history")} compact /> : null}
@@ -264,17 +265,19 @@ export function HomeDiscovery({
   </View>;
 }
 
-function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = false, style, onFocus }: {
+function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = false, style, onFocus, focusId }: {
   children: React.ReactNode;
   onPress: () => void;
   onLongPress?: () => void;
   preferredFocus?: boolean;
   style?: StyleProp<ViewStyle>;
   onFocus?: () => void;
+  focusId?: string;
 }) {
   const colors = useColors();
   const [focused, setFocused] = useState(false);
-  return <Pressable
+  return <TVPreviewPressable
+    focusId={focusId}
     focusable
     hasTVPreferredFocus={Platform.isTV && preferredFocus}
     onFocus={() => {
@@ -289,7 +292,7 @@ function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = fal
       Platform.isTV ? s.homeTvFocusBase : null,
       Platform.isTV && focused ? [s.homeTvFocusActive, { borderColor: colors.primary, shadowColor: colors.primary }] : null,
     ]}
-  >{children}</Pressable>;
+  >{children}</TVPreviewPressable>;
 }
 
 function ResilientCatalogImage({ uri, style, resizeMode = "cover", fallbackIcon = "film" }: {
@@ -339,7 +342,7 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
 
   if (!items.length) {
     if (loading) {
-      return <View style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}> 
+      return <View style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}>
         <LinearGradient colors={["rgba(0,212,255,0.10)", "rgba(5,9,20,0.02)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
         <View style={{ flex: 1, justifyContent: "flex-end", gap: 10 }}>
           <View style={[s.homeSkeletonLine, { width: "28%", backgroundColor: colors.muted }]} />
@@ -348,7 +351,7 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
         </View>
       </View>;
     }
-    return <TvFocusPressable preferredFocus onPress={onDiscover} style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}> 
+    return <TvFocusPressable focusId="home:discover" preferredFocus onPress={onDiscover} style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <LinearGradient colors={["rgba(0,212,255,0.12)", "rgba(5,9,20,0.02)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
       <View style={{ flex: 1, justifyContent: "flex-end" }}>
         <Text style={[s.homeHeroEyebrow, { color: colors.primary }]}>{providerName}</Text>
@@ -369,6 +372,7 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
       getItemLayout={(_data, itemIndex) => ({ length: cardWidth, offset: cardWidth * itemIndex, index: itemIndex })}
       onMomentumScrollEnd={(event) => setIndex(Math.round(event.nativeEvent.contentOffset.x / cardWidth))}
       renderItem={({ item, index: itemIndex }) => <TvFocusPressable
+        focusId={`home-hero:${item.id}`}
         preferredFocus={itemIndex === 0}
         onPress={() => onOpen(item)}
         onFocus={() => listRef.current?.scrollToIndex({ index: itemIndex, animated: true })}
@@ -387,7 +391,8 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
   </View>;
 }
 
-function HomeCountCard({ icon, label, value, accent, onPress, preferredFocus = false }: {
+function HomeCountCard({ focusId, icon, label, value, accent, onPress, preferredFocus = false }: {
+  focusId: string;
   icon: keyof typeof Feather.glyphMap;
   label: string;
   value: string | null;
@@ -396,7 +401,7 @@ function HomeCountCard({ icon, label, value, accent, onPress, preferredFocus = f
   preferredFocus?: boolean;
 }) {
   const colors = useColors();
-  return <TvFocusPressable preferredFocus={preferredFocus} onPress={onPress} style={[s.homeCompactStatCard, { backgroundColor: colors.card, borderColor: colors.border }]}> 
+  return <TvFocusPressable focusId={focusId} preferredFocus={preferredFocus} onPress={onPress} style={[s.homeCompactStatCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
     <LinearGradient colors={[`${accent}18`, "rgba(255,255,255,0.015)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
     <View style={[s.homeCompactStatIcon, { backgroundColor: `${accent}18` }]}><Feather name={icon} size={18} color={accent} /></View>
     <View style={{ flex: 1, minWidth: 0 }}>
@@ -422,7 +427,7 @@ function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel
   return <View style={s.homeShelfSection}>
     <View style={s.homeShelfHeader}>
       <Text style={[s.homeShelfTitle, { color: colors.foreground }]}>{title}</Text>
-      <TvFocusPressable onPress={onSeeAll} style={s.homeSeeAllButton}>
+      <TvFocusPressable focusId={`home-shelf:${title}:more`} onPress={onSeeAll} style={s.homeSeeAllButton}>
         <Text style={[s.homeSeeAllText, { color: colors.primary }]}>{seeAll}</Text>
         <Feather name="arrow-right" size={15} color={colors.primary} />
       </TvFocusPressable>
@@ -438,12 +443,13 @@ function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel
       maxToRenderPerBatch={8}
       windowSize={5}
       renderItem={({ item, index: itemIndex }) => <TvFocusPressable
+        focusId={`home-shelf:${item.id}`}
         onPress={item.onPress}
         onLongPress={Platform.isTV ? item.onRemove : undefined}
         onFocus={() => listRef.current?.scrollToIndex({ index: itemIndex, animated: true, viewPosition: 0.45 })}
         style={[compact ? s.homeShelfCardCompact : s.homeShelfCard, { backgroundColor: colors.card, borderColor: colors.border }]}
       >
-        <View style={[compact ? s.homeShelfImageCompact : s.homeShelfImage, { backgroundColor: colors.muted }]}> 
+        <View style={[compact ? s.homeShelfImageCompact : s.homeShelfImage, { backgroundColor: colors.muted }]}>
           <ResilientCatalogImage uri={item.image} resizeMode="cover" style={StyleSheet.absoluteFill} fallbackIcon={compact ? "radio" : "play-circle"} />
           {!Platform.isTV && item.onRemove ? <Pressable onPress={item.onRemove} hitSlop={8} style={s.homeShelfRemove}><Feather name="x" size={14} color="#fff" /></Pressable> : null}
         </View>
@@ -454,7 +460,7 @@ function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel
           {item.progressLabel ? <Text style={[s.homeProgressLabel, { color: colors.mutedForeground }]}>{item.progressLabel}</Text> : null}
         </> : null}
       </TvFocusPressable>}
-    /> : loading ? <View style={s.homeShelfSkeletonRow}>{[0, 1, 2].map((itemIndex) => <View key={itemIndex} style={[s.homeShelfSkeletonCard, { borderColor: colors.border, backgroundColor: colors.card }]}><View style={[s.homeShelfSkeletonImage, { backgroundColor: colors.muted }]} /><View style={[s.homeSkeletonLine, { width: "72%", backgroundColor: colors.muted }]} /></View>)}</View> : <TvFocusPressable onPress={onSeeAll} style={[s.homeShelfEmpty, { borderColor: colors.border }]}><Text style={{ color: colors.mutedForeground }}>{emptyLabel || "—"}</Text><Feather name="arrow-right" size={17} color={colors.primary} /></TvFocusPressable>}
+    /> : loading ? <View style={s.homeShelfSkeletonRow}>{[0, 1, 2].map((itemIndex) => <View key={itemIndex} style={[s.homeShelfSkeletonCard, { borderColor: colors.border, backgroundColor: colors.card }]}><View style={[s.homeShelfSkeletonImage, { backgroundColor: colors.muted }]} /><View style={[s.homeSkeletonLine, { width: "72%", backgroundColor: colors.muted }]} /></View>)}</View> : <TvFocusPressable focusId={`home-shelf:${title}:empty`} onPress={onSeeAll} style={[s.homeShelfEmpty, { borderColor: colors.border }]}><Text style={{ color: colors.mutedForeground }}>{emptyLabel || "—"}</Text><Feather name="arrow-right" size={17} color={colors.primary} /></TvFocusPressable>}
   </View>;
 }
 

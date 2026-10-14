@@ -14,6 +14,8 @@ on:
         default: false
         type: boolean
   push:
+    branches:
+      - feature/r18-tv-preview-virtual-dpad
     tags:
       - "v*"
 
@@ -429,3 +431,4 @@ jobs:
             apk-release-build.log
           if-no-files-found: ignore
           retention-days: 7
+

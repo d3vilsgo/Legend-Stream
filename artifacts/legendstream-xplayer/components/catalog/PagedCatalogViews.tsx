@@ -17,6 +17,8 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FocusButton } from "@/components/FocusButton";
+import { TVPreviewPressable, useTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
+import { useUiPresentation } from "@/context/UiPresentationContext";
 import { ManualEpgControl } from "@/components/catalog/ManualEpgControl";
 import type { EpgProgram, ProviderConfig, ProviderType } from "@/context/PlayerContext";
 import { selectProgramsAt } from "@/context/PlayerContext";
@@ -364,6 +366,7 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
   const drawerWidth = Math.min(width * 0.78, 560);
   const translateX = useRef(new Animated.Value(-drawerWidth)).current;
   const closingRef = useRef(false);
+  const focus = useTVPreviewFocus();
 
   useEffect(() => {
     if (!visible) return;
@@ -372,14 +375,21 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
     Animated.timing(translateX, { toValue: 0, duration: 190, useNativeDriver: true }).start();
   }, [drawerWidth, translateX, visible]);
 
-  const closeAnimated = () => {
+  const closeAnimated = useCallback(() => {
     if (closingRef.current) return;
     closingRef.current = true;
     Animated.timing(translateX, { toValue: -drawerWidth, duration: 170, useNativeDriver: true }).start(() => {
       closingRef.current = false;
       onClose();
     });
-  };
+  }, [drawerWidth, onClose, translateX]);
+
+  useEffect(() => {
+    if (!visible) return;
+    const popScope = focus.pushFocusScope("category-drawer");
+    const unregisterBack = focus.registerBackAction(closeAnimated);
+    return () => { unregisterBack(); popScope(); };
+  }, [closeAnimated, focus.pushFocusScope, focus.registerBackAction, visible]);
 
   const closeSwipe = useMemo(
     () => PanResponder.create({
@@ -390,7 +400,7 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
       },
       onPanResponderTerminationRequest: () => true,
     }),
-    [drawerWidth, translateX],
+    [closeAnimated, drawerWidth, translateX],
   );
 
   return <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={closeAnimated}>
@@ -410,9 +420,9 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
       >
         <View style={s.drawerHeader} {...closeSwipe.panHandlers}>
           <Text style={[s.drawerTitle, { color: colors.foreground }]}>Kategoriler</Text>
-          <Pressable onPress={closeAnimated} style={s.iconButton}>
+          <TVPreviewPressable focusId="category-drawer:close" focusScope="category-drawer" accessibilityRole="button" accessibilityLabel="Kategorileri kapat" onPress={closeAnimated} style={s.iconButton}>
             <Feather name="x" size={22} color={colors.mutedForeground} />
-          </Pressable>
+          </TVPreviewPressable>
         </View>
         <FlatList
           style={s.drawerScroll}
@@ -421,7 +431,12 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => {
             const active = selected === item.id;
-            return <Pressable
+            return <TVPreviewPressable
+              focusId={`category-drawer:item:${item.id}`}
+              focusScope="category-drawer"
+              accessibilityRole="button"
+              accessibilityLabel={item.name || "—"}
+              accessibilityState={{ selected: active }}
               onPress={() => {
                 onSelect(item.id);
                 closeAnimated();
@@ -433,7 +448,7 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
                 {item.name || "—"}
               </Text>
               {active ? <Feather name="check" size={18} color={colors.primary} /> : null}
-            </Pressable>;
+            </TVPreviewPressable>;
           }}
           nestedScrollEnabled
           showsVerticalScrollIndicator
@@ -479,9 +494,9 @@ function Poster({ uri, title }: { uri?: string; title: string }) {
       </View>;
 }
 
-function GridCard({ title, image, onPress }: { title: string; image?: string; onPress: () => void }) {
+function GridCard({ focusId, title, image, onPress }: { focusId: string; title: string; image?: string; onPress: () => void }) {
   const colors = useColors();
-  return <Pressable onPress={onPress} style={s.card}>
+  return <TVPreviewPressable focusId={focusId} accessibilityRole="button" accessibilityLabel={title} onPress={onPress} style={s.card}>
     <View style={[s.media, { borderColor: colors.border, backgroundColor: colors.card }]}> 
       {image
         ? <Image source={{ uri: image }} style={s.posterBig} resizeMode="cover" />
@@ -490,7 +505,7 @@ function GridCard({ title, image, onPress }: { title: string; image?: string; on
           </View>}
       <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", padding: 9 }}>{title}</Text>
     </View>
-  </Pressable>;
+  </TVPreviewPressable>;
 }
 
 export function PagedLiveCatalog({
@@ -611,9 +626,9 @@ export function PagedLiveCatalog({
   if (stalkerLive && !categoriesReady) return <CatalogLoadingSkeleton text={t("loading")} />;
   if (initialEmpty) return <CatalogLoadingSkeleton text={t("loading")} />;
 
-  return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
+  return <View style={{ flex: 1, minHeight: 0 }} {...drawerSwipe.panHandlers}>
     <FlatList
-      style={{ flex: 1 }}
+      style={{ flex: 1, minHeight: 0 }}
       contentContainerStyle={s.liveListContent}
       data={page.items}
       keyExtractor={(channel) => channel.id}
@@ -660,7 +675,10 @@ export function PagedLiveCatalog({
           ? new Date(current.end).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })
           : undefined;
         return <View style={[s.liveRow, { borderColor: colors.border, backgroundColor: colors.card }]}> 
-          <Pressable
+          <TVPreviewPressable
+            focusId={`live:${channel.id}`}
+            accessibilityRole="button"
+            accessibilityLabel={channel.name}
             style={s.liveMain}
             onPressIn={() => {
               if (provider.type === "m3u") recordM3ULivePressIn();
@@ -680,7 +698,7 @@ export function PagedLiveCatalog({
                 {current ? `Şu an: ${current.title}${endLabel ? ` · ${endLabel}` : ""}` : "—"}
               </Text>
             </View>
-          </Pressable>
+          </TVPreviewPressable>
           <Pressable onPress={() => onFavorite(channel.id)} style={s.iconButton}>
             <Feather name="star" size={20} color={favorites.includes(channel.id) ? colors.primary : colors.mutedForeground} />
           </Pressable>
@@ -726,8 +744,10 @@ export function PagedMoviesCatalog({
   onOpen: (item: XtreamVodItem) => void;
   onDrawerVisibilityChange: (visible: boolean) => void;
 }) {
+  const colors = useColors();
   const { t } = useI18n();
   const { width } = useWindowDimensions();
+  const { tvPreview } = useUiPresentation();
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "vod", provider.type === "m3u");
@@ -747,16 +767,18 @@ export function PagedMoviesCatalog({
   });
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const columns = tvPreview
+    ? width >= 1600 ? 7 : width >= 1200 ? 6 : width >= 800 ? 5 : 4
+    : width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
 
   useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
   if (shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search)) return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
 
-  return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
+  return <View style={{ flex: 1, minHeight: 0 }} {...drawerSwipe.panHandlers}>
     <FlatList
       key={`movies-${columns}`}
-      style={{ flex: 1 }}
+      style={{ flex: 1, minHeight: 0 }}
       contentContainerStyle={s.gridListContent}
       data={page.items}
       numColumns={columns}
@@ -779,11 +801,11 @@ export function PagedMoviesCatalog({
       ListFooterComponent={<PageFooter loading={page.loadingMore} />}
       ListEmptyComponent={page.loadingInitial
         ? <CatalogLoadingSkeleton text={t("loadingMovies")} />
-        : <View style={s.emptyGrid}><Text>—</Text></View>}
+        : <View style={s.emptyGrid}><Text style={{ color: colors.mutedForeground }}>Katalogda film bulunamadı.</Text></View>}
       onEndReached={page.loadMore}
       onEndReachedThreshold={0.55}
       renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
-        <GridCard title={item.name} image={item.stream_icon} onPress={() => onOpen(item)} />
+        <GridCard focusId={`vod:${item.stream_id}`} title={item.name} image={item.stream_icon} onPress={() => onOpen(item)} />
       </View>}
       initialNumToRender={Math.max(8, columns * 3)}
       maxToRenderPerBatch={Math.max(8, columns * 3)}
@@ -856,10 +878,14 @@ export function GoldenSeriesCatalog({
   const colors = useColors();
   const { t } = useI18n();
   const { width } = useWindowDimensions();
+  const { tvPreview } = useUiPresentation();
+  const { registerBackAction } = useTVPreviewFocus();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const columns = tvPreview
+    ? width >= 1600 ? 7 : width >= 1200 ? 6 : width >= 800 ? 5 : 4
+    : width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
   const orderedSeasons = useMemo(
     () => orderGoldenSeriesSeasons(detail?.seasons ?? []),
     [detail],
@@ -868,21 +894,22 @@ export function GoldenSeriesCatalog({
     () => selectedGoldenSeriesSeason(orderedSeasons, selectedSeasonId),
     [orderedSeasons, selectedSeasonId],
   );
+  const leaveDetailLevel = () => {
+    if (goldenSeriesBackTarget(selectedSeasonId, orderedSeasons.length) === "seasons") setSelectedSeasonId(null);
+    else onBack();
+  };
 
   useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
   useEffect(() => {
     setSelectedSeasonId(initialGoldenSeriesSeasonId(orderedSeasons));
   }, [detail?.id, orderedSeasons.length]);
+  useEffect(() => {
+    if (!detail && !detailLoading) return;
+    return registerBackAction(leaveDetailLevel);
+  }, [detail, detailLoading, leaveDetailLevel, registerBackAction]);
 
   if (detail || detailLoading) {
-    const leaveDetailLevel = () => {
-      if (goldenSeriesBackTarget(selectedSeasonId, orderedSeasons.length) === "seasons") {
-        setSelectedSeasonId(null);
-      } else {
-        onBack();
-      }
-    };
     const seasonSelector = <FlatList
       horizontal
       data={orderedSeasons}
@@ -895,7 +922,10 @@ export function GoldenSeriesCatalog({
       windowSize={5}
       renderItem={({ item: season }) => {
         const selected = season.id === selectedSeasonId;
-        return <Pressable
+        return <TVPreviewPressable
+          focusId={`season:${season.id}`}
+          accessibilityRole="button"
+          accessibilityLabel={season.label}
           onPress={() => setSelectedSeasonId(season.id)}
           style={[
             s.seasonChip,
@@ -908,7 +938,7 @@ export function GoldenSeriesCatalog({
           <Text style={{ color: selected ? colors.primaryForeground : colors.foreground, fontWeight: "800" }}>
             {season.label}
           </Text>
-        </Pressable>;
+        </TVPreviewPressable>;
       }}
     />;
     const detailHeader = <View>
@@ -943,13 +973,16 @@ export function GoldenSeriesCatalog({
       keyExtractor={(episode) => episode.id}
       ListHeaderComponent={detailHeader}
       ListEmptyComponent={<Text style={[s.seriesDetailMessage, { color: colors.mutedForeground }]}>{t("seasonHasNoEpisodes")}</Text>}
-      renderItem={({ item: episode }) => <Pressable
+      renderItem={({ item: episode }) => <TVPreviewPressable
+        focusId={`episode:${episode.id}`}
+        accessibilityRole="button"
+        accessibilityLabel={episode.title}
         onPress={() => onEpisode(selectedSeason.id, episode.id)}
         style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}
       >
         <Text style={{ color: colors.foreground, flex: 1 }}>{episode.title}</Text>
         <Feather name="play-circle" size={24} color={colors.primary} />
-      </Pressable>}
+      </TVPreviewPressable>}
       initialNumToRender={8}
       maxToRenderPerBatch={10}
       windowSize={7}
@@ -961,10 +994,10 @@ export function GoldenSeriesCatalog({
 
   if (shouldUseWholeCatalogLoadingSkeleton(loadingInitial, items.length, search)) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
 
-  return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
+  return <View style={{ flex: 1, minHeight: 0 }} {...drawerSwipe.panHandlers}>
     <FlatList
       key={`golden-series-${columns}`}
-      style={{ flex: 1 }}
+      style={{ flex: 1, minHeight: 0 }}
       contentContainerStyle={s.gridListContent}
       data={items}
       numColumns={columns}
@@ -987,11 +1020,11 @@ export function GoldenSeriesCatalog({
         ? <CatalogLoadingSkeleton text={t("loadingSeries")} />
         : error
           ? <CatalogErrorState message={error} onRetry={onRetry} />
-          : <View style={s.emptyGrid}><Text>—</Text></View>}
+          : <View style={s.emptyGrid}><Text style={{ color: colors.mutedForeground }}>Katalogda dizi bulunamadı.</Text></View>}
       onEndReached={onLoadMore}
       onEndReachedThreshold={0.55}
       renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
-        <GridCard title={item.title} image={item.image} onPress={() => onOpen(item.id)} />
+        <GridCard focusId={`series:${item.id}`} title={item.title} image={item.image} onPress={() => onOpen(item.id)} />
       </View>}
       initialNumToRender={Math.max(8, columns * 3)}
       maxToRenderPerBatch={Math.max(8, columns * 3)}

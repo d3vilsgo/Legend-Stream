@@ -34,6 +34,8 @@ import { StalkerVodSurface } from "@/components/stalker/StalkerVodSurface";
 import { PlayerChromeTimeoutSetting } from "@/components/PlayerChromeTimeoutSetting";
 import { ProviderBackupPanel } from "@/components/ProviderBackupPanel";
 import { ProviderSubscriptionChip } from "@/components/ProviderSubscriptionChip";
+import { TVPreviewSetting } from "@/components/tvPreview/TVPreviewSetting";
+import { useTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
 import {
   type Channel,
   type ProviderConfig,
@@ -309,6 +311,18 @@ export default function OptimizedHomeScreenPaged() {
     if (target !== "series") { seriesRequestGenerationRef.current += 1; setSelectedSeries(null); setSeriesInfo(null); }
   };
 
+  const { setBackAction } = useTVPreviewFocus();
+  useEffect(() => {
+    setBackAction(() => {
+      if (view === "series" && selectedSeries) {
+        seriesRequestGenerationRef.current += 1;
+        setSelectedSeries(null);
+        setSeriesInfo(null);
+      } else if (view !== "home") navigate("home");
+    });
+    return () => setBackAction(null);
+  }, [navigate, selectedSeries, setBackAction, view]);
+
   React.useEffect(() => {
     if (!m3uDiagnosticEnabled) return;
     recordM3UViewCommit(view);
@@ -481,7 +495,7 @@ export default function OptimizedHomeScreenPaged() {
 
     {view === "history" ? <HistoryView providerId={provider.id} channels={resolvedFullHistoryIdentityChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
 
-    {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? <ScrollView style={{ flex: 1 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEnabled={!catalogDrawerOpen}>
+    {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEnabled={!catalogDrawerOpen}>
       {view === "home" ? <HomeDiscovery
         provider={provider}
         live={provider.type === "stalker" ? homeLiveSource.totalCount : countKnown ? snapshot.counts.live : null}
@@ -627,6 +641,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAd
   const { t, language, languages, setLanguage } = useI18n();
   return <View>
     <Text style={[s.title, { color: colors.foreground }]}>{t("settings")}</Text>
+      <TVPreviewSetting />
     <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16 }}>{t("activeConnection")}</Text>
       <Text style={{ color: colors.foreground }}>{provider.name}</Text>
@@ -659,7 +674,7 @@ function Input({ label, trailingAction, ...props }: {
 }
 
 const s = StyleSheet.create({
-  screen: { flex: 1 },
+  screen: { flex: 1, minHeight: 0 },
   fullPlayer: { flex: 1, backgroundColor: "#000" },
   centered: { flex: 1, alignItems: "center", justifyContent: "center" },
   content: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },

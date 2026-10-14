@@ -2,9 +2,9 @@ name: Quality
 
 on:
   pull_request:
-    branches: [main, feature/r18-presentation-foundation-1b, feature/r18-premium-tablet-design-foundation]
+    branches: [main, feature/r18-presentation-foundation-1b, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation]
   push:
-    branches: [main, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation]
+    branches: [main, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad]
 
 # Deterministic, read-only CI: dependency resolution must match pnpm-lock.yaml exactly.
 # Storage security gate: 6 credential scenarios + 24 backup scenarios must all pass.
@@ -37,7 +37,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -257,6 +257,12 @@ jobs:
           set -euo pipefail
           result="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/adaptiveNavigationScenarios.ts 2>&1 | tee /dev/stderr)"
           grep -F 'premium adaptive navigation scenarios: 16/16 passed' <<<"$result"
+      - name: TV Preview and virtual D-pad interaction scenarios (32/32 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tvPreviewScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'TV Preview interaction scenarios: 32/32 passed' <<<"$result"
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references

@@ -4,9 +4,12 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
+  useState,
 } from "react";
 import { AppState, Platform, useWindowDimensions } from "react-native";
 import * as ScreenOrientation from "expo-screen-orientation";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import {
   resolveUiPresentation,
   type UiModePreference,
@@ -20,15 +23,40 @@ import {
   type CatalogOrientationPolicy,
 } from "@/lib/orientationOwnership";
 
-const UiPresentationContext = createContext<UiPresentation | null>(null);
+type UiPresentationContextValue = UiPresentation & {
+  setTvPreview: (enabled: boolean) => void;
+};
+const UiPresentationContext = createContext<UiPresentationContextValue | null>(null);
+const TV_PREVIEW_PREFERENCE_KEY = "legendstream.ui.tvPreview.v1";
 
 export function UiPresentationProvider({
   children,
-  preference = "auto",
+  preference: initialPreference = "auto",
 }: {
   children: ReactNode;
   preference?: UiModePreference;
 }) {
+  const [preference, setPreferenceState] = useState<UiModePreference>(initialPreference);
+  const [preferenceLoaded, setPreferenceLoaded] = useState(false);
+  const pendingPreference = useRef<UiModePreference | null>(null);
+  useEffect(() => {
+    let active = true;
+    void AsyncStorage.getItem(TV_PREVIEW_PREFERENCE_KEY).then((stored) => {
+      if (!active) return;
+      const saved = stored === "tv" || stored === "auto" ? stored : initialPreference;
+      setPreferenceState(pendingPreference.current ?? saved);
+      setPreferenceLoaded(true);
+    }).catch(() => setPreferenceLoaded(true));
+    return () => { active = false; };
+  }, [initialPreference]);
+  const setTvPreview = (enabled: boolean) => {
+    const next: UiModePreference = enabled ? "tv" : "auto";
+    pendingPreference.current = next;
+    setPreferenceState(next);
+  };
+  useEffect(() => {
+    if (preferenceLoaded) void AsyncStorage.setItem(TV_PREVIEW_PREFERENCE_KEY, preference).catch(() => undefined);
+  }, [preference, preferenceLoaded]);
   const { width, height } = useWindowDimensions();
   const presentation = useMemo(
     () =>
@@ -46,11 +74,14 @@ export function UiPresentationProvider({
         nativeTv: Platform.isTV,
         width,
         height,
+        tvPreview: preference === "tv",
       }),
-    [height, width],
+    [height, preference, width],
   );
   const catalogOrientationPolicy: CatalogOrientationPolicy =
-    devicePresentation.deviceClass === "phone"
+    devicePresentation.preview
+      ? "landscape"
+      : devicePresentation.deviceClass === "phone"
       ? "portrait"
       : devicePresentation.deviceClass === "tablet"
         ? "free"
@@ -63,6 +94,7 @@ export function UiPresentationProvider({
           ScreenOrientation.lockAsync(
             ScreenOrientation.OrientationLock.PORTRAIT_UP,
           ),
+        lockLandscape: () => ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE),
         unlock: () => ScreenOrientation.unlockAsync(),
       }),
     [catalogOrientationPolicy],
@@ -80,13 +112,13 @@ export function UiPresentationProvider({
   }, [height, width]);
 
   return (
-    <UiPresentationContext.Provider value={presentation}>
+    <UiPresentationContext.Provider value={{ ...presentation, setTvPreview }}>
       {children}
     </UiPresentationContext.Provider>
   );
 }
 
-export function useUiPresentation() {
+export function useUiPresentation(): UiPresentationContextValue {
   const value = useContext(UiPresentationContext);
   if (!value)
     throw new Error(

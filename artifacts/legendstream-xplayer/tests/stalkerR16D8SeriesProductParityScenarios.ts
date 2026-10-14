@@ -94,7 +94,7 @@ async function main() {
   const boundarySource = fs.readFileSync(path.join(root, "components/stalker/StalkerProductErrorBoundary.tsx"), "utf8");
 
   assert.match(catalogSource, /export function GoldenSeriesCatalog/);
-  assert.match(catalogSource, /GridCard title=\{item\.title\} image=\{item\.image\}/);
+  assert.match(catalogSource, /GridCard focusId=\{`series:\$\{item\.id\}`\} title=\{item\.title\} image=\{item\.image\}/);
   assert.match(catalogSource, /key=\{`golden-series-\$\{columns\}`\}/);
   assert.match(catalogSource, /onEndReached=\{onLoadMore\}/);
   assert.match(catalogSource, /<CategoryDrawer visible=\{drawerOpen\}/);

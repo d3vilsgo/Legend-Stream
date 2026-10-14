@@ -14,6 +14,7 @@ export type UiPresentation = {
   nativeTv: boolean;
   landscape: boolean;
   tvLayout: boolean;
+  tvPreview: boolean;
 };
 
 const landscapeFromDimensions = (width: number, height: number) =>
@@ -26,6 +27,7 @@ const landscapeFromDimensions = (width: number, height: number) =>
 export function resolveUiPresentation(input: UiPresentationInput): UiPresentation {
   const landscape = landscapeFromDimensions(input.width, input.height);
 
+  const tvPreview = input.preference === "tv" && !input.nativeTv;
   if (input.preference === "tv" || (input.preference === "auto" && input.nativeTv)) {
     return {
       preference: input.preference,
@@ -33,6 +35,7 @@ export function resolveUiPresentation(input: UiPresentationInput): UiPresentatio
       nativeTv: input.nativeTv,
       landscape: true,
       tvLayout: true,
+      tvPreview,
     };
   }
 
@@ -42,5 +45,6 @@ export function resolveUiPresentation(input: UiPresentationInput): UiPresentatio
     nativeTv: input.nativeTv,
     landscape,
     tvLayout: false,
+    tvPreview: false,
   };
 }

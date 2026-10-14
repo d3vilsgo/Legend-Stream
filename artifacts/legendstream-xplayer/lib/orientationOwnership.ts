@@ -1,7 +1,8 @@
-export type CatalogOrientationPolicy = "portrait" | "free" | "preserve";
+export type CatalogOrientationPolicy = "portrait" | "landscape" | "free" | "preserve";
 
 export type CatalogOrientationRuntime = {
   lockPortrait: () => void | Promise<void>;
+  lockLandscape?: () => void | Promise<void>;
   unlock: () => void | Promise<void>;
 };
 
@@ -25,6 +26,10 @@ export function createOrientationOwnershipCoordinator() {
       )
         return false;
       if (policy === "portrait") await runtime.lockPortrait();
+      if (policy === "landscape") {
+        if (runtime.lockLandscape) await runtime.lockLandscape();
+        else await runtime.unlock();
+      }
       if (policy === "free") await runtime.unlock();
       return owner === "catalog" && revision === expectedRevision;
     });
