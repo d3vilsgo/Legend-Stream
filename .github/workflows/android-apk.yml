@@ -170,6 +170,11 @@ jobs:
             echo "dual_abi=false" >> "$GITHUB_OUTPUT"
             echo "universal=true" >> "$GITHUB_OUTPUT"
             echo "Universal APK: arm64-v8a + armeabi-v7a in one signed APK"
+          elif [[ "$GITHUB_EVENT_NAME" == "push" && "$HEAD_COMMIT_MESSAGE" == *"[universal]"* ]]; then
+            echo "full_release=false" >> "$GITHUB_OUTPUT"
+            echo "dual_abi=false" >> "$GITHUB_OUTPUT"
+            echo "universal=true" >> "$GITHUB_OUTPUT"
+            echo "Universal APK push build requested by commit message marker"
           elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$DISPATCH_DUAL_ABI" == "true" ]] || [[ "$GITHUB_EVENT_NAME" == "push" && "$HEAD_COMMIT_MESSAGE" == *"[dual-abi]"* ]]; then
             echo "full_release=false" >> "$GITHUB_OUTPUT"
             echo "dual_abi=true" >> "$GITHUB_OUTPUT"

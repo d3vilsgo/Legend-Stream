@@ -41,6 +41,10 @@ assert.match(workflow, /Universal APK missing ABI directory/);
 assert.match(workflow, /verify --verbose --print-certs/);
 assert.match(workflow, /EXPECTED_CERT_SHA256/);
 assert.match(workflow, /universal_artifact_name/);
+assert.match(workflow, /HEAD_COMMIT_MESSAGE.*\[universal\]/);
 assert.match(abiPlugin, /variant\.versionCode \* 1000 \+ 3/);
+assert.match(abiPlugin, /if \(project\.hasProperty\("abiUniversal"\)\)[\s\S]*?ndk \{[\s\S]*?abiFilters "arm64-v8a", "armeabi-v7a"/);
+assert.match(abiPlugin, /def legendStreamAbiSplitEnabled = project\.hasProperty\("abiSplit"\)/);
+assert.match(abiPlugin, /if \(legendStreamAbiSplitEnabled\)[\s\S]*?output\.versionCodeOverride/);
 
 console.log("Native Android TV and universal APK build contract scenarios passed.");
