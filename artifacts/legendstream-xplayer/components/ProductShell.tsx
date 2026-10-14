@@ -34,7 +34,7 @@ export default function ProductShell() {
   return (
     <UiPresentationProvider>
       <TVPreviewFocusProvider>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, minHeight: 0 }}>
           <TVPreviewFocusRegion><ProductShellContent /></TVPreviewFocusRegion>
           <TVPreviewControls />
         </View>

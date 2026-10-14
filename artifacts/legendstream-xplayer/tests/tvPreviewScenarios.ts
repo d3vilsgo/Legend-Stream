@@ -181,16 +181,59 @@ async function main() {
     for (const id of ["up", "down", "left", "right", "ok", "back"]) assert.ok(controls.includes(`tv-preview-dpad-${id}`));
     assert.match(controls, /button\("OK", "OK", focus\.activate/); assert.match(controls, /onPress=\{focus\.back\}/);
     assert.match(controls, /testID="tv-preview-focus-target"/); assert.match(controls, /testID="tv-preview-activation-target"/);
+    assert.match(controls, /tv-preview-dpad-collapse/); assert.match(controls, /tv-preview-dpad-expand/);
+    assert.match(controls, /tv-preview-dpad-diagnostics-toggle/); assert.match(controls, /tv-preview-diagnostics-panel/);
+    assert.match(controls, /position: "absolute" as const/); assert.match(controls, /StyleSheet\.absoluteFillObject/);
+    assert.match(controls, /pointerEvents="box-none"/); assert.match(controls, /width: 28, height: 28/);
     assert.match(controls, /TVPreviewFocusRegion/); assert.match(source("components/ProductShell.tsx"), /<TVPreviewControls \/>/);
     assert.match(source("components/catalog/PagedCatalogViews.tsx"), /focusScope="category-drawer"/);
-    assert.doesNotMatch(source("components/ProductShell.tsx"), /position:\s*["']absolute/);
+    assert.match(source("components/ProductShell.tsx"), /TVPreviewFocusRegion><ProductShellContent \/><\/TVPreviewFocusRegion>\s*<TVPreviewControls \/>/);
+  });
+  await scenario("catalog viewport stays independent from the floating controller height", () => {
+    const focus = source("components/tvPreview/TVPreviewFocus.tsx");
+    const shell = source("components/ProductShell.tsx");
+    assert.match(focus, /style=\{\{ flex: 1, minHeight: 0 \}\}/);
+    assert.match(focus, /overlay: \{ \.\.\.StyleSheet\.absoluteFillObject/);
+    assert.match(shell, /<View style=\{\{ flex: 1, minHeight: 0 \}\}>/);
+    assert.match(source("components/OptimizedHomeScreenPaged.tsx"), /screen: \{ flex: 1, minHeight: 0 \}/);
+    assert.match(source("components/StalkerMainPage.tsx"), /screen: \{ flex: 1, minHeight: 0 \}/);
+    assert.match(source("components/catalog/PagedCatalogViews.tsx"), /return <View style=\{\{ flex: 1, minHeight: 0 \}\} \{\.\.\.drawerSwipe\.panHandlers\}>/);
+  });
+  await scenario("M3U and Xtream keep their real Home Live VOD and Series catalog render paths", () => {
+    const paged = source("components/OptimizedHomeScreenPaged.tsx");
+    assert.match(paged, /view === "home" \? <HomeDiscovery/);
+    assert.match(paged, /provider\.type === "m3u" \|\| provider\.type === "xtream"\) \? <PagedLiveCatalog/);
+    assert.match(paged, /provider\.type === "m3u" \|\| provider\.type === "xtream"\) \? <PagedMoviesCatalog/);
+    assert.match(paged, /provider\.type === "m3u" \|\| provider\.type === "xtream"\) \? <PagedSeriesCatalog/);
+  });
+  await scenario("Stalker keeps separate real live and VOD poster render paths", () => {
+    const main = source("components/StalkerMainPage.tsx");
+    const paged = source("components/OptimizedHomeScreenPaged.tsx");
+    assert.match(main, /presentedView === "live" \? \([\s\S]*?<PagedLiveCatalog/);
+    assert.match(main, /presentedView === "movies" \? \([\s\S]*?<StalkerGoldenMoviesCatalog/);
+    assert.match(main, /presentedView === "series" \? \([\s\S]*?<StalkerSeriesProductSurface/);
+    assert.match(paged, /provider\.type === "stalker"[^\n]*<StalkerLiveCatalog/);
+    assert.match(paged, /provider\.type === "stalker"[^\n]*<StalkerVodSurface/);
+  });
+  await scenario("loaded empty VOD and Series catalogs render explicit empty states, not a blank body", () => {
+    const paged = source("components/catalog/PagedCatalogViews.tsx");
+    assert.match(paged, /Katalogda film bulunamadı\./);
+    assert.match(paged, /Katalogda dizi bulunamadı\./);
+    assert.match(paged, /page\.loadingInitial\s*\? <CatalogLoadingSkeleton/);
+  });
+  await scenario("collapsing the D-pad leaves controller focus and activation state in its provider", () => {
+    const controls = source("components/tvPreview/TVPreviewFocus.tsx");
+    assert.match(controls, /setCollapsed\(true\)/); assert.match(controls, /setCollapsed\(false\)/);
+    assert.match(controls, /const \[focusedId, setFocusedId\] = useState/);
+    assert.match(controls, /const \[lastActivatedId, setLastActivatedId\] = useState/);
+    assert.match(controls, /const \[showDiagnostics, setShowDiagnostics\] = useState\(false\)/);
   });
   await scenario("player orientation implementation retains independent ownership", () => {
     assert.match(source("hooks/usePlayerOrientation.ts"), /acquirePlayerOrientationOwnership/);
     assert.match(source("hooks/usePlayerOrientation.ts"), /handoffPlayerOrientationToCatalog/);
     assert.match(source("components/ProductShell.tsx"), /<TVPreviewControls \/>/);
   });
-  assert.equal(passed, 27);
-  console.log(`TV Preview interaction scenarios: ${passed}/27 passed`);
+  assert.equal(passed, 32);
+  console.log(`TV Preview interaction scenarios: ${passed}/32 passed`);
 }
 void main().catch((error) => { console.error(error); process.exitCode = 1; });

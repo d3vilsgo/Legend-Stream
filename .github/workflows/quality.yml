@@ -257,12 +257,12 @@ jobs:
           set -euo pipefail
           result="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/adaptiveNavigationScenarios.ts 2>&1 | tee /dev/stderr)"
           grep -F 'premium adaptive navigation scenarios: 16/16 passed' <<<"$result"
-      - name: TV Preview and virtual D-pad interaction scenarios (27/27 required)
+      - name: TV Preview and virtual D-pad interaction scenarios (32/32 required)
         shell: bash
         run: |
           set -euo pipefail
           result="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tvPreviewScenarios.ts 2>&1 | tee /dev/stderr)"
-          grep -F 'TV Preview interaction scenarios: 27/27 passed' <<<"$result"
+          grep -F 'TV Preview interaction scenarios: 32/32 passed' <<<"$result"
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references

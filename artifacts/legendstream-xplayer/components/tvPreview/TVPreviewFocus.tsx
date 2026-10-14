@@ -1,5 +1,6 @@
 import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, Text, View, type PressableProps } from "react-native";
+import { Platform, Pressable, StyleSheet, Text, View, type PressableProps } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useUiPresentation } from "@/context/UiPresentationContext";
 import { useColors } from "@/hooks/useColors";
 import { createTVPreviewFocusController, type TVPreviewDirection, type TVPreviewFocusEntry } from "@/lib/tvPreviewFocus";
@@ -69,7 +70,7 @@ export function TVPreviewFocusRegion({ children }: { children: ReactNode }) {
     });
   }, [setViewport]);
   useEffect(() => () => { measureRevision.current += 1; setViewport(null); }, [setViewport]);
-  return <View ref={ref} collapsable={false} onLayout={measure} style={{ flex: 1 }}>{children}</View>;
+  return <View ref={ref} collapsable={false} onLayout={measure} style={{ flex: 1, minHeight: 0 }}>{children}</View>;
 }
 
 export function useTVPreviewFocus() {
@@ -160,6 +161,9 @@ export function TVPreviewPressable({ focusId, focusScope = "content", style, onP
 export function TVPreviewControls() {
   const { tvPreview } = useUiPresentation();
   const focus = useTVPreviewFocus();
+  const insets = useSafeAreaInsets();
+  const [collapsed, setCollapsed] = useState(false);
+  const [showDiagnostics, setShowDiagnostics] = useState(false);
   if (!tvPreview) return null;
   const focusedEntry = focus.getFocusedEntry();
   const focusedBounds = focusedEntry?.bounds;
@@ -168,35 +172,57 @@ export function TVPreviewControls() {
     : "—";
   const button = (label: string, glyph: string, onPress: () => void, testID: string) => (
     <Pressable key={label} testID={testID} accessibilityRole="button" accessibilityLabel={label} onPress={onPress} style={styles.key}>
-      <Text style={{ color: "#fff", fontWeight: "800", fontSize: 17 }}>{glyph}</Text>
+      <Text style={styles.glyph}>{glyph}</Text>
     </Pressable>
   );
-  return <View style={styles.dock}>
-    <Text testID="tv-preview-focus-target" accessibilityLiveRegion="polite" numberOfLines={1} style={styles.focusReadout}>Odak: {focusReadout}</Text>
-    <Text testID="tv-preview-activation-target" accessibilityLiveRegion="polite" numberOfLines={1} style={styles.focusReadout}>Son OK: {focus.lastActivatedId ?? "—"}</Text>
-    <View accessibilityLabel="Sanal TV kumandası" style={styles.pad}>
-      {button("Yukarı", "↑", () => { void focus.move("up"); }, "tv-preview-dpad-up")}
-      <View style={styles.middle}>
-        {button("Sol", "←", () => { void focus.move("left"); }, "tv-preview-dpad-left")}
-        {button("OK", "OK", focus.activate, "tv-preview-dpad-ok")}
-        {button("Sağ", "→", () => { void focus.move("right"); }, "tv-preview-dpad-right")}
+  return <View pointerEvents="box-none" style={styles.overlay}>
+    {collapsed ? <Pressable testID="tv-preview-dpad-expand" accessibilityRole="button" accessibilityLabel="Sanal kumandayı aç" onPress={() => setCollapsed(false)} style={[styles.collapsedButton, { right: Math.max(insets.right, 10), bottom: Math.max(insets.bottom, 10) }]}>
+      <Text style={styles.glyph}>⌖</Text>
+    </Pressable> : <View style={[styles.dock, { right: Math.max(insets.right, 10), bottom: Math.max(insets.bottom, 10) }]}>
+      <View style={styles.toolbar}>
+        <Pressable testID="tv-preview-dpad-diagnostics-toggle" accessibilityRole="button" accessibilityLabel="Odak tanı bilgisini aç veya kapat" onPress={() => setShowDiagnostics((value) => !value)} style={styles.toolButton}>
+          <Text style={styles.toolGlyph}>i</Text>
+        </Pressable>
+        <Pressable testID="tv-preview-dpad-collapse" accessibilityRole="button" accessibilityLabel="Sanal kumandayı daralt" onPress={() => setCollapsed(true)} style={styles.toolButton}>
+          <Text style={styles.toolGlyph}>⌄</Text>
+        </Pressable>
       </View>
-      <View style={styles.bottomRow}>
-        <View style={styles.keySpacer} />
-        {button("Aşağı", "↓", () => { void focus.move("down"); }, "tv-preview-dpad-down")}
-        <Pressable testID="tv-preview-dpad-back" accessibilityRole="button" accessibilityLabel="Geri" onPress={focus.back} style={[styles.key, styles.back]}><Text style={{ color: "#fff", fontWeight: "800", fontSize: 17 }}>↶</Text></Pressable>
+      {showDiagnostics ? <View testID="tv-preview-diagnostics-panel" style={styles.diagnostics}>
+        <Text testID="tv-preview-focus-target" accessibilityLiveRegion="polite" numberOfLines={2} style={styles.focusReadout}>Odak: {focusReadout}</Text>
+        <Text testID="tv-preview-activation-target" accessibilityLiveRegion="polite" numberOfLines={2} style={styles.focusReadout}>Son OK: {focus.lastActivatedId ?? "—"}</Text>
       </View>
-    </View>
+      : null}
+      <View accessibilityLabel="Sanal TV kumandası" style={styles.pad}>
+        {button("Yukarı", "↑", () => { void focus.move("up"); }, "tv-preview-dpad-up")}
+        <View style={styles.middle}>
+          {button("Sol", "←", () => { void focus.move("left"); }, "tv-preview-dpad-left")}
+          {button("OK", "OK", focus.activate, "tv-preview-dpad-ok")}
+          {button("Sağ", "→", () => { void focus.move("right"); }, "tv-preview-dpad-right")}
+        </View>
+        <View style={styles.bottomRow}>
+          <View style={styles.keySpacer} />
+          {button("Aşağı", "↓", () => { void focus.move("down"); }, "tv-preview-dpad-down")}
+          <Pressable testID="tv-preview-dpad-back" accessibilityRole="button" accessibilityLabel="Geri" onPress={focus.back} style={[styles.key, styles.back]}><Text style={styles.glyph}>↶</Text></Pressable>
+        </View>
+      </View>
+    </View>}
   </View>;
 }
 
 const styles = {
-  dock: { alignSelf: "stretch" as const, alignItems: "center" as const, paddingTop: 3, paddingBottom: 5, backgroundColor: "rgba(5,10,20,0.76)" },
-  focusReadout: { color: "rgba(255,255,255,0.82)", fontSize: 10, lineHeight: 13, maxWidth: "90%" as const, marginBottom: 2 },
-  pad: { alignItems: "center" as const, gap: 3, padding: 4, borderRadius: 30, backgroundColor: "rgba(255,255,255,0.08)" },
+  overlay: { ...StyleSheet.absoluteFillObject, zIndex: 40, elevation: 40 },
+  collapsedButton: { position: "absolute" as const, width: 34, height: 34, borderRadius: 17, alignItems: "center" as const, justifyContent: "center" as const, backgroundColor: "rgba(5,10,20,0.52)", borderWidth: 1, borderColor: "rgba(255,255,255,0.28)" },
+  dock: { position: "absolute" as const, alignItems: "center" as const, padding: 4, borderRadius: 18, backgroundColor: "rgba(5,10,20,0.42)", borderWidth: 1, borderColor: "rgba(255,255,255,0.18)" },
+  toolbar: { flexDirection: "row" as const, alignSelf: "stretch" as const, justifyContent: "flex-end" as const, gap: 3, marginBottom: 2 },
+  toolButton: { width: 20, height: 20, borderRadius: 10, alignItems: "center" as const, justifyContent: "center" as const, backgroundColor: "rgba(255,255,255,0.16)" },
+  toolGlyph: { color: "rgba(255,255,255,0.9)", fontWeight: "800" as const, fontSize: 12 },
+  diagnostics: { position: "absolute" as const, right: 0, bottom: 116, width: 174, padding: 6, borderRadius: 8, backgroundColor: "rgba(5,10,20,0.76)" },
+  focusReadout: { color: "rgba(255,255,255,0.9)", fontSize: 9, lineHeight: 12, marginBottom: 2 },
+  pad: { alignItems: "center" as const, gap: 2, padding: 2, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.04)" },
   middle: { flexDirection: "row" as const, alignItems: "center" as const, gap: 3 },
   bottomRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 3 },
-  keySpacer: { width: 40, height: 40 },
-  key: { width: 40, height: 40, borderRadius: 22, alignItems: "center" as const, justifyContent: "center" as const, backgroundColor: "rgba(255,255,255,0.23)", borderWidth: 1, borderColor: "rgba(255,255,255,0.35)", color: "#fff", fontWeight: "800" as const, fontSize: 17, overflow: "hidden" as const },
-  back: { backgroundColor: "rgba(5,10,20,0.76)" },
+  keySpacer: { width: 28, height: 28 },
+  key: { width: 28, height: 28, borderRadius: 14, alignItems: "center" as const, justifyContent: "center" as const, backgroundColor: "rgba(255,255,255,0.18)", borderWidth: 1, borderColor: "rgba(255,255,255,0.25)", overflow: "hidden" as const },
+  glyph: { color: "rgba(255,255,255,0.94)", fontWeight: "800" as const, fontSize: 13 },
+  back: { backgroundColor: "rgba(5,10,20,0.58)" },
 };

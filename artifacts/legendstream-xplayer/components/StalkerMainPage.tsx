@@ -427,7 +427,7 @@ export default function StalkerMainPage() {
   return (
     <View
       style={[
-        s.screen,
+      s.screen,
         {
           backgroundColor: colors.background,
           paddingTop: top,
@@ -508,7 +508,7 @@ export default function StalkerMainPage() {
 
       {presentedView !== "live" && presentedView !== "movies" && presentedView !== "series" && presentedView !== "history" ? (
         <ScrollView
-          style={{ flex: 1 }}
+          style={{ flex: 1, minHeight: 0 }}
           contentContainerStyle={s.content}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
@@ -728,7 +728,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onSwitch, on
 }
 
 const s = StyleSheet.create({
-  screen: { flex: 1 },
+  screen: { flex: 1, minHeight: 0 },
   fullPlayer: { ...StyleSheet.absoluteFillObject, zIndex: 100, backgroundColor: "#000" },
   content: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
   header: { borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingBottom: 8 },

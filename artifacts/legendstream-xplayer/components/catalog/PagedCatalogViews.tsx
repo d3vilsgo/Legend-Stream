@@ -626,9 +626,9 @@ export function PagedLiveCatalog({
   if (stalkerLive && !categoriesReady) return <CatalogLoadingSkeleton text={t("loading")} />;
   if (initialEmpty) return <CatalogLoadingSkeleton text={t("loading")} />;
 
-  return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
+  return <View style={{ flex: 1, minHeight: 0 }} {...drawerSwipe.panHandlers}>
     <FlatList
-      style={{ flex: 1 }}
+      style={{ flex: 1, minHeight: 0 }}
       contentContainerStyle={s.liveListContent}
       data={page.items}
       keyExtractor={(channel) => channel.id}
@@ -774,10 +774,10 @@ export function PagedMoviesCatalog({
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
   if (shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search)) return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
 
-  return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
+  return <View style={{ flex: 1, minHeight: 0 }} {...drawerSwipe.panHandlers}>
     <FlatList
       key={`movies-${columns}`}
-      style={{ flex: 1 }}
+      style={{ flex: 1, minHeight: 0 }}
       contentContainerStyle={s.gridListContent}
       data={page.items}
       numColumns={columns}
@@ -800,7 +800,7 @@ export function PagedMoviesCatalog({
       ListFooterComponent={<PageFooter loading={page.loadingMore} />}
       ListEmptyComponent={page.loadingInitial
         ? <CatalogLoadingSkeleton text={t("loadingMovies")} />
-        : <View style={s.emptyGrid}><Text>—</Text></View>}
+        : <View style={s.emptyGrid}><Text style={{ color: colors.mutedForeground }}>Katalogda film bulunamadı.</Text></View>}
       onEndReached={page.loadMore}
       onEndReachedThreshold={0.55}
       renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
@@ -993,10 +993,10 @@ export function GoldenSeriesCatalog({
 
   if (shouldUseWholeCatalogLoadingSkeleton(loadingInitial, items.length, search)) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
 
-  return <View style={{ flex: 1 }} {...drawerSwipe.panHandlers}>
+  return <View style={{ flex: 1, minHeight: 0 }} {...drawerSwipe.panHandlers}>
     <FlatList
       key={`golden-series-${columns}`}
-      style={{ flex: 1 }}
+      style={{ flex: 1, minHeight: 0 }}
       contentContainerStyle={s.gridListContent}
       data={items}
       numColumns={columns}
@@ -1019,7 +1019,7 @@ export function GoldenSeriesCatalog({
         ? <CatalogLoadingSkeleton text={t("loadingSeries")} />
         : error
           ? <CatalogErrorState message={error} onRetry={onRetry} />
-          : <View style={s.emptyGrid}><Text>—</Text></View>}
+          : <View style={s.emptyGrid}><Text style={{ color: colors.mutedForeground }}>Katalogda dizi bulunamadı.</Text></View>}
       onEndReached={onLoadMore}
       onEndReachedThreshold={0.55}
       renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
