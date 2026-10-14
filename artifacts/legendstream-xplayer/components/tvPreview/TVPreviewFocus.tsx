@@ -147,7 +147,8 @@ export function TVPreviewPressable({ focusId, focusScope = "content", style, onP
     {...props}
     ref={ref}
     disabled={disabled}
-    focusable={!disabled && (focus.enabled || undefined)}
+    // Native TVs use Android's FocusFinder; handheld preview uses the JS controller.
+    focusable={!disabled && (focus.enabled || Platform.isTV || undefined)}
     accessibilityLabel={accessibilityLabel}
     nativeID={nativeID}
     onLayout={(event) => { onLayout?.(event); measureAndRegister(); }}

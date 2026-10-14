@@ -3,6 +3,7 @@ import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  BackHandler,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -153,6 +154,17 @@ export default function OptimizedHomeScreenPaged() {
   const switchingProviderRef = useRef<string | null>(null);
   const activeProviderIdRef = useRef<string | null>(provider?.id ?? null);
   const seriesRequestGenerationRef = useRef(0);
+
+  useEffect(() => {
+    if (!Platform.isTV) return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (view === "player") return false;
+      if (adding) { setAdding(false); setEditingProviderId(null); return true; }
+      if (view !== "home") { setView("home"); return true; }
+      return false;
+    });
+    return () => subscription.remove();
+  }, [adding, view]);
 
   React.useEffect(() => {
     let cancelled = false;

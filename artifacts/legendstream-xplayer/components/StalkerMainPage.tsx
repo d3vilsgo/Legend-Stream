@@ -2,6 +2,7 @@ import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  BackHandler,
   Platform,
   Pressable,
   ScrollView,
@@ -170,6 +171,16 @@ export default function StalkerMainPage() {
   const switchingProviderRef = useRef<string | null>(null);
   const historyPlaybackAbortRef = useRef<AbortController | null>(null);
   const historyPlaybackSequenceRef = useRef(0);
+
+  useEffect(() => {
+    if (!Platform.isTV) return;
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (view === "player") return false;
+      if (view !== "home") { setView("home"); return true; }
+      return false;
+    });
+    return () => subscription.remove();
+  }, [view]);
   const liveCatalog = useStalkerLiveCatalogSync(provider);
   const productCounts = useStalkerProductCounts(provider?.type === "stalker" ? provider.id : undefined);
   const homeSummary = useStalkerHomeSummary(provider?.type === "stalker" ? provider.id : undefined);
