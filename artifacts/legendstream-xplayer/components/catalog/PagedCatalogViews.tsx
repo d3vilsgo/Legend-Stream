@@ -744,6 +744,7 @@ export function PagedMoviesCatalog({
   onOpen: (item: XtreamVodItem) => void;
   onDrawerVisibilityChange: (visible: boolean) => void;
 }) {
+  const colors = useColors();
   const { t } = useI18n();
   const { width } = useWindowDimensions();
   const { tvPreview } = useUiPresentation();
