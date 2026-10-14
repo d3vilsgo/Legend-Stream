@@ -244,7 +244,7 @@ async function main() {
   const liveRowEnd = liveListSource.indexOf("extraData={{ favorites, epgByChannel, epgClock }}", liveRowStart);
   const liveRowSource = liveListSource.slice(liveRowStart, liveRowEnd);
   assert.ok(liveRowStart >= 0 && liveRowEnd > liveRowStart);
-  assert.match(liveRowSource, /<Pressable[\s\S]*style=\{s\.liveMain\}[\s\S]*onPress=\{\(\) => \{\s*if \(provider\.type === "m3u"\) recordM3ULivePress\(\);\s*onOpen\(channel\);\s*\}/);
+  assert.match(liveRowSource, /<TVPreviewPressable[\s\S]*style=\{s\.liveMain\}[\s\S]*onPress=\{\(\) => \{\s*if \(provider\.type === "m3u"\) recordM3ULivePress\(\);\s*onOpen\(channel\);\s*\}/);
   assert.doesNotMatch(liveRowSource, /disabled=/);
   assert.match(homeSource, /epgLoading=\{isEpgLoading\} refreshing=\{isLoading \|\| isRefreshing \|\| isSyncing\}/);
   const openLiveStart = homeSource.indexOf("const openLive =");
