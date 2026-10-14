@@ -57,4 +57,213 @@ jobs:
           set -euo pipefail
           output="$(pnpm --filter @workspace/legendstream-xplayer test:credentials 2>&1 | tee /dev/stderr)"
           grep -F 'credential storage scenarios: 6/6 passed' <<<"$output"
-      - name: Provider backup invariants (24/24 requ
+      - name: Provider backup invariants (24/24 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$(pnpm --filter @workspace/legendstream-xplayer test:backup 2>&1 | tee /dev/stderr)"
+          grep -F 'provider backup acceptance: 7/7 passed' <<<"$output"
+          grep -F 'negative crypto: 2/2 passed' <<<"$output"
+          grep -F 'credential round-trip: 1/1 passed' <<<"$output"
+          grep -F 'security regressions: 14/14 passed' <<<"$output"
+          grep -F 'provider backup tests: 24/24 passed' <<<"$output"
+      - name: Log redaction invariants (13/13 mobile + M3U K4 6/6 + 4/4 API required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mobile="$(pnpm --filter @workspace/legendstream-xplayer test:logging 2>&1 | tee /dev/stderr)"
+          grep -F 'log redaction scenarios: 13/13 passed' <<<"$mobile"
+          grep -F 'm3u diagnostics K4 scenarios: 6/6 passed' <<<"$mobile"
+          api="$(pnpm --filter @workspace/legendstream-xplayer exec tsx "$GITHUB_WORKSPACE/artifacts/api-server/src/lib/logRedaction.test.ts" 2>&1 | tee /dev/stderr)"
+          grep -F 'API log redaction scenarios: 4/4 passed' <<<"$api"
+      - name: Console usage guard (fail-closed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/check-console-usage.mjs --self-test
+          node scripts/check-console-usage.mjs
+      - name: EPG runtime regressions (12/12 + UTF-8 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          epg="$(pnpm --filter @workspace/legendstream-xplayer test:epg 2>&1 | tee /dev/stderr)"
+          grep -F 'epg runtime scenarios: 12/12 passed' <<<"$epg"
+          grep -F 'Stalker product EPG scenarios: 20/20 passed' <<<"$epg"
+          grep -F 'EPG UTF-8 regression samples passed.' <<<"$epg"
+      - name: M3U shape diagnostics regressions (8/8 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          diagnostics="$(pnpm --filter @workspace/legendstream-xplayer test:m3u-diagnostics 2>&1 | tee /dev/stderr)"
+          grep -F 'm3u shape diagnostics scenarios: 8/8 passed' <<<"$diagnostics"
+      - name: M3U structural classification regressions (6/6 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          classification="$(pnpm --filter @workspace/legendstream-xplayer test:m3u-classification 2>&1 | tee /dev/stderr)"
+          grep -F 'm3u classification scenarios: 6/6 passed' <<<"$classification"
+      - name: M3U playback ref regressions (8/8 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          playback_ref="$(pnpm --filter @workspace/legendstream-xplayer test:m3u-playback-ref 2>&1 | tee /dev/stderr)"
+          grep -F 'm3u playback ref scenarios: 8/8 passed' <<<"$playback_ref"
+      - name: SQLite diagnostics + catalog measurement freshness (28/28 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          sqlite_diag="$(pnpm --filter @workspace/legendstream-xplayer test:sqlite-diagnostics-freshness 2>&1 | tee /dev/stderr)"
+          grep -F 'sqlite diagnostics freshness scenarios: 28/28 passed' <<<"$sqlite_diag"
+      - name: Catalog DB writer coordination regressions (8/8 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          writer="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-db-writer 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog DB writer coordination scenarios: 8/8 passed' <<<"$writer"
+      - name: Catalog prepared write candidate semantics (27/27 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          candidate="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-write-batch 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog write batch scenarios: 27/27 passed' <<<"$candidate"
+      - name: Catalog native benchmark runner semantics (41/41 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          runner="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-write-benchmark-runner 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog write benchmark runner scenarios: 41/41 passed' <<<"$runner"
+      - name: Catalog benchmark runtime isolation (9/9 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          runtime="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-benchmark-runtime 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog benchmark runtime isolation scenarios: 9/9 passed' <<<"$runtime"
+      - name: Catalog persistence invariants (10/10 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          catalog="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-persistence 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog persistence scenarios: 10/10 passed' <<<"$catalog"
+      - name: Paged catalog parity regressions (12/12 + 4/4 + 12/12 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          parity="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-parity 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog parity scenarios: 12/12 passed' <<<"$parity"
+          grep -F 'paged catalog remediation scenarios: 4/4 passed' <<<"$parity"
+          grep -F 'history favorites resolution scenarios: 12/12 passed' <<<"$parity"
+      - name: Catalog category fallback regressions (8/8 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          fallback="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-category-fallback 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog category fallback scenarios: 8/8 passed' <<<"$fallback"
+      - name: Catalog cache availability regressions (7/7 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          availability="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-availability 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog availability scenarios: 7/7 passed' <<<"$availability"
+      - name: Provider switch UX regressions (24/24 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          provider_switch="$(pnpm --filter @workspace/legendstream-xplayer test:provider-switch 2>&1 | tee /dev/stderr)"
+          grep -F 'provider switch UX scenarios: 24/24 passed' <<<"$provider_switch"
+      - name: Catalog bulk sync regressions (7/7 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bulk="$(pnpm --filter @workspace/legendstream-xplayer test:catalog-bulk-sync 2>&1 | tee /dev/stderr)"
+          grep -F 'catalog bulk sync scenarios: 7/7 passed' <<<"$bulk"
+      - name: Poster image resilience regressions (6/6 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          poster="$(pnpm --filter @workspace/legendstream-xplayer test:poster-image-resilience 2>&1 | tee /dev/stderr)"
+          grep -F 'poster image resilience scenarios: 6/6 passed' <<<"$poster"
+      - name: Player live queue regressions (6/6 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          player="$(pnpm --filter @workspace/legendstream-xplayer test:player-live-queue 2>&1 | tee /dev/stderr)"
+          grep -F 'player live queue scenarios: 6/6 passed' <<<"$player"
+      - name: Media progress provider-scope and migration invariants (31/31 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          progress="$(pnpm --filter @workspace/legendstream-xplayer test:media-progress 2>&1 | tee /dev/stderr)"
+          grep -F 'media progress scenarios: 31/31 passed' <<<"$progress"
+      - name: Live history provider-scope and migration invariants (32/32 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          history="$(pnpm --filter @workspace/legendstream-xplayer test:live-history 2>&1 | tee /dev/stderr)"
+          grep -F 'live history scenarios: 32/32 passed' <<<"$history"
+          grep -F 'live history owner scenarios: 9/9 passed' <<<"$history"
+      - name: Adaptive UI presentation foundation (23/23 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ui="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/uiPresentationScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'ui presentation scenarios: 23/23 passed' <<<"$ui"
+      - name: R18-C unified product shell contract
+        shell: bash
+        run: |
+          set -euo pipefail
+          shell_contract="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/r18CProductShellScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'R18-C product shell scenarios passed.' <<<"$shell_contract"
+      - name: R18-C2 credential-safe Stalker trace
+        shell: bash
+        run: |
+          set -euo pipefail
+          trace="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/r18C2StalkerTraceScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'R18-C2 credential-safe trace scenarios passed.' <<<"$trace"
+      - name: Repository hygiene guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -d artifacts/mockup-sandbox ]; then
+            echo 'artifacts/mockup-sandbox still exists'
+            exit 1
+          fi
+          echo 'Repository hygiene guard passed.'
+      - name: Device presentation foundation scenarios
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @workspace/legendstream-xplayer exec tsx tests/devicePresentationScenarios.ts
+      - name: Presentation orientation lifecycle (14/14 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          lifecycle="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/presentationLifecycleScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'presentation lifecycle scenarios: 14/14 passed' <<<"$lifecycle"
+      - name: Premium design system scenarios
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/designSystemScenarios.ts
+      - name: Premium catalog grid layout scenarios
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/catalogGridLayoutScenarios.ts
+      - name: Premium Home hero scenarios
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/premiumHomeHeroScenarios.ts
+      - name: Premium tablet design foundation scenarios (11/11 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tabletDesignFoundationScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'premium tablet design foundation scenarios: 11/11 passed' <<<"$result"
+      - name: Premium adaptive navigation scenarios (16/16 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/adaptiveNavigationScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'premium adaptive navigation scenarios: 16/16 passed' <<<"$result"
+      - name: TV Preview and virtual D-pad interaction scenarios (27/27 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tvPreviewScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'TV Preview interaction scenarios: 27/27 passed' <<<"$result"
+      - name: Typecheck mobile app
+        run: pnpm --filter @workspace/legendstream-xplayer typecheck
+      - name: Typecheck API server and references
+        run: pnpm exec tsc -b artifacts/api-server/tsconfig.json --pretty false

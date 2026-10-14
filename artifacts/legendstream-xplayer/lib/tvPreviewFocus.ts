@@ -88,4 +88,100 @@ export function createTVPreviewFocusController(
   const move = async (direction: TVPreviewDirection, viewport?: TVPreviewViewport) => {
     const revision = ++moveRevision;
     const activeEntries = entriesInActiveScope();
-    const measuredEntries = await Promise.all(activeEntries.map(async (entry
+    const measuredEntries = await Promise.all(activeEntries.map(async (entry) => {
+      if (!entry.measure) return { entry, bounds: entry.bounds, measurable: true };
+      try {
+        const bounds = await entry.measure();
+        return { entry, bounds, measurable: bounds !== null };
+      } catch {
+        return { entry, bounds: null, measurable: false };
+      }
+    }));
+    if (revision !== moveRevision) return;
+    const currentEntries: TVPreviewFocusEntry[] = [];
+    for (const result of measuredEntries) {
+      if (entries.get(result.entry.id) !== result.entry) continue;
+      if (!result.measurable || !result.bounds) {
+        if (focusedId === result.entry.id) focus(null);
+        entries.delete(result.entry.id);
+        continue;
+      }
+      result.entry.bounds = result.bounds;
+      currentEntries.push(result.entry);
+    }
+    const visibleEntries = currentEntries.filter((entry) => isVisibleInViewport(entry, viewport));
+    const current = visibleEntries.find((entry) => entry.id === focusedId);
+    if (!current) {
+      focus(visibleEntries[0]?.id ?? null);
+      return;
+    }
+    const visibleNext = resolveTVPreviewFocusTarget(current, direction, visibleEntries);
+    if (visibleNext) { focus(visibleNext.id); return; }
+
+    // Ask the closest mounted off-screen cell to reveal itself. It only receives
+    // focus after a fresh measurement confirms it is actually visible.
+    const offscreenEntries = currentEntries.filter((entry) => !isVisibleInViewport(entry, viewport));
+    const nextOffscreen = resolveTVPreviewFocusTarget(current, direction, offscreenEntries);
+    if (!nextOffscreen?.reveal || revision !== moveRevision) return;
+    try {
+      const revealedBounds = await nextOffscreen.reveal();
+      if (revision !== moveRevision || !revealedBounds) return;
+      nextOffscreen.bounds = revealedBounds;
+      if (isVisibleInViewport(nextOffscreen, viewport) && entries.get(nextOffscreen.id) === nextOffscreen) focus(nextOffscreen.id);
+    } catch {
+      // A recycled or unmounted virtualized cell cannot be focused.
+    }
+  };
+  const activate = () => {
+    if (!focusedId) return;
+    const active = entries.get(focusedId);
+    if (!active) return;
+    onActivate?.(active.id);
+    active.press();
+  };
+  const setBackAction = (action: (() => void) | null) => { backAction = action; };
+  const registerBackAction = (action: () => void) => {
+    const id = ++nextBackActionId;
+    scopedBackActions.set(id, action);
+    return () => { scopedBackActions.delete(id); };
+  };
+  const pushFocusScope = (scope: string) => {
+    moveRevision += 1;
+    const token = ++nextFocusScopeId;
+    const frame = { token, scope, previousScope: activeScope, previousFocus: focusedId };
+    focusScopes.push(frame);
+    activeScope = scope;
+    focusFirst();
+    return () => {
+      const index = focusScopes.findIndex((item) => item.token === token);
+      if (index < 0) return;
+      const [removed] = focusScopes.splice(index, 1);
+      moveRevision += 1;
+      if (index !== focusScopes.length) return;
+      activeScope = focusScopes[focusScopes.length - 1]?.scope ?? removed.previousScope;
+      const previousEntry = removed.previousFocus ? entries.get(removed.previousFocus) : undefined;
+      focus(previousEntry && (previousEntry.scope ?? "content") === activeScope
+        ? previousEntry.id
+        : entriesInActiveScope()[0]?.id ?? null);
+    };
+  };
+  const back = () => {
+    const actions = [...scopedBackActions.values()];
+    const active = actions[actions.length - 1];
+    (active ?? backAction)?.();
+  };
+  const clear = () => { moveRevision += 1; focus(null); };
+  return {
+    register,
+    focusFirst,
+    move,
+    activate,
+    setBackAction,
+    registerBackAction,
+    pushFocusScope,
+    back,
+    clear,
+    getFocusedId: () => focusedId,
+    getFocusedEntry: () => focusedId ? entries.get(focusedId) ?? null : null,
+  };
+}

@@ -51,4 +51,146 @@ async function main() {
     ownership.registerCatalogPolicy("landscape", { lockPortrait: () => { calls.push("portrait"); }, lockLandscape: () => { calls.push("landscape"); }, unlock: () => { calls.push("free"); } });
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
     ownership.registerCatalogPolicy("portrait", { lockPortrait: () => { calls.push("portrait"); }, lockLandscape: () => { calls.push("landscape"); }, unlock: () => { calls.push("free"); } });
-    await new Promise<void>((res
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    assert.deepEqual(calls, ["landscape", "portrait"]);
+  });
+  await scenario("player owns orientation during playback and catalog policy resumes on release", async () => {
+    const calls: string[] = [];
+    const ownership = createOrientationOwnershipCoordinator();
+    ownership.registerCatalogPolicy("portrait", { lockPortrait: () => { calls.push("portrait"); }, lockLandscape: () => { calls.push("landscape"); }, unlock: () => { calls.push("free"); } });
+    await new Promise<void>((resolve) => setTimeout(resolve, 0)); calls.length = 0;
+    await ownership.acquirePlayer();
+    ownership.registerCatalogPolicy("landscape", { lockPortrait: () => { calls.push("portrait"); }, lockLandscape: () => { calls.push("landscape"); }, unlock: () => { calls.push("free"); } });
+    assert.deepEqual(calls, []); assert.equal(ownership.snapshot().owner, "player");
+    await ownership.handoffPlayerToCatalog();
+    assert.deepEqual(calls, ["landscape"]); assert.equal(ownership.snapshot().owner, "catalog");
+  });
+  await scenario("preview navigation keeps all main sections visible", () => {
+    const profile = resolvePremiumCatalogProfile({ width: 1280, height: 720, nativeTv: false, tvPreview: true });
+    const model = resolveAdaptiveNavigationModel({ profile, open: true, activeKey: "home", itemKeys: keys });
+    assert.deepEqual(model.visibleItemKeys, [...keys]); assert.equal(model.showTabLabels, "all"); assert.equal(model.showMenuToggle, false);
+  });
+  await scenario("preview route selection retains the selected accessible tab", () => {
+    for (const activeKey of keys) {
+      const profile = resolvePremiumCatalogProfile({ width: 1280, height: 720, nativeTv: false, tvPreview: true });
+      const model = resolveAdaptiveNavigationModel({ profile, open: true, activeKey, itemKeys: keys });
+      assert.equal(model.activeKey, activeKey); assert.ok(model.visibleItemKeys.includes(activeKey));
+    }
+  });
+  await scenario("normal phone navigation keeps the compact touch layout", () => {
+    const profile = resolvePremiumCatalogProfile({ width: 390, height: 844, nativeTv: false });
+    const model = resolveAdaptiveNavigationModel({ profile, open: false, activeKey: "live", itemKeys: keys });
+    assert.equal(model.nativeTv, false); assert.equal(model.showMenuToggle, true); assert.deepEqual(model.visibleItemKeys, []);
+  });
+  await scenario("native TV remains labeled and keeps Home as its Back target", () => {
+    const profile = resolvePremiumCatalogProfile({ width: 1920, height: 1080, nativeTv: true });
+    const model = resolveAdaptiveNavigationModel({ profile, open: true, activeKey: "series", itemKeys: keys });
+    assert.equal(model.nativeTv, true); assert.equal(model.touchTarget, 56); assert.equal(model.backTarget, "home");
+  });
+  await scenario("directional search selects the closest right-hand catalog card", () => {
+    const current = entry("a", 0, 0); const right = entry("b", 120, 0); const diagonal = entry("c", 100, 100);
+    assert.equal(resolveTVPreviewFocusTarget(current, "right", [current, right, diagonal])?.id, "b");
+  });
+  await scenario("directional search selects the nearest item above", () => {
+    const current = entry("a", 100, 100); const above = entry("b", 100, 0); const far = entry("c", 0, 0);
+    assert.equal(resolveTVPreviewFocusTarget(current, "up", [current, above, far])?.id, "b");
+  });
+  await scenario("focus does not jump to an item behind the pressed direction", () => {
+    const current = entry("a", 100, 100); const left = entry("b", 0, 100);
+    assert.equal(resolveTVPreviewFocusTarget(current, "right", [current, left]), null);
+  });
+  await scenario("virtual OK invokes the currently focused real screen action", () => {
+    const selected: string[] = []; const activated: string[] = []; const focus = createTVPreviewFocusController(undefined, (id) => activated.push(id));
+    focus.register(entry("home-live-card", 0, 0, () => { selected.push("live"); }));
+    focus.activate(); assert.deepEqual(selected, ["live"]); assert.deepEqual(activated, ["home-live-card"]);
+  });
+  await scenario("directional movement updates visible focused state before OK", async () => {
+    const changes: Array<[string, boolean]> = []; const selected: string[] = [];
+    const focus = createTVPreviewFocusController();
+    focus.register(entry("home", 0, 0, () => { selected.push("home"); }, (value) => { changes.push(["home", value]); }));
+    focus.register(entry("live", 120, 0, () => { selected.push("live"); }, (value) => { changes.push(["live", value]); }));
+    await focus.move("right", { x: 0, y: 0, width: 400, height: 200 }); focus.activate();
+    assert.deepEqual(selected, ["live"]); assert.deepEqual(changes, [["home", true], ["home", false], ["live", true]]);
+  });
+  await scenario("movement remeasures targets after scroll and exposes the refreshed focus coordinates", async () => {
+    const focus = createTVPreviewFocusController(); let targetX = 120;
+    focus.register(entry("home:live", 0, 0));
+    focus.register({ ...entry("vod:asset-42", 120, 0, () => undefined), measure: async () => ({ x: targetX, y: 0, width: 100, height: 60 }) });
+    await focus.move("right", { x: 0, y: 0, width: 400, height: 200 });
+    assert.equal(focus.getFocusedId(), "vod:asset-42");
+    targetX = 240;
+    await focus.move("right", { x: 0, y: 0, width: 400, height: 200 });
+    assert.equal(focus.getFocusedEntry()?.bounds.x, 240);
+  });
+  await scenario("offscreen cells are excluded until focus reveals and remeasures them", async () => {
+    const focus = createTVPreviewFocusController(); let focusedTarget: string | null = null; let activated = "";
+    focus.register(entry("menu:vod", 0, 0));
+    focus.register({
+      ...entry("vod:poster-7", 0, 500, () => { activated = "poster-7"; }, (value) => { if (value) focusedTarget = "vod:poster-7"; }),
+      measure: async () => ({ x: 0, y: 500, width: 100, height: 60 }),
+      reveal: async () => ({ x: 120, y: 20, width: 100, height: 60 }),
+    });
+    await focus.move("down", { x: 0, y: 0, width: 400, height: 200 });
+    assert.equal(focus.getFocusedId(), "vod:poster-7"); assert.equal(focusedTarget, "vod:poster-7");
+    focus.activate(); assert.equal(activated, "poster-7");
+  });
+  await scenario("unmeasurable stale registrations are removed and cannot receive OK", async () => {
+    let staleActivation = 0; const focus = createTVPreviewFocusController();
+    focus.register(entry("menu:live", 0, 0));
+    focus.register({ ...entry("stale:item", 120, 0, () => { staleActivation += 1; }), measure: async () => null });
+    await focus.move("right", { x: 0, y: 0, width: 400, height: 200 });
+    assert.equal(focus.getFocusedId(), "menu:live"); focus.activate(); assert.equal(staleActivation, 0);
+  });
+  await scenario("modal focus scope isolates category choices and restores the previous content ID", async () => {
+    const selected: string[] = []; const focus = createTVPreviewFocusController();
+    focus.register(entry("menu:vod", 0, 0));
+    focus.register(entry("vod:poster-42", 120, 0, () => selected.push("vod:42")));
+    await focus.move("right", { x: 0, y: 0, width: 400, height: 200 });
+    assert.equal(focus.getFocusedId(), "vod:poster-42");
+    focus.register({ ...entry("category:all", 0, 0, () => selected.push("category:all")), scope: "category-drawer" });
+    const closeScope = focus.pushFocusScope("category-drawer");
+    assert.equal(focus.getFocusedId(), "category:all"); focus.activate();
+    assert.deepEqual(selected, ["category:all"]);
+    closeScope(); assert.equal(focus.getFocusedId(), "vod:poster-42");
+  });
+  await scenario("scope changes invalidate pending movement and offscreen focus IDs", async () => {
+    const focus = createTVPreviewFocusController(); let finishMeasure: ((value: { x: number; y: number; width: number; height: number } | null) => void) | undefined;
+    focus.register(entry("menu:vod", 0, 0));
+    focus.register({ ...entry("stale:poster", 120, 0), scope: "content", measure: () => new Promise((resolve) => { finishMeasure = resolve; }) });
+    const moving = focus.move("right", { x: 0, y: 0, width: 400, height: 200 });
+    focus.pushFocusScope("category-drawer"); finishMeasure?.({ x: 120, y: 0, width: 100, height: 60 }); await moving;
+    assert.notEqual(focus.getFocusedId(), "stale:poster");
+  });
+  await scenario("virtual Back executes the active screen navigation callback", () => {
+    let route = "series"; const focus = createTVPreviewFocusController();
+    focus.setBackAction(() => { route = "home"; }); focus.back(); assert.equal(route, "home");
+  });
+  await scenario("Home, Live, VOD and Series use the same interactive preview wrapper", () => {
+    assert.match(source("components/home/HomeDiscovery.tsx"), /return <TVPreviewPressable/);
+    assert.match(source("components/catalog/PagedCatalogViews.tsx"), /function GridCard[\s\S]*?TVPreviewPressable/);
+    assert.match(source("components/catalog/StalkerLiveCatalog.tsx"), /TVPreviewPressable focusId=\{`stalker-live:\$\{channel\.id\}`\} accessibilityRole="button"/);
+    assert.match(source("components/stalker/StalkerVodSurface.tsx"), /TVPreviewPressable focusId=\{`stalker-vod:\$\{item\.portalId\}`\} accessibilityRole="button"/);
+  });
+  await scenario("persistent settings switch writes through AsyncStorage", () => {
+    const context = source("context/UiPresentationContext.tsx"); const setting = source("components/tvPreview/TVPreviewSetting.tsx");
+    assert.match(context, /legendstream\.ui\.tvPreview\.v1/); assert.match(context, /AsyncStorage\.setItem/);
+    assert.match(setting, /testID="tv-preview-toggle"/); assert.match(setting, /accessibilityRole="switch"/);
+  });
+  await scenario("D-pad overlay exposes six labeled controls and exact UI callback wiring", () => {
+    const controls = source("components/tvPreview/TVPreviewFocus.tsx");
+    for (const id of ["up", "down", "left", "right", "ok", "back"]) assert.ok(controls.includes(`tv-preview-dpad-${id}`));
+    assert.match(controls, /button\("OK", "OK", focus\.activate/); assert.match(controls, /onPress=\{focus\.back\}/);
+    assert.match(controls, /testID="tv-preview-focus-target"/); assert.match(controls, /testID="tv-preview-activation-target"/);
+    assert.match(controls, /TVPreviewFocusRegion/); assert.match(source("components/ProductShell.tsx"), /<TVPreviewControls \/>/);
+    assert.match(source("components/catalog/PagedCatalogViews.tsx"), /focusScope="category-drawer"/);
+    assert.doesNotMatch(source("components/ProductShell.tsx"), /position:\s*["']absolute/);
+  });
+  await scenario("player orientation implementation retains independent ownership", () => {
+    assert.match(source("hooks/usePlayerOrientation.ts"), /acquirePlayerOrientationOwnership/);
+    assert.match(source("hooks/usePlayerOrientation.ts"), /handoffPlayerOrientationToCatalog/);
+    assert.match(source("components/ProductShell.tsx"), /<TVPreviewControls \/>/);
+  });
+  assert.equal(passed, 27);
+  console.log(`TV Preview interaction scenarios: ${passed}/27 passed`);
+}
+void main().catch((error) => { console.error(error); process.exitCode = 1; });
