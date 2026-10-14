@@ -19,6 +19,7 @@
     "android": {
       "package": "com.legendstream.xplayer",
       "versionCode": 60,
+      "banner": "./assets/images/tv-banner.png",
       "softwareKeyboardLayoutMode": "resize"
     },
     "web": {
@@ -58,6 +59,7 @@
       "./plugins/withLegendStreamPip",
       "./plugins/withAndroidLargeHeap",
       "./plugins/withAndroidAbiSplits",
+      "./plugins/withAndroidTv",
       "expo-font",
       "expo-web-browser",
       "expo-secure-store"

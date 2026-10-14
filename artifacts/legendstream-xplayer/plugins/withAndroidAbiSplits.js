@@ -6,6 +6,7 @@ const MARKER_END = "// @legendstream abi-splits:end";
 const SPLIT_BLOCK = `${MARKER_START}
     def legendStreamAbiSplitEnabled = project.hasProperty("abiSplit")
     def legendStreamAbiOnly = project.findProperty("abiOnly")?.toString()
+    def legendStreamUniversalApk = project.hasProperty("abiUniversal")
 
     splits {
         abi {
@@ -21,6 +22,12 @@ const SPLIT_BLOCK = `${MARKER_START}
     }
 
     applicationVariants.all { variant ->
+        if (legendStreamUniversalApk) {
+            variant.outputs.each { output ->
+                // Keep one universal APK upgrade-compatible with either ABI split.
+                output.versionCodeOverride = variant.versionCode * 1000 + 3
+            }
+        }
         if (legendStreamAbiSplitEnabled) {
             variant.outputs.each { output ->
                 def abi = output.getFilter(com.android.build.OutputFile.ABI)

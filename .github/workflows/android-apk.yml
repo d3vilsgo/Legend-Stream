@@ -3,8 +3,17 @@ name: Android APK
 on:
   workflow_dispatch:
     inputs:
+      apk_mode:
+        description: "APK type to build"
+        required: true
+        default: arm64
+        type: choice
+        options:
+          - arm64
+          - dual-abi
+          - universal
       dual_abi:
-        description: "Build both arm64-v8a and armeabi-v7a test APKs"
+        description: "Compatibility input: build separate arm64-v8a and armeabi-v7a test APKs"
         required: false
         default: false
         type: boolean
@@ -16,6 +25,7 @@ on:
   push:
     branches:
       - feature/r18-tv-preview-virtual-dpad
+      - feature/r18-native-tv-universal-apk
     tags:
       - "v*"
 
@@ -127,17 +137,24 @@ jobs:
           export EXPO_PUBLIC_GIT_SHA="${GITHUB_SHA:0:8}"
           pnpm exec expo prebuild --platform android --clean --no-install 2>&1 | tee "$GITHUB_WORKSPACE/expo-prebuild.log"
           grep '^reactNativeArchitectures=' android/gradle.properties || true
+          MANIFEST=android/app/src/main/AndroidManifest.xml
+          grep -F '<category android:name="android.intent.category.LEANBACK_LAUNCHER"' "$MANIFEST" || { echo "::error::Generated Android manifest lacks LEANBACK_LAUNCHER"; exit 1; }
+          grep -F '<uses-feature android:name="android.hardware.touchscreen" android:required="false"' "$MANIFEST" || { echo "::error::Generated Android manifest requires a touchscreen"; exit 1; }
+          grep -F '<uses-feature android:name="android.software.leanback" android:required="false"' "$MANIFEST" || { echo "::error::Generated Android manifest requires Leanback"; exit 1; }
+          grep -F 'android:banner="@drawable/tv_banner"' "$MANIFEST" || { echo "::error::Generated Android manifest lacks the TV banner"; exit 1; }
+          test -s android/app/src/main/res/drawable-nodpi/tv_banner.png || { echo "::error::TV launcher banner resource is missing"; exit 1; }
           sed -n '/@legendstream abi-splits:start/,/@legendstream abi-splits:end/p' android/app/build.gradle
 
       - name: Select package mode
         id: mode
         env:
           DISPATCH_DUAL_ABI: ${{ inputs.dual_abi || false }}
+          DISPATCH_APK_MODE: ${{ inputs.apk_mode || 'arm64' }}
           DISPATCH_CATALOG_BENCHMARK: ${{ inputs.catalog_benchmark || false }}
           HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message || '' }}
         shell: bash
         run: |
-          if [[ "$DISPATCH_CATALOG_BENCHMARK" == "true" && ( "$GITHUB_EVENT_NAME" != "workflow_dispatch" || "$DISPATCH_DUAL_ABI" == "true" ) ]]; then
+          if [[ "$DISPATCH_CATALOG_BENCHMARK" == "true" && ( "$GITHUB_EVENT_NAME" != "workflow_dispatch" || "$DISPATCH_DUAL_ABI" == "true" || "$DISPATCH_APK_MODE" != "arm64" ) ]]; then
             echo "::error::Catalog benchmark builds must be manual arm64-only test builds"
             exit 1
           fi
@@ -145,14 +162,23 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
             echo "full_release=true" >> "$GITHUB_OUTPUT"
             echo "dual_abi=true" >> "$GITHUB_OUTPUT"
+            echo "universal=false" >> "$GITHUB_OUTPUT"
             echo "Full release: arm64 + armv7 + AAB"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$DISPATCH_APK_MODE" == "universal" ]]; then
+            if [[ "$DISPATCH_DUAL_ABI" == "true" ]]; then echo "::error::Select either universal or dual-abi mode, not both"; exit 1; fi
+            echo "full_release=false" >> "$GITHUB_OUTPUT"
+            echo "dual_abi=false" >> "$GITHUB_OUTPUT"
+            echo "universal=true" >> "$GITHUB_OUTPUT"
+            echo "Universal APK: arm64-v8a + armeabi-v7a in one signed APK"
           elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" && "$DISPATCH_DUAL_ABI" == "true" ]] || [[ "$GITHUB_EVENT_NAME" == "push" && "$HEAD_COMMIT_MESSAGE" == *"[dual-abi]"* ]]; then
             echo "full_release=false" >> "$GITHUB_OUTPUT"
             echo "dual_abi=true" >> "$GITHUB_OUTPUT"
+            echo "universal=false" >> "$GITHUB_OUTPUT"
             echo "Dual-ABI test build: arm64 + armv7 APKs"
           else
             echo "full_release=false" >> "$GITHUB_OUTPUT"
             echo "dual_abi=false" >> "$GITHUB_OUTPUT"
+            echo "universal=false" >> "$GITHUB_OUTPUT"
             echo "Test build: arm64-v8a APK only"
           fi
 
@@ -195,12 +221,15 @@ jobs:
           GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
           FULL_RELEASE: ${{ steps.mode.outputs.full_release }}
           DUAL_ABI: ${{ steps.mode.outputs.dual_abi }}
+          UNIVERSAL: ${{ steps.mode.outputs.universal }}
           EXPO_PUBLIC_ENABLE_CATALOG_BENCHMARK: ${{ steps.mode.outputs.catalog_benchmark == 'true' && '1' || '0' }}
         shell: bash
         run: |
           set -euo pipefail
           export EXPO_PUBLIC_GIT_SHA="${GITHUB_SHA:0:8}"
-          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
+          if [ "$UNIVERSAL" = "true" ]; then
+            ./gradlew assembleRelease -PabiUniversal --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
+          elif [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
             ./gradlew assembleRelease -PabiSplit --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
           else
             ./gradlew assembleRelease -PabiSplit -PabiOnly=arm64-v8a -PreactNativeArchitectures=arm64-v8a --no-daemon --no-build-cache --max-workers=2 --console=plain --stacktrace 2>&1 | tee "$GITHUB_WORKSPACE/apk-release-build.log"
@@ -211,6 +240,7 @@ jobs:
         env:
           FULL_RELEASE: ${{ steps.mode.outputs.full_release }}
           DUAL_ABI: ${{ steps.mode.outputs.dual_abi }}
+          UNIVERSAL: ${{ steps.mode.outputs.universal }}
           EXPECTED_PACKAGE: com.legendstream.xplayer
           EXPECTED_CERT_SHA256: FAC61745DC0903786FB9EDE62A962B399F7348F0BB6F899B8332667591033B9C
           MIN_VERSION_CODE_EXCLUSIVE: "45002"
@@ -225,7 +255,9 @@ jobs:
           echo "APK outputs:"
           printf '%s\n' "${APKS[@]}"
 
-          if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
+          if [ "$UNIVERSAL" = "true" ]; then
+            [ "${#APKS[@]}" -eq 1 ] || { echo "::error::Expected exactly 1 universal APK; found ${#APKS[@]}"; exit 1; }
+          elif [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
             [ "${#APKS[@]}" -eq 2 ] || { echo "::error::Expected exactly 2 split APKs for dual-ABI build; found ${#APKS[@]}"; exit 1; }
           else
             [ "${#APKS[@]}" -eq 1 ] || { echo "::error::Expected exactly 1 APK for arm64-only build; found ${#APKS[@]}"; exit 1; }
@@ -249,7 +281,7 @@ jobs:
             if grep -q '^lib/armeabi-v7a/' <<<"$entries"; then HAS_ARMV7=1; fi
             echo "$apk arm64=$HAS_ARM64 armv7=$HAS_ARMV7"
 
-            if [ "$HAS_ARM64" -eq 1 ] && [ "$HAS_ARMV7" -eq 1 ]; then
+            if [ "$UNIVERSAL" != "true" ] && [ "$HAS_ARM64" -eq 1 ] && [ "$HAS_ARMV7" -eq 1 ]; then
               echo "::error::Split APK unexpectedly contains both ARM ABIs: $apk"
               exit 1
             fi
@@ -261,7 +293,8 @@ jobs:
             if [ "$HAS_ARMV7" -eq 1 ]; then ARMV7_APK="$apk"; fi
           done
 
-          [ -n "$ARM64_APK" ] || { echo "::error::arm64-v8a-only APK not identified"; exit 1; }
+          [ -n "$ARM64_APK" ] || { echo "::error::APK with arm64-v8a was not identified"; exit 1; }
+          if [ "$UNIVERSAL" = "true" ] && [ -z "$ARMV7_APK" ]; then ARMV7_APK="$ARM64_APK"; fi
           if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
             [ -n "$ARMV7_APK" ] || { echo "::error::armeabi-v7a-only APK not identified"; exit 1; }
           fi
@@ -279,6 +312,7 @@ jobs:
           [ "$BASE_CODE" -gt 0 ] || { echo "::error::Android base versionCode must be > 0; got $BASE_CODE"; exit 1; }
           EXPECTED_ARM64_CODE="$((BASE_CODE * 1000 + 2))"
           EXPECTED_ARMV7_CODE="$((BASE_CODE * 1000 + 1))"
+          EXPECTED_UNIVERSAL_CODE="$((BASE_CODE * 1000 + 3))"
 
           verify_apk() {
             local apk="$1"
@@ -328,7 +362,18 @@ jobs:
             echo "$label package=$package_name versionCode=$version_code certSHA256=$cert_sha"
           }
 
-          verify_apk "$ARM64_APK" "$EXPECTED_ARM64_CODE" "arm64-v8a"
+          if [ "$UNIVERSAL" = "true" ]; then
+            verify_apk "$ARM64_APK" "$EXPECTED_UNIVERSAL_CODE" "Universal"
+            UNIVERSAL_ENTRIES="$(unzip -Z1 "$ARM64_APK")"
+            for abi in arm64-v8a armeabi-v7a; do
+              grep -q "^lib/$abi/" <<<"$UNIVERSAL_ENTRIES" || { echo "::error::Universal APK missing ABI directory lib/$abi/"; exit 1; }
+              grep -q "^lib/$abi/libvlc.so$" <<<"$UNIVERSAL_ENTRIES" || { echo "::error::Universal APK missing libvlc.so for $abi"; exit 1; }
+              grep -q "^lib/$abi/libvlcjni.so$" <<<"$UNIVERSAL_ENTRIES" || { echo "::error::Universal APK missing libvlcjni.so for $abi"; exit 1; }
+              grep -q "^lib/$abi/libc++_shared.so$" <<<"$UNIVERSAL_ENTRIES" || { echo "::error::Universal APK missing libc++_shared.so for $abi"; exit 1; }
+            done
+          else
+            verify_apk "$ARM64_APK" "$EXPECTED_ARM64_CODE" "arm64-v8a"
+          fi
           if [ "$FULL_RELEASE" = "true" ] || [ "$DUAL_ABI" = "true" ]; then
             verify_apk "$ARMV7_APK" "$EXPECTED_ARMV7_CODE" "armeabi-v7a"
           fi
@@ -346,6 +391,15 @@ jobs:
             exit 1
           fi
           [ -n "$APP_VERSION" ] || { echo "::error::App version is empty in app.json"; exit 1; }
+          if [ "$UNIVERSAL" = "true" ]; then
+            UNIVERSAL_NAME="LegendStream-XPlayer-v${APP_VERSION}-Universal.apk"
+            UNIVERSAL_ARTIFACT_NAME="LegendStream-XPlayer-v${APP_VERSION}-Universal"
+            cp "$ARM64_APK" "$STAGE_DIR/$UNIVERSAL_NAME"
+            echo "universal_artifact_name=$UNIVERSAL_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
+            echo "universal_version_code=$EXPECTED_UNIVERSAL_CODE" >> "$GITHUB_OUTPUT"
+            echo "universal_bytes=$(stat -c%s "$STAGE_DIR/$UNIVERSAL_NAME")" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "$CATALOG_BENCHMARK" = "true" ]; then
             ARM64_NAME="LegendStream-XPlayer-v${APP_VERSION}-benchmark-arm64-v8a.apk"
             ARM64_ARTIFACT_NAME="LegendStream-XPlayer-v${APP_VERSION}-benchmark-arm64-v8a"
@@ -376,6 +430,7 @@ jobs:
       - name: Upload arm64 APK artifact
         id: upload_arm64
         uses: actions/upload-artifact@v4
+        if: steps.mode.outputs.universal != 'true'
         with:
           name: ${{ steps.package_android.outputs.arm64_artifact_name }}
           path: release-staging/*-arm64-v8a.apk
@@ -383,7 +438,7 @@ jobs:
           retention-days: 14
 
       - name: Publish optional arm64 artifact notification
-        if: steps.mode.outputs.full_release != 'true'
+        if: steps.mode.outputs.full_release != 'true' && steps.mode.outputs.universal != 'true'
         continue-on-error: true
         uses: actions/github-script@v7
         env:
@@ -406,6 +461,15 @@ jobs:
         with:
           name: LegendStream-XPlayer-v${{ steps.package_android.outputs.app_version }}-armeabi-v7a
           path: release-staging/*-armeabi-v7a.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload Universal APK artifact
+        if: steps.mode.outputs.universal == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package_android.outputs.universal_artifact_name }}
+          path: release-staging/*-Universal.apk
           if-no-files-found: error
           retention-days: 14
 
