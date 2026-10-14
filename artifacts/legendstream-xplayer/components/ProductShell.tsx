@@ -6,6 +6,7 @@ import { usePlayer } from "@/context/PlayerContext";
 import { deriveProductCapabilities } from "@/lib/productContract";
 import { selectTransitionalProductSurface } from "@/lib/productShell";
 import { UiPresentationProvider } from "@/context/UiPresentationContext";
+import { TVPreviewControls, TVPreviewFocusProvider } from "@/components/tvPreview/TVPreviewFocus";
 
 function ProductShellContent() {
   const { provider } = usePlayer();
@@ -31,7 +32,10 @@ function ProductShellContent() {
 export default function ProductShell() {
   return (
     <UiPresentationProvider>
-      <ProductShellContent />
+      <TVPreviewFocusProvider>
+        <ProductShellContent />
+        <TVPreviewControls />
+      </TVPreviewFocusProvider>
     </UiPresentationProvider>
   );
 }

@@ -83,10 +83,12 @@ scenario("runtime provider derives only device/layout state and owns no product 
     "xtreamCatalog",
     "m3uTransport",
     "fetch(",
-    "AsyncStorage",
   ]) {
     assert.equal(context.includes(forbidden), false, `UI presentation context leaked ${forbidden}`);
   }
+  assert.match(context, /legendstream\.ui\.tvPreview\.v1/);
+  assert.match(context, /AsyncStorage\.getItem/);
+  assert.match(context, /AsyncStorage\.setItem/);
 });
 
 scenario("router Stack stays outside the dimension-reactive presentation provider", () => {

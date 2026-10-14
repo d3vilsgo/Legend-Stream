@@ -34,6 +34,8 @@ import { StalkerVodSurface } from "@/components/stalker/StalkerVodSurface";
 import { PlayerChromeTimeoutSetting } from "@/components/PlayerChromeTimeoutSetting";
 import { ProviderBackupPanel } from "@/components/ProviderBackupPanel";
 import { ProviderSubscriptionChip } from "@/components/ProviderSubscriptionChip";
+import { TVPreviewSetting } from "@/components/tvPreview/TVPreviewSetting";
+import { useTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
 import {
   type Channel,
   type ProviderConfig,
@@ -308,6 +310,18 @@ export default function OptimizedHomeScreenPaged() {
     setView(target);
     if (target !== "series") { seriesRequestGenerationRef.current += 1; setSelectedSeries(null); setSeriesInfo(null); }
   };
+
+  const { setBackAction } = useTVPreviewFocus();
+  useEffect(() => {
+    setBackAction(() => {
+      if (view === "series" && selectedSeries) {
+        seriesRequestGenerationRef.current += 1;
+        setSelectedSeries(null);
+        setSeriesInfo(null);
+      } else if (view !== "home") navigate("home");
+    });
+    return () => setBackAction(null);
+  }, [navigate, selectedSeries, setBackAction, view]);
 
   React.useEffect(() => {
     if (!m3uDiagnosticEnabled) return;
@@ -627,6 +641,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAd
   const { t, language, languages, setLanguage } = useI18n();
   return <View>
     <Text style={[s.title, { color: colors.foreground }]}>{t("settings")}</Text>
+      <TVPreviewSetting />
     <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16 }}>{t("activeConnection")}</Text>
       <Text style={{ color: colors.foreground }}>{provider.name}</Text>

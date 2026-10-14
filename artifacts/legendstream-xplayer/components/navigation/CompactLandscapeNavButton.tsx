@@ -1,7 +1,8 @@
 import { Feather } from "@expo/vector-icons";
 import React from "react";
-import { Pressable, StyleSheet, Text } from "react-native";
+import { StyleSheet, Text } from "react-native";
 import { useColors } from "@/hooks/useColors";
+import { TVPreviewPressable } from "@/components/tvPreview/TVPreviewFocus";
 
 type Props = {
   label: string;
@@ -10,12 +11,13 @@ type Props = {
   active: boolean;
   minTarget?: 44 | 48 | 56;
   onPress: () => void;
+  showLabel?: boolean;
 };
 
-export function CompactLandscapeNavButton({ label, shortLabel, icon, active, minTarget = 44, onPress }: Props) {
+export function CompactLandscapeNavButton({ label, shortLabel, icon, active, minTarget = 44, onPress, showLabel = active }: Props) {
   const colors = useColors();
   return (
-    <Pressable
+    <TVPreviewPressable
       accessibilityRole="tab"
       accessibilityState={{ selected: active }}
       accessibilityLabel={label}
@@ -28,8 +30,8 @@ export function CompactLandscapeNavButton({ label, shortLabel, icon, active, min
       ]}
     >
       <Feather name={icon} size={19} color={active ? colors.primary : colors.foreground} />
-      {active ? <Text numberOfLines={1} style={[styles.label, { color: colors.foreground }]}>{shortLabel ?? label}</Text> : null}
-    </Pressable>
+      {showLabel ? <Text numberOfLines={1} style={[styles.label, { color: colors.foreground }]}>{shortLabel ?? label}</Text> : null}
+    </TVPreviewPressable>
   );
 }
 

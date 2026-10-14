@@ -17,6 +17,8 @@ import {
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FocusButton } from "@/components/FocusButton";
+import { TVPreviewPressable, useTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
+import { useUiPresentation } from "@/context/UiPresentationContext";
 import { ManualEpgControl } from "@/components/catalog/ManualEpgControl";
 import type { EpgProgram, ProviderConfig, ProviderType } from "@/context/PlayerContext";
 import { selectProgramsAt } from "@/context/PlayerContext";
@@ -481,7 +483,7 @@ function Poster({ uri, title }: { uri?: string; title: string }) {
 
 function GridCard({ title, image, onPress }: { title: string; image?: string; onPress: () => void }) {
   const colors = useColors();
-  return <Pressable onPress={onPress} style={s.card}>
+  return <TVPreviewPressable accessibilityRole="button" accessibilityLabel={title} onPress={onPress} style={s.card}>
     <View style={[s.media, { borderColor: colors.border, backgroundColor: colors.card }]}> 
       {image
         ? <Image source={{ uri: image }} style={s.posterBig} resizeMode="cover" />
@@ -490,7 +492,7 @@ function GridCard({ title, image, onPress }: { title: string; image?: string; on
           </View>}
       <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", padding: 9 }}>{title}</Text>
     </View>
-  </Pressable>;
+  </TVPreviewPressable>;
 }
 
 export function PagedLiveCatalog({
@@ -660,7 +662,7 @@ export function PagedLiveCatalog({
           ? new Date(current.end).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })
           : undefined;
         return <View style={[s.liveRow, { borderColor: colors.border, backgroundColor: colors.card }]}> 
-          <Pressable
+          <TVPreviewPressable
             style={s.liveMain}
             onPressIn={() => {
               if (provider.type === "m3u") recordM3ULivePressIn();
@@ -680,7 +682,7 @@ export function PagedLiveCatalog({
                 {current ? `Şu an: ${current.title}${endLabel ? ` · ${endLabel}` : ""}` : "—"}
               </Text>
             </View>
-          </Pressable>
+          </TVPreviewPressable>
           <Pressable onPress={() => onFavorite(channel.id)} style={s.iconButton}>
             <Feather name="star" size={20} color={favorites.includes(channel.id) ? colors.primary : colors.mutedForeground} />
           </Pressable>
@@ -728,6 +730,7 @@ export function PagedMoviesCatalog({
 }) {
   const { t } = useI18n();
   const { width } = useWindowDimensions();
+  const { tvPreview } = useUiPresentation();
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "vod", provider.type === "m3u");
@@ -747,7 +750,9 @@ export function PagedMoviesCatalog({
   });
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const columns = tvPreview
+    ? width >= 1600 ? 7 : width >= 1200 ? 6 : width >= 800 ? 5 : 4
+    : width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
 
   useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
@@ -856,10 +861,14 @@ export function GoldenSeriesCatalog({
   const colors = useColors();
   const { t } = useI18n();
   const { width } = useWindowDimensions();
+  const { tvPreview } = useUiPresentation();
+  const { registerBackAction } = useTVPreviewFocus();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const columns = tvPreview
+    ? width >= 1600 ? 7 : width >= 1200 ? 6 : width >= 800 ? 5 : 4
+    : width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
   const orderedSeasons = useMemo(
     () => orderGoldenSeriesSeasons(detail?.seasons ?? []),
     [detail],
@@ -868,21 +877,22 @@ export function GoldenSeriesCatalog({
     () => selectedGoldenSeriesSeason(orderedSeasons, selectedSeasonId),
     [orderedSeasons, selectedSeasonId],
   );
+  const leaveDetailLevel = () => {
+    if (goldenSeriesBackTarget(selectedSeasonId, orderedSeasons.length) === "seasons") setSelectedSeasonId(null);
+    else onBack();
+  };
 
   useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
   useEffect(() => {
     setSelectedSeasonId(initialGoldenSeriesSeasonId(orderedSeasons));
   }, [detail?.id, orderedSeasons.length]);
+  useEffect(() => {
+    if (!detail && !detailLoading) return;
+    return registerBackAction(leaveDetailLevel);
+  }, [detail, detailLoading, leaveDetailLevel, registerBackAction]);
 
   if (detail || detailLoading) {
-    const leaveDetailLevel = () => {
-      if (goldenSeriesBackTarget(selectedSeasonId, orderedSeasons.length) === "seasons") {
-        setSelectedSeasonId(null);
-      } else {
-        onBack();
-      }
-    };
     const seasonSelector = <FlatList
       horizontal
       data={orderedSeasons}
@@ -895,7 +905,7 @@ export function GoldenSeriesCatalog({
       windowSize={5}
       renderItem={({ item: season }) => {
         const selected = season.id === selectedSeasonId;
-        return <Pressable
+        return <TVPreviewPressable
           onPress={() => setSelectedSeasonId(season.id)}
           style={[
             s.seasonChip,
@@ -908,7 +918,7 @@ export function GoldenSeriesCatalog({
           <Text style={{ color: selected ? colors.primaryForeground : colors.foreground, fontWeight: "800" }}>
             {season.label}
           </Text>
-        </Pressable>;
+        </TVPreviewPressable>;
       }}
     />;
     const detailHeader = <View>
@@ -943,13 +953,13 @@ export function GoldenSeriesCatalog({
       keyExtractor={(episode) => episode.id}
       ListHeaderComponent={detailHeader}
       ListEmptyComponent={<Text style={[s.seriesDetailMessage, { color: colors.mutedForeground }]}>{t("seasonHasNoEpisodes")}</Text>}
-      renderItem={({ item: episode }) => <Pressable
+      renderItem={({ item: episode }) => <TVPreviewPressable
         onPress={() => onEpisode(selectedSeason.id, episode.id)}
         style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}
       >
         <Text style={{ color: colors.foreground, flex: 1 }}>{episode.title}</Text>
         <Feather name="play-circle" size={24} color={colors.primary} />
-      </Pressable>}
+      </TVPreviewPressable>}
       initialNumToRender={8}
       maxToRenderPerBatch={10}
       windowSize={7}

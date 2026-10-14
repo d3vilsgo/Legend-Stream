@@ -10,6 +10,7 @@ import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { normalizeImageUrl } from "@/lib/imageUrl";
 import { visibleProgressRatio } from "@/lib/historyPresentation";
+import { TVPreviewPressable } from "@/components/tvPreview/TVPreviewFocus";
 import type { Channel } from "@/lib/iptv";
 import type { XtreamSeriesItem, XtreamVodItem } from "@/lib/xtreamCatalog";
 
@@ -274,7 +275,7 @@ function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = fal
 }) {
   const colors = useColors();
   const [focused, setFocused] = useState(false);
-  return <Pressable
+  return <TVPreviewPressable
     focusable
     hasTVPreferredFocus={Platform.isTV && preferredFocus}
     onFocus={() => {
@@ -289,7 +290,7 @@ function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = fal
       Platform.isTV ? s.homeTvFocusBase : null,
       Platform.isTV && focused ? [s.homeTvFocusActive, { borderColor: colors.primary, shadowColor: colors.primary }] : null,
     ]}
-  >{children}</Pressable>;
+  >{children}</TVPreviewPressable>;
 }
 
 function ResilientCatalogImage({ uri, style, resizeMode = "cover", fallbackIcon = "film" }: {

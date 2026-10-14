@@ -5,6 +5,7 @@ import {
   type GoldenSeriesDetailModel,
 } from "@/components/catalog/PagedCatalogViews";
 import { useI18n } from "@/context/I18nContext";
+import { useTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
 import { redactSensitiveText } from "@/lib/safeLog";
 import {
   isCurrentStalkerProductSession,
@@ -78,6 +79,15 @@ export function StalkerSeriesProductSurface({
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchReturnScreen, setSearchReturnScreen] = useState<"categories" | "list">("categories");
+  const { registerBackAction } = useTVPreviewFocus();
+
+  useEffect(() => {
+    if (screen === "categories" || screen === "detail") return;
+    return registerBackAction(() => {
+      if (screen === "search") setScreen(searchReturnScreen);
+      else setScreen("categories");
+    });
+  }, [registerBackAction, screen, searchReturnScreen]);
 
   const requestSequence = useRef(0);
   const requestAbort = useRef<AbortController | null>(null);

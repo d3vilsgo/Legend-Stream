@@ -31,6 +31,8 @@ import { StalkerSeriesProductSurface } from "@/components/stalker/StalkerSeriesP
 import { PlayerChromeTimeoutSetting } from "@/components/PlayerChromeTimeoutSetting";
 import { ProviderBackupPanel } from "@/components/ProviderBackupPanel";
 import { ProviderSubscriptionChip } from "@/components/ProviderSubscriptionChip";
+import { TVPreviewSetting } from "@/components/tvPreview/TVPreviewSetting";
+import { useTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
 import {
   type Channel,
   type ProviderConfig,
@@ -160,6 +162,7 @@ export default function StalkerMainPage() {
   }, [provider?.id, provider?.type]);
 
   const [view, setView] = useState<StalkerViewName>("home");
+  const { setBackAction } = useTVPreviewFocus();
   const [playable, setPlayable] = useState<Playable | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
@@ -196,13 +199,18 @@ export default function StalkerMainPage() {
     historyPlaybackSequenceRef.current += 1;
   }, [provider?.id]);
 
-  if (!provider || !isStalkerProductProvider(provider)) return null;
-
   const navigate = (target: StalkerContentView) => {
     setCatalogError(null);
     if (target !== "live") clearScopedError("live-history");
     setView(target);
   };
+
+  useEffect(() => {
+    setBackAction(() => { if (view !== "home") navigate("home"); });
+    return () => setBackAction(null);
+  }, [navigate, setBackAction, view]);
+
+  if (!provider || !isStalkerProductProvider(provider)) return null;
 
   const openResolvedPlayable = (next: Playable) => {
     if (next.kind !== "live") clearScopedError("live-history");
@@ -648,6 +656,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onSwitch, on
   return (
     <View>
       <Text style={[s.title, { color: colors.foreground }]}>{t("settings")}</Text>
+      <TVPreviewSetting />
       <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}>
         <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16 }}>{t("activeConnection")}</Text>
         <Text style={{ color: colors.foreground }}>{provider.name}</Text>

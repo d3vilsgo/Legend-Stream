@@ -14,6 +14,7 @@ import type { EpgProgram } from "@/context/PlayerContext";
 import { selectProgramsAt, usePlayer } from "@/context/PlayerContext";
 import { useCatalogPage } from "@/hooks/useCatalogPage";
 import { useColors } from "@/hooks/useColors";
+import { TVPreviewPressable } from "@/components/tvPreview/TVPreviewFocus";
 import { useStalkerLiveCatalogSync } from "@/hooks/useStalkerLiveCatalogSync";
 import {
   readCatalogCategorySelection,
@@ -217,7 +218,7 @@ export function StalkerLiveCatalog({
           ? new Date(current.end).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })
           : undefined;
         return <View style={[styles.channelRow, { borderColor: colors.border, backgroundColor: colors.card }]}> 
-          <Pressable style={styles.channelMain} onPress={() => onOpen(channel)}>
+          <TVPreviewPressable accessibilityRole="button" accessibilityLabel={channel.name} style={styles.channelMain} onPress={() => onOpen(channel)}>
             {channel.logoUrl
               ? <Image source={{ uri: channel.logoUrl }} style={styles.logo} />
               : <View style={[styles.logo, styles.logoFallback, { backgroundColor: colors.secondary }]}>
@@ -229,7 +230,7 @@ export function StalkerLiveCatalog({
                 {current ? `Şu an: ${current.title}${endLabel ? ` · ${endLabel}` : ""}` : "—"}
               </Text>
             </View>
-          </Pressable>
+          </TVPreviewPressable>
           <Pressable accessibilityRole="button" accessibilityLabel="Favori" onPress={() => onFavorite(channel.id)} style={styles.favoriteButton}>
             <Text style={{ color: favorites.includes(channel.id) ? colors.primary : colors.mutedForeground, fontSize: 22 }}>☆</Text>
           </Pressable>

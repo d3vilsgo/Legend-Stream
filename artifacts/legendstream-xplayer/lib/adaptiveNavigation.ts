@@ -23,15 +23,16 @@ export function resolveAdaptiveNavigationModel<Key extends string>(input: {
   const { profile, open, activeKey, itemKeys } = input;
   const nativeTv = profile.deviceClass === "tv" && !profile.tvPreview;
   const tablet = profile.deviceClass === "tablet";
-  const isCompact = !nativeTv;
-  const visibleItemKeys = nativeTv || open ? [...itemKeys] : [];
+  const preview = profile.tvPreview && !nativeTv;
+  const isCompact = !nativeTv && !preview;
+  const visibleItemKeys = nativeTv || preview || open ? [...itemKeys] : [];
   return {
     mode: profile.mode,
     nativeTv,
     compact: isCompact,
     touchTarget: nativeTv ? 56 : tablet ? 48 : 44,
-    showMenuToggle: !nativeTv,
-    showTabLabels: nativeTv ? "all" : "active-only",
+    showMenuToggle: !nativeTv && !preview,
+    showTabLabels: nativeTv || preview ? "all" : "active-only",
     visibleItemKeys,
     activeKey,
     availableContentWidth: profile.effectiveContentWidth,
