@@ -1,4 +1,5 @@
 import React from "react";
+import { View } from "react-native";
 import { shortSafeId, traceStalker } from "@/lib/stalkerPlaybackTrace";
 import OptimizedHomeScreenV6 from "@/components/OptimizedHomeScreenV6";
 import StalkerMainPage from "@/components/StalkerMainPage";
@@ -6,7 +7,7 @@ import { usePlayer } from "@/context/PlayerContext";
 import { deriveProductCapabilities } from "@/lib/productContract";
 import { selectTransitionalProductSurface } from "@/lib/productShell";
 import { UiPresentationProvider } from "@/context/UiPresentationContext";
-import { TVPreviewControls, TVPreviewFocusProvider } from "@/components/tvPreview/TVPreviewFocus";
+import { TVPreviewControls, TVPreviewFocusProvider, TVPreviewFocusRegion } from "@/components/tvPreview/TVPreviewFocus";
 
 function ProductShellContent() {
   const { provider } = usePlayer();
@@ -33,8 +34,10 @@ export default function ProductShell() {
   return (
     <UiPresentationProvider>
       <TVPreviewFocusProvider>
-        <ProductShellContent />
-        <TVPreviewControls />
+        <View style={{ flex: 1 }}>
+          <TVPreviewFocusRegion><ProductShellContent /></TVPreviewFocusRegion>
+          <TVPreviewControls />
+        </View>
       </TVPreviewFocusProvider>
     </UiPresentationProvider>
   );

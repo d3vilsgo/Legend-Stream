@@ -18,6 +18,7 @@ export function CompactLandscapeNavButton({ label, shortLabel, icon, active, min
   const colors = useColors();
   return (
     <TVPreviewPressable
+      focusId={`navigation:${label}`}
       accessibilityRole="tab"
       accessibilityState={{ selected: active }}
       accessibilityLabel={label}
