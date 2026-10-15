@@ -13,7 +13,6 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.Window
-import com.facebook.react.uimanager.UIManagerModule
 import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -43,7 +42,7 @@ class LegendStreamTvRemoteModule : Module() {
   }
   private fun view(tag: Int): View? {
     // Dialog/Modal targets are registered in React UIManager but not Activity.findViewById.
-    return try { appContext.reactContext?.getNativeModule(UIManagerModule::class.java)?.resolveView(tag)
+    return try { appContext.findView<View>(tag)
       ?: appContext.currentActivity?.findViewById(tag) } catch (_: Exception) { appContext.currentActivity?.findViewById(tag) }
   }
   private fun watchModal(target: View) {
