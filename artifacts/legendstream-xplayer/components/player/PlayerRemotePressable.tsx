@@ -11,7 +11,7 @@ export function PlayerRemotePressable({ children, style, accessibilityLabel, ...
   const id=props.nativeID ?? props.testID ?? `player:${accessibilityLabel ?? "action"}:${generatedId}`;
   const nativeFocus=useNativeTvTarget(ref,id,"player","player",Boolean(props.disabled || props.focusable===false),Boolean(props.hasTVPreferredFocus));
   const focused=Platform.isTV ? nativeFocus.focused : paperFocused;
-  return <Pressable {...props} ref={ref} onPress={(event)=>{props.onPress?.(event);if(Platform.isTV)inspectorAction("onPress");}} nativeID={id} onLayout={(event) => {nativeFocus.register();props.onLayout?.(event);}} accessibilityLabel={accessibilityLabel} accessibilityState={{ ...props.accessibilityState, disabled: Boolean(props.disabled) }}
+  return <Pressable {...props} ref={ref} onPress={props.onPress ? (event)=>{props.onPress?.(event);if(Platform.isTV)inspectorAction("onPress");} : undefined} nativeID={id} onLayout={(event) => {nativeFocus.register();props.onLayout?.(event);}} accessibilityLabel={accessibilityLabel} accessibilityState={{ ...props.accessibilityState, disabled: Boolean(props.disabled) }}
     focusable={Platform.isTV ? !props.disabled && props.focusable !== false : props.focusable}
     onFocus={(event) => { setFocused(true); props.onFocus?.(event); }}
     onBlur={(event) => { setFocused(false); props.onBlur?.(event); }}
