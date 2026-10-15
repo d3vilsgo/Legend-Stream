@@ -1,7 +1,7 @@
 name: Native TV parity Universal APK dispatch
 on:
   push:
-    branches: [feature/r18-native-tv-remote-player-parity]
+    branches: [feature/r18-native-tv-remote-player-parity, feature/r18-tv-remote-focus-inspector]
 permissions:
   contents: read
   actions: write

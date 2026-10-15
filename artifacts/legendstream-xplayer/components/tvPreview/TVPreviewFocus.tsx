@@ -1,3 +1,4 @@
+import { inspectorAction } from "@/lib/tvRemoteInspector";
 import { useNativeTvTarget } from "@/hooks/useNativeTvTarget";
 import { requestTvTargetFocus, setNativeTvScope, subscribeNativeTvFocus } from "@/modules/legendstream-tv-remote";
 import { findNodeHandle } from "react-native";
@@ -213,7 +214,7 @@ export function TVPreviewPressable({ focusId, focusScope = "content", style, onP
     onLayout={(event) => { nativeFocus.register(); onLayout?.(event); measureAndRegister(); }}
     onFocus={(event) => { setNativeFocused(true); if (Platform.isTV) focus.rememberNativeFocus(id); onFocus?.(event); }}
     onBlur={(event) => { setNativeFocused(false); onBlur?.(event); }}
-    onPress={onPress}
+    onPress={(event)=>{onPress?.(event);if(Platform.isTV)inspectorAction("onPress");}}
     style={(state) => [typeof style === "function" ? style(state) : style, ((focus.enabled && focus.focusedId === id) || (Platform.isTV && (nativeFocus.focused || nativeFocused))) && { borderColor: "#ffffff", borderWidth: 4, backgroundColor: "#075985", shadowColor: colors.primary, shadowOpacity: 0.65, shadowRadius: 10, elevation: 8 }]}
   >{children}</Pressable>;
 }

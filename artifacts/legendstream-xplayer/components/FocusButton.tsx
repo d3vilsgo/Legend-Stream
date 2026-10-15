@@ -1,3 +1,4 @@
+import { inspectorAction } from "@/lib/tvRemoteInspector";
 import { useNativeTvTarget } from "@/hooks/useNativeTvTarget";
 import { Feather } from '@expo/vector-icons';
 import React, { ReactNode, useId, useEffect, useRef, useState } from 'react';
@@ -75,7 +76,7 @@ export function FocusButton({
         focusable={!disabled}
         hasTVPreferredFocus={Platform.isTV && hasTVPreferredFocus}
         disabled={disabled}
-        onPress={onPress}
+        onPress={() => { onPress(); if(Platform.isTV) inspectorAction("onPress"); }}
         onFocus={() => animateFocus(true)}
         onBlur={() => animateFocus(false)}
         style={[

@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';
+import {InspectorHistory} from '../lib/tvRemoteInspector';
+let n=0;function test(name:string,fn:()=>void){fn();process.stdout.write(`ok inspector ${++n} - ${name}\n`);}
+const event=(v:Record<string,unknown>={})=>({kind:'input',sequence:1,key:'UP',phase:'DOWN',handled:false,focus:'target:1',scope:'content',context:'catalog',...v} as Parameters<InspectorHistory['native']>[0]);
+const fresh=()=>{const s=new InspectorHistory();s.toggle(true);return s;};
+test('default off',()=>{const s=new InspectorHistory();s.native(event());assert.equal(s.records.length,0);});
+for(const key of ['UP','DOWN','LEFT','RIGHT','OK','BACK','PLAY','PAUSE','MENU','NEXT','PREVIOUS','STOP','GAMEPAD'])test(key,()=>{const s=fresh();s.native(event({key}));assert.equal(s.records[0].key,key);assert.equal(s.records[0].type,'input');assert.equal(s.records.length,1);});
+test('focus changed versus unchanged',()=>{const s=fresh();s.native(event({kind:'focus'}));s.native(event({kind:'focus'}));assert.match(s.records[0].result,/değişti/);assert.match(s.records[1].result,/değişmedi/);});
+test('screen is not focus',()=>{const s=fresh();s.native(event({kind:'focus',focus:'navigation:live'}));s.observeScreen('movies');assert.equal(s.focus,'navigation:live');});
+test('category modal',()=>{const s=fresh();s.native(event({kind:'focus',scope:'modal'}));assert.equal(s.scope,'modal');});
+test('actual focus after scroll',()=>{const s=fresh();s.native(event({kind:'focus'}));s.native(event({kind:'focus',focus:'target:2'}));assert.equal(s.records[1].before,'target:1');assert.equal(s.records[1].after,'target:2');});
+test('player focus versus back owner',()=>{const s=fresh();s.native(event({kind:'focus',scope:'player',focus:'player:audio'}));s.add('action','back-panel');assert.equal(s.focus,'player:audio');assert.equal(s.records[1].result,'back-panel');});
+test('handled never proves action',()=>{const s=fresh();s.native(event({kind:'dispatch',handled:true}));assert.match(s.records[0].result,/eylem kanıtı değildir/);});
+test('intermediate focus retained across dispatch',()=>{const s=fresh();s.native(event());s.native(event({kind:'focus',focus:'target:2'}));s.native(event({kind:'dispatch',focus:'target:2'}));assert.match(s.records[2].result,/odak değişti/);});
+test('off clears',()=>{const s=fresh();s.native(event());s.toggle(false);s.native(event());assert.equal(s.records.length,0);});
+test('twenty record bound',()=>{const s=fresh();for(let i=0;i<30;i++)s.native(event({sequence:i}));assert.equal(s.records.length,20);assert.equal(s.records[0].n,11);});
+test('privacy allowlist',()=>{const s=fresh();s.native(event({focus:'https://user:password@provider/token',key:'secret-MAC',scope:'provider-id',context:'private-title',url:'secret-url',token:'secret-token'}));s.observeScreen('secret-provider');const output=JSON.stringify(s.records);for(const x of ['password','provider-id','private-title','secret-url','secret-token','secret-MAC'])assert(!output.includes(x));assert.equal(s.focus,'redacted');});
+test('unknown kind cannot fabricate action',()=>{const s=fresh();s.native(event({kind:'action'}));assert.equal(s.records.length,0);});
+test('unsubscribe',()=>{const s=fresh();let calls=0;const off=s.subscribe(()=>calls++);s.native(event());off();s.native(event());assert.equal(calls,1);});
+test('collapse has no input or focus effect',()=>{const s=fresh();s.collapsed=true;s.history=true;s.notify();assert.equal(s.records.length,0);});
+process.stdout.write(`TV remote inspector: ${n}/${n} passed\n`);

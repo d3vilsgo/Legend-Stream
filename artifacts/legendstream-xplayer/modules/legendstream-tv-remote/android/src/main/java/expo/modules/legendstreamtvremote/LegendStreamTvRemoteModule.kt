@@ -27,6 +27,20 @@ class LegendStreamTvRemoteModule : Module() {
   private val remembered = mutableMapOf<String, String>()
   private var activeScope = "content"
   private var catalogRootTag: Int? = null
+  private var inspectorEnabled = false
+  private var inspectorSequence = 0
+  private val anonymousIds = mutableMapOf<Int, String>()
+  private fun safeId(tag: Int, raw: String): String {
+    val fixed = setOf("nav:home","nav:live","nav:movies","nav:series","nav:settings","nav:history","nav:downloads","player:play-pause","player:exit","player:channels","player:audio","player:subtitles","player:codec")
+    if(raw in fixed) return raw.replace("nav:","navigation:")
+    return anonymousIds.getOrPut(tag) { "target:${anonymousIds.size+1}" }
+  }
+  private fun diagnostic(kind: String, key: String = "", phase: String = "", handled: Boolean = false) {
+    if(!inspectorEnabled) return
+    val current=outlined ?: attachedWindow?.currentFocus
+    val entry=current?.let {targets[it.id] ?: legacyTargets[it.id]}
+    sendEvent("onInspector",mapOf("kind" to kind,"sequence" to inspectorSequence,"key" to key,"phase" to phase,"handled" to handled,"focus" to (entry?.let {safeId(it.tag,it.id)} ?: if(current!=null) safeId(current.id,"") else "none"),"scope" to (if(activeScope=="content" || activeScope=="player") activeScope else "modal"),"context" to (if(playerActive) if(hidden) "player-hidden" else "player-controls" else "catalog")))
+  }
   private var playerActive = false
   private var hidden = false
   private var original: Window.Callback? = null
@@ -49,6 +63,7 @@ class LegendStreamTvRemoteModule : Module() {
       ?: appContext.currentActivity?.findViewById(tag) } catch (_: Exception) { appContext.currentActivity?.findViewById(tag) }
   }
   private fun watchModal(target: View) {
+    inspectDialogs(attachedWindow?.decorView)
     val observer=target.viewTreeObserver
     if(observer===attachedWindow?.decorView?.viewTreeObserver || modalObservers.containsKey(observer)) return
     val listener=ViewTreeObserver.OnGlobalFocusChangeListener { _,next -> outline(next) }
@@ -71,6 +86,7 @@ class LegendStreamTvRemoteModule : Module() {
     }
     val entry = next?.let { targets[it.id] ?: legacyTargets[it.id] }
     if(entry!=null) remembered[entry.scope]=entry.id
+    diagnostic("focus")
     sendEvent("onNativeFocus", mapOf("tag" to (next?.id ?: -1), "id" to (entry?.id ?: "")))
   }
   private fun focus(entry: Entry): Boolean {
@@ -115,6 +131,7 @@ class LegendStreamTvRemoteModule : Module() {
     return true // A boundary retains the actual target; it never selects an arbitrary item.
   }
   private fun detach() {
+    clearInspectedWindows()
     val window=attachedWindow
     if(window!=null && window.callback===wrapper) window.callback=original
     focusListener?.let { if(window?.decorView?.viewTreeObserver?.isAlive==true) window.decorView.viewTreeObserver.removeOnGlobalFocusChangeListener(it) }
@@ -122,6 +139,45 @@ class LegendStreamTvRemoteModule : Module() {
     modalObservers.clear()
     outlined?.foreground=originalForeground
     outlined=null;originalForeground=null;focusListener=null;original=null;wrapper=null;attachedWindow=null;consumed.clear()
+  }
+  private val inspectedWindows=mutableMapOf<Window,Pair<Window.Callback,Window.Callback>>()
+  private fun clearInspectedWindows() {
+    for((window,pair) in inspectedWindows) if(window.callback===pair.second) window.callback=pair.first
+    inspectedWindows.clear()
+  }
+  private fun inspectDialogs(root: View?) {
+    if(!inspectorEnabled || root==null) return
+    // RN 0.81.5 ReactModalHostView exposes public getDialog(). No unsupported TV API.
+    if(root.javaClass.name=="com.facebook.react.views.modal.ReactModalHostView") {
+      val dialog=try {root.javaClass.getMethod("getDialog").invoke(root) as? android.app.Dialog} catch(_:Exception){null}
+      val window=dialog?.window
+      if(window!=null && !inspectedWindows.containsKey(window)) {
+        val previous=window.callback
+        if(previous!=null) {
+          val observer=object:Window.Callback by previous {
+            override fun dispatchKeyEvent(event:KeyEvent):Boolean = observeKey(event) {previous.dispatchKeyEvent(event)}
+          }
+          inspectedWindows[window]=Pair(previous,observer);window.callback=observer
+        }
+      }
+    }
+    if(root is ViewGroup) for(i in 0 until root.childCount) inspectDialogs(root.getChildAt(i))
+  }
+  private fun observeKey(event:KeyEvent, dispatch:()->Boolean):Boolean {
+    if(!inspectorEnabled) return dispatch()
+        val key=when(event.keyCode) {
+          KeyEvent.KEYCODE_DPAD_UP->"UP";KeyEvent.KEYCODE_DPAD_DOWN->"DOWN";KeyEvent.KEYCODE_DPAD_LEFT->"LEFT";KeyEvent.KEYCODE_DPAD_RIGHT->"RIGHT"
+          KeyEvent.KEYCODE_DPAD_CENTER,KeyEvent.KEYCODE_ENTER->"OK";KeyEvent.KEYCODE_BACK->"BACK";KeyEvent.KEYCODE_MENU->"MENU"
+          KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE->"PLAY_PAUSE";KeyEvent.KEYCODE_MEDIA_PLAY->"PLAY";KeyEvent.KEYCODE_MEDIA_PAUSE->"PAUSE";KeyEvent.KEYCODE_MEDIA_STOP->"STOP"
+          KeyEvent.KEYCODE_MEDIA_NEXT->"NEXT";KeyEvent.KEYCODE_MEDIA_PREVIOUS->"PREVIOUS"
+          in KeyEvent.KEYCODE_BUTTON_A..KeyEvent.KEYCODE_BUTTON_MODE->"GAMEPAD";else->"OTHER"
+        }
+        val phase=if(event.action==KeyEvent.ACTION_DOWN) if(event.repeatCount>0) "REPEAT" else "DOWN" else if(event.action==KeyEvent.ACTION_UP) "UP" else "OTHER"
+        if(event.action==KeyEvent.ACTION_DOWN) inspectorSequence++
+        diagnostic("input",key,phase)
+        val handled=dispatch()
+        diagnostic("dispatch",key,phase,handled)
+        return handled
   }
   private fun attach(): Boolean {
     if(!isTv()) return false
@@ -134,6 +190,9 @@ class LegendStreamTvRemoteModule : Module() {
     focusListener=listener;window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener(listener)
     val callback=object: Window.Callback by previous {
       override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        return observeKey(event) { dispatchObserved(event) }
+      }
+      private fun dispatchObserved(event: KeyEvent): Boolean {
         if(event.action==KeyEvent.ACTION_UP && consumed.remove(event.keyCode)) return true
         val direction=when(event.keyCode) {KeyEvent.KEYCODE_DPAD_LEFT->"left";KeyEvent.KEYCODE_DPAD_RIGHT->"right";KeyEvent.KEYCODE_DPAD_UP->"up";KeyEvent.KEYCODE_DPAD_DOWN->"down";else->null}
         val select=event.keyCode==KeyEvent.KEYCODE_DPAD_CENTER || event.keyCode==KeyEvent.KEYCODE_ENTER
@@ -176,7 +235,12 @@ class LegendStreamTvRemoteModule : Module() {
   }
   override fun definition()=ModuleDefinition {
     Name("LegendStreamTvRemote")
-    Events("onRemoteKey","onNativeFocus")
+    Events("onRemoteKey","onNativeFocus","onInspector")
+    AsyncFunction("setInspector") { enabled: Boolean ->
+      inspectorEnabled=enabled;inspectorSequence=0;anonymousIds.clear()
+      if(enabled) {attach();inspectDialogs(attachedWindow?.decorView);diagnostic("snapshot")} else clearInspectedWindows()
+      true
+    }.runOnQueue(Queues.MAIN)
     AsyncFunction("registerTarget") { tag: Int,id: String,scope: String,region: String,preferred: Boolean ->
       if(!attach()) return@AsyncFunction false
       targets[tag]=Entry(tag,id,scope,region,preferred)

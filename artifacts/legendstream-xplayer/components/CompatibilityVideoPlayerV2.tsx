@@ -1,3 +1,4 @@
+import { inspectorAction } from "@/lib/tvRemoteInspector";
 import { persistBeforePlayerExit } from "@/lib/playerExitPersistence";
 import { configureTvRemote, subscribeTvRemote } from "@/modules/legendstream-tv-remote";
 import { useOptionalTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
@@ -181,6 +182,9 @@ export function CompatibilityVideoPlayer({
   const [controlsVisible, setControlsVisible] = useState(true);
   const [infoVisible, setInfoVisible] = useState(true);
   const [panel, setPanel] = useState<PlayerPanel>(null);
+  useEffect(()=>{if(Platform.isTV)inspectorAction(controlsVisible?"controls-shown":"controls-hidden");},[controlsVisible]);
+  useEffect(()=>{if(Platform.isTV)inspectorAction(panel?"panel-open":"panel-closed");},[panel]);
+  useEffect(()=>{if(!Platform.isTV)return;inspectorAction("player-mounted");return ()=>inspectorAction("player-unmounted");},[]);
   const backSnapshot=useRef({panel:Boolean(panel),controls:controlsVisible});
   backSnapshot.current={panel:Boolean(panel),controls:controlsVisible};
   const [position, setPosition] = useState(0);
@@ -604,6 +608,7 @@ export function CompatibilityVideoPlayer({
   useEffect(() => {
     const handleBack = () => {
       const target = advancePlayerBack(backSnapshot.current,Platform.isTV);
+      if(Platform.isTV) inspectorAction(target === "panel" ? "back-panel" : target === "controls" ? "back-controls" : "back-exit");
       if (target === "controls") {
         clearControlsTimer(); clearInfoTimer();
         setControlsVisible(false); setInfoVisible(false);
