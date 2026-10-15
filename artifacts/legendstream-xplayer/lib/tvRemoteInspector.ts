@@ -16,7 +16,7 @@ export class InspectorHistory {
   }
   native(e:{kind:string;sequence:number;key:string;phase:string;handled:boolean;focus:string;scope:string;context:string}){
     if(!this.enabled)return;
-    const safeFocus=/^(navigation:(home|live|movies|series|settings|history|downloads)|player:(play-pause|exit|channels|audio|subtitles|codec)|target:[0-9]+|unregistered|none)$/.test(e.focus)?e.focus:"redacted";
+    const safeFocus=/^(navigation:(home|live|movies|series|settings|history|downloads)|player:(play-pause|exit|channels|audio|subtitles|codec|aspect|previous|next|pip|download|panel-close)|target:[0-9]+|unregistered|none)$/.test(e.focus)?e.focus:"redacted";
     this.scope=["content","player","modal"].includes(e.scope)?e.scope:"other";
     this.context=["catalog","player-hidden","player-controls"].includes(e.context)?e.context:"other";
     const key=["UP","DOWN","LEFT","RIGHT","OK","BACK","MENU","PLAY_PAUSE","PLAY","PAUSE","STOP","NEXT","PREVIOUS","GAMEPAD","OTHER"].includes(e.key)?e.key:"OTHER";
@@ -27,4 +27,4 @@ export class InspectorHistory {
   }
 }
 export const tvInspector=new InspectorHistory();
-export function inspectorAction(action:"onPress"|"back-panel"|"back-controls"|"back-exit"|"controls-shown"|"controls-hidden"|"panel-open"|"panel-closed"|"player-mounted"|"player-unmounted") {tvInspector.add("action",action);}
+export function inspectorAction(action:"onPress"|"back-panel"|"back-controls"|"back-exit"|"controls-shown"|"controls-hidden"|"panel-open"|"panel-closed"|"player-mounted"|"player-unmounted") {tvInspector.add("action",action.startsWith("back-")?`player-root:${action}`:action);}

@@ -33,6 +33,9 @@ class LegendStreamTvRemoteModule : Module() {
   private fun safeId(tag: Int, raw: String): String {
     val fixed = setOf("nav:home","nav:live","nav:movies","nav:series","nav:settings","nav:history","nav:downloads","player:play-pause","player:exit","player:channels","player:audio","player:subtitles","player:codec")
     if(raw in fixed) return raw.replace("nav:","navigation:")
+    val actionAliases=mapOf("list" to "channels","cc" to "subtitles","audio" to "audio","codec" to "codec","fit" to "aspect","previous" to "previous","next" to "next","pip" to "pip","download" to "download")
+    if(raw.startsWith("player:action:")) actionAliases[raw.removePrefix("player:action:")]?.let {return "player:$it"}
+    if(raw=="player:panel-close") return "player:panel-close"
     val source=if(raw.isEmpty()) "native:$tag" else raw
     val digest=java.security.MessageDigest.getInstance("SHA-256").digest((inspectorSalt+source).toByteArray(Charsets.UTF_8))
     return "target:"+java.math.BigInteger(1,digest.copyOfRange(0,8)).toString()
