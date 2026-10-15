@@ -1,3 +1,6 @@
+import { useNativeTvTarget } from "@/hooks/useNativeTvTarget";
+import { requestTvTargetFocus, setNativeTvScope, subscribeNativeTvFocus } from "@/modules/legendstream-tv-remote";
+import { findNodeHandle } from "react-native";
 import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, View, type PressableProps } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -7,6 +10,10 @@ import { createTVPreviewFocusController, type TVPreviewDirection, type TVPreview
 
 type FocusContextValue = {
   enabled: boolean;
+  nativeScope: string;
+  nativeFocusedId: string | null;
+  rememberNativeFocus: (id: string) => void;
+  registerNativeTarget: (id: string, focus: () => void) => () => void;
   focusedId: string | null;
   lastActivatedId: string | null;
   register: (entry: TVPreviewFocusEntry) => () => void;
@@ -24,19 +31,58 @@ const FocusContext = createContext<FocusContextValue | null>(null);
 
 export function TVPreviewFocusProvider({ children }: { children: ReactNode }) {
   const { tvPreview } = useUiPresentation();
+  const [nativeScope, setNativeScope] = useState("content");
+  const [nativeFocusedId, setNativeFocusedId] = useState<string | null>(null);
+  const nativeFocusRef = useRef<string | null>(null);
+  const nativeTargets = useRef(new Map<string, () => void>());
+  const nativeScopes = useRef<Array<{ scope: string; previous: string | null }>>([]);
+  const rememberNativeFocus = useCallback((id: string) => { nativeFocusRef.current = id; setNativeFocusedId(id); }, []);
+  const registerNativeTarget = useCallback((id: string, focus: () => void) => {
+    nativeTargets.current.set(id, focus);
+    return () => { if (nativeTargets.current.get(id) === focus) nativeTargets.current.delete(id); };
+  }, []);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [lastActivatedId, setLastActivatedId] = useState<string | null>(null);
   const [viewport, setViewport] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
   const controllerRef = useRef<ReturnType<typeof createTVPreviewFocusController> | null>(null);
   if (!controllerRef.current) controllerRef.current = createTVPreviewFocusController(setFocusedId, setLastActivatedId);
   const controller = controllerRef.current;
+  useEffect(() => {
+    if(!Platform.isTV) return;
+    const subscription=subscribeNativeTvFocus((event) => {
+      if(event.id) rememberNativeFocus(event.id);
+    });
+    return () => subscription?.remove();
+  },[rememberNativeFocus]);
+  useEffect(() => { if(Platform.isTV) void setNativeTvScope(nativeScope); },[nativeScope]);
 
   useEffect(() => {
     if (tvPreview) controller.focusFirst();
     else { controller.clear(); setViewport(null); }
   }, [controller, tvPreview]);
 
+  const pushFocusScope = useCallback((scope: string) => {
+    const popPreview = controller.pushFocusScope(scope);
+    const frame = { scope, previous: nativeFocusRef.current };
+    nativeScopes.current.push(frame);
+    nativeFocusRef.current = null;
+    setNativeFocusedId(null);
+    setNativeScope(scope);
+    return () => {
+      popPreview();
+      const index = nativeScopes.current.indexOf(frame);
+      if (index < 0) return;
+      nativeScopes.current.splice(index, 1);
+      if (index !== nativeScopes.current.length) return;
+      setNativeScope(nativeScopes.current.at(-1)?.scope ?? "content");
+      if (frame.previous) {
+        rememberNativeFocus(frame.previous);
+        requestAnimationFrame(() => nativeTargets.current.get(frame.previous!)?.());
+      }
+    };
+  }, [controller, rememberNativeFocus]);
   const value = useMemo(() => ({
+    nativeScope, nativeFocusedId, rememberNativeFocus, registerNativeTarget,
     enabled: tvPreview,
     focusedId,
     lastActivatedId,
@@ -48,9 +94,9 @@ export function TVPreviewFocusProvider({ children }: { children: ReactNode }) {
     activate: controller.activate,
     setBackAction: controller.setBackAction,
     registerBackAction: controller.registerBackAction,
-    pushFocusScope: controller.pushFocusScope,
+    pushFocusScope,
     back: controller.back,
-  }), [controller, focusedId, lastActivatedId, tvPreview, viewport]);
+  }), [controller, focusedId, lastActivatedId, tvPreview, viewport, nativeScope, nativeFocusedId, rememberNativeFocus, registerNativeTarget, pushFocusScope]);
   return <FocusContext.Provider value={value}>{children}</FocusContext.Provider>;
 }
 
@@ -73,6 +119,8 @@ export function TVPreviewFocusRegion({ children }: { children: ReactNode }) {
   return <View ref={ref} collapsable={false} onLayout={measure} style={{ flex: 1, minHeight: 0 }}>{children}</View>;
 }
 
+export const useOptionalTVPreviewFocus = () => useContext(FocusContext);
+
 export function useTVPreviewFocus() {
   const value = useContext(FocusContext);
   if (!value) throw new Error("useTVPreviewFocus must be used inside TVPreviewFocusProvider");
@@ -87,8 +135,10 @@ export function TVPreviewPressable({ focusId, focusScope = "content", style, onP
   const ref = useRef<React.ElementRef<typeof Pressable>>(null);
   const generatedId = useId();
   const id = focusId ?? nativeID ?? accessibilityLabel ?? generatedId;
+  const nativeFocus = useNativeTvTarget(ref,id,focusScope,"content",Boolean(disabled),Boolean(props.hasTVPreferredFocus));
 
   const measureAndRegister = useCallback(() => {
+    if (!focus.enabled) return; // Native focus events alone own the physical highlight.
     type MeasurablePressable = React.ElementRef<typeof Pressable> & {
       measureInWindow?: (callback: (x: number, y: number, width: number, height: number) => void) => void;
       focus?: () => void;
@@ -139,6 +189,14 @@ export function TVPreviewPressable({ focusId, focusScope = "content", style, onP
       previous?.();
     });
   }, [disabled, focus.enabled, focus.register, focusScope, id, onPress]);
+  useEffect(() => {
+    if (!Platform.isTV) return;
+    return focus.registerNativeTarget(id, () => {
+      const node = ref.current as (React.ElementRef<typeof Pressable> & { requestTVFocus?: () => void }) | null;
+      const tag=findNodeHandle(node);
+      if(tag!=null) void requestTvTargetFocus(tag);
+    });
+  }, [focus.registerNativeTarget, id]);
   const unregisterRef = useRef<(() => void) | null>(null);
   useEffect(() => () => unregisterRef.current?.(), []);
   useEffect(() => { measureAndRegister(); }, [measureAndRegister, disabled]);
@@ -148,14 +206,15 @@ export function TVPreviewPressable({ focusId, focusScope = "content", style, onP
     ref={ref}
     disabled={disabled}
     // Native TVs use Android's FocusFinder; handheld preview uses the JS controller.
-    focusable={!disabled && (focus.enabled || Platform.isTV || undefined)}
+    focusable={!disabled && (Platform.isTV ? focus.nativeScope === focusScope : focus.enabled || undefined)}
+    hasTVPreferredFocus={Platform.isTV ? focus.nativeScope === focusScope && (focus.nativeFocusedId ? focus.nativeFocusedId === id : props.hasTVPreferredFocus) : props.hasTVPreferredFocus}
     accessibilityLabel={accessibilityLabel}
-    nativeID={nativeID}
-    onLayout={(event) => { onLayout?.(event); measureAndRegister(); }}
-    onFocus={(event) => { setNativeFocused(true); onFocus?.(event); }}
+    nativeID={nativeID ?? id}
+    onLayout={(event) => { nativeFocus.register(); onLayout?.(event); measureAndRegister(); }}
+    onFocus={(event) => { setNativeFocused(true); if (Platform.isTV) focus.rememberNativeFocus(id); onFocus?.(event); }}
     onBlur={(event) => { setNativeFocused(false); onBlur?.(event); }}
     onPress={onPress}
-    style={(state) => [typeof style === "function" ? style(state) : style, ((focus.enabled && focus.focusedId === id) || (Platform.isTV && nativeFocused)) && { borderColor: colors.primary, borderWidth: 3, shadowColor: colors.primary, shadowOpacity: 0.65, shadowRadius: 10, elevation: 8 }]}
+    style={(state) => [typeof style === "function" ? style(state) : style, ((focus.enabled && focus.focusedId === id) || (Platform.isTV && (nativeFocus.focused || nativeFocused))) && { borderColor: "#ffffff", borderWidth: 4, backgroundColor: "#075985", shadowColor: colors.primary, shadowOpacity: 0.65, shadowRadius: 10, elevation: 8 }]}
   >{children}</Pressable>;
 }
 

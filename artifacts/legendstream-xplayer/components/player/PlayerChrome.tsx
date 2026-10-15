@@ -1,9 +1,12 @@
+import { resolveTvRemoteAction } from "@/lib/tvPlayerRemote";
+import { PlayerRemotePressable as Pressable } from "./PlayerRemotePressable";
+import { configureTvRemote, subscribeTvRemote } from "@/modules/legendstream-tv-remote";
 import { Feather, MaterialIcons } from "@expo/vector-icons";
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Animated,
   LayoutChangeEvent,
-  Pressable,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -167,6 +170,26 @@ export function PlayerChrome(props: Props) {
     epgLoading,
     ...chrome
   } = props;
+  const remoteProps = useRef(chrome);
+  remoteProps.current = chrome;
+  useEffect(() => {
+    if (!Platform.isTV) return;
+    const subscription = subscribeTvRemote(({ key, code }) => {
+      if(key==="back") return; // The player root owns Back even while chrome is unmounted.
+      const p = remoteProps.current;
+      const action = resolveTvRemoteAction(key, code, p.mediaKind === "live", p.paused, p.controlsVisible);
+      if (action === "togglePause") p.onTogglePause();
+      else if (action === "exit") p.onExit();
+      else if (action === "codec") p.onTogglePanel("codec");
+      else if (action === "reveal") p.onBackgroundPress();
+      else if (action === "previous" || action === "next") p.onMoveRelative(action === "previous" ? -1 : 1);
+      else if (action === "seekBack" || action === "seekForward") p.onSeekBy(action === "seekBack" ? -10 : 15);
+    });
+    return () => { subscription?.remove(); };
+  }, []);
+  useEffect(() => {
+    if (Platform.isTV) void configureTvRemote(true, !chrome.controlsVisible && !chrome.panel);
+  }, [chrome.controlsVisible, chrome.panel]);
   const controlsOpacity = useRef(new Animated.Value(chrome.controlsVisible ? 1 : 0)).current;
 
   useEffect(() => {
@@ -231,17 +254,18 @@ export function PlayerChrome(props: Props) {
       accent: chrome.fitMode === "fit",
       onPress: chrome.onCycleFit,
     },
-    {
+    ...(!Platform.isTV ? [{
       key: "rotate",
       label: "Döndür",
       icon: "rotate-cw" as FeatherName,
       onPress: chrome.onRotate,
-    },
-    ...(chrome.pipSupported ? [{
+    }] : []),
+    ...((chrome.pipSupported || Platform.isTV) ? [{
       key: "pip",
-      label: "Picture in Picture",
+      label: chrome.pipSupported ? "Picture in Picture" : "PiP bu cihazda desteklenmiyor",
+      disabled: !chrome.pipSupported,
       materialIcon: "picture-in-picture" as MaterialName,
-      subLabel: "PiP",
+      subLabel: chrome.pipSupported ? "PiP" : "PiP yok",
       onPress: chrome.onEnterPip,
     }] : []),
     {
@@ -277,14 +301,14 @@ export function PlayerChrome(props: Props) {
   ];
 
   const gap = Math.round((portrait ? 4 : 9) * uiScale);
-  const outerPadding = Math.round((portrait ? 8 : 22) * uiScale);
+  const outerPadding = Platform.isTV ? 40 : Math.round((portrait ? 8 : 22) * uiScale);
   const availableWidth = Math.max(1, width - insets.left - insets.right - outerPadding * 2);
-  const buttonSize = clamp(
+  const buttonSize = Platform.isTV ? 64 : clamp(
     Math.floor((availableWidth - gap * Math.max(0, actions.length - 1)) / Math.max(1, actions.length)),
     Math.round(38 * uiScale),
     Math.round((portrait ? 44 : 48) * uiScale),
   );
-  const dockIconSize = clamp(Math.round((portrait ? 20 : 22) * uiScale), 17, 23);
+  const dockIconSize = Platform.isTV ? 28 : clamp(Math.round((portrait ? 20 : 22) * uiScale), 17, 23);
   const progressScale = clamp(width / (portrait ? 390 : 840), 0.82, 1.12);
   const timeWidth = clamp(Math.round(50 * progressScale), 42, 58);
   const timeFontSize = clamp(Math.round(10 * progressScale), 9, 12);
@@ -333,6 +357,7 @@ export function PlayerChrome(props: Props) {
       {chrome.controlsVisible && chrome.canExit ? (
         <Pressable
           accessibilityRole="button"
+          nativeID="player:exit"
           accessibilityLabel="Oynatıcıdan çık"
           onPress={chrome.onExit}
           hitSlop={14}
@@ -367,7 +392,8 @@ export function PlayerChrome(props: Props) {
             <RoundButton
               icon="rotate-ccw"
               badge="10"
-              label="10 saniye geri"
+              disabled={Platform.isTV && chrome.duration <= 0}
+              label={Platform.isTV && chrome.duration <= 0 ? "Süre bilgisi bekleniyor" : "10 saniye geri"}
               onPress={() => chrome.onSeekBy(-10)}
               size={Math.round((portrait ? 54 : 58) * uiScale)}
               iconSize={Math.round((portrait ? 27 : 30) * uiScale)}
@@ -376,7 +402,9 @@ export function PlayerChrome(props: Props) {
 
           <Pressable
             accessibilityRole="button"
+            nativeID="player:play-pause"
             accessibilityLabel={chrome.paused ? "Oynat" : "Duraklat"}
+            hasTVPreferredFocus={Platform.isTV}
             onPress={chrome.onTogglePause}
             hitSlop={14}
             style={({ pressed }) => [
@@ -400,7 +428,8 @@ export function PlayerChrome(props: Props) {
             <RoundButton
               icon="rotate-cw"
               badge="15"
-              label="15 saniye ileri"
+              disabled={Platform.isTV && chrome.duration <= 0}
+              label={Platform.isTV && chrome.duration <= 0 ? "Süre bilgisi bekleniyor" : "15 saniye ileri"}
               onPress={() => chrome.onSeekBy(15)}
               size={Math.round((portrait ? 54 : 58) * uiScale)}
               iconSize={Math.round((portrait ? 27 : 30) * uiScale)}
@@ -415,7 +444,7 @@ export function PlayerChrome(props: Props) {
             styles.bottom,
             {
               opacity: controlsOpacity,
-              bottom: Math.max(insets.bottom + 2, Math.round((portrait ? 8 : 10) * uiScale)),
+              bottom: Math.max(Platform.isTV ? 40 : 0, insets.bottom + 2, Math.round((portrait ? 8 : 10) * uiScale)),
               paddingLeft: Math.max(outerPadding, insets.left + 8),
               paddingRight: Math.max(outerPadding, insets.right + 8),
             },
@@ -427,7 +456,9 @@ export function PlayerChrome(props: Props) {
               <Text style={[styles.time, { width: timeWidth, fontSize: timeFontSize }]}>{formatTime(chrome.position)}</Text>
               <Pressable
                 onLayout={(event: LayoutChangeEvent) => setSeekWidth(Math.max(1, event.nativeEvent.layout.width))}
-                onPress={(event) => chrome.onSeekRatio(clamp(event.nativeEvent.locationX / seekWidth, 0, 1))}
+                focusable={!Platform.isTV}
+                accessibilityLabel="İlerleme; kumandada geri ve ileri düğmelerini kullanın"
+                onPress={(event) => { if (!Platform.isTV) chrome.onSeekRatio(clamp(event.nativeEvent.locationX / seekWidth, 0, 1)); }}
                 style={styles.seekTouch}
                 hitSlop={{ top: 14, bottom: 14, left: 0, right: 0 }}
               >
@@ -440,6 +471,7 @@ export function PlayerChrome(props: Props) {
             </View>
           ) : null}
 
+          {Platform.isTV && chrome.mediaKind !== "live" && chrome.duration <= 0 ? <Text style={{ color: "#cbd5e1", textAlign: "center", marginBottom: 8 }}>İlerletme için süre bilgisi bekleniyor.</Text> : null}
           {bottomInfo ? (
             <VideoInfoBand
               text={bottomInfo}
@@ -509,6 +541,7 @@ function InfoCard({ opacity, portrait, scale, top, left, right, title, live, epg
           </Text>
         </View>
 
+        {live && Platform.isTV && !hasEpg ? <Text style={styles.epgMuted}>Bu yayında program bilgisi yok.</Text> : null}
         {live && hasEpg ? (
           <View style={[styles.epgBlock, { marginTop: Math.round(2 * scale) }]}>
             {epgLoading && !epgNow ? (
@@ -560,17 +593,20 @@ function ModeChip({ icon, text, scale, accent }: { icon: FeatherName; text: stri
   );
 }
 
-function RoundButton({ icon, badge, label, onPress, size, iconSize }: {
+function RoundButton({ icon, badge, label, onPress, size, iconSize, disabled = false }: {
   icon: FeatherName;
   badge?: string;
   label: string;
   onPress: () => void;
   size: number;
   iconSize: number;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
+      disabled={disabled}
       accessibilityRole="button"
+      nativeID={`player:seek:${icon}:${badge ?? ""}`}
       accessibilityLabel={label}
       onPress={onPress}
       hitSlop={14}
@@ -587,6 +623,7 @@ function AdaptiveDockButton({ action, size, iconSize }: { action: Action; size: 
   return (
     <Pressable
       accessibilityRole="button"
+      nativeID={`player:action:${action.key}`}
       accessibilityLabel={action.label}
       onPress={action.onPress}
       disabled={action.disabled}

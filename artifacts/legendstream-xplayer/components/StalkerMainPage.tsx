@@ -1,3 +1,5 @@
+import { NativeTVFocusScope } from "@/components/tvPreview/NativeTVFocusScope";
+import { hasPlayerBackOwner } from "@/lib/playerRemoteOwnership";
 import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -175,6 +177,7 @@ export default function StalkerMainPage() {
   useEffect(() => {
     if (!Platform.isTV) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (hasPlayerBackOwner()) return false;
       if (view === "player") return false;
       if (view !== "home") { setView("home"); return true; }
       return false;
@@ -446,6 +449,7 @@ export default function StalkerMainPage() {
         },
       ]}
     >
+      <NativeTVFocusScope>
       <View
         style={[
           s.header,
@@ -564,6 +568,7 @@ export default function StalkerMainPage() {
         </ScrollView>
       ) : null}
 
+      </NativeTVFocusScope>
       {view === "player" && playable ? (
         <View style={s.fullPlayer}>
           <NativeVideoPlayer

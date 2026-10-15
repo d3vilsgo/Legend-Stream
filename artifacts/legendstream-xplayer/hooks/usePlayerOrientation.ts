@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppState, StatusBar, useWindowDimensions } from "react-native";
+import { AppState, Platform, StatusBar, useWindowDimensions } from "react-native";
 import * as ScreenOrientation from "expo-screen-orientation";
 import { logPlayerDiagnostic } from "@/lib/playerDiagnostics";
 import {
@@ -128,6 +128,7 @@ export function usePlayerOrientation(
       if (diagnosticM3ULive) recordM3UOrientationBegin();
       try {
         await acquirePlayerOrientationOwnership();
+        if (Platform.isTV) return; // Fixed TV displays have no mobile sensor/rotation preparation.
         initialOrientation.current =
           await ScreenOrientation.getOrientationAsync();
         initialOrientationLock.current =

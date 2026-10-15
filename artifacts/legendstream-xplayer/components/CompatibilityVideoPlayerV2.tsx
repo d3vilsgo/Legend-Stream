@@ -1,6 +1,10 @@
+import { persistBeforePlayerExit } from "@/lib/playerExitPersistence";
+import { configureTvRemote, subscribeTvRemote } from "@/modules/legendstream-tv-remote";
+import { useOptionalTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
+import { claimPlayerBack, advancePlayerBack } from "@/lib/playerRemoteOwnership";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ActivityIndicator, AppState, BackHandler, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, AppState, BackHandler, Platform, StyleSheet, Text, View } from "react-native";
 import { useMediaLibrary } from "@/context/MediaLibraryContext";
 import type { MediaPlaybackRef } from "@/lib/mediaProgress";
 import { selectChannelEpg, usePlayer } from "@/context/PlayerContext";
@@ -118,6 +122,11 @@ export function CompatibilityVideoPlayer({
   onFullscreenExit?: () => void;
   allowDownload?: boolean;
 }) {
+  const focus = useOptionalTVPreviewFocus();
+  const pushScope = focus?.pushFocusScope;
+  useEffect(() => {
+    if (Platform.isTV) return pushScope?.("player");
+  }, [pushScope]);
   const { getProgress, saveProgress } = useMediaLibrary();
   const {
     provider,
@@ -172,6 +181,8 @@ export function CompatibilityVideoPlayer({
   const [controlsVisible, setControlsVisible] = useState(true);
   const [infoVisible, setInfoVisible] = useState(true);
   const [panel, setPanel] = useState<PlayerPanel>(null);
+  const backSnapshot=useRef({panel:Boolean(panel),controls:controlsVisible});
+  backSnapshot.current={panel:Boolean(panel),controls:controlsVisible};
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [videoSize, setVideoSize] = useState<PlayerVideoSize>({ width: 16, height: 9 });
@@ -241,7 +252,7 @@ export function CompatibilityVideoPlayer({
   const revealControls = useCallback((keep = false) => {
     setControlsVisible(true);
     clearControlsTimer();
-    if (!keep) controlsTimer.current = setTimeout(
+    if (!keep && !Platform.isTV) controlsTimer.current = setTimeout(
       () => setControlsVisible(false),
       chromeTimeoutSeconds * 1000,
     );
@@ -577,24 +588,39 @@ export function CompatibilityVideoPlayer({
     orientation.beginExit();
     clearControlsTimer();
     clearInfoTimer();
-    await persistProgress();
-    await orientation.restore();
-    onFullscreenExit?.();
-    orientation.releaseWhenLayoutReady();
+    try { await persistBeforePlayerExit(persistProgress,Platform.isTV); } catch { /* Persistence cannot trap the user in playback. */ }
+    try { await orientation.restore(); } finally {
+      onFullscreenExit?.();
+      orientation.releaseWhenLayoutReady();
+    }
   }, [clearControlsTimer, clearInfoTimer, onFullscreenExit, orientation, persistProgress]);
 
+  useEffect(() => claimPlayerBack(), []);
   useEffect(() => {
-    const back = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (panel) {
+    if(!Platform.isTV) return;
+    void configureTvRemote(true,false);
+    return () => {void configureTvRemote(false,false);};
+  },[]);
+  useEffect(() => {
+    const handleBack = () => {
+      const target = advancePlayerBack(backSnapshot.current,Platform.isTV);
+      if (target === "controls") {
+        clearControlsTimer(); clearInfoTimer();
+        setControlsVisible(false); setInfoVisible(false);
+        return true;
+      }
+      if (target === "panel") {
         setPanel(null);
         revealControls();
         return true;
       }
       void exitPlayer();
       return true;
-    });
-    return () => back.remove();
-  }, [exitPlayer, panel, revealControls]);
+    };
+    const back = BackHandler.addEventListener("hardwareBackPress", handleBack);
+    const native = Platform.isTV ? subscribeTvRemote(({key}) => {if(key==="back") handleBack();}) : undefined;
+    return () => {back.remove();native?.remove();};
+  }, [exitPlayer, panel, revealControls, controlsVisible, clearControlsTimer, clearInfoTimer]);
 
   const seekToRatio = useCallback((ratio: number) => {
     if (currentKind === "live") return;

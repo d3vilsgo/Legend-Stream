@@ -1,3 +1,5 @@
+import { NativeTVFocusScope } from "@/components/tvPreview/NativeTVFocusScope";
+import { hasPlayerBackOwner } from "@/lib/playerRemoteOwnership";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -158,6 +160,7 @@ export default function OptimizedHomeScreenPaged() {
   useEffect(() => {
     if (!Platform.isTV) return;
     const subscription = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (hasPlayerBackOwner()) return false;
       if (view === "player") return false;
       if (adding) { setAdding(false); setEditingProviderId(null); return true; }
       if (view !== "home") { setView("home"); return true; }
@@ -470,7 +473,8 @@ export default function OptimizedHomeScreenPaged() {
   const openDownload = (item: DownloadedMedia) => { setPlayable({ title: item.title, subtitle: item.subtitle, url: item.uri, kind: "download", returnTo: "downloads" }); setView("player"); };
   const openProgress = (item: MediaProgress) => { setPlayable({ title: item.title, subtitle: item.subtitle, url: item.source, kind: item.kind, returnTo: "history" }); setView("player"); };
 
-  if (view === "player") return <View style={s.fullPlayer}>
+  const presentedView = view === "player" ? playable?.returnTo ?? "home" : view;
+  if (!Platform.isTV && view === "player") return <View style={s.fullPlayer}>
     {playable ? <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => setView(playable.returnTo)} /> : null}
   </View>;
 
@@ -485,11 +489,12 @@ export default function OptimizedHomeScreenPaged() {
   ];
   const top = Math.max(insets.top, Platform.OS === "web" ? 20 : 0);
   const countKnown = snapshot.providerId === provider.id && (hasUsableCache || snapshot.ready || snapshot.counts.live + snapshot.counts.vod + snapshot.counts.series > 0);
-  const visibleScopedError = view === "live" && scopedError?.domain === "live-history" && scopedError.providerId === provider.id
+  const visibleScopedError = presentedView === "live" && scopedError?.domain === "live-history" && scopedError.providerId === provider.id
     ? t(scopedError.messageKey)
     : null;
 
-  return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
+  const renderCatalog = (view: ContentView) => (
+    <NativeTVFocusScope>
     <View style={[s.header, { borderColor: colors.border }, view === "home" ? s.homeHeaderPremium : null]}>
       <View style={s.headerTop}><Text style={[s.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text><ProviderSubscriptionChip provider={provider} /></View>
       <ResponsiveContentNav items={nav} activeKey={view} onSelect={navigate} />
@@ -533,6 +538,15 @@ export default function OptimizedHomeScreenPaged() {
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
       {view === "settings" ? <Settings provider={provider} providers={providers} busy={providerSwitchBusy} switchingProviderId={switchingProviderId} onEdit={() => setEditingProviderId(provider.id)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
     </ScrollView> : null}
+
+    </NativeTVFocusScope>
+  );
+
+  return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
+    {renderCatalog(presentedView)}
+    {Platform.isTV && view === "player" && playable ? <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "black", zIndex: 100, elevation: 100 }]}>
+      <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => { setView(playable.returnTo); setPlayable(null); }} />
+    </View> : null}
 
   </View>;
 }

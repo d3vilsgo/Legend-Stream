@@ -20,8 +20,10 @@ const getNativeModule = () => {
 
 const clamp = (value: number) => Math.min(1, Math.max(0, value));
 
-export const isPipSupported = () =>
-  Platform.OS === "android" && Number(Platform.Version) >= 26;
+export const isPipSupported = () => {
+  if (Platform.OS !== "android" || Number(Platform.Version) < 26) return false;
+  try { return Boolean(getNativeModule()?.isSupported?.()); } catch { return false; }
+};
 
 export const isInPipMode = () => {
   if (Platform.OS !== "android" || Number(Platform.Version) < 26) return false;
