@@ -129,11 +129,13 @@ class LegendStreamTvRemoteModule : Module() {
           if(select) {
             val current=window.currentFocus
             val entry=current?.let {targets[it.id]}
-            if(entry!=null && entry.scope==activeScope) {
+            if(entry!=null) {
               consumed.add(event.keyCode)
-              if(event.repeatCount==0) current?.performClick()
+              if(entry.scope==activeScope && event.repeatCount==0) current?.performClick()
+              else if(entry.scope!=activeScope) restore()
               return true
             }
+            if(playerActive) {consumed.add(event.keyCode);restore();return true}
           }
         }
         val name=if(!playerActive) null else when(event.keyCode) {
@@ -167,7 +169,7 @@ class LegendStreamTvRemoteModule : Module() {
       view(tag)?.let {watchModal(it)}
       if(attachedWindow?.currentFocus?.id==tag) outline(view(tag))
       val current=attachedWindow?.currentFocus?.let {targets[it.id]}
-      if(scope==activeScope && current==null && (remembered[scope]==id || preferred)) restore()
+      if(scope==activeScope && (current==null || current.scope!=activeScope) && (remembered[scope]==id || preferred)) restore()
       true
     }.runOnQueue(Queues.MAIN)
     AsyncFunction("unregisterTarget") { tag: Int -> targets.remove(tag);true }.runOnQueue(Queues.MAIN)
