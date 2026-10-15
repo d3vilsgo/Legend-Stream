@@ -16,7 +16,7 @@ Base gate: PR #136 OPEN / DRAFT / NOT MERGED, remote HEAD `d9f279ad4033c69906397
 
 ## Kullanım
 
-TV Ayarlar → **Kumanda ve Odak Test Modu** → aç. Varsayılan kapalıdır; kalıcı tercih veya BuildConfig.DEBUG şartı yoktur. Ayarlar'dan kapatma, daraltma ve son 20 olay görünümü seçilir. Panelde focusable öğe ve pointer hedefi yoktur; kumandaya yeni kısayol eklemez, odağı çalmaz. Kategori modalı paneli aynalar; tek collector vardır.
+TV Ayarlar → **Kumanda ve Odak Test Modu** → aç. Varsayılan kapalıdır; kalıcı tercih veya BuildConfig.DEBUG şartı yoktur. Ayarlar'dan kapatma, daraltma ve son 20 olay görünümü seçilir. Geçmiş beşer kayıtlık dört sayfa olarak incelenir; her satır olay anındaki ekran/scope/bağlamı gösterir. Panelde focusable öğe ve pointer hedefi yoktur; kumandaya yeni kısayol eklemez, odağı çalmaz. Kategori modalı paneli aynalar; tek collector vardır.
 
 Son tuş, mevcut gerçek odak ve son eylem/state kanıtı sıra numaralarıyla ayrı sabit satırlarda kalır; son eylem önceki bir olaya ait olabilir. Yeni tuş gelmesi yeni eylem gerçekleştiği anlamına gelmez. Daraltılmış panel de bu üç kanıtı gösterir.
 

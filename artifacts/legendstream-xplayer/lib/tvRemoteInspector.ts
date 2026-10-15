@@ -1,7 +1,7 @@
 /** Ephemeral allowlisted diagnostics. Never accepts titles, URLs or provider identifiers. */
 export type InspectorRecord = { n:number; type:string; key:string; phase:string; before:string; after:string; screen:string; scope:string; context:string; result:string };
 export class InspectorHistory {
-  enabled=false; collapsed=false; history=false; screen="unknown"; focus="none"; scope="content"; context="catalog"; records:InspectorRecord[]=[]; private serial=0; private keyFocus=new Map<number,string>();
+  enabled=false; collapsed=false; history=false; page=0; screen="unknown"; focus="none"; scope="content"; context="catalog"; records:InspectorRecord[]=[]; private serial=0; private keyFocus=new Map<number,string>();
   private listeners=new Set<()=>void>();
   subscribe=(listener:()=>void)=>{this.listeners.add(listener);return ()=>{this.listeners.delete(listener);};};
   notify=()=>{for(const listener of this.listeners) listener();};
