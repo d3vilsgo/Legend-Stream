@@ -1,6 +1,7 @@
+import { useNativeTvTarget } from "@/hooks/useNativeTvTarget";
 import { Feather } from '@expo/vector-icons';
-import React, { ReactNode, useRef, useState } from 'react';
-import { type AccessibilityRole, type AccessibilityState, Animated, Platform, Pressable, StyleProp, StyleSheet, Text, ViewStyle } from 'react-native';
+import React, { ReactNode, useId, useEffect, useRef, useState } from 'react';
+import { type AccessibilityRole, type AccessibilityState, Animated, Platform, Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
 import { useColors } from '@/hooks/useColors';
 
 interface FocusButtonProps {
@@ -13,6 +14,7 @@ interface FocusButtonProps {
   children?: ReactNode;
   testID?: string;
   hasTVPreferredFocus?: boolean;
+  focusId?: string;
   accessibilityRole?: AccessibilityRole;
   accessibilityState?: AccessibilityState;
   onFocusChange?: (focused: boolean) => void;
@@ -31,7 +33,13 @@ export function FocusButton({
   accessibilityRole = 'button',
   accessibilityState,
   onFocusChange,
+  focusId,
 }: FocusButtonProps) {
+  const nativeRef = useRef<View>(null);
+  const generatedId = useId();
+  const id = focusId ?? testID ?? `button:${label}:${generatedId}`;
+  const nativeFocus = useNativeTvTarget(nativeRef,id,"content",id.startsWith("nav:") ? "navigation" : "content",disabled,hasTVPreferredFocus);
+  useEffect(() => { if(Platform.isTV) onFocusChange?.(nativeFocus.focused); },[nativeFocus.focused,onFocusChange]);
   const colors = useColors();
   const [focused, setFocused] = useState(false);
   const scale = useRef(new Animated.Value(1)).current;
@@ -42,7 +50,7 @@ export function FocusButton({
         ? colors.secondary
         : 'transparent';
   const foregroundColor = variant === 'primary' ? colors.primaryForeground : colors.foreground;
-  const tvFocused = Platform.isTV && focused;
+  const tvFocused = Platform.isTV && (nativeFocus.focused || focused);
 
   const animateFocus = (next: boolean) => {
     setFocused(next);
@@ -60,6 +68,9 @@ export function FocusButton({
   return (
     <Animated.View style={[tvFocused ? styles.tvGlowWrap : null, { transform: [{ scale }] }]}>
       <Pressable
+        ref={nativeRef}
+        nativeID={id}
+        onLayout={nativeFocus.register}
         testID={testID}
         focusable={!disabled}
         hasTVPreferredFocus={Platform.isTV && hasTVPreferredFocus}
@@ -71,7 +82,7 @@ export function FocusButton({
           styles.button,
           {
             backgroundColor,
-            borderColor: tvFocused ? colors.primary : colors.border,
+            borderColor: tvFocused ? "#fff" : colors.border,
             borderWidth: tvFocused ? 3 : 1,
             opacity: disabled ? 0.45 : 1,
           },

@@ -31,7 +31,8 @@ assert.match(presentation, /nativeTv:\s*Platform\.isTV/);
 assert.match(productShell, /<TVPreviewControls\s*\/>/);
 assert.match(focus, /if\s*\(!tvPreview\)\s*return null/);
 assert.match(focus, /focusable=\{!disabled && \(Platform\.isTV \? focus\.nativeScope === focusScope : focus\.enabled/);
-assert.match(focus, /Platform\.isTV && nativeFocused/);
+assert.match(focus, /Platform\.isTV && \(nativeFocus\.focused \|\| nativeFocused\)/);
+assert.match(focus, /useNativeTvTarget/);
 
 for (const mode of ["arm64", "dual-abi", "universal"]) assert.match(workflow, new RegExp(`- ${mode}`));
 assert.match(workflow, /-PabiUniversal/);

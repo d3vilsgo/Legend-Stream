@@ -954,7 +954,7 @@ export function GoldenSeriesCatalog({
       }}
     />;
     const detailHeader = <View>
-      <FocusButton label={t("back")} icon="arrow-left" variant="ghost" onPress={leaveDetailLevel} />
+      <FocusButton focusId="series-detail:back" hasTVPreferredFocus={Platform.isTV} label={t("back")} icon="arrow-left" variant="ghost" onPress={leaveDetailLevel} />
       <Text style={[s.title, { color: colors.foreground, marginTop: 14 }]}>{detail?.title ?? t("series")}</Text>
       {error ? <CatalogErrorState message={error} onRetry={onRetry} /> : null}
       {orderedSeasons.length ? <>

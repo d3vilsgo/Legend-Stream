@@ -175,6 +175,7 @@ export function PlayerChrome(props: Props) {
   useEffect(() => {
     if (!Platform.isTV) return;
     const subscription = subscribeTvRemote(({ key, code }) => {
+      if(key==="back") return; // The player root owns Back even while chrome is unmounted.
       const p = remoteProps.current;
       const action = resolveTvRemoteAction(key, code, p.mediaKind === "live", p.paused, p.controlsVisible);
       if (action === "togglePause") p.onTogglePause();
@@ -184,7 +185,7 @@ export function PlayerChrome(props: Props) {
       else if (action === "previous" || action === "next") p.onMoveRelative(action === "previous" ? -1 : 1);
       else if (action === "seekBack" || action === "seekForward") p.onSeekBy(action === "seekBack" ? -10 : 15);
     });
-    return () => { subscription?.remove(); void configureTvRemote(false, false); };
+    return () => { subscription?.remove(); };
   }, []);
   useEffect(() => {
     if (Platform.isTV) void configureTvRemote(true, !chrome.controlsVisible && !chrome.panel);
@@ -356,6 +357,7 @@ export function PlayerChrome(props: Props) {
       {chrome.controlsVisible && chrome.canExit ? (
         <Pressable
           accessibilityRole="button"
+          nativeID="player:exit"
           accessibilityLabel="Oynatıcıdan çık"
           onPress={chrome.onExit}
           hitSlop={14}
@@ -400,6 +402,7 @@ export function PlayerChrome(props: Props) {
 
           <Pressable
             accessibilityRole="button"
+            nativeID="player:play-pause"
             accessibilityLabel={chrome.paused ? "Oynat" : "Duraklat"}
             hasTVPreferredFocus={Platform.isTV}
             onPress={chrome.onTogglePause}
@@ -603,6 +606,7 @@ function RoundButton({ icon, badge, label, onPress, size, iconSize, disabled = f
     <Pressable
       disabled={disabled}
       accessibilityRole="button"
+      nativeID={`player:seek:${icon}:${badge ?? ""}`}
       accessibilityLabel={label}
       onPress={onPress}
       hitSlop={14}
@@ -619,6 +623,7 @@ function AdaptiveDockButton({ action, size, iconSize }: { action: Action; size: 
   return (
     <Pressable
       accessibilityRole="button"
+      nativeID={`player:action:${action.key}`}
       accessibilityLabel={action.label}
       onPress={action.onPress}
       disabled={action.disabled}

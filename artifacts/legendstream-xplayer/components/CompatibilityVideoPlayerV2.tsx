@@ -1,5 +1,7 @@
+import { persistBeforePlayerExit } from "@/lib/playerExitPersistence";
+import { configureTvRemote, subscribeTvRemote } from "@/modules/legendstream-tv-remote";
 import { useOptionalTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
-import { claimPlayerBack, resolvePlayerBack } from "@/lib/playerRemoteOwnership";
+import { claimPlayerBack, advancePlayerBack } from "@/lib/playerRemoteOwnership";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, AppState, BackHandler, Platform, StyleSheet, Text, View } from "react-native";
@@ -179,6 +181,8 @@ export function CompatibilityVideoPlayer({
   const [controlsVisible, setControlsVisible] = useState(true);
   const [infoVisible, setInfoVisible] = useState(true);
   const [panel, setPanel] = useState<PlayerPanel>(null);
+  const backSnapshot=useRef({panel:Boolean(panel),controls:controlsVisible});
+  backSnapshot.current={panel:Boolean(panel),controls:controlsVisible};
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [videoSize, setVideoSize] = useState<PlayerVideoSize>({ width: 16, height: 9 });
@@ -584,7 +588,7 @@ export function CompatibilityVideoPlayer({
     orientation.beginExit();
     clearControlsTimer();
     clearInfoTimer();
-    try { await persistProgress(); } catch { /* Persistence cannot trap the user in playback. */ }
+    try { await persistBeforePlayerExit(persistProgress,Platform.isTV); } catch { /* Persistence cannot trap the user in playback. */ }
     try { await orientation.restore(); } finally {
       onFullscreenExit?.();
       orientation.releaseWhenLayoutReady();
@@ -593,8 +597,13 @@ export function CompatibilityVideoPlayer({
 
   useEffect(() => claimPlayerBack(), []);
   useEffect(() => {
-    const back = BackHandler.addEventListener("hardwareBackPress", () => {
-      const target = resolvePlayerBack(Boolean(panel), Platform.isTV && controlsVisible);
+    if(!Platform.isTV) return;
+    void configureTvRemote(true,false);
+    return () => {void configureTvRemote(false,false);};
+  },[]);
+  useEffect(() => {
+    const handleBack = () => {
+      const target = advancePlayerBack(backSnapshot.current,Platform.isTV);
       if (target === "controls") {
         clearControlsTimer(); clearInfoTimer();
         setControlsVisible(false); setInfoVisible(false);
@@ -607,8 +616,10 @@ export function CompatibilityVideoPlayer({
       }
       void exitPlayer();
       return true;
-    });
-    return () => back.remove();
+    };
+    const back = BackHandler.addEventListener("hardwareBackPress", handleBack);
+    const native = Platform.isTV ? subscribeTvRemote(({key}) => {if(key==="back") handleBack();}) : undefined;
+    return () => {back.remove();native?.remove();};
   }, [exitPlayer, panel, revealControls, controlsVisible, clearControlsTimer, clearInfoTimer]);
 
   const seekToRatio = useCallback((ratio: number) => {

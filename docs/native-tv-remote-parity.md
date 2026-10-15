@@ -1,3 +1,5 @@
+> APK #491 Homatics fiziksel sonucu: FAIL. Güncel kök neden ve düzeltme adayı raporu: [pr136-native-tv-physical-failure.md](pr136-native-tv-physical-failure.md). Önceki yazılım/CI sonuçları fiziksel kabul değildir.
+
 # Native TV kumanda ve player parity
 
 Kaynak: PR #135, `e49e586107f6fc111b63791769e8d1f449c9a3e0`.

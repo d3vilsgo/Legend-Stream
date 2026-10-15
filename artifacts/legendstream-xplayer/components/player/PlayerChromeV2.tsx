@@ -305,7 +305,7 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
       {props.panel ? (
         <View style={panelStyle}>
           <LinearGradient colors={["rgba(14,165,233,.18)", "rgba(6,11,20,0)"]} style={styles.panelGlow} pointerEvents="none" />
-          {Platform.isTV ? <Pressable accessibilityLabel="Paneli kapat" hasTVPreferredFocus={props.panel === "audio" && !props.audioTracks.length} onPress={() => props.onTogglePanel(props.panel!)} style={{ padding: 16 }}><Text style={{ color: "white", fontSize: 18 }}>← Paneli kapat</Text></Pressable> : null}
+          {Platform.isTV ? <Pressable nativeID="player:panel-close" accessibilityLabel="Paneli kapat" hasTVPreferredFocus={props.panel === "audio" && !props.audioTracks.length} onPress={() => props.onTogglePanel(props.panel!)} style={{ padding: 16 }}><Text style={{ color: "white", fontSize: 18 }}>← Paneli kapat</Text></Pressable> : null}
           <PanelContent {...props} />
         </View>
       ) : null}
@@ -338,7 +338,8 @@ export function PanelContent(props: Props) {
         ListHeaderComponent={<PanelHeader title={props.mediaKind === "live" ? "Kanal listesi" : "İçerik listesi"} hint={`${props.selectableItems.length} öğe`} />}
         renderItem={({ item, index }) => (
           <Pressable
-            accessibilityLabel={item.title}
+            nativeID={`player:content:${item.id}`}
+          accessibilityLabel={item.title}
             hasTVPreferredFocus={Platform.isTV && index === Math.max(0, props.currentIndex)}
             onPress={() => props.onSwitchTo(item)}
             style={({ pressed }) => [
@@ -369,7 +370,7 @@ export function PanelContent(props: Props) {
         keyExtractor={(item, index) => `${item.id}:${index}`}
         ListHeaderComponent={<PanelHeader title="Altyazı" hint={props.textTracks.length ? "Gömülü altyazı parçasını seçin." : "Bu içerikte gömülü altyazı bulunamadı."} />}
         renderItem={({ item, index }) => (
-          <Pressable accessibilityLabel={item.name} hasTVPreferredFocus={Platform.isTV && index === 0} onPress={() => props.onSelectSubtitle(item.id)} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
+          <Pressable nativeID={`player:subtitle:${item.id}`} accessibilityLabel={item.name} hasTVPreferredFocus={Platform.isTV && index === 0} onPress={() => props.onSelectSubtitle(item.id)} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
             <View style={styles.rowHeadline}>
               <View style={styles.rowIcon}><Text style={styles.ccSmall}>CC</Text></View>
               <Text style={styles.rowTitle}>{item.name}</Text>
@@ -388,7 +389,7 @@ export function PanelContent(props: Props) {
         ListHeaderComponent={<PanelHeader title="Ses" hint={props.audioTracks.length ? "Ses parçasını seçin." : "Bu içerikte seçilebilir ek ses parçası bulunamadı."} />}
         ListEmptyComponent={<View />}
         renderItem={({ item, index }) => (
-          <Pressable accessibilityLabel={item.name} hasTVPreferredFocus={Platform.isTV && index === 0} onPress={() => props.onSelectAudio(item.id)} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
+          <Pressable nativeID={`player:audio:${item.id}`} accessibilityLabel={item.name} hasTVPreferredFocus={Platform.isTV && index === 0} onPress={() => props.onSelectAudio(item.id)} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
             <View style={styles.rowHeadline}>
               <View style={styles.rowIcon}><Feather name="volume-2" size={16} color="#67e8f9" /></View>
               <Text style={styles.rowTitle}>{item.name}</Text>
@@ -411,6 +412,7 @@ export function PanelContent(props: Props) {
       ListHeaderComponent={<PanelHeader title="Codec çözümleme" hint="AUTO önerilir. Sorunlu veya eski cihazlarda SW deneyin." />}
       renderItem={({ item }) => (
         <Pressable
+          nativeID={`player:codec:${item.id}`}
           accessibilityLabel={item.title}
           hasTVPreferredFocus={Platform.isTV && props.codecMode === item.id}
           onPress={() => props.onChangeCodec(item.id)}

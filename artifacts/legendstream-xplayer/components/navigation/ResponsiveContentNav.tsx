@@ -92,6 +92,7 @@ export function ResponsiveContentNav<Key extends string>({
         {items.map((item) => (
           <FocusButton
             key={item.key}
+            focusId={`nav:${item.key}`}
             testID={`adaptive-nav-${item.key}`}
             label={item.label}
             icon={item.icon}

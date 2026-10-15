@@ -1,6 +1,6 @@
 import { requireOptionalNativeModule } from "expo";
 import { Platform } from "react-native";
-export type RemoteKey = "select" | "left" | "right" | "up" | "down" | "playPause" | "stop" | "next" | "previous" | "menu";
+export type RemoteKey = "back" | "select" | "left" | "right" | "up" | "down" | "playPause" | "stop" | "next" | "previous" | "menu";
 type RemoteModule = {
   setFocusBlocked: (tag: number, blocked: boolean) => Promise<boolean>;
   configure: (active: boolean, hidden: boolean) => Promise<boolean>;
@@ -11,3 +11,18 @@ export const configureTvRemote = (active: boolean, hidden: boolean) => native?.c
 export const subscribeTvRemote = (listener: (event: { key: RemoteKey; code: number }) => void) => native?.addListener("onRemoteKey", listener);
 
 export const setTvFocusBlocked = (tag: number, blocked: boolean) => native?.setFocusBlocked(tag, blocked).catch(() => false);
+
+export type NativeFocusEvent = { tag: number; id: string };
+type FocusModule = {
+  registerTarget: (tag: number, id: string, scope: string, region: string, preferred: boolean) => Promise<boolean>;
+  unregisterTarget: (tag: number) => Promise<boolean>;
+  requestTargetFocus: (tag: number) => Promise<boolean>;
+  setScope: (scope: string) => Promise<boolean>;
+  addListener: (name: "onNativeFocus", listener: (event: NativeFocusEvent) => void) => { remove: () => void };
+};
+const focusNative = native as (RemoteModule & FocusModule) | null;
+export const registerTvTarget = (tag: number, id: string, scope: string, region: string, preferred: boolean) => focusNative?.registerTarget(tag,id,scope,region,preferred).catch(() => false);
+export const unregisterTvTarget = (tag: number) => focusNative?.unregisterTarget(tag).catch(() => false);
+export const requestTvTargetFocus = (tag: number) => focusNative?.requestTargetFocus(tag).catch(() => false);
+export const setNativeTvScope = (scope: string) => focusNative?.setScope(scope).catch(() => false);
+export const subscribeNativeTvFocus = (listener: (event: NativeFocusEvent) => void) => focusNative?.addListener("onNativeFocus",listener);

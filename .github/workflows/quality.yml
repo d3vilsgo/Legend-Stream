@@ -265,6 +265,10 @@ jobs:
           grep -F 'TV Preview interaction scenarios: 32/32 passed' <<<"$result"
       - name: Native Android TV and universal APK contract
         run: node artifacts/legendstream-xplayer/tests/androidTvUniversalBuildScenarios.mjs
+      - name: Production Android focus policy JVM behavior
+        run: node artifacts/legendstream-xplayer/tests/nativeTvFocusJvmScenarios.mjs
+      - name: Native TV bounded persistence on exit
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvExitScenarios.ts
       - name: Native TV remote ownership and action semantics
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvRemoteScenarios.ts
       - name: Typecheck mobile app

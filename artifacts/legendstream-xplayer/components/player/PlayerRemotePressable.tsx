@@ -1,10 +1,16 @@
-import React, { useState } from "react";
-import { Platform, Pressable, Text, type PressableProps } from "react-native";
+import { useNativeTvTarget } from "@/hooks/useNativeTvTarget";
+import React, { useState, useRef, useId } from "react";
+import { Platform, Pressable, Text, View, type PressableProps } from "react-native";
 
 /** Same action callbacks as mobile, with a physical-focus outline and visible action name. */
 export function PlayerRemotePressable({ children, style, accessibilityLabel, ...props }: PressableProps) {
-  const [focused, setFocused] = useState(false);
-  return <Pressable {...props} accessibilityLabel={accessibilityLabel} accessibilityState={{ ...props.accessibilityState, disabled: Boolean(props.disabled) }}
+  const [paperFocused, setFocused] = useState(false);
+  const ref=useRef<View>(null);
+  const generatedId=useId();
+  const id=props.nativeID ?? props.testID ?? `player:${accessibilityLabel ?? "action"}:${generatedId}`;
+  const nativeFocus=useNativeTvTarget(ref,id,"player","player",Boolean(props.disabled || props.focusable===false),Boolean(props.hasTVPreferredFocus));
+  const focused=Platform.isTV ? nativeFocus.focused : paperFocused;
+  return <Pressable {...props} ref={ref} nativeID={id} onLayout={(event) => {nativeFocus.register();props.onLayout?.(event);}} accessibilityLabel={accessibilityLabel} accessibilityState={{ ...props.accessibilityState, disabled: Boolean(props.disabled) }}
     focusable={Platform.isTV ? !props.disabled && props.focusable !== false : props.focusable}
     onFocus={(event) => { setFocused(true); props.onFocus?.(event); }}
     onBlur={(event) => { setFocused(false); props.onBlur?.(event); }}
