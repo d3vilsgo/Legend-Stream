@@ -1,9 +1,13 @@
+import { resolveTvRemoteAction } from "@/lib/tvPlayerRemote";
+import { useOptionalTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
+import { PlayerRemotePressable as Pressable } from "./PlayerRemotePressable";
+import { configureTvRemote, subscribeTvRemote } from "@/modules/legendstream-tv-remote";
 import { Feather, MaterialIcons } from "@expo/vector-icons";
 import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   Animated,
   LayoutChangeEvent,
-  Pressable,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -145,6 +149,11 @@ const formatRemaining = (end?: number) => {
 };
 
 export function PlayerChrome(props: Props) {
+  const focus = useOptionalTVPreviewFocus();
+  const pushScope = focus?.pushFocusScope;
+  useEffect(() => {
+    if (Platform.isTV) return pushScope?.("player");
+  }, [pushScope]);
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const portrait = height > width;
@@ -167,6 +176,25 @@ export function PlayerChrome(props: Props) {
     epgLoading,
     ...chrome
   } = props;
+  const remoteProps = useRef(chrome);
+  remoteProps.current = chrome;
+  useEffect(() => {
+    if (!Platform.isTV) return;
+    const subscription = subscribeTvRemote(({ key, code }) => {
+      const p = remoteProps.current;
+      const action = resolveTvRemoteAction(key, code, p.mediaKind === "live", p.paused, p.controlsVisible);
+      if (action === "togglePause") p.onTogglePause();
+      else if (action === "exit") p.onExit();
+      else if (action === "codec") p.onTogglePanel("codec");
+      else if (action === "reveal") p.onBackgroundPress();
+      else if (action === "previous" || action === "next") p.onMoveRelative(action === "previous" ? -1 : 1);
+      else if (action === "seekBack" || action === "seekForward") p.onSeekBy(action === "seekBack" ? -10 : 15);
+    });
+    return () => { subscription?.remove(); void configureTvRemote(false, false); };
+  }, []);
+  useEffect(() => {
+    if (Platform.isTV) void configureTvRemote(true, !chrome.controlsVisible && !chrome.panel);
+  }, [chrome.controlsVisible, chrome.panel]);
   const controlsOpacity = useRef(new Animated.Value(chrome.controlsVisible ? 1 : 0)).current;
 
   useEffect(() => {
@@ -231,12 +259,12 @@ export function PlayerChrome(props: Props) {
       accent: chrome.fitMode === "fit",
       onPress: chrome.onCycleFit,
     },
-    {
+    ...(!Platform.isTV ? [{
       key: "rotate",
       label: "Döndür",
       icon: "rotate-cw" as FeatherName,
       onPress: chrome.onRotate,
-    },
+    }] : []),
     ...(chrome.pipSupported ? [{
       key: "pip",
       label: "Picture in Picture",
@@ -277,14 +305,14 @@ export function PlayerChrome(props: Props) {
   ];
 
   const gap = Math.round((portrait ? 4 : 9) * uiScale);
-  const outerPadding = Math.round((portrait ? 8 : 22) * uiScale);
+  const outerPadding = Platform.isTV ? 40 : Math.round((portrait ? 8 : 22) * uiScale);
   const availableWidth = Math.max(1, width - insets.left - insets.right - outerPadding * 2);
-  const buttonSize = clamp(
+  const buttonSize = Platform.isTV ? 64 : clamp(
     Math.floor((availableWidth - gap * Math.max(0, actions.length - 1)) / Math.max(1, actions.length)),
     Math.round(38 * uiScale),
     Math.round((portrait ? 44 : 48) * uiScale),
   );
-  const dockIconSize = clamp(Math.round((portrait ? 20 : 22) * uiScale), 17, 23);
+  const dockIconSize = Platform.isTV ? 28 : clamp(Math.round((portrait ? 20 : 22) * uiScale), 17, 23);
   const progressScale = clamp(width / (portrait ? 390 : 840), 0.82, 1.12);
   const timeWidth = clamp(Math.round(50 * progressScale), 42, 58);
   const timeFontSize = clamp(Math.round(10 * progressScale), 9, 12);
@@ -377,6 +405,7 @@ export function PlayerChrome(props: Props) {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={chrome.paused ? "Oynat" : "Duraklat"}
+            hasTVPreferredFocus={Platform.isTV}
             onPress={chrome.onTogglePause}
             hitSlop={14}
             style={({ pressed }) => [
@@ -415,7 +444,7 @@ export function PlayerChrome(props: Props) {
             styles.bottom,
             {
               opacity: controlsOpacity,
-              bottom: Math.max(insets.bottom + 2, Math.round((portrait ? 8 : 10) * uiScale)),
+              bottom: Math.max(Platform.isTV ? 40 : 0, insets.bottom + 2, Math.round((portrait ? 8 : 10) * uiScale)),
               paddingLeft: Math.max(outerPadding, insets.left + 8),
               paddingRight: Math.max(outerPadding, insets.right + 8),
             },
@@ -427,7 +456,9 @@ export function PlayerChrome(props: Props) {
               <Text style={[styles.time, { width: timeWidth, fontSize: timeFontSize }]}>{formatTime(chrome.position)}</Text>
               <Pressable
                 onLayout={(event: LayoutChangeEvent) => setSeekWidth(Math.max(1, event.nativeEvent.layout.width))}
-                onPress={(event) => chrome.onSeekRatio(clamp(event.nativeEvent.locationX / seekWidth, 0, 1))}
+                focusable={!Platform.isTV}
+                accessibilityLabel="İlerleme; kumandada geri ve ileri düğmelerini kullanın"
+                onPress={(event) => { if (!Platform.isTV) chrome.onSeekRatio(clamp(event.nativeEvent.locationX / seekWidth, 0, 1)); }}
                 style={styles.seekTouch}
                 hitSlop={{ top: 14, bottom: 14, left: 0, right: 0 }}
               >

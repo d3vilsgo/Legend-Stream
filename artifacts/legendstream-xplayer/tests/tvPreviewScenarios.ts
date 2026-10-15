@@ -201,7 +201,7 @@ async function main() {
   });
   await scenario("M3U and Xtream keep their real Home Live VOD and Series catalog render paths", () => {
     const paged = source("components/OptimizedHomeScreenPaged.tsx");
-    assert.match(paged, /view === "home" \? <HomeDiscovery/);
+    assert.match(paged, /presentedView === "home" \? <HomeDiscovery/);
     assert.match(paged, /provider\.type === "m3u" \|\| provider\.type === "xtream"\) \? <PagedLiveCatalog/);
     assert.match(paged, /provider\.type === "m3u" \|\| provider\.type === "xtream"\) \? <PagedMoviesCatalog/);
     assert.match(paged, /provider\.type === "m3u" \|\| provider\.type === "xtream"\) \? <PagedSeriesCatalog/);

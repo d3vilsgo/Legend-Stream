@@ -1,10 +1,11 @@
+import { PlayerRemotePressable as Pressable } from "./PlayerRemotePressable";
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import React, { memo, useMemo, useState } from "react";
 import {
   FlatList,
   LayoutChangeEvent,
-  Pressable,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -110,7 +111,7 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
   return (
     <View style={styles.overlay} pointerEvents="box-none">
       <PlayerGestureLayer
-        enabled={!props.panel}
+        enabled={!props.panel && !Platform.isTV}
         volume={props.volume}
         seekEnabled={props.mediaKind !== "live" && props.duration > 0}
         position={props.position}
@@ -304,6 +305,7 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
       {props.panel ? (
         <View style={panelStyle}>
           <LinearGradient colors={["rgba(14,165,233,.18)", "rgba(6,11,20,0)"]} style={styles.panelGlow} pointerEvents="none" />
+          {Platform.isTV ? <Pressable accessibilityLabel="Paneli kapat" hasTVPreferredFocus={props.panel === "audio" && !props.audioTracks.length} onPress={() => props.onTogglePanel(props.panel!)} style={{ padding: 16 }}><Text style={{ color: "white", fontSize: 18 }}>← Paneli kapat</Text></Pressable> : null}
           <PanelContent {...props} />
         </View>
       ) : null}
@@ -321,12 +323,14 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
   );
 });
 
-function PanelContent(props: Props) {
+export function PanelContent(props: Props) {
   if (props.panel === "content") {
     return (
       <FlatList
         data={props.selectableItems}
         keyExtractor={(item, index) => `${item.id}:${index}`}
+        initialScrollIndex={Platform.isTV ? Math.max(0, props.currentIndex) : undefined}
+        getItemLayout={Platform.isTV ? (_, index) => ({ length: 72, offset: 72 * index, index }) : undefined}
         initialNumToRender={16}
         maxToRenderPerBatch={16}
         windowSize={5}
@@ -334,9 +338,12 @@ function PanelContent(props: Props) {
         ListHeaderComponent={<PanelHeader title={props.mediaKind === "live" ? "Kanal listesi" : "İçerik listesi"} hint={`${props.selectableItems.length} öğe`} />}
         renderItem={({ item, index }) => (
           <Pressable
+            accessibilityLabel={item.title}
+            hasTVPreferredFocus={Platform.isTV && index === Math.max(0, props.currentIndex)}
             onPress={() => props.onSwitchTo(item)}
             style={({ pressed }) => [
               styles.row,
+              Platform.isTV && { height: 72 },
               index === props.currentIndex && styles.rowActive,
               pressed && styles.rowPressed,
             ]}
@@ -361,8 +368,8 @@ function PanelContent(props: Props) {
         data={rows}
         keyExtractor={(item, index) => `${item.id}:${index}`}
         ListHeaderComponent={<PanelHeader title="Altyazı" hint={props.textTracks.length ? "Gömülü altyazı parçasını seçin." : "Bu içerikte gömülü altyazı bulunamadı."} />}
-        renderItem={({ item }) => (
-          <Pressable onPress={() => props.onSelectSubtitle(item.id)} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
+        renderItem={({ item, index }) => (
+          <Pressable accessibilityLabel={item.name} hasTVPreferredFocus={Platform.isTV && index === 0} onPress={() => props.onSelectSubtitle(item.id)} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
             <View style={styles.rowHeadline}>
               <View style={styles.rowIcon}><Text style={styles.ccSmall}>CC</Text></View>
               <Text style={styles.rowTitle}>{item.name}</Text>
@@ -380,8 +387,8 @@ function PanelContent(props: Props) {
         keyExtractor={(item, index) => `${item.id}:${index}`}
         ListHeaderComponent={<PanelHeader title="Ses" hint={props.audioTracks.length ? "Ses parçasını seçin." : "Bu içerikte seçilebilir ek ses parçası bulunamadı."} />}
         ListEmptyComponent={<View />}
-        renderItem={({ item }) => (
-          <Pressable onPress={() => props.onSelectAudio(item.id)} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
+        renderItem={({ item, index }) => (
+          <Pressable accessibilityLabel={item.name} hasTVPreferredFocus={Platform.isTV && index === 0} onPress={() => props.onSelectAudio(item.id)} style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}>
             <View style={styles.rowHeadline}>
               <View style={styles.rowIcon}><Feather name="volume-2" size={16} color="#67e8f9" /></View>
               <Text style={styles.rowTitle}>{item.name}</Text>
@@ -404,6 +411,8 @@ function PanelContent(props: Props) {
       ListHeaderComponent={<PanelHeader title="Codec çözümleme" hint="AUTO önerilir. Sorunlu veya eski cihazlarda SW deneyin." />}
       renderItem={({ item }) => (
         <Pressable
+          accessibilityLabel={item.title}
+          hasTVPreferredFocus={Platform.isTV && props.codecMode === item.id}
           onPress={() => props.onChangeCodec(item.id)}
           style={({ pressed }) => [
             styles.row,

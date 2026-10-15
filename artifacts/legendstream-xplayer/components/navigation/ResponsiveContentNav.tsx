@@ -1,3 +1,4 @@
+import { hasPlayerBackOwner } from "@/lib/playerRemoteOwnership";
 import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { BackHandler, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
@@ -67,6 +68,7 @@ export function ResponsiveContentNav<Key extends string>({
     if (!model.nativeTv || !backEnabled || !model.backTarget) return;
     const backTarget = model.backTarget;
     const back = BackHandler.addEventListener("hardwareBackPress", () => {
+      if (hasPlayerBackOwner()) return false;
       if (!navigationFocusedRef.current) return false;
       onSelect(backTarget);
       return true;

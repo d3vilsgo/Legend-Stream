@@ -30,7 +30,7 @@ assert.match(manifestPlugin, /tv-banner\.png/);
 assert.match(presentation, /nativeTv:\s*Platform\.isTV/);
 assert.match(productShell, /<TVPreviewControls\s*\/>/);
 assert.match(focus, /if\s*\(!tvPreview\)\s*return null/);
-assert.match(focus, /focusable=\{!disabled && \(focus\.enabled \|\| Platform\.isTV/);
+assert.match(focus, /focusable=\{!disabled && \(Platform\.isTV \? focus\.nativeScope === focusScope : focus\.enabled/);
 assert.match(focus, /Platform\.isTV && nativeFocused/);
 
 for (const mode of ["arm64", "dual-abi", "universal"]) assert.match(workflow, new RegExp(`- ${mode}`));

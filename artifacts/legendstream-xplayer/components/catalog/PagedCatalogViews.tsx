@@ -666,7 +666,7 @@ export function PagedLiveCatalog({
         liveUserScrolledRef.current = true;
       }}
       onEndReached={() => {
-        if (liveUserScrolledRef.current) page.loadMore();
+        if (Platform.isTV || liveUserScrolledRef.current) page.loadMore();
       }}
       onEndReachedThreshold={0.45}
       renderItem={({ item: channel }) => {
@@ -709,7 +709,7 @@ export function PagedLiveCatalog({
       maxToRenderPerBatch={12}
       windowSize={9}
       updateCellsBatchingPeriod={50}
-      removeClippedSubviews={Platform.OS !== "web"}
+      removeClippedSubviews={!Platform.isTV && Platform.OS !== "web"}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     />
@@ -810,7 +810,7 @@ export function PagedMoviesCatalog({
       initialNumToRender={Math.max(8, columns * 3)}
       maxToRenderPerBatch={Math.max(8, columns * 3)}
       windowSize={7}
-      removeClippedSubviews={Platform.OS !== "web"}
+      removeClippedSubviews={!Platform.isTV && Platform.OS !== "web"}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     />
@@ -986,7 +986,7 @@ export function GoldenSeriesCatalog({
       initialNumToRender={8}
       maxToRenderPerBatch={10}
       windowSize={7}
-      removeClippedSubviews={Platform.OS !== "web"}
+      removeClippedSubviews={!Platform.isTV && Platform.OS !== "web"}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator
     />;
@@ -1029,7 +1029,7 @@ export function GoldenSeriesCatalog({
       initialNumToRender={Math.max(8, columns * 3)}
       maxToRenderPerBatch={Math.max(8, columns * 3)}
       windowSize={7}
-      removeClippedSubviews={Platform.OS !== "web"}
+      removeClippedSubviews={!Platform.isTV && Platform.OS !== "web"}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     />
