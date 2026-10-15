@@ -233,6 +233,7 @@ function CatalogHeader({
   children,
   activeCategoryLabel,
   searchEnabled = true,
+  onCategories,
 }: {
   title: string;
   detail: string;
@@ -243,6 +244,7 @@ function CatalogHeader({
   children?: React.ReactNode;
   activeCategoryLabel?: string;
   searchEnabled?: boolean;
+  onCategories?: () => void;
 }) {
   const colors = useColors();
   const { t } = useI18n();
@@ -275,6 +277,7 @@ function CatalogHeader({
       <Feather name="tag" size={14} color={colors.primary} />
       <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700", flex: 1 }}>{activeCategoryLabel}</Text>
     </View> : null}
+    {Platform.isTV && onCategories ? <TVPreviewPressable focusId="catalog:categories" accessibilityRole="button" accessibilityLabel="Kategoriler" onPress={onCategories} style={[s.sortDropdownButton, { borderColor: colors.border, backgroundColor: colors.card }]}><Feather name="grid" size={22} color={colors.foreground} /><Text style={{ color: colors.foreground, fontSize: 18 }}>Kategoriler</Text></TVPreviewPressable> : null}
     {children}
   </View>;
 }
@@ -307,7 +310,8 @@ function SortControl({
   ];
   const active = options.find((option) => option.id === selected) ?? options[0];
   return <View style={s.sortDropdownWrap}>
-    <Pressable
+    <TVPreviewPressable
+      focusId="catalog:sort" accessibilityLabel="Sırala"
       onPress={() => setOpen((value) => !value)}
       style={[s.sortDropdownButton, { borderColor: open ? colors.primary : colors.border, backgroundColor: colors.card }]}
     >
@@ -316,12 +320,13 @@ function SortControl({
         {language === "tr" ? "Sırala" : "Sort"}: {active.short}
       </Text>
       <Feather name={open ? "chevron-up" : "chevron-down"} size={17} color={colors.mutedForeground} />
-    </Pressable>
+    </TVPreviewPressable>
     {open ? <View style={[s.sortDropdownMenu, { borderColor: colors.border, backgroundColor: colors.card }]}>
       {options.map((option) => {
         const activeOption = option.id === selected;
-        return <Pressable
+        return <TVPreviewPressable
           key={option.id}
+          focusId={`catalog:sort:${option.id}`} accessibilityLabel={option.label}
           onPress={() => {
             onSelect(option.id);
             setOpen(false);
@@ -333,7 +338,7 @@ function SortControl({
             {option.label}
           </Text>
           {activeOption ? <Feather name="check" size={17} color={colors.primary} /> : null}
-        </Pressable>;
+        </TVPreviewPressable>;
       })}
     </View> : null}
   </View>;
@@ -420,7 +425,7 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
       >
         <View style={s.drawerHeader} {...closeSwipe.panHandlers}>
           <Text style={[s.drawerTitle, { color: colors.foreground }]}>Kategoriler</Text>
-          <TVPreviewPressable focusId="category-drawer:close" focusScope="category-drawer" accessibilityRole="button" accessibilityLabel="Kategorileri kapat" onPress={closeAnimated} style={s.iconButton}>
+          <TVPreviewPressable focusId="category-drawer:close" focusScope="category-drawer" hasTVPreferredFocus={Platform.isTV && !items.some((item) => item.id === selected)} accessibilityRole="button" accessibilityLabel="Kategorileri kapat" onPress={closeAnimated} style={s.iconButton}>
             <Feather name="x" size={22} color={colors.mutedForeground} />
           </TVPreviewPressable>
         </View>
@@ -434,6 +439,7 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
             return <TVPreviewPressable
               focusId={`category-drawer:item:${item.id}`}
               focusScope="category-drawer"
+              hasTVPreferredFocus={Platform.isTV && item.id === selected}
               accessibilityRole="button"
               accessibilityLabel={item.name || "—"}
               accessibilityState={{ selected: active }}
@@ -458,7 +464,7 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
           windowSize={7}
         />
       </Animated.View>
-      <Pressable style={s.drawerDismiss} onPress={closeAnimated} />
+      <Pressable focusable={!Platform.isTV} style={s.drawerDismiss} onPress={closeAnimated} />
     </View>
   </Modal>;
 }
@@ -634,6 +640,7 @@ export function PagedLiveCatalog({
       keyExtractor={(channel) => channel.id}
       ListHeaderComponent={<CatalogHeader
         title={t("liveTv")}
+        onCategories={() => setDrawerOpen(true)}
         detail={stalkerLive && category === null
           ? t("categoryNotSelected")
           : `${t("channels", { count: countText(page.totalCount, page.countKnown) })}${epgLoading ? " · EPG…" : ""}`}
@@ -662,11 +669,15 @@ export function PagedLiveCatalog({
           ? <CatalogLoadingSkeleton text={t("loading")} />
           : <Text style={{ color: colors.mutedForeground, textAlign: "center", paddingVertical: 30 }}>—</Text>}
       ListFooterComponent={<PageFooter loading={page.loadingMore} />}
+      onScroll={(event) => {
+        if (Platform.isTV && event.nativeEvent.contentOffset.y > 0) liveUserScrolledRef.current = true;
+      }}
+      scrollEventThrottle={16}
       onScrollBeginDrag={() => {
         liveUserScrolledRef.current = true;
       }}
       onEndReached={() => {
-        if (Platform.isTV || liveUserScrolledRef.current) page.loadMore();
+        if (liveUserScrolledRef.current) page.loadMore();
       }}
       onEndReachedThreshold={0.45}
       renderItem={({ item: channel }) => {
@@ -699,9 +710,9 @@ export function PagedLiveCatalog({
               </Text>
             </View>
           </TVPreviewPressable>
-          <Pressable onPress={() => onFavorite(channel.id)} style={s.iconButton}>
+          <TVPreviewPressable focusId={`live-favorite:${channel.id}`} accessibilityLabel={`${channel.name} favori`} onPress={() => onFavorite(channel.id)} style={s.iconButton}>
             <Feather name="star" size={20} color={favorites.includes(channel.id) ? colors.primary : colors.mutedForeground} />
-          </Pressable>
+          </TVPreviewPressable>
         </View>;
       }}
       extraData={{ favorites, epgByChannel, epgClock }}
@@ -785,6 +796,7 @@ export function PagedMoviesCatalog({
       keyExtractor={(item) => String(item.stream_id)}
       ListHeaderComponent={<CatalogHeader
         title={t("movies")}
+        onCategories={() => setDrawerOpen(true)}
         detail={t("titles", { count: countText(page.totalCount, page.countKnown) })}
         search={search}
         onSearch={setSearch}
@@ -1004,6 +1016,7 @@ export function GoldenSeriesCatalog({
       keyExtractor={(item) => item.id}
       ListHeaderComponent={<CatalogHeader
         title={t("series")}
+        onCategories={() => setDrawerOpen(true)}
         detail={t("seriesCount", { count: countText(totalCount, countKnown) })}
         search={search}
         onSearch={onSearch}

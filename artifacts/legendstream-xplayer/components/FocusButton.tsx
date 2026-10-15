@@ -1,4 +1,3 @@
-import { useOptionalTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
 import { Feather } from '@expo/vector-icons';
 import React, { ReactNode, useRef, useState } from 'react';
 import { type AccessibilityRole, type AccessibilityState, Animated, Platform, Pressable, StyleProp, StyleSheet, Text, ViewStyle } from 'react-native';
@@ -33,7 +32,6 @@ export function FocusButton({
   accessibilityState,
   onFocusChange,
 }: FocusButtonProps) {
-  const scope = useOptionalTVPreviewFocus();
   const colors = useColors();
   const [focused, setFocused] = useState(false);
   const scale = useRef(new Animated.Value(1)).current;
@@ -63,7 +61,7 @@ export function FocusButton({
     <Animated.View style={[tvFocused ? styles.tvGlowWrap : null, { transform: [{ scale }] }]}>
       <Pressable
         testID={testID}
-        focusable={!disabled && (!Platform.isTV || !scope || scope.nativeScope === "content")}
+        focusable={!disabled}
         hasTVPreferredFocus={Platform.isTV && hasTVPreferredFocus}
         disabled={disabled}
         onPress={onPress}

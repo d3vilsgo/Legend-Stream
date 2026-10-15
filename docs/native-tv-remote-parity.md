@@ -14,7 +14,8 @@ Base: `feature/r18-native-tv-universal-apk`. Homatics 4K V2 / Universal APK #487
 - `PlayerGestureLayer.tsx`: TV'de mevcut enabled prop'u üzerinden dokunmatik katman devre dışı bırakılır. Dosyası değiştirilmez.
 - `VlcPlaybackSurface.tsx`: mevcut oynatma, track, fit, codec, diagnostic/redaction ve provider URL çözümleme akışı değiştirilmez.
 - Native köprü yalnız gerçek Android TV uiMode ve aktif player sırasında key event yakalar. Kontroller görünürken D-pad/OK Android FocusFinder'a bırakılır. Back native köprü tarafından tüketilmez. Yakalanan key-down'un key-up'ı da tüketilir; çift OK önlenir.
-- Canlı katalog D-pad ile scroll edildiğinde onScrollBeginDrag gelmediği için pagination engeli vardı; TV için bu koşul kaldırılır. Native listelerde clipping kapatılır; sanallaştırma/batch sınırları korunur. Android ScrollView requestChildFocus odaklanan child'ı görünür alana kaydırır.
+- Kategoriler için TV'de açık bir kumanda hedefi eklenir; swipe zorunluluğu kaldırılır. Sıralama ve favoriler de kararlı kimlikli, görünür odaklı hedeflerdir.
+- Canlı katalog D-pad ile scroll edildiğinde onScrollBeginDrag gelmediği için pagination engeli vardı; TV scroll offset ilerlemesi de kullanıcı kaydırmasını işaretler; ilk render sırasında sayfalama engeli korunur. Native listelerde clipping kapatılır; sanallaştırma/batch sınırları korunur. Android ScrollView requestChildFocus odaklanan child'ı görünür alana kaydırır.
 
 ## Mobil eylem → TV eşlemesi
 
@@ -41,7 +42,7 @@ Base: `feature/r18-native-tv-universal-apk`. Homatics 4K V2 / Universal APK #487
 
 ## Otomatik doğrulama ve sınır
 
-`nativeTvRemoteScenarios.ts`: Back önceliği, çoklu sahiplik temizliği, media tuşları, bağlama göre seek/kanal/reveal ve odak komşuluğu için davranış testleri. Mevcut TV Preview 32 senaryo ve Universal APK kontratı korunur. İki kaynak assertion'ı yeni presentedView/native scope mimarisine eşit güçte uyarlanmıştır; assertion silinmez.
+`nativeTvRemoteScenarios.ts`: Back önceliği, çoklu sahiplik temizliği, media tuşları, bağlama göre seek/kanal/reveal ve odak komşuluğu için davranış testleri. Mevcut TV Preview 32 senaryo ve Universal APK kontratı korunur. Mevcut katalog/navigation assertion'ları korunur; yalnız Native TV focusable source kontratı scope mimarisine uyarlanmıştır; assertion silinmez.
 
 Bu testler fiziksel native focus veya VLC oynatma ispatı değildir. Gerçek cihazdaki odak komşuluğu, sanallaştırma sınırları, Menu tuşunun firmware tarafından iletilmesi, track seçimi ve sağlayıcı uyumu aşağıdaki fiziksel turda doğrulanmalıdır.
 

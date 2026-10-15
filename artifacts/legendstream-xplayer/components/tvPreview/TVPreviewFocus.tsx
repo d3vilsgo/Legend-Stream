@@ -54,6 +54,8 @@ export function TVPreviewFocusProvider({ children }: { children: ReactNode }) {
     const popPreview = controller.pushFocusScope(scope);
     const frame = { scope, previous: nativeFocusRef.current };
     nativeScopes.current.push(frame);
+    nativeFocusRef.current = null;
+    setNativeFocusedId(null);
     setNativeScope(scope);
     return () => {
       popPreview();
@@ -124,6 +126,7 @@ export function TVPreviewPressable({ focusId, focusScope = "content", style, onP
   const id = focusId ?? nativeID ?? accessibilityLabel ?? generatedId;
 
   const measureAndRegister = useCallback(() => {
+    if (!focus.enabled) return; // Native focus events alone own the physical highlight.
     type MeasurablePressable = React.ElementRef<typeof Pressable> & {
       measureInWindow?: (callback: (x: number, y: number, width: number, height: number) => void) => void;
       focus?: () => void;
