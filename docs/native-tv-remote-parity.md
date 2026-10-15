@@ -15,7 +15,7 @@ Base: `feature/r18-native-tv-universal-apk`. Homatics 4K V2 / Universal APK #487
 - `PlayerChrome.tsx`, `PlayerChromeV2.tsx`: aynı action callback'leri, aynı VLC, aynı track/codec/content panelleri kullanılır. Yeni playback engine veya provider protokol yolu yoktur. Büyük TV hedefleri, görünür odak etiketi ve beyaz odak çerçevesi eklenir.
 - `PlayerGestureLayer.tsx`: TV'de mevcut enabled prop'u üzerinden dokunmatik katman devre dışı bırakılır. Dosyası değiştirilmez.
 - `VlcPlaybackSurface.tsx`: mevcut oynatma, track, fit, codec, diagnostic/redaction ve provider URL çözümleme akışı değiştirilmez.
-- Native köprü yalnız gerçek Android TV uiMode ve aktif player sırasında key event yakalar. Kontroller görünürken D-pad/OK Android FocusFinder'a bırakılır. Back native köprü tarafından tüketilmez. Yakalanan key-down'un key-up'ı da tüketilir; çift OK önlenir.
+- Native köprü gerçek Android TV uiMode üzerinde ortak odak grafiğini yönetir; görünür hedeflerde D-pad üretim yön politikasına, OK gerçek View.performClick üzerinden mevcut onPress callback’ine gider. Player açıkken Back native katmanda tek kez tüketilip yalnız root player handler’ına gönderilir. Yakalanan key-down ve key-up birlikte tüketilir; çift OK önlenir.
 - Kategoriler için TV'de açık bir kumanda hedefi eklenir; swipe zorunluluğu kaldırılır. Sıralama ve favoriler de kararlı kimlikli, görünür odaklı hedeflerdir.
 - Canlı katalog D-pad ile scroll edildiğinde onScrollBeginDrag gelmediği için pagination engeli vardı; TV scroll offset ilerlemesi de kullanıcı kaydırmasını işaretler; ilk render sırasında sayfalama engeli korunur. Native listelerde clipping kapatılır; sanallaştırma/batch sınırları korunur. Android ScrollView requestChildFocus odaklanan child'ı görünür alana kaydırır.
 
@@ -69,4 +69,4 @@ Bu testler fiziksel native focus veya VLC oynatma ispatı değildir. Gerçek cih
 17. Telefon TV Preview'da Home/Live/VOD/Series sanal D-pad ve kategori scope regresyonunu kontrol et.
 18. ARM64 + ARMv7 LibVLC dizinleri, paket, imza ve Universal versionCode mevcut APK workflow'unda ayrıca zorunludur.
 
-Son karar: Homatics fiziksel sonucu gelene kadar NATIVE_TV_PHYSICAL_PENDING; hiçbir PR merge edilmez.
+Son karar: APK #491 için NATIVE_TV_PHYSICAL_FAIL devam eder. Yeni adayın Homatics fiziksel sonucu gelmeden PASS verilmez; hiçbir PR merge edilmez.
