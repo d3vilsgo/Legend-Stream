@@ -19,7 +19,7 @@ class LegendStreamTvRemoteModule : Module() {
 
   private fun detach() {
     val window = attachedWindow
-    if (window?.callback === wrapper) window.callback = original
+    if (window != null && window.callback === wrapper) window.callback = original
     original = null
     wrapper = null
     attachedWindow = null
