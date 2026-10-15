@@ -1,3 +1,4 @@
+import { useOptionalTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
 import { claimPlayerBack, resolvePlayerBack } from "@/lib/playerRemoteOwnership";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -119,6 +120,11 @@ export function CompatibilityVideoPlayer({
   onFullscreenExit?: () => void;
   allowDownload?: boolean;
 }) {
+  const focus = useOptionalTVPreviewFocus();
+  const pushScope = focus?.pushFocusScope;
+  useEffect(() => {
+    if (Platform.isTV) return pushScope?.("player");
+  }, [pushScope]);
   const { getProgress, saveProgress } = useMediaLibrary();
   const {
     provider,

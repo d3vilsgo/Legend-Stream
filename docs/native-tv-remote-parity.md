@@ -9,7 +9,7 @@ Base: `feature/r18-native-tv-universal-apk`. Homatics 4K V2 / Universal APK #487
 - `FocusButton.tsx`, `ResponsiveContentNav.tsx`: navigation hedefleri mevcut native odak stilini korur; player Back sahipliği varken navigation Back tüketmez.
 - `OptimizedHomeScreenPaged.tsx`: TV player katalog bileşenlerini unmount ediyordu. TV'de katalog player altında tutulur; kategori, yüklenmiş sayfalar, Series detayı ve scroll korunur. Telefonun mevcut ayrı player render yolu korunur. StalkerMainPage zaten overlay kullanıyordu.
 - `NativeTVFocusScope.tsx`: Android ViewGroup descendantFocusability ile bütün arka plan hedefleri engellenir. Yalnız `focusable=false` yeterli değildir: React Native 0.81.5 ReactViewManager erişilebilirlik için native focusable bayrağını kaldırmaz.
-- `CompatibilityVideoPlayerV2.tsx`: panel → kontroller → çıkış sırası TV'ye uygulanır. Katalog Back listener'ları ortak sahipliği kontrol eder. İlerleme kaydetme hatası çıkışı engellemez. TV kontrolleri kendiliğinden kaybolmaz; Back ile kapatılır.
+- `CompatibilityVideoPlayerV2.tsx`: panel → kontroller → çıkış sırası TV'ye uygulanır. Katalog Back listener'ları ortak sahipliği kontrol eder. İlerleme kaydetme hatası çıkışı engellemez. Player scope hazırlık ve çıkış dahil bütün player ömrü boyunca tutulur. TV kontrolleri kendiliğinden kaybolmaz; Back ile kapatılır.
 - `PlayerChrome.tsx`, `PlayerChromeV2.tsx`: aynı action callback'leri, aynı VLC, aynı track/codec/content panelleri kullanılır. Yeni playback engine veya provider protokol yolu yoktur. Büyük TV hedefleri, görünür odak etiketi ve beyaz odak çerçevesi eklenir.
 - `PlayerGestureLayer.tsx`: TV'de mevcut enabled prop'u üzerinden dokunmatik katman devre dışı bırakılır. Dosyası değiştirilmez.
 - `VlcPlaybackSurface.tsx`: mevcut oynatma, track, fit, codec, diagnostic/redaction ve provider URL çözümleme akışı değiştirilmez.
@@ -26,7 +26,7 @@ Base: `feature/r18-native-tv-universal-apk`. Homatics 4K V2 / Universal APK #487
 | Çıkış/stop | Çıkış simgesinde OK, media Stop veya Back sırası | Panel, kontroller, sonra exitPlayer |
 | Önceki/sonraki kanal | Dock OK; kontroller gizliyken Yukarı/Aşağı; media previous/next | Aynı onMoveRelative ve queue sınırları |
 | Kanal/içerik listesi | Liste simgesinde OK | Mevcut FlatList paneli; seçili satıra başlangıç kaydırma |
-| VOD seek/progress | Geri 10 / ileri 15 düğmelerinde OK; kontroller gizliyken Sol/Sağ | Aynı seekBy; canlıda seek yok; duration yoksa handler işlem yapmaz |
+| VOD seek/progress | Geri 10 / ileri 15 düğmelerinde OK; kontroller gizliyken Sol/Sağ | Aynı seekBy; canlıda seek yok; duration yoksa seek hedefleri disabled olur ve açıklama gösterilir |
 | Ses parçası | Ses simgesi → satırda OK | Aynı track ID; boş panel açıklaması ve kapatma hedefi |
 | Altyazı | CC → satırda OK | Kapalı ve mevcut gömülü parçalar; olmayan track açıklanır |
 | Görüntü oranı | Fit simgesinde OK | Aynı fit/full/original/16:9/4:3 döngüsü |
@@ -34,7 +34,7 @@ Base: `feature/r18-native-tv-universal-apk`. Homatics 4K V2 / Universal APK #487
 | EPG şimdi/sıradaki | Kontrollerle birlikte mevcut InfoCard | Mevcut epgNow/epgNext verisi; Stalker probe ürün EPG sayılmaz |
 | Oynatıcı bilgisi | Kontrollerle birlikte mevcut durum/teknik bant | Codec, çözünürlük, FPS, mevcut hata/toast panelleri |
 | İndirme | Mevcut allowDownload izin veriyorsa dock OK | Mevcut download callback ve durum |
-| PiP | Mevcut pipSupported izin veriyorsa dock OK | Aynı PiP callback; cihaz desteği fiziksel testte doğrulanır |
+| PiP | Gerçek native cihaz yeteneği izin veriyorsa dock OK | Aynı PiP callback; destek yoksa TV'de disabled PiP hedefi gösterilir; fiziksel test gerekir |
 | Ekranı döndür | TV'de gösterilmez | Sabit TV panelinde cihaz dönüşü anlamlı değildir |
 | Parlaklık kaydırma | TV'de dokunma hareketi yok | Panel parlaklığı TV/monitörün kendi ayarıdır |
 | Ses kaydırma | TV/AVR kumandasının ses tuşları | Android sistem ses tuşları köprüde yakalanmaz |

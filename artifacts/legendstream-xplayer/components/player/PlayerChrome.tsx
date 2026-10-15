@@ -1,5 +1,4 @@
 import { resolveTvRemoteAction } from "@/lib/tvPlayerRemote";
-import { useOptionalTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
 import { PlayerRemotePressable as Pressable } from "./PlayerRemotePressable";
 import { configureTvRemote, subscribeTvRemote } from "@/modules/legendstream-tv-remote";
 import { Feather, MaterialIcons } from "@expo/vector-icons";
@@ -149,11 +148,6 @@ const formatRemaining = (end?: number) => {
 };
 
 export function PlayerChrome(props: Props) {
-  const focus = useOptionalTVPreviewFocus();
-  const pushScope = focus?.pushFocusScope;
-  useEffect(() => {
-    if (Platform.isTV) return pushScope?.("player");
-  }, [pushScope]);
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const portrait = height > width;
@@ -265,11 +259,12 @@ export function PlayerChrome(props: Props) {
       icon: "rotate-cw" as FeatherName,
       onPress: chrome.onRotate,
     }] : []),
-    ...(chrome.pipSupported ? [{
+    ...((chrome.pipSupported || Platform.isTV) ? [{
       key: "pip",
-      label: "Picture in Picture",
+      label: chrome.pipSupported ? "Picture in Picture" : "PiP bu cihazda desteklenmiyor",
+      disabled: !chrome.pipSupported,
       materialIcon: "picture-in-picture" as MaterialName,
-      subLabel: "PiP",
+      subLabel: chrome.pipSupported ? "PiP" : "PiP yok",
       onPress: chrome.onEnterPip,
     }] : []),
     {
@@ -395,7 +390,8 @@ export function PlayerChrome(props: Props) {
             <RoundButton
               icon="rotate-ccw"
               badge="10"
-              label="10 saniye geri"
+              disabled={Platform.isTV && chrome.duration <= 0}
+              label={Platform.isTV && chrome.duration <= 0 ? "Süre bilgisi bekleniyor" : "10 saniye geri"}
               onPress={() => chrome.onSeekBy(-10)}
               size={Math.round((portrait ? 54 : 58) * uiScale)}
               iconSize={Math.round((portrait ? 27 : 30) * uiScale)}
@@ -429,7 +425,8 @@ export function PlayerChrome(props: Props) {
             <RoundButton
               icon="rotate-cw"
               badge="15"
-              label="15 saniye ileri"
+              disabled={Platform.isTV && chrome.duration <= 0}
+              label={Platform.isTV && chrome.duration <= 0 ? "Süre bilgisi bekleniyor" : "15 saniye ileri"}
               onPress={() => chrome.onSeekBy(15)}
               size={Math.round((portrait ? 54 : 58) * uiScale)}
               iconSize={Math.round((portrait ? 27 : 30) * uiScale)}
@@ -471,6 +468,7 @@ export function PlayerChrome(props: Props) {
             </View>
           ) : null}
 
+          {Platform.isTV && chrome.mediaKind !== "live" && chrome.duration <= 0 ? <Text style={{ color: "#cbd5e1", textAlign: "center", marginBottom: 8 }}>İlerletme için süre bilgisi bekleniyor.</Text> : null}
           {bottomInfo ? (
             <VideoInfoBand
               text={bottomInfo}
@@ -540,6 +538,7 @@ function InfoCard({ opacity, portrait, scale, top, left, right, title, live, epg
           </Text>
         </View>
 
+        {live && Platform.isTV && !hasEpg ? <Text style={styles.epgMuted}>Bu yayında program bilgisi yok.</Text> : null}
         {live && hasEpg ? (
           <View style={[styles.epgBlock, { marginTop: Math.round(2 * scale) }]}>
             {epgLoading && !epgNow ? (
@@ -591,16 +590,18 @@ function ModeChip({ icon, text, scale, accent }: { icon: FeatherName; text: stri
   );
 }
 
-function RoundButton({ icon, badge, label, onPress, size, iconSize }: {
+function RoundButton({ icon, badge, label, onPress, size, iconSize, disabled = false }: {
   icon: FeatherName;
   badge?: string;
   label: string;
   onPress: () => void;
   size: number;
   iconSize: number;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
+      disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={label}
       onPress={onPress}
