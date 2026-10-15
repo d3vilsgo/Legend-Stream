@@ -29,11 +29,13 @@ class LegendStreamTvRemoteModule : Module() {
   private var catalogRootTag: Int? = null
   private var inspectorEnabled = false
   private var inspectorSequence = 0
-  private val anonymousIds = mutableMapOf<Int, String>()
+  private var inspectorSalt = java.util.UUID.randomUUID().toString()
   private fun safeId(tag: Int, raw: String): String {
     val fixed = setOf("nav:home","nav:live","nav:movies","nav:series","nav:settings","nav:history","nav:downloads","player:play-pause","player:exit","player:channels","player:audio","player:subtitles","player:codec")
     if(raw in fixed) return raw.replace("nav:","navigation:")
-    return anonymousIds.getOrPut(tag) { "target:${anonymousIds.size+1}" }
+    val source=if(raw.isEmpty()) "native:$tag" else raw
+    val digest=java.security.MessageDigest.getInstance("SHA-256").digest((inspectorSalt+source).toByteArray(Charsets.UTF_8))
+    return "target:"+java.math.BigInteger(1,digest.copyOfRange(0,8)).toString()
   }
   private fun diagnostic(kind: String, key: String = "", phase: String = "", handled: Boolean = false) {
     if(!inspectorEnabled) return
@@ -237,7 +239,7 @@ class LegendStreamTvRemoteModule : Module() {
     Name("LegendStreamTvRemote")
     Events("onRemoteKey","onNativeFocus","onInspector")
     AsyncFunction("setInspector") { enabled: Boolean ->
-      inspectorEnabled=enabled;inspectorSequence=0;anonymousIds.clear()
+      inspectorEnabled=enabled;inspectorSequence=0;inspectorSalt=java.util.UUID.randomUUID().toString()
       if(enabled) {attach();inspectDialogs(attachedWindow?.decorView);diagnostic("snapshot")} else clearInspectedWindows()
       true
     }.runOnQueue(Queues.MAIN)

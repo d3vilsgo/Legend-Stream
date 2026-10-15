@@ -26,7 +26,7 @@ Panelde ayrı kanıtlar:
 - `action`: ortak gerçek React onPress callback'i döndü; root player Back kararı (`back-panel`, `back-controls`, `back-exit`); ayrıca controls/panel state commit ve player mount/unmount. `back-exit` çıkış isteğidir; katalog screen state ve unmount dönüşü doğrular. Oynatma motorunun işi tamamladığı iddia edilmez.
 - `screen`: Paged/Stalker gerçek view state commit'i; focus'tan bağımsız.
 
-Sabit navigasyon/player eylemleri allowlist kimliklidir. Diğer katalog/kategori/legacy hedefleri native tag'den `target:N` olur; aynı mount ve inspector oturumu boyunca kararlıdır. Sanallaştırılan öğe remount olduğunda yeni tag/anonim ID alabilir; içerik kimliği veya sağlayıcı kimliği kaydedilmez. Mevcut uygulama focus restore semantik ID'leri değiştirilmez.
+Sabit navigasyon/player eylemleri allowlist kimliklidir. Diğer katalog/kategori hedefleri mevcut semantik focus ID’nin oturuma özel tuzlu SHA-256 özetinden `target:N` olur; inspector oturumu içinde aynı semantik hedef remount olsa da aynı anonim ID üretilir. Ham kimlik tutulmaz/yayılmaz. Semantik kaydı olmayan legacy hedefler native tag kullanır ve yalnız mount ömründe kararlıdır. İçerik veya sağlayıcı kimliği teşhis kaydına girmez. Mevcut uygulama focus restore semantik ID'leri değiştirilmez.
 
 Tuşlar UP/DOWN/LEFT/RIGHT/OK/BACK/PLAY_PAUSE/PLAY/PAUSE/MENU/STOP/NEXT/PREVIOUS; standart gamepad button aralığı GAMEPAD, diğerleri OTHER. HOME, ses, güç veya firmware'in uygulamaya iletmediği olaylar izlenemez. Sessizlik, tuşa basılmadığını kanıtlamaz. Ekrandaki panelden sistem seviyesinde yakalama iddiası çıkarılamaz.
 
