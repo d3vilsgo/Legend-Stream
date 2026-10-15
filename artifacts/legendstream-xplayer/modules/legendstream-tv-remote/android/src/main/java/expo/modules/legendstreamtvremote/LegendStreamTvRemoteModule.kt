@@ -13,6 +13,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
 import android.view.Window
+import android.widget.EditText
 import expo.modules.kotlin.functions.Queues
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -21,6 +22,8 @@ import expo.modules.kotlin.modules.ModuleDefinition
 class LegendStreamTvRemoteModule : Module() {
   private data class Entry(val tag: Int, val id: String, val scope: String, val region: String, val preferred: Boolean)
   private val targets = linkedMapOf<Int, Entry>()
+  private val legacyTargets = linkedMapOf<Int, Entry>()
+  private fun entries(): List<Entry> = targets.values.toList()+legacyTargets.values.filter { !targets.containsKey(it.tag) }
   private val remembered = mutableMapOf<String, String>()
   private var activeScope = "content"
   private var catalogRootTag: Int? = null
@@ -66,7 +69,7 @@ class LegendStreamTvRemoteModule : Module() {
       }
       next.foreground = LayerDrawable(arrayOf(dark,light))
     }
-    val entry = next?.let { targets[it.id] }
+    val entry = next?.let { targets[it.id] ?: legacyTargets[it.id] }
     if(entry!=null) remembered[entry.scope]=entry.id
     sendEvent("onNativeFocus", mapOf("tag" to (next?.id ?: -1), "id" to (entry?.id ?: "")))
   }
@@ -81,13 +84,24 @@ class LegendStreamTvRemoteModule : Module() {
   }
   private fun restore() {
     val id=remembered[activeScope]
-    val entry=targets.values.firstOrNull { it.scope==activeScope && it.id==id }
-      ?: targets.values.firstOrNull { it.scope==activeScope && it.preferred }
+    fun valid(entry: Entry)=entry.scope==activeScope && view(entry.tag)?.let {it.isShown && it.isEnabled}==true
+    val entry=entries().firstOrNull { it.id==id && valid(it) }
+      ?: entries().firstOrNull { it.preferred && valid(it) }
     if(entry!=null) attachedWindow?.decorView?.postDelayed({ if(entry.scope==activeScope) focus(entry) },32)
   }
   private fun move(direction: String): Boolean {
     val currentView=attachedWindow?.currentFocus ?: return false
-    val current=targets[currentView.id] ?: return false
+    if(activeScope=="content") {
+      // Retain native access to legacy Pressables and EditTexts (search/settings/EPG).
+      // Primary catalog rows/cards keep their explicit semantic IDs in targets.
+      legacyTargets.clear()
+      val root=catalogRootTag?.let {view(it)} ?: attachedWindow?.decorView
+      val focusables=ArrayList<View>();root?.addFocusables(focusables,View.FOCUS_FORWARD,View.FOCUSABLES_ALL)
+      for(v in focusables) if(!targets.containsKey(v.id) && v.id!=View.NO_ID && v.isEnabled && (v.isClickable || v is EditText)) {
+        legacyTargets[v.id]=Entry(v.id,"native:${catalogRootTag ?: 0}:${v.id}","content","content",false)
+      }
+    }
+    val current=targets[currentView.id] ?: legacyTargets[currentView.id] ?: return false
     fun measured(entry: Entry): TvFocusPolicy.Target? {
       val v=view(entry.tag) ?: return null
       if(!v.isAttachedToWindow || !v.isShown || !v.isEnabled || v.width<=0 || v.height<=0) return null
@@ -95,9 +109,9 @@ class LegendStreamTvRemoteModule : Module() {
       return TvFocusPolicy.Target(entry.tag,entry.id,entry.scope,entry.region,xy[0].toFloat(),xy[1].toFloat(),v.width.toFloat(),v.height.toFloat())
     }
     val currentRect=measured(current) ?: return true
-    val candidates=targets.values.filter { it.scope==activeScope }.mapNotNull { measured(it) }
+    val candidates=entries().filter { it.scope==activeScope }.mapNotNull { measured(it) }
     val next=TvFocusPolicy.move(currentRect,direction,candidates,activeScope)
-    if(next!=null) targets[next.tag]?.let { focus(it) }
+    if(next!=null) (targets[next.tag] ?: legacyTargets[next.tag])?.let { focus(it) }
     return true // A boundary retains the actual target; it never selects an arbitrary item.
   }
   private fun detach() {
@@ -127,8 +141,9 @@ class LegendStreamTvRemoteModule : Module() {
           if(direction!=null && move(direction)) {consumed.add(event.keyCode);return true}
           if(select) {
             val current=window.currentFocus
-            val entry=current?.let {targets[it.id]}
+            val entry=current?.let {targets[it.id] ?: legacyTargets[it.id]}
             if(entry!=null) {
+              if(entry.scope==activeScope && current is EditText) return previous.dispatchKeyEvent(event)
               consumed.add(event.keyCode)
               if(entry.scope==activeScope && event.repeatCount==0) current?.performClick()
               else if(entry.scope!=activeScope) restore()
@@ -180,7 +195,7 @@ class LegendStreamTvRemoteModule : Module() {
     }.runOnQueue(Queues.MAIN)
     AsyncFunction("setFocusBlocked") { tag: Int,blocked: Boolean ->
       val group=view(tag) as? ViewGroup ?: return@AsyncFunction false
-      if(catalogRootTag!=tag) {catalogRootTag=tag;remembered.remove("content")}
+      if(catalogRootTag!=tag) {catalogRootTag=tag;remembered.remove("content");legacyTargets.clear()}
       group.descendantFocusability=if(blocked) ViewGroup.FOCUS_BLOCK_DESCENDANTS else ViewGroup.FOCUS_AFTER_DESCENDANTS
       if(blocked) group.clearFocus() else restore()
       true
@@ -189,6 +204,6 @@ class LegendStreamTvRemoteModule : Module() {
       playerActive=active;hidden=controlsHidden
       attach()
     }.runOnQueue(Queues.MAIN)
-    OnDestroy { appContext.currentActivity?.runOnUiThread {detach();targets.clear();remembered.clear()} }
+    OnDestroy { appContext.currentActivity?.runOnUiThread {detach();targets.clear();legacyTargets.clear();remembered.clear()} }
   }
 }

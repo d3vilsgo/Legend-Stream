@@ -51,6 +51,10 @@ public class TvFocusPolicyScenarios {
     actions.put(poster.tag,()->screen[0]="series-detail");actions.get(poster.tag).run();check(screen[0].equals("series-detail"),"Poster action opens detail state");
     Target episode=t(41,"episode:one","content","content",440,210);actions.put(episode.tag,()->screen[0]="player");actions.get(episode.tag).run();check(screen[0].equals("player"),"Episode action opens playback state");
     check(a.id.equals("live:a"),"Stable content identity survives policy movement");
+    Target search=t(90,"native:root:search","content","content",110,80);grid.add(search);
+    check(move(live,"down",grid,"content")==search,"Legacy search target is reachable from navigation");
+    check(move(search,"down",grid,"content")==b,"Legacy controls retain access to registered catalog rows");
+    check(move(search,"up",grid,"content")==live,"Legacy control returns to navigation");
     System.out.println("Native JVM focus scenarios: "+passed+"/"+passed+" passed");
   }
 }
