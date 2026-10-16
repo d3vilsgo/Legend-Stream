@@ -1,4 +1,4 @@
-import { PlayerRemotePressable as Pressable } from "./PlayerRemotePressable";
+import { PlayerRemotePressable as Pressable, PlayerRemoteFocusBoundary } from "./PlayerRemotePressable";
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import React, { memo, useMemo, useState } from "react";
@@ -303,11 +303,11 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
       ) : null}
 
       {props.panel ? (
-        <View style={panelStyle}>
+        <PlayerRemoteFocusBoundary scope={`player-panel:${props.panel}`}><View style={panelStyle}>
           <LinearGradient colors={["rgba(14,165,233,.18)", "rgba(6,11,20,0)"]} style={styles.panelGlow} pointerEvents="none" />
-          {Platform.isTV ? <Pressable nativeID="player:panel-close" accessibilityLabel="Paneli kapat" hasTVPreferredFocus={props.panel === "audio" && !props.audioTracks.length} onPress={() => props.onTogglePanel(props.panel!)} style={{ padding: 16 }}><Text style={{ color: "white", fontSize: 18 }}>← Paneli kapat</Text></Pressable> : null}
+          {Platform.isTV ? <Pressable nativeID="player:panel-close" accessibilityLabel="Paneli kapat" hasTVPreferredFocus={Platform.isTV} onPress={() => props.onTogglePanel(props.panel!)} style={{ padding: 16 }}><Text style={{ color: "white", fontSize: 18 }}>← Paneli kapat</Text></Pressable> : null}
           <PanelContent {...props} />
-        </View>
+        </View></PlayerRemoteFocusBoundary>
       ) : null}
 
       {props.downloadState === "downloading" ? (

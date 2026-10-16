@@ -16,6 +16,7 @@ export function TVRemoteInspectorOverlay(){
  if(!Platform.isTV||!state.enabled)return null;
  const recent=[...state.records].reverse();
  const lastKey=recent.find(r=>r.type==="input" && (r.phase==="DOWN"||r.phase==="REPEAT"));
+ const lastFocus=recent.find(r=>r.type==="focus"||r.type==="snapshot");
  const lastAction=recent.find(r=>r.type==="action"||r.type==="screen");
  const end=Math.max(0,state.records.length-state.page*5);
  const rows=state.history?state.records.slice(Math.max(0,end-5),end):state.records.slice(-2);
@@ -23,8 +24,9 @@ export function TVRemoteInspectorOverlay(){
  <Text style={{color:"#67e8f9",fontSize:18,fontWeight:"700"}}>REMOTE INPUT / FOCUS · {state.screen}</Text>
  <Text style={{color:"#fde047",fontSize:17}}>Tuş: {lastKey?`#${lastKey.n} ${lastKey.key} ${lastKey.phase}`:"Henüz native tuş algılanmadı"}</Text>
  <Text style={{color:"#86efac",fontSize:15}}>Son eylem/state: {lastAction?`#${lastAction.n} ${lastAction.result}`:"Henüz eylem kanıtı yok"}</Text>
+ <Text style={{color:lastFocus?.withoutInput?"#fb923c":"#cbd5e1",fontSize:14}}>Kaynak: {lastFocus?.source??"henüz yok"} · odak/son tuş arası: {lastFocus && lastFocus.inputAgeMs>=0?`${Math.round(lastFocus.inputAgeMs)} ms`:"bilinmiyor"}{lastFocus?.withoutInput?" · TUŞSUZ ODAK":""}</Text>
  <Text style={{color:"white",fontSize:16}}>Odak: {state.focus} · scope: {state.scope}</Text>
- {!state.collapsed? <><Text style={{color:"#cbd5e1",fontSize:14}}>Tuş ≠ odak ≠ eylem · Sistemce iletilmeyen tuşlar görülemez</Text>{rows.map(r=><Text key={r.n} style={{color:r.type==="input"?"#fde047":r.type==="action"?"#86efac":"white",fontSize:13,marginTop:3}}>#{r.n} {r.type} {r.key} {r.phase} · {r.result} · {r.before} → {r.after} · {r.screen} / {r.context} / {r.scope}</Text>)}</>:null}
+ {!state.collapsed? <><Text style={{color:"#cbd5e1",fontSize:14}}>Tuş ≠ odak ≠ eylem · Sistemce iletilmeyen tuşlar görülemez</Text>{rows.map(r=><Text key={r.n} style={{color:r.type==="input"?"#fde047":r.type==="action"?"#86efac":"white",fontSize:13,marginTop:3}}>#{r.n} {r.type} {r.key} {r.phase} {r.delivery??""} · {r.result} · {r.before} → {r.after} · {r.screen} / {r.context} / {r.scope} · {r.source} · Δtuş={r.inputAgeMs<0?"yok":`${Math.round(r.inputAgeMs)}ms`}</Text>)}</>:null}
  </View>;
 }
 

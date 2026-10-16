@@ -1,24 +1,26 @@
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { findNodeHandle, Platform, type View } from "react-native";
 import { registerTvTarget, unregisterTvTarget, subscribeNativeTvFocus } from "@/modules/legendstream-tv-remote";
-
-/** Does not rely on RN Paper onFocus/onBlur, which discard surfaceId=-1 events. */
+/** Native registration describes identity; layout never requests physical focus. */
 export function useNativeTvTarget(ref: RefObject<View | null>, id: string, scope="content", region="content", disabled=false, preferred=false) {
-  const [focused,setFocused]=useState(false);
-  const tagRef=useRef<number | null>(null);
-  const register=useCallback(() => {
-    if(!Platform.isTV) return;
-    const tag=findNodeHandle(ref.current);
-    if(tag==null) return;
-    tagRef.current=tag;
-    if(disabled) {void unregisterTvTarget(tag);setFocused(false);return;}
-    void registerTvTarget(tag,id,scope,scope==="content" ? region : "player",preferred);
-  },[disabled,id,preferred,ref,region,scope]);
-  useLayoutEffect(() => {
-    if(!Platform.isTV) return;
-    const subscription=subscribeNativeTvFocus((event) => setFocused(event.tag===tagRef.current && !disabled));
-    register();
-    return () => {subscription?.remove(); if(tagRef.current!=null) void unregisterTvTarget(tagRef.current);};
-  },[disabled,register]);
-  return {focused,register};
+ const [focused,setFocused]=useState(false);
+ const current=useRef<{tag:number;identity:string}|null>(null);
+ const disabledRef=useRef(disabled);disabledRef.current=disabled;
+ const register=useCallback(()=>{
+  if(!Platform.isTV)return;
+  const tag=findNodeHandle(ref.current);if(tag==null)return;
+  const identity=JSON.stringify([id,scope,region,disabled,preferred]);
+  if(current.current?.tag===tag&&current.current.identity===identity)return;
+  if(current.current && (disabled || current.current.tag!==tag))void unregisterTvTarget(current.current.tag);
+  current.current={tag,identity};
+  if(disabled){setFocused(false);return;}
+  void registerTvTarget(tag,id,scope,scope==="content"?region:"player",preferred);
+ },[disabled,id,preferred,ref,region,scope]);
+ useLayoutEffect(()=>{register();},[register]);
+ useLayoutEffect(()=>{
+  if(!Platform.isTV)return;
+  const sub=subscribeNativeTvFocus(e=>setFocused(e.tag===current.current?.tag&&!disabledRef.current));
+  return ()=>{sub?.remove();if(current.current)void unregisterTvTarget(current.current.tag);current.current=null;};
+ },[]);
+ return {focused,register};
 }

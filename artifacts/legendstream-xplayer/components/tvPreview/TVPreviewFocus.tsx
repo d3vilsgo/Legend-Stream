@@ -78,7 +78,7 @@ export function TVPreviewFocusProvider({ children }: { children: ReactNode }) {
       setNativeScope(nativeScopes.current.at(-1)?.scope ?? "content");
       if (frame.previous) {
         rememberNativeFocus(frame.previous);
-        requestAnimationFrame(() => nativeTargets.current.get(frame.previous!)?.());
+        // Native scope transition is the sole physical restore owner.
       }
     };
   }, [controller, rememberNativeFocus]);
@@ -208,14 +208,14 @@ export function TVPreviewPressable({ focusId, focusScope = "content", style, onP
     disabled={disabled}
     // Native TVs use Android's FocusFinder; handheld preview uses the JS controller.
     focusable={!disabled && (Platform.isTV ? focus.nativeScope === focusScope : focus.enabled || undefined)}
-    hasTVPreferredFocus={Platform.isTV ? focus.nativeScope === focusScope && (focus.nativeFocusedId ? focus.nativeFocusedId === id : props.hasTVPreferredFocus) : props.hasTVPreferredFocus}
+    hasTVPreferredFocus={Platform.isTV ? false : props.hasTVPreferredFocus}
     accessibilityLabel={accessibilityLabel}
     nativeID={nativeID ?? id}
     onLayout={(event) => { nativeFocus.register(); onLayout?.(event); measureAndRegister(); }}
     onFocus={(event) => { setNativeFocused(true); if (Platform.isTV) focus.rememberNativeFocus(id); onFocus?.(event); }}
     onBlur={(event) => { setNativeFocused(false); onBlur?.(event); }}
     onPress={onPress ? (event)=>{onPress(event);if(Platform.isTV)inspectorAction("onPress");} : undefined}
-    style={(state) => [typeof style === "function" ? style(state) : style, ((focus.enabled && focus.focusedId === id) || (Platform.isTV && (nativeFocus.focused || nativeFocused))) && { borderColor: "#ffffff", borderWidth: 4, backgroundColor: "#075985", shadowColor: colors.primary, shadowOpacity: 0.65, shadowRadius: 10, elevation: 8 }]}
+    style={(state) => [typeof style === "function" ? style(state) : style, Platform.isTV && {borderWidth:4,borderColor:"transparent"}, ((focus.enabled && focus.focusedId === id) || (Platform.isTV && nativeFocus.focused)) && { borderColor: "#ffffff", borderWidth: 4, backgroundColor: "#075985", shadowColor: colors.primary, shadowOpacity: 0.65, shadowRadius: 10, elevation: 8 }]}
   >{children}</Pressable>;
 }
 

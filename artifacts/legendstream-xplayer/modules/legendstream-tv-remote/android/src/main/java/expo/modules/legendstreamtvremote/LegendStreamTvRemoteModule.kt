@@ -42,9 +42,9 @@ class LegendStreamTvRemoteModule : Module() {
   }
   private fun diagnostic(kind: String, key: String = "", phase: String = "", handled: Boolean = false) {
     if(!inspectorEnabled) return
-    val current=outlined ?: attachedWindow?.currentFocus
+    val current=actualFocus()
     val entry=current?.let {targets[it.id] ?: legacyTargets[it.id]}
-    sendEvent("onInspector",mapOf("kind" to kind,"sequence" to inspectorSequence,"key" to key,"phase" to phase,"handled" to handled,"focus" to (entry?.let {safeId(it.tag,it.id)} ?: if(current!=null) safeId(current.id,"") else "none"),"scope" to (if(activeScope=="content" || activeScope=="player") activeScope else "modal"),"context" to (if(playerActive) if(hidden) "player-hidden" else "player-controls" else "catalog")))
+    sendEvent("onInspector",mapOf("timeMs" to now(),"inputAgeMs" to (if(lastInputAt<0) -1L else now()-lastInputAt),"beforeFocus" to focusBefore,"cause" to focusCause,"withoutInput" to withoutInput,"delivery" to delivery,"kind" to kind,"sequence" to inspectorSequence,"key" to key,"phase" to phase,"handled" to handled,"focus" to (entry?.let {safeId(it.tag,it.id)} ?: if(current!=null) safeId(current.id,"") else "none"),"scope" to (if(activeScope in setOf("content","player","player-panel:content","player-panel:audio","player-panel:subtitles","player-panel:codec")) activeScope else "modal"),"context" to (if(playerActive) if(hidden) "player-hidden" else "player-controls" else "catalog")))
   }
   private var playerActive = false
   private var hidden = false
@@ -56,6 +56,37 @@ class LegendStreamTvRemoteModule : Module() {
   private var outlined: View? = null
   private var originalForeground: Drawable? = null
   private val consumed = mutableSetOf<Int>()
+  private val stability=TvFocusStability()
+  private var pendingRestore:Runnable?=null
+  private var requestedCause=""
+  private var dispatchingInput=false
+  private var delivery="fresh"
+  private var lastInputAt=-1L
+  private var lastStructureAt=-1L
+  private var lastStructure="layout"
+  private var observedFocusId="none"
+  private var focusBefore="none"
+  private var focusCause="snapshot"
+  private var withoutInput=false
+  private var layoutListener:ViewTreeObserver.OnGlobalLayoutListener?=null
+  private fun now()=android.os.SystemClock.elapsedRealtime()
+  private fun structural(reason:String){if(reason=="layout"&&lastStructure!="layout"&&now()-lastStructureAt<=100)return;lastStructure=reason;lastStructureAt=now()}
+  private fun cancelRestore(){stability.invalidate();pendingRestore?.let {attachedWindow?.decorView?.removeCallbacks(it)};pendingRestore=null}
+  private fun actualFocus():View? = outlined?.takeIf {it.hasFocus() && it.isAttachedToWindow} ?: attachedWindow?.currentFocus
+  private fun hasActiveFocus():Boolean {
+    val current=actualFocus() ?: return false
+    val entry=targets[current.id] ?: legacyTargets[current.id]
+    if(entry!=null)return entry.scope==activeScope && current.isShown && current.isEnabled
+    if(activeScope!="content" || !(current.isClickable || current is EditText))return false
+    var ancestor:android.view.ViewParent?=current.parent
+    while(ancestor!=null){if((ancestor as? View)?.id==catalogRootTag)return true;ancestor=ancestor.parent}
+    return false
+  }
+  private fun anonymousFocus(v:View?):String {
+    if(v==null)return "none"
+    val entry=targets[v.id] ?: legacyTargets[v.id]
+    return safeId(v.id,entry?.id ?: "")
+  }
 
   private fun isTv(): Boolean {
     val activity = appContext.currentActivity ?: return false
@@ -76,6 +107,11 @@ class LegendStreamTvRemoteModule : Module() {
   }
   private fun outline(next: View?) {
     if(next==null && outlined?.hasFocus()==true) return
+    if(next===outlined)return
+    focusBefore=observedFocusId
+    focusCause=TvFocusStability.cause(requestedCause,dispatchingInput,if(lastStructureAt<0) -1L else now()-lastStructureAt,lastStructure)
+    withoutInput=!dispatchingInput && (lastInputAt<0 || now()-lastInputAt>150)
+    cancelRestore()
     outlined?.foreground = originalForeground
     outlined = next
     originalForeground = next?.foreground
@@ -91,24 +127,37 @@ class LegendStreamTvRemoteModule : Module() {
     }
     val entry = next?.let { targets[it.id] ?: legacyTargets[it.id] }
     if(entry!=null) remembered[entry.scope]=entry.id
+    observedFocusId=anonymousFocus(next)
     diagnostic("focus")
     sendEvent("onNativeFocus", mapOf("tag" to (next?.id ?: -1), "id" to (entry?.id ?: "")))
   }
-  private fun focus(entry: Entry): Boolean {
+  private fun focus(entry: Entry,cause:String="explicit-restore"): Boolean {
     if(entry.scope!=activeScope) return false
     val target=view(entry.tag) ?: return false
     if(!target.isAttachedToWindow || !target.isShown || !target.isEnabled) return false
     target.requestRectangleOnScreen(Rect(0,0,target.width,target.height),false)
-    val focused=target.requestFocus()
-    if(focused) outline(target)
-    return focused
+    val previousCause=requestedCause;requestedCause=cause
+    try {
+      val focused=target.requestFocus()
+      if(focused && target.hasFocus())outline(target)
+      return focused
+    } finally {requestedCause=previousCause}
   }
-  private fun restore() {
+  private fun restore(reason:String="scope-restore") {
+    if(hasActiveFocus())return
+    pendingRestore?.let {attachedWindow?.decorView?.removeCallbacks(it)}
     val id=remembered[activeScope]
-    fun valid(entry: Entry)=entry.scope==activeScope && view(entry.tag)?.let {it.isShown && it.isEnabled}==true
-    val entry=entries().firstOrNull { it.id==id && valid(it) }
-      ?: entries().firstOrNull { it.preferred && valid(it) }
-    if(entry!=null) attachedWindow?.decorView?.postDelayed({ if(entry.scope==activeScope) focus(entry) },32)
+    fun valid(entry:Entry)=entry.scope==activeScope && view(entry.tag)?.let {it.isAttachedToWindow && it.isShown && it.isEnabled}==true
+    // Missing remembered item waits for its mount; no arbitrary preferred fallback.
+    val entry=if(id!=null) entries().firstOrNull {it.id==id&&valid(it)} else entries().firstOrNull {it.preferred&&valid(it)}
+    if(entry==null)return
+    val ticket=stability.schedule()
+    val task=Runnable {
+      pendingRestore=null
+      val same=targets[entry.tag]?.let {it.id==entry.id&&it.scope==activeScope}==true
+      if(stability.canRestore(ticket,hasActiveFocus(),same&&valid(entry)))focus(entry,reason)
+    }
+    pendingRestore=task;attachedWindow?.decorView?.postDelayed(task,32)
   }
   private fun move(direction: String): Boolean {
     val currentView=attachedWindow?.currentFocus ?: return false
@@ -123,6 +172,7 @@ class LegendStreamTvRemoteModule : Module() {
       }
     }
     val current=targets[currentView.id] ?: legacyTargets[currentView.id] ?: return false
+    if(current.scope!=activeScope){restore("scope-restore");return true}
     fun measured(entry: Entry): TvFocusPolicy.Target? {
       val v=view(entry.tag) ?: return null
       if(!v.isAttachedToWindow || !v.isShown || !v.isEnabled || v.width<=0 || v.height<=0) return null
@@ -132,10 +182,13 @@ class LegendStreamTvRemoteModule : Module() {
     val currentRect=measured(current) ?: return true
     val candidates=entries().filter { it.scope==activeScope }.mapNotNull { measured(it) }
     val next=TvFocusPolicy.move(currentRect,direction,candidates,activeScope)
-    if(next!=null) (targets[next.tag] ?: legacyTargets[next.tag])?.let { focus(it) }
+    if(next!=null) (targets[next.tag] ?: legacyTargets[next.tag])?.let { focus(it,"native-input") }
     return true // A boundary retains the actual target; it never selects an arbitrary item.
   }
   private fun detach() {
+    cancelRestore();stability.clear()
+    layoutListener?.let {if(attachedWindow?.decorView?.viewTreeObserver?.isAlive==true) attachedWindow?.decorView?.viewTreeObserver?.removeOnGlobalLayoutListener(it)}
+    layoutListener=null
     clearInspectedWindows()
     val window=attachedWindow
     if(window!=null && window.callback===wrapper) window.callback=original
@@ -169,7 +222,13 @@ class LegendStreamTvRemoteModule : Module() {
     if(root is ViewGroup) for(i in 0 until root.childCount) inspectDialogs(root.getChildAt(i))
   }
   private fun observeKey(event:KeyEvent, dispatch:()->Boolean):Boolean {
-    if(!inspectorEnabled) return dispatch()
+    if(event.action==KeyEvent.ACTION_DOWN || event.action==KeyEvent.ACTION_UP)lastInputAt=now()
+    if(event.action==KeyEvent.ACTION_DOWN)cancelRestore()
+    val eventId=TvFocusStability.eventId(event.deviceId,event.downTime,event.keyCode,event.action,event.repeatCount)
+    val press=TvFocusStability.eventId(event.deviceId,event.downTime,event.keyCode,0,0)
+    delivery=if(stability.lateRepeat(press,event.action,event.repeatCount)) "late-repeat" else if(stability.seen(eventId)) "duplicate" else if(event.repeatCount>0) "repeat" else "fresh"
+    val wasDispatching=dispatchingInput;dispatchingInput=true
+    if(!inspectorEnabled)try {return dispatch()} finally {dispatchingInput=wasDispatching}
         val key=when(event.keyCode) {
           KeyEvent.KEYCODE_DPAD_UP->"UP";KeyEvent.KEYCODE_DPAD_DOWN->"DOWN";KeyEvent.KEYCODE_DPAD_LEFT->"LEFT";KeyEvent.KEYCODE_DPAD_RIGHT->"RIGHT"
           KeyEvent.KEYCODE_DPAD_CENTER,KeyEvent.KEYCODE_ENTER->"OK";KeyEvent.KEYCODE_BACK->"BACK";KeyEvent.KEYCODE_MENU->"MENU"
@@ -180,9 +239,11 @@ class LegendStreamTvRemoteModule : Module() {
         val phase=if(event.action==KeyEvent.ACTION_DOWN) if(event.repeatCount>0) "REPEAT" else "DOWN" else if(event.action==KeyEvent.ACTION_UP) "UP" else "OTHER"
         if(event.action==KeyEvent.ACTION_DOWN) inspectorSequence++
         diagnostic("input",key,phase)
-        val handled=dispatch()
-        diagnostic("dispatch",key,phase,handled)
-        return handled
+        try {
+          val handled=dispatch()
+          diagnostic("dispatch",key,phase,handled)
+          return handled
+        } finally {dispatchingInput=wasDispatching}
   }
   private fun attach(): Boolean {
     if(!isTv()) return false
@@ -193,9 +254,21 @@ class LegendStreamTvRemoteModule : Module() {
     original=previous;attachedWindow=window
     val listener=ViewTreeObserver.OnGlobalFocusChangeListener { _, next -> outline(next) }
     focusListener=listener;window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener(listener)
+    val layout=ViewTreeObserver.OnGlobalLayoutListener {structural("layout")}
+    layoutListener=layout;window.decorView.viewTreeObserver.addOnGlobalLayoutListener(layout)
     val callback=object: Window.Callback by previous {
       override fun dispatchKeyEvent(event: KeyEvent): Boolean {
-        return observeKey(event) { dispatchObserved(event) }
+        return observeKey(event) {
+          val id=TvFocusStability.eventId(event.deviceId,event.downTime,event.keyCode,event.action,event.repeatCount)
+          val press=TvFocusStability.eventId(event.deviceId,event.downTime,event.keyCode,0,0)
+          if(event.action==KeyEvent.ACTION_UP)stability.release(press)
+          if(stability.lateRepeat(press,event.action,event.repeatCount)) true
+          else if(stability.seen(id)) stability.result(id) ?: previous.dispatchKeyEvent(event)
+          else {
+            stability.begin(id)
+            val result=dispatchObserved(event);stability.finish(id,result);result
+          }
+        }
       }
       private fun dispatchObserved(event: KeyEvent): Boolean {
         if(event.action==KeyEvent.ACTION_UP && consumed.remove(event.keyCode)) return true
@@ -229,7 +302,7 @@ class LegendStreamTvRemoteModule : Module() {
         if(name==null) return previous.dispatchKeyEvent(event)
         if(event.action==KeyEvent.ACTION_DOWN) {
           consumed.add(event.keyCode)
-          if(event.repeatCount==0) sendEvent("onRemoteKey",mapOf("key" to name,"code" to event.keyCode))
+          if(event.repeatCount==0 || direction!=null) sendEvent("onRemoteKey",mapOf("key" to name,"code" to event.keyCode))
         }
         return true
       }
@@ -243,30 +316,35 @@ class LegendStreamTvRemoteModule : Module() {
     Events("onRemoteKey","onNativeFocus","onInspector")
     AsyncFunction("setInspector") { enabled: Boolean ->
       inspectorEnabled=enabled;inspectorSequence=0;inspectorSalt=java.util.UUID.randomUUID().toString()
-      if(enabled) {attach();inspectDialogs(attachedWindow?.decorView);diagnostic("snapshot")} else clearInspectedWindows()
+      if(enabled) {attach();observedFocusId=anonymousFocus(actualFocus());focusBefore=observedFocusId;focusCause="snapshot";withoutInput=false;inspectDialogs(attachedWindow?.decorView);diagnostic("snapshot")} else clearInspectedWindows()
       true
     }.runOnQueue(Queues.MAIN)
     AsyncFunction("registerTarget") { tag: Int,id: String,scope: String,region: String,preferred: Boolean ->
       if(!attach()) return@AsyncFunction false
+      val previous=targets[tag]
       targets[tag]=Entry(tag,id,scope,region,preferred)
+      if(previous==null)structural("target-registration")
       view(tag)?.let {watchModal(it)}
-      if(attachedWindow?.currentFocus?.id==tag) outline(view(tag))
-      val current=attachedWindow?.currentFocus?.let {targets[it.id]}
-      if(scope==activeScope && (current==null || current.scope!=activeScope) && (remembered[scope]==id || preferred)) restore()
+      if(actualFocus()?.id==tag){remembered[scope]=id;observedFocusId=anonymousFocus(view(tag));sendEvent("onNativeFocus",mapOf("tag" to tag,"id" to id))}
+      val current=actualFocus()?.let {targets[it.id]}
+      if(scope==activeScope && (current==null || current.scope!=activeScope) && (remembered[scope]==id || preferred)) restore("mount-restore")
       true
     }.runOnQueue(Queues.MAIN)
-    AsyncFunction("unregisterTarget") { tag: Int -> targets.remove(tag);true }.runOnQueue(Queues.MAIN)
-    AsyncFunction("requestTargetFocus") { tag: Int -> targets[tag]?.let {focus(it)} ?: false }.runOnQueue(Queues.MAIN)
+    AsyncFunction("unregisterTarget") { tag: Int ->
+      val removed=targets.remove(tag)
+      if(removed!=null){structural("virtualization");cancelRestore()}
+      true }.runOnQueue(Queues.MAIN)
+    AsyncFunction("requestTargetFocus") { tag: Int -> targets[tag]?.let {cancelRestore();focus(it,"explicit-restore")} ?: false }.runOnQueue(Queues.MAIN)
     AsyncFunction("setScope") { scope: String ->
       if(!attach()) return@AsyncFunction false
-      if(activeScope!=scope) {activeScope=scope;restore()}
+      if(activeScope!=scope) {cancelRestore();structural(if(scope=="content"||scope=="player")"scope-transition" else "modal-transition");activeScope=scope;if(scope.startsWith("player-panel:"))remembered.remove(scope);restore("scope-restore")}
       true
     }.runOnQueue(Queues.MAIN)
     AsyncFunction("setFocusBlocked") { tag: Int,blocked: Boolean ->
       val group=view(tag) as? ViewGroup ?: return@AsyncFunction false
       if(catalogRootTag!=tag) {catalogRootTag=tag;remembered.remove("content");legacyTargets.clear()}
       group.descendantFocusability=if(blocked) ViewGroup.FOCUS_BLOCK_DESCENDANTS else ViewGroup.FOCUS_AFTER_DESCENDANTS
-      if(blocked) group.clearFocus() else restore()
+      if(blocked) {cancelRestore();group.clearFocus()} else restore("scope-unblock")
       true
     }.runOnQueue(Queues.MAIN)
     AsyncFunction("configure") { active: Boolean,controlsHidden: Boolean ->

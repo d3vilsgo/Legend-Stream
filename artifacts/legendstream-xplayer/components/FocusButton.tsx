@@ -51,7 +51,7 @@ export function FocusButton({
         ? colors.secondary
         : 'transparent';
   const foregroundColor = variant === 'primary' ? colors.primaryForeground : colors.foreground;
-  const tvFocused = Platform.isTV && (nativeFocus.focused || focused);
+  const tvFocused = Platform.isTV && nativeFocus.focused;
 
   const animateFocus = (next: boolean) => {
     setFocused(next);
@@ -74,7 +74,7 @@ export function FocusButton({
         onLayout={nativeFocus.register}
         testID={testID}
         focusable={!disabled}
-        hasTVPreferredFocus={Platform.isTV && hasTVPreferredFocus}
+        hasTVPreferredFocus={false}
         disabled={disabled}
         onPress={() => { onPress(); if(Platform.isTV) inspectorAction("onPress"); }}
         onFocus={() => animateFocus(true)}
@@ -84,7 +84,7 @@ export function FocusButton({
           {
             backgroundColor,
             borderColor: tvFocused ? "#fff" : colors.border,
-            borderWidth: tvFocused ? 3 : 1,
+            borderWidth: Platform.isTV ? 3 : 1,
             opacity: disabled ? 0.45 : 1,
           },
           tvFocused ? { shadowColor: colors.primary } : null,

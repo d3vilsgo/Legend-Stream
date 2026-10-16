@@ -1,3 +1,5 @@
+> 16 Ekim 2026: Tuşsuz odak denetimi ve tek restore sahipliği için [güncel rapor](native-tv-uncommanded-focus.md). Yeni stability policy 21 ve Inspector 35 senaryosu bu rapordaki başlangıç test kapsamını genişletir.
+
 # TV Remote Input & Focus Inspector
 
 Base gate: PR #136 OPEN / DRAFT / NOT MERGED, remote HEAD `d9f279ad4033c69906397a76750401a2d7d575ec`. Önceden verilen `338e73d...` güncel HEAD değildir. Base exact-SHA Quality #1218 / run 38713863010 SUCCESS; Universal APK #496 / run 38713869502 SUCCESS. Bunlar fiziksel kabul değildir. #491 Homatics Physical FAIL kararı korunur.
