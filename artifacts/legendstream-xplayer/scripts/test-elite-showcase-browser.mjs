@@ -1,3 +1,4 @@
+import { pathToFileURL } from "node:url";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { createServer } from "node:http";
@@ -180,9 +181,18 @@ try {
   await page
     .locator("#device")
     .screenshot({ path: join(evidence, "elite-mobile.png") });
+  const externalRequests = [];
+  page.on("request", (request) => {
+    if (/^https?:/.test(request.url())) externalRequests.push(request.url());
+  });
+  await page.goto(pathToFileURL(join(root, "Legend-Elite-V1.html")).href);
+  await target("hero:discover").waitFor();
+  await target("hero:discover").click();
+  await target("overlay:close").waitFor();
+  assert.deepEqual(externalRequests, []);
   assert.deepEqual(errors, []);
   process.stdout.write(
-    `Elite browser: ${cases}/60 responsive render/reveal cases, focus vs active/selected, OK, four-direction helper, overlay isolation and Escape restore passed\n`,
+    `Elite browser: ${cases}/60 responsive render/reveal cases, focus vs active/selected, OK, four-direction helper, overlay isolation and Escape restore and offline standalone HTML passed\n`,
   );
 } finally {
   await browser?.close();

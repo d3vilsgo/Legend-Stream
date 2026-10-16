@@ -51,7 +51,8 @@ for (const name of ["Inter_400Regular", "Inter_700Bold"])
   );
 standalone = standalone.replace(
   '<script src="elite.js"></script>',
-  "<script>" +
+  () =>
+    "<script>" +
     readFileSync(join(out, "elite.js"), "utf8").replaceAll(
       "</script",
       "<\\/script",
