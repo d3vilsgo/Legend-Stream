@@ -40,7 +40,7 @@ export function ResponsiveContentNav<Key extends string>({
   const presentation = useUiPresentation();
   const [open, setOpen] = useState(Platform.isTV || presentation.tvPreview);
   const [preferInitialFocus, setPreferInitialFocus] = useState(Platform.isTV);
-  const navigationFocusedRef = useRef(false);
+  const navigationFocusedIds = useRef(new Set<string>());
   const profile = useMemo(() => resolvePremiumCatalogProfile({
     width,
     height,
@@ -71,7 +71,7 @@ export function ResponsiveContentNav<Key extends string>({
     const backTarget = model.backTarget;
     const back = BackHandler.addEventListener("hardwareBackPress", () => {
       if (hasPlayerBackOwner()) return false;
-      if (!navigationFocusedRef.current) return false;
+      if (navigationFocusedIds.current.size === 0) return false;
       onSelect(backTarget);
       return true;
     });
@@ -102,7 +102,7 @@ export function ResponsiveContentNav<Key extends string>({
             accessibilityRole="tab"
             accessibilityState={{ selected: activeKey === item.key }}
             hasTVPreferredFocus={preferInitialFocus && activeKey === item.key && activeKey === homeKey}
-            onFocusChange={(focused) => { navigationFocusedRef.current = focused; }}
+            onFocusChange={(focused) => { if (focused) navigationFocusedIds.current.add(item.key); else navigationFocusedIds.current.delete(item.key); }}
             onPress={() => select(item.key)}
             labelLines={1}
             labelStyle={{ fontSize: tv.labelFont, flexShrink: 1 }}
