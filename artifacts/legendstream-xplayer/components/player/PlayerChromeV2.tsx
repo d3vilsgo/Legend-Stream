@@ -490,18 +490,18 @@ function ToolButton({
     <Pressable
       onPress={onPress}
       disabled={disabled}
-      style={({ pressed }) => [styles.tool, disabled && styles.disabled, pressed && styles.toolPressed]}
+      style={({ pressed }) => [styles.tool, Platform.isTV && styles.toolTv, disabled && styles.disabled, pressed && styles.toolPressed]}
       hitSlop={4}
     >
-      <View style={[styles.toolIcon, (active || accent) && styles.toolIconAccent, active && styles.toolIconActive]}>
+      <View style={[styles.toolIcon, Platform.isTV && styles.toolIconTv, (active || accent) && styles.toolIconAccent, active && styles.toolIconActive]}>
         {glyph ? (
           <Text style={[styles.toolGlyph, (active || accent) && styles.toolGlyphAccent]}>{glyph}</Text>
         ) : icon ? (
-          <Feather name={icon} size={19} color={(active || accent) ? "#67e8f9" : "#f8fafc"} />
+          <Feather name={icon} size={Platform.isTV ? 24 : 19} color={(active || accent) ? "#67e8f9" : "#f8fafc"} />
         ) : null}
       </View>
-      <Text numberOfLines={1} style={[styles.toolLabel, active && styles.toolLabelActive]}>{label}</Text>
-      {meta ? <Text style={styles.toolMeta}>{meta}</Text> : null}
+      <Text numberOfLines={1} style={[styles.toolLabel, Platform.isTV && styles.toolLabelTv, active && styles.toolLabelActive]}>{label}</Text>
+      {meta ? <Text style={[styles.toolMeta, Platform.isTV && styles.toolMetaTv]}>{meta}</Text> : null}
     </Pressable>
   );
 }
@@ -580,15 +580,19 @@ const styles = StyleSheet.create({
   dockContent: { alignItems: "center", paddingHorizontal: 8, paddingVertical: 7, gap: 2 },
   dockDivider: { width: 1, height: 34, marginHorizontal: 4, backgroundColor: "rgba(255,255,255,.11)" },
   tool: { width: 58, minHeight: 57, borderRadius: 14, alignItems: "center", justifyContent: "center", paddingHorizontal: 3, paddingVertical: 3 },
+  toolTv: { width: 104, minHeight: 82, paddingHorizontal: 8, paddingVertical: 8 },
   toolPressed: { backgroundColor: "rgba(255,255,255,.07)", transform: [{ scale: 0.96 }] },
   toolIcon: { width: 32, height: 30, borderRadius: 10, alignItems: "center", justifyContent: "center", borderWidth: 1, borderColor: "transparent" },
+  toolIconTv: { width: 42, height: 40 },
   toolIconAccent: { backgroundColor: "rgba(34,211,238,.09)", borderColor: "rgba(34,211,238,.22)" },
   toolIconActive: { backgroundColor: "rgba(34,211,238,.18)", borderColor: "rgba(103,232,249,.42)" },
   toolGlyph: { color: "#f8fafc", fontSize: 11, fontWeight: "900", letterSpacing: -0.2 },
   toolGlyphAccent: { color: "#67e8f9" },
   toolLabel: { color: "#cbd5e1", fontSize: 8.5, fontWeight: "800", marginTop: 1 },
+  toolLabelTv: { fontSize: 14, marginTop: 4 },
   toolLabelActive: { color: "#fff" },
   toolMeta: { color: "#67e8f9", fontSize: 7.5, fontWeight: "900", marginTop: -1, letterSpacing: 0.3 },
+  toolMetaTv: { fontSize: 12, marginTop: 2 },
 
   panel: {
     position: "absolute", zIndex: 11, right: 16, top: 82, bottom: 92,
