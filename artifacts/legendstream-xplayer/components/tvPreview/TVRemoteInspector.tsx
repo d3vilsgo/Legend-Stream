@@ -1,5 +1,5 @@
 import React, {useEffect,useReducer} from "react";
-import {Platform,Text,View} from "react-native";
+import {Platform,Text,View,useWindowDimensions} from "react-native";
 import {FocusButton} from "@/components/FocusButton";
 import {tvInspector} from "@/lib/tvRemoteInspector";
 import {setNativeInspector,subscribeNativeInspector} from "@/modules/legendstream-tv-remote";
@@ -13,6 +13,7 @@ export function TVRemoteInspectorSetting(){
 }
 export function TVRemoteInspectorOverlay(){
  const state=useInspector();
+ const {width,height}=useWindowDimensions();
  if(!Platform.isTV||!state.enabled)return null;
  const recent=[...state.records].reverse();
  const lastKey=recent.find(r=>r.type==="input" && (r.phase==="DOWN"||r.phase==="REPEAT"));
@@ -20,7 +21,7 @@ export function TVRemoteInspectorOverlay(){
  const lastAction=recent.find(r=>r.type==="action"||r.type==="screen");
  const end=Math.max(0,state.records.length-state.page*5);
  const rows=state.history?state.records.slice(Math.max(0,end-5),end):state.records.slice(-2);
- return <View pointerEvents="none" accessible={false} focusable={false} style={{position:"absolute",right:32,top:32,width:state.collapsed?360:560,padding:14,borderRadius:10,backgroundColor:"rgba(0,0,0,.78)",borderWidth:1,borderColor:"#67e8f9",zIndex:99999,elevation:999}}>
+ return <View pointerEvents="none" accessible={false} focusable={false} style={{position:"absolute",right:16,top:16,width:Math.max(1,Math.min(state.collapsed?360:560,width-32)),maxHeight:Math.max(1,height-32),padding:14,borderRadius:10,backgroundColor:"rgba(0,0,0,.78)",borderWidth:1,borderColor:"#67e8f9",zIndex:99999,elevation:999}}>
  <Text style={{color:"#67e8f9",fontSize:18,fontWeight:"700"}}>REMOTE INPUT / FOCUS · {state.screen}</Text>
  <Text style={{color:"#fde047",fontSize:17}}>Tuş: {lastKey?`#${lastKey.n} ${lastKey.key} ${lastKey.phase}`:"Henüz native tuş algılanmadı"}</Text>
  <Text style={{color:"#86efac",fontSize:15}}>Son eylem/state: {lastAction?`#${lastAction.n} ${lastAction.result}`:"Henüz eylem kanıtı yok"}</Text>
