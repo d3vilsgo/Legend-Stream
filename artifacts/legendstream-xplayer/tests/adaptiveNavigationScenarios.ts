@@ -125,11 +125,15 @@ scenario("the navigation surface uses device profiles independently of orientati
 });
 scenario("TV nav buttons are not clipped into a focus trap and closed menus unmount tabs", () => {
   const nav = source("components/navigation/ResponsiveContentNav.tsx");
-  assert.ok(nav.includes("showsHorizontalScrollIndicator={false}"));
+  // Native TV keeps the scroll affordance visible; phone/tablet closed menus still unmount their tabs.
+  assert.ok(nav.includes("showsHorizontalScrollIndicator"));
   assert.ok(nav.includes("{open ? ("));
   assert.ok(nav.includes("BackHandler"));
   assert.ok(nav.includes("hardwareBackPress"));
-  assert.ok(nav.includes("if (!navigationFocusedRef.current) return false;"));
-  assert.ok(nav.includes("onFocusChange={(focused) => { navigationFocusedRef.current = focused; }}"));
+  // Track focus ownership per tab: a blur from one tab must not erase another focused tab.
+  assert.ok(nav.includes("navigationFocusedIds.current.size === 0"));
+  assert.ok(nav.includes("navigationFocusedIds.current.add(item.key)"));
+  assert.ok(nav.includes("navigationFocusedIds.current.delete(item.key)"));
+  assert.ok(!nav.includes("navigationFocusedRef.current"));
 });
 console.log(`premium adaptive navigation scenarios: ${passed}/${passed} passed`);
