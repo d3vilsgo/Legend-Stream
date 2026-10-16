@@ -1,4 +1,4 @@
-/** Fictional fixture vocabulary; no provider, title lookup, credentials, stream or playback engine. */
+/** Fictional, self-contained design fixture vocabulary. */
 export const eliteSections = [
   { id: "home", label: "Ana Sayfa", icon: "home" },
   { id: "live", label: "Canlı TV", icon: "tv" },
