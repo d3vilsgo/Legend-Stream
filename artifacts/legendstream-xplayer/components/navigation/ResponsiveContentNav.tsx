@@ -1,3 +1,4 @@
+import { nativeTvLayout } from "@/lib/nativeTvResponsive";
 import { hasPlayerBackOwner } from "@/lib/playerRemoteOwnership";
 import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -34,7 +35,8 @@ export function ResponsiveContentNav<Key extends string>({
 }: Props<Key>) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { width, height } = useWindowDimensions();
+  const { width, height, fontScale } = useWindowDimensions();
+  const tv = nativeTvLayout({ width, height, fontScale, safeArea: insets }, items.length);
   const presentation = useUiPresentation();
   const [open, setOpen] = useState(Platform.isTV || presentation.tvPreview);
   const [preferInitialFocus, setPreferInitialFocus] = useState(Platform.isTV);
@@ -85,8 +87,8 @@ export function ResponsiveContentNav<Key extends string>({
     return (
       <ScrollView
         horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={[styles.tvNav, { paddingHorizontal: Math.max(profile.horizontalPadding, insets.left, insets.right) }]}
+        showsHorizontalScrollIndicator
+        contentContainerStyle={[styles.tvNav, { paddingLeft: tv.left, paddingRight: tv.right, paddingTop: tv.top, paddingBottom: tv.gutter }]}
         accessibilityLabel="Ana gezinme"
       >
         {items.map((item) => (
@@ -102,7 +104,9 @@ export function ResponsiveContentNav<Key extends string>({
             hasTVPreferredFocus={preferInitialFocus && activeKey === item.key && activeKey === homeKey}
             onFocusChange={(focused) => { navigationFocusedRef.current = focused; }}
             onPress={() => select(item.key)}
-            style={styles.tvTarget}
+            labelLines={1}
+            labelStyle={{ fontSize: tv.labelFont, flexShrink: 1 }}
+            style={[styles.tvTarget, { width: tv.navWidth, minHeight: tv.target, paddingHorizontal: 10 }]}
           />
         ))}
       </ScrollView>

@@ -124,7 +124,7 @@ async function main() {
       assert.match(goldenCatalogSource, new RegExp(`function ${marker}|export function ${marker}`));
       assert.match(stalkerMoviesSource, new RegExp(`function ${marker}|export function ${marker}`));
     }
-    assert.match(stalkerMoviesSource, /const columns = width >= 900 \? 5 : width >= 650 \? 4 : width >= 420 \? 3 : 2/);
+    assert.match(stalkerMoviesSource, /const columns = Platform\.isTV \? grid\.columns : width >= 900 \? 5 : width >= 650 \? 4 : width >= 420 \? 3 : 2/);
     assert.match(stalkerMoviesSource, /onEndReachedThreshold=\{0\.55\}/);
     assert.match(stalkerMoviesSource, /shouldUseWholeCatalogLoadingSkeleton\(catalog\.loadingInitial, catalog\.visibleItems\.length, catalog\.search\)/);
     assert.match(stalkerMoviesSource, /ListEmptyComponent=\{catalog\.loadingInitial \|\| catalog\.searching[\s\S]*?<CatalogLoadingSkeleton text=\{t\("loadingMovies"\)\} \/>[\s\S]*?: <View style=\{s\.emptyGrid\}><Text>—<\/Text><\/View>\}/);
@@ -135,8 +135,8 @@ async function main() {
       stalkerMoviesSource.indexOf("function GridCard"),
       stalkerMoviesSource.indexOf("function PageFooter"),
     );
-    assert.match(cardSource, /function GridCard\(\{ title, image, onPress \}/);
-    assert.match(cardSource, /<Pressable onPress=\{onPress\} style=\{s\.card\}>/);
+    assert.match(cardSource, /function GridCard\(\{ focusId, title, image, onPress \}/);
+    assert.match(cardSource, /<TVPreviewPressable focusId=\{focusId\} accessibilityLabel=\{title\} onPress=\{onPress\} style=\{s\.card\}>/);
     assert.match(cardSource, /fontWeight: "700", padding: 9/);
     assert.doesNotMatch(cardSource, /loading|disabled=|ActivityIndicator|cardTitleRow|minHeight/);
     assert.doesNotMatch(stalkerMoviesSource, /cardTitleRow|resolvingItemId ===/);
@@ -191,7 +191,7 @@ async function main() {
     ];
     assert.deepEqual(sortStalkerSeriesItems(providerItems, "default").map((item) => item.id), ["20", "3"]);
     assert.deepEqual(sortStalkerSeriesItems(providerItems, "alphaAsc").map((item) => item.id), ["3", "20"]);
-    assert.match(goldenCatalogSource, /const columns = tvPreview[\s\S]*?width >= 900 \? 5 : width >= 650 \? 4 : width >= 420 \? 3 : 2/);
+    assert.match(goldenCatalogSource, /const columns = Platform\.isTV \? grid\.columns : tvPreview[\s\S]*?width >= 900 \? 5 : width >= 650 \? 4 : width >= 420 \? 3 : 2/);
     assert.match(goldenCatalogSource, /<CategoryDrawer visible=\{drawerOpen\}/);
     assert.match(goldenCatalogSource, /onEndReachedThreshold=\{0\.55\}/);
     assert.match(stalkerMainSource, /onDrawerVisibilityChange=\{setCatalogDrawerOpen\}/);

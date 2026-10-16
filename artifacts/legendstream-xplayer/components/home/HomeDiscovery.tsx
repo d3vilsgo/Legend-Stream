@@ -324,12 +324,13 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
 }) {
   const colors = useColors();
   const { width } = useWindowDimensions();
-  const cardWidth = Math.max(280, Math.min(width - 36, 1464));
+  const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
+  const cardWidth = Platform.isTV ? Math.max(1, measuredWidth ?? width - 112) : Math.max(280, Math.min(width - 36, 1464));
   const listRef = useRef<FlatList<HomeHeroEntry>>(null);
   const [index, setIndex] = useState(0);
 
   useEffect(() => {
-    if (items.length < 2) return;
+    if (Platform.isTV || items.length < 2) return;
     const timer = setInterval(() => {
       setIndex((current) => {
         const next = (current + 1) % items.length;
@@ -361,7 +362,7 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
     </TvFocusPressable>;
   }
 
-  return <View>
+  return <View onLayout={Platform.isTV ? event => setMeasuredWidth(event.nativeEvent.layout.width) : undefined}>
     <FlatList
       ref={listRef}
       data={items}

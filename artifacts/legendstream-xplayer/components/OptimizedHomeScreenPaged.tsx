@@ -1,3 +1,4 @@
+import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
 import { TVRemoteInspectorSetting } from "@/components/tvPreview/TVRemoteInspector";
 import { tvInspector } from "@/lib/tvRemoteInspector";
 import { NativeTVFocusScope } from "@/components/tvPreview/NativeTVFocusScope";
@@ -134,6 +135,7 @@ function snapshotCount(providerId: string, snapshotProviderId: string | undefine
 export default function OptimizedHomeScreenPaged() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const tvLayout = useNativeTvLayout();
   const { t } = useI18n();
   const {
     provider, providers, channels, epgByChannel, favorites, history, isHydrating, isLoading, isEpgLoading,
@@ -515,7 +517,7 @@ export default function OptimizedHomeScreenPaged() {
 
     {view === "history" ? <HistoryView providerId={provider.id} channels={resolvedFullHistoryIdentityChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
 
-    {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEnabled={!catalogDrawerOpen}>
+    {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={[s.content, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEnabled={!catalogDrawerOpen}>
       {view === "home" ? <HomeDiscovery
         provider={provider}
         live={provider.type === "stalker" ? homeLiveSource.totalCount : countKnown ? snapshot.counts.live : null}
