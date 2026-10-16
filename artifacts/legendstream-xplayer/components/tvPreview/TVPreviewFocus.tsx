@@ -128,8 +128,8 @@ export function useTVPreviewFocus() {
   return value;
 }
 
-type PreviewPressableProps = PressableProps & { focusId?: string; focusScope?: string };
-export function TVPreviewPressable({ focusId, focusScope = "content", style, onPress, children, disabled, onLayout, onFocus, onBlur, accessibilityLabel, nativeID, ...props }: PreviewPressableProps) {
+type PreviewPressableProps = PressableProps & { focusId?: string; focusScope?: string; eliteVisual?: boolean };
+export function TVPreviewPressable({ focusId, focusScope = "content", eliteVisual = false, style, onPress, children, disabled, onLayout, onFocus, onBlur, accessibilityLabel, nativeID, ...props }: PreviewPressableProps) {
   const focus = useTVPreviewFocus();
   const colors = useColors();
   const [nativeFocused, setNativeFocused] = useState(false);
@@ -215,7 +215,7 @@ export function TVPreviewPressable({ focusId, focusScope = "content", style, onP
     onFocus={(event) => { setNativeFocused(true); if (Platform.isTV) focus.rememberNativeFocus(id); onFocus?.(event); }}
     onBlur={(event) => { setNativeFocused(false); onBlur?.(event); }}
     onPress={onPress ? (event)=>{onPress(event);if(Platform.isTV)inspectorAction("onPress");} : undefined}
-    style={(state) => [typeof style === "function" ? style(state) : style, Platform.isTV && {borderWidth:4,borderColor:"transparent"}, ((focus.enabled && focus.focusedId === id) || (Platform.isTV && nativeFocus.focused)) && { borderColor: "#ffffff", borderWidth: 4, backgroundColor: "#075985", shadowColor: colors.primary, shadowOpacity: 0.65, shadowRadius: 10, elevation: 8 }]}
+    style={(state) => [typeof style === "function" ? style(state) : style, Platform.isTV && {borderWidth:4,borderColor:"transparent"}, ((focus.enabled && focus.focusedId === id) || (Platform.isTV && nativeFocus.focused)) && { borderColor: "#ffffff", borderWidth: 4, backgroundColor: eliteVisual ? "#1C2530" : "#075985", shadowColor: colors.primary, shadowOpacity: eliteVisual ? 0 : 0.65, shadowRadius: eliteVisual ? 0 : 10, elevation: eliteVisual ? 0 : 8 }]}
   >{children}</Pressable>;
 }
 

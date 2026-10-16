@@ -1,5 +1,7 @@
+import { EliteLiveCatalog } from "@/components/elite/EliteLiveCatalog";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  Platform,
   ActivityIndicator,
   FlatList,
   Image,
@@ -147,6 +149,15 @@ export function StalkerLiveCatalog({
 
   const selectedCategory = categories.find((item) => item.id === category) ?? null;
   const countLabel = page.countKnown && page.totalCount !== null ? page.totalCount.toLocaleString() : "—";
+
+  if (Platform.isTV) return <EliteLiveCatalog
+    key={providerId} idPrefix="stalker-live" categories={categories.map(item => ({id:item.id,name:item.title}))}
+    category={category} onCategory={setCategory} channels={page.items} epgByChannel={epgByChannel}
+    clock={epgClock} favorites={favorites} loading={refreshing || sync.syncing || page.loadingInitial}
+    loadingMore={page.loadingMore} search={search} onSearch={setSearch} onLoadMore={page.loadMore}
+    onRefresh={() => { void Promise.resolve(sync.refresh()).finally(() => { loadCategories(); page.reload(); }); }}
+    onOpen={onOpen} onFavorite={onFavorite}
+  />;
 
   return <StalkerCategoryPager
     categories={categories}

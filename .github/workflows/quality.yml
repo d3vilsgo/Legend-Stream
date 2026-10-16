@@ -275,6 +275,8 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvRemoteScenarios.ts
       - name: Native TV responsive dp matrix
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvResponsiveScenarios.ts
+      - name: Elite V2 Live responsive layout and selection
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/eliteLiveLayoutScenarios.ts
       - name: Elite design state, geometry, alpha contrast and isolation
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/eliteDesignScenarios.ts
       - name: Elite showcase build (same React Native components)

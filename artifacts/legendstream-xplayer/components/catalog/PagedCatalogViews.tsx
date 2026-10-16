@@ -1,3 +1,4 @@
+import { EliteLiveCatalog } from "@/components/elite/EliteLiveCatalog";
 import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
 import { useNativeTvCatalogGrid } from "@/hooks/useNativeTvCatalogGrid";
 import {TVRemoteInspectorOverlay} from "@/components/tvPreview/TVRemoteInspector";
@@ -638,6 +639,15 @@ export function PagedLiveCatalog({
   const initialEmpty = shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search);
   if (stalkerLive && !categoriesReady) return <CatalogLoadingSkeleton text={t("loading")} />;
   if (initialEmpty) return <CatalogLoadingSkeleton text={t("loading")} />;
+
+  if (Platform.isTV) return <EliteLiveCatalog
+    key={provider.id} idPrefix="live" categories={drawerItems} category={category} onCategory={setCategory}
+    channels={page.items} epgByChannel={epgByChannel} clock={epgClock} favorites={favorites}
+    loading={refreshing || page.loadingInitial} loadingMore={page.loadingMore}
+    search={search} onSearch={setSearch} onLoadMore={page.loadMore}
+    onRefresh={() => { void Promise.resolve(onRefresh()).finally(() => { reloadCategories(); page.reload(); }); }}
+    onOpen={channel => { if(provider.type === "m3u") recordM3ULivePress(); onOpen(channel); }} onFavorite={onFavorite}
+  />;
 
   return <View style={{ flex: 1, minHeight: 0 }} {...drawerSwipe.panHandlers}>
     <FlatList
