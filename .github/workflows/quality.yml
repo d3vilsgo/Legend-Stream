@@ -2,9 +2,9 @@ name: Quality
 
 on:
   pull_request:
-    branches: [feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, feature/r18-native-tv-universal-apk, main, feature/r18-presentation-foundation-1b, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad]
+    branches: [feature/r18-legend-elite-design-v1,feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, feature/r18-native-tv-universal-apk, main, feature/r18-presentation-foundation-1b, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad]
   push:
-    branches: [feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, main, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad, feature/r18-native-tv-universal-apk]
+    branches: [feature/r18-legend-elite-design-v1,feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, main, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad, feature/r18-native-tv-universal-apk]
 
 # Deterministic, read-only CI: dependency resolution must match pnpm-lock.yaml exactly.
 # Storage security gate: 6 credential scenarios + 24 backup scenarios must all pass.
@@ -275,6 +275,18 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvRemoteScenarios.ts
       - name: Native TV responsive dp matrix
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvResponsiveScenarios.ts
+      - name: Elite design state, geometry, alpha contrast and isolation
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/eliteDesignScenarios.ts
+      - name: Elite showcase build (same React Native components)
+        run: node artifacts/legendstream-xplayer/scripts/build-elite-showcase.mjs /tmp/legend-elite-preview
+      - name: Upload isolated Elite design showcase
+        uses: actions/upload-artifact@v4
+        with:
+          name: Legend-Elite-Design-Showcase-V1
+          path: /tmp/legend-elite-preview
+          retention-days: 14
+      - name: Elite source formatting
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/components/elite/EliteShowcase.tsx artifacts/legendstream-xplayer/lib/design/eliteTokens.ts artifacts/legendstream-xplayer/lib/design/eliteShowcaseModel.ts artifacts/legendstream-xplayer/showcase/elite.web.tsx artifacts/legendstream-xplayer/scripts/build-elite-showcase.mjs artifacts/legendstream-xplayer/scripts/test-elite-showcase-browser.mjs artifacts/legendstream-xplayer/tests/eliteDesignScenarios.ts
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references
