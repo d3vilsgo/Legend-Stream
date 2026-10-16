@@ -1,3 +1,5 @@
+import { TVRemoteInspectorSetting } from "@/components/tvPreview/TVRemoteInspector";
+import { tvInspector } from "@/lib/tvRemoteInspector";
 import { NativeTVFocusScope } from "@/components/tvPreview/NativeTVFocusScope";
 import { hasPlayerBackOwner } from "@/lib/playerRemoteOwnership";
 import AsyncStorage from "@react-native-async-storage/async-storage";
@@ -142,6 +144,7 @@ export default function OptimizedHomeScreenPaged() {
   useCredentialDiagnosticsStartup();
 
   const [view, setView] = useState<ViewName>("home");
+  useEffect(() => { tvInspector.observeScreen(view); }, [view]);
   const [editingProviderId, setEditingProviderId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
   const [playable, setPlayable] = useState<Playable | null>(null);
@@ -668,6 +671,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAd
   return <View>
     <Text style={[s.title, { color: colors.foreground }]}>{t("settings")}</Text>
       <TVPreviewSetting />
+      <TVRemoteInspectorSetting />
     <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16 }}>{t("activeConnection")}</Text>
       <Text style={{ color: colors.foreground }}>{provider.name}</Text>

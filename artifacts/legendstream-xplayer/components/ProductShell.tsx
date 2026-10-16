@@ -1,3 +1,4 @@
+import { TVRemoteInspectorOverlay, TVRemoteInspectorCollector } from "@/components/tvPreview/TVRemoteInspector";
 import React from "react";
 import { View } from "react-native";
 import { shortSafeId, traceStalker } from "@/lib/stalkerPlaybackTrace";
@@ -37,6 +38,8 @@ export default function ProductShell() {
         <View style={{ flex: 1, minHeight: 0 }}>
           <TVPreviewFocusRegion><ProductShellContent /></TVPreviewFocusRegion>
           <TVPreviewControls />
+          <TVRemoteInspectorCollector />
+          <TVRemoteInspectorOverlay />
         </View>
       </TVPreviewFocusProvider>
     </UiPresentationProvider>

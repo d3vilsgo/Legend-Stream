@@ -1,3 +1,5 @@
+import { TVRemoteInspectorSetting } from "@/components/tvPreview/TVRemoteInspector";
+import { tvInspector } from "@/lib/tvRemoteInspector";
 import { NativeTVFocusScope } from "@/components/tvPreview/NativeTVFocusScope";
 import { hasPlayerBackOwner } from "@/lib/playerRemoteOwnership";
 import { Feather } from "@expo/vector-icons";
@@ -165,6 +167,7 @@ export default function StalkerMainPage() {
   }, [provider?.id, provider?.type]);
 
   const [view, setView] = useState<StalkerViewName>("home");
+  useEffect(() => { tvInspector.observeScreen(view); }, [view]);
   const { setBackAction } = useTVPreviewFocus();
   const [playable, setPlayable] = useState<Playable | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -673,6 +676,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onSwitch, on
     <View>
       <Text style={[s.title, { color: colors.foreground }]}>{t("settings")}</Text>
       <TVPreviewSetting />
+      <TVRemoteInspectorSetting />
       <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}>
         <Text style={{ color: colors.foreground, fontWeight: "800", fontSize: 16 }}>{t("activeConnection")}</Text>
         <Text style={{ color: colors.foreground }}>{provider.name}</Text>

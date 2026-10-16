@@ -1,3 +1,4 @@
+import {TVRemoteInspectorOverlay} from "@/components/tvPreview/TVRemoteInspector";
 import { Feather } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -466,6 +467,7 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
       </Animated.View>
       <Pressable focusable={!Platform.isTV} style={s.drawerDismiss} onPress={closeAnimated} />
     </View>
+    <TVRemoteInspectorOverlay />
   </Modal>;
 }
 
