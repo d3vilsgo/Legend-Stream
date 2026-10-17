@@ -145,7 +145,7 @@ class LegendStreamTvRemoteModule : Module() {
     if(entry.scope!=activeScope) return false
     val target=view(entry.tag) ?: return false
     if(!target.isAttachedToWindow || !target.isShown || !target.isEnabled) return false
-    target.requestRectangleOnScreen(Rect(0,0,target.width,target.height),false)
+    target.requestRectangleOnScreen(Rect(0,0,target.width,target.height),cause=="native-input")
     val previousCause=requestedCause;requestedCause=cause
     try {
       val focused=target.requestFocus()
