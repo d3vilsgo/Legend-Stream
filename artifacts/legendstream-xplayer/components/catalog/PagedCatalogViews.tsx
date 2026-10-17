@@ -1,3 +1,5 @@
+import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
+import { currentMovie, pagedMovieInput, localXtreamMovie } from "@/lib/tmdb/movieInfoModel";
 import { EliteLiveCatalog } from "@/components/elite/EliteLiveCatalog";
 import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
 import { useNativeTvCatalogGrid } from "@/hooks/useNativeTvCatalogGrid";
@@ -776,6 +778,7 @@ export function PagedMoviesCatalog({
   const { t } = useI18n();
   const { width } = useWindowDimensions();
   const { tvPreview } = useUiPresentation();
+  const [infoMovie, setInfoMovie] = useState<XtreamVodItem | null>(null);
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "vod", provider.type === "m3u");
@@ -800,7 +803,8 @@ export function PagedMoviesCatalog({
     ? width >= 1600 ? 7 : width >= 1200 ? 6 : width >= 800 ? 5 : 4
     : width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
 
-  useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
+  useEffect(() => { if(infoMovie && !currentMovie(page.items,String(infoMovie.stream_id),item=>String(item.stream_id))) setInfoMovie(null); },[page.items,infoMovie]);
+  useEffect(() => onDrawerVisibilityChange(drawerOpen || infoMovie !== null), [drawerOpen, infoMovie, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
   if (shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search)) return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
 
@@ -836,7 +840,7 @@ export function PagedMoviesCatalog({
       onEndReached={page.loadMore}
       onEndReachedThreshold={0.55}
       renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
-        <GridCard focusId={`vod:${item.stream_id}`} title={item.name} image={item.stream_icon} onPress={() => onOpen(item)} />
+        <GridCard focusId={`vod:${item.stream_id}`} title={item.name} image={item.stream_icon} onPress={() => setInfoMovie(item)} />
       </View>}
       initialNumToRender={Math.max(8, columns * 3)}
       maxToRenderPerBatch={Math.max(8, columns * 3)}
@@ -845,6 +849,11 @@ export function PagedMoviesCatalog({
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     />
+    {infoMovie ? <MovieInfoModal
+      key={`${provider.id}:${infoMovie.stream_id}`}
+      input={pagedMovieInput(provider.id,provider.type === "m3u" ? "m3u" : "xtream",String(catalogRevision ?? "catalog"),infoMovie)}
+      local={localXtreamMovie(infoMovie)} onClose={() => setInfoMovie(null)} onPlay={() => { const current=currentMovie(page.items,String(infoMovie.stream_id),item=>String(item.stream_id)); if(current) onOpen(current); }}
+    /> : null}
     <CategoryDrawer visible={drawerOpen} items={drawerItems} selected={category} onClose={() => setDrawerOpen(false)} onSelect={setCategory} />
   </View>;
 }
