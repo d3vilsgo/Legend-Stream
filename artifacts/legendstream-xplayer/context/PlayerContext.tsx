@@ -29,7 +29,6 @@ import { credentialFieldsEqual, hasRequiredCredentialFields, migratedLegacyState
 import type { ProviderMetadataCommitMetrics } from "@/lib/providerBackupService";
 import {
   hydrateM3UProviderCache,
-  markM3UCacheActivation,
 } from "@/lib/m3uCatalogCache";
 import { persistM3ULoadInBackground } from "@/lib/m3uCacheWriteRunner";
 import {
@@ -616,7 +615,6 @@ const readState = async (liveHistory: LiveHistoryOwner): Promise<PlayerState> =>
       const cached = await hydrateM3UProviderCache(provider);
       if (cached) {
         next.channels = cached.live;
-        markM3UCacheActivation(provider.id);
       }
     } catch {
       // A cache read failure must preserve the existing network fallback path.

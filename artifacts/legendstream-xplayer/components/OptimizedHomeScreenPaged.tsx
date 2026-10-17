@@ -481,8 +481,8 @@ export default function OptimizedHomeScreenPaged() {
         if (activeProviderIdRef.current === requestProviderId) setCatalogError("Playback source could not be resolved.");
       });
   };
-  const openDownload = (item: DownloadedMedia) => { setPlayable({ title: item.title, subtitle: item.subtitle, url: item.uri, kind: "download", returnTo: "downloads" }); setView("player"); };
-  const openProgress = (item: MediaProgress) => { setPlayable({ title: item.title, subtitle: item.subtitle, url: item.source, kind: item.kind, returnTo: "history" }); setView("player"); };
+  const openDownload = (item: DownloadedMedia) => { beginPlaybackAttempt("unknown"); setPlayable({ title: item.title, subtitle: item.subtitle, url: item.uri, kind: "download", returnTo: "downloads" }); setView("player"); };
+  const openProgress = (item: MediaProgress) => { beginPlaybackAttempt(provider.type as ProviderKind); setPlayable({ title: item.title, subtitle: item.subtitle, url: item.source, kind: item.kind, returnTo: "history" }); setView("player"); };
 
   const presentedView = view === "player" ? playable?.returnTo ?? "home" : view;
   if (!Platform.isTV && view === "player") return <View style={s.fullPlayer}>

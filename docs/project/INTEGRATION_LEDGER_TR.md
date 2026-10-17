@@ -165,10 +165,14 @@ Gauge'lar: katalog/Home satır sayıları; kullanılabilir cache okuma hit/miss 
 3. useCatalogPage reload önce emptyState yayımlıyordu. Kaynak window helper'a bağlandı; query/provider değişimi ayrı reset kalır; refresh hata/iptal eski pencereyi silmez.
 4. Source #131'in çıkardığı background ownership kaynak kontrolleri yeniden güçlendirildi; yeni üçüncü persistence predicate argümanı denetlenir. Hiçbir test kaldırılmaz/skip edilmez. İmza değişimlerine ilişkin statik marker'lar güncellenir; gerçek coordinator + SQLite testleri ek kanıttır.
 
-Yeni kapılar: #130 diagnostics 19; U3 lifecycle/privacy 10; policy senaryoları; production coordinator 9; production host SQLite 6; window/policy/ownership 9. Host adapter ve SQLite testleri Android layout/scheduling/firmware veya gerçek provider performansı değildir. Mevcut U2 ve Native JVM/Player/Back/orientation/Elite/TMDB kapıları korunur.
+Yeni kapılar: #130 diagnostics 19; U3 lifecycle/privacy 11; policy senaryoları; production coordinator 9; production host SQLite 6; window/policy/ownership 9. Host adapter ve SQLite testleri Android layout/scheduling/firmware veya gerçek provider performansı değildir. Mevcut U2 ve Native JVM/Player/Back/orientation/Elite/TMDB kapıları korunur.
 
 ### Teslim ve açık işler
 
 Yalnız integration/legendstream-u1 normal ileri güncellenir; küçük logical commit'ler kaynak SHA ve adaptasyon izini taşır. GitHub blob/tree SHA eşitliği yerel doğrulanan commit ağaçlarıyla karşılaştırılır; final ref update eski HEAD lease'i ve force=false ile yapılır. PR #143 Draft ve base #142 kalır. Final HEAD ve iki Quality run, PR açıklaması/Checks içinde doğrulanır; belge kendi commit SHA'sını uydurmaz.
 
 Native TV Physical FAIL, TMDB LIVE BLOCKED ve legacy 14 SKIP aynen korunur. APK/workflow dispatch veya sunucu dağıtımı yapılmaz. U3 tamamlandı diye U2 telefon portrait policy açığı veya Elite Home/Live/Player/Series Info parity kapanmaz. U4 için ortak Elite ekran/action parity önerilir; fiziksel test ancak bütünleşik RC ve kullanıcı onayıyla.
+
+History/Continue Watching ve yerel download açılışları da yeni playback denemesi başlatır. PLAYER_EXIT sonrası active attempt temizlenir; geç VLC callback eski raporu yeni oturum gibi tamamlayamaz. Bu ek yalnız tanılama çağrısıdır; history referansı veya resolver davranışı değişmez.
+
+Eski 1,25 saniyelik M3U scheduler kaldırıldıktan sonra tüketilmeyen activationProviders Set/mark çağrıları da kaldırıldı; sıcak cache işaretleri gereksiz bellekte birikmez. Tazelik kararının tek sahibi CatalogSync olur. Yerel tam Quality 69/69 shell kapısında geçti; final yayın yine yeni exact-HEAD GitHub push ve PR koşularını gerektirir.

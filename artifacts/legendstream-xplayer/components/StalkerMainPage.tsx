@@ -1,3 +1,4 @@
+import { beginPlaybackAttempt } from "@/lib/performanceDiagnostics";
 import { CatalogRefreshSettings } from "@/components/CatalogRefreshSettings";
 import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
 import { TVRemoteInspectorSetting } from "@/components/tvPreview/TVRemoteInspector";
@@ -260,6 +261,7 @@ export default function StalkerMainPage() {
   };
 
   const openDownload = (item: DownloadedMedia) => {
+    beginPlaybackAttempt("unknown");
     openResolvedPlayable({
       title: item.title,
       subtitle: item.subtitle,
@@ -307,6 +309,7 @@ export default function StalkerMainPage() {
   };
 
   const openProgress = async (item: MediaProgress) => {
+    beginStalkerPlaybackTrace();
     historyPlaybackAbortRef.current?.abort();
     const sequence = ++historyPlaybackSequenceRef.current;
     if (item.playbackRef.type === "stalker-episode") {

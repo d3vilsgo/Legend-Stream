@@ -417,6 +417,7 @@ export function createPerformanceDiagnostics(options: ControllerOptions = {}) {
             ? "ERROR"
             : "CANCELLED",
       );
+    if (name === "PLAYER_EXIT") activePlaybackId = null;
     emit();
   };
   const beginMeasurement = (

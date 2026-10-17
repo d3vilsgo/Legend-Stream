@@ -70,10 +70,20 @@ d.markPlayback("password" as never);
 const text = formatPerformanceDiagnostics(d.snapshot());
 assert(!/password|token=|00:11:22/.test(text));
 assert.match(text, /gauge.jsHeapBytes=NOT_OBSERVED/);
+const exitAttempt = d.beginPlayback("m3u");
+d.markPlayback("PLAYER_EXIT", exitAttempt);
+assert.equal(d.getPlaybackId(), null);
+d.markPlayback("VLC_PLAYING", exitAttempt);
+assert(
+  !d
+    .snapshot()
+    .playback.at(-1)!
+    .events.some((e) => e.name === "VLC_PLAYING"),
+);
 const before = d.snapshot().measurements.length;
 d.setPreference(false);
 d.beginMeasurement("CATALOG_REFRESH");
 assert.equal(d.snapshot().measurements.length, before);
 console.log(
-  "U3 performance lifecycle/privacy/bounds: 10/10 passed; NO_PHYSICAL_PERFORMANCE_CLAIM",
+  "U3 performance lifecycle/privacy/bounds: 11/11 passed; NO_PHYSICAL_PERFORMANCE_CLAIM",
 );

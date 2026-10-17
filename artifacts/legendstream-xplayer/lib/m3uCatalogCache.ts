@@ -70,7 +70,6 @@ import type { XtreamCategory } from "./xtreamCatalog";
 const M3U_CACHE_STAGE_TOTAL = 3;
 export const M3U_HOME_PREVIEW_LIMIT = 48;
 const M3U_DIAGNOSTIC_CACHE_BATCH_SIZE = 200;
-const activationProviders = new Set<string>();
 
 function shouldLogDiagnosticCacheBatch(batchIndex: number, totalRows: number) {
   const totalBatches = Math.max(1, Math.ceil(totalRows / M3U_DIAGNOSTIC_CACHE_BATCH_SIZE));
@@ -117,16 +116,6 @@ function categories(values: string[]): XtreamCategory[] {
     category_id: name,
     category_name: name,
   }));
-}
-
-export function markM3UCacheActivation(providerId: string) {
-  activationProviders.add(providerId);
-}
-
-export function consumeM3UCacheActivation(providerId: string) {
-  if (!activationProviders.has(providerId)) return false;
-  activationProviders.delete(providerId);
-  return true;
 }
 
 export async function hydrateM3UProviderCache(
