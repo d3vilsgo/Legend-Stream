@@ -11,13 +11,13 @@ Proje aşaması: **GLOBAL INTEGRATION & FEATURE COMPLETION**. APK ve fiziksel ka
 | Dilim | Kapsam | Durum / çıkış kapısı | Sorumlu hat |
 |---|---|---|---|
 | U1.1 | #142 kaynak ağacı + #138'in eksik üç Native TV onarımı | Bu branch; exact-HEAD Quality ve Draft PR ile izlenir. Ürün bütünü tamamlandı değildir. | U1 kaynak entegrasyonu |
-| U1.2 | #120 hijyen, #121/#126 katalog grid, #122/#127 mobil/tablet/Preview Hero, #124/#125 alternatiflerinin semantik uzlaşması | Açık; mevcut TV onarımını ezmeden, küçük ayrı kabul dilimleri | Ortak sunum ve araç zinciri |
-| U1.3 | #130 performans gözlemi + #131 cache-first refresh | Açık; callback/iptal/kimlik/redaksiyon regresyonlarıyla üç provider ayrı ayrı | Provider/cache/performance |
+| U2 | #121/#126 grid, #122/#127 Hero, #124/#133 navigasyon, #125/#132 sunum temeli | Kaynak bağlantıları bu branch'te; exact-HEAD Quality zorunlu. Telefon katalog portrait politikası ve tam Elite ekran parity açık kalır. | Ortak sunum |
+| U3 | #130 performans gözlemi + #131 cache-first refresh | DEFERRED; U2 sonrasında callback/iptal/kimlik/redaksiyon regresyonlarıyla üç provider ayrı ayrı | Provider/cache/performance |
 | U1.4 | Gerçek Elite Home, Live touch/Preview parity, Player/kanal overlay, Series Info ve Home→Film Info | Açık; aynı marka/action sözleşmesi, cihazlara uyarlanmış düzen | Elite ürün parity |
 | U1.5 | TMDB canlı bağlantı | LIVE BLOCKED; onaylı HTTPS hosting, güvenilir session issuer, sunucu secret bağlantısı, atıf ve gerçek uçtan uca kanıt gerekir | Metadata/backend |
 | RC | Bütünleşik otomatik doğrulama + tek kaynaklı RC kabulü | Henüz başlamadı; fiziksel test yalnız kullanıcı onayıyla | Release kabulü |
 
-## Açık PR işlerinin korunması
+## U1.1 tarihsel kaynak envanteri — güncel kararlar aşağıdaki U2 tablosunda
 
 | Kaynak | U1.1 kapsamı | Sonraki iş |
 |---|---|---|
@@ -37,3 +37,26 @@ Proje aşaması: **GLOBAL INTEGRATION & FEATURE COMPLETION**. APK ve fiziksel ka
 Yeni görev önce bu dilimlerden birine bağlanır. Önceki görev sessizce kapanmaz: geliştirme, Quality, fiziksel kabul, açık kusur ve sonraki eylem ayrı güncellenir. Commit veya Quality tek başına ürün tamamlanması sayılmaz.
 
 Bağlı kayıtlar: [parity](FEATURE_PARITY_MATRIX_TR.md), [kusurlar](OPEN_ISSUES_TR.md), [kabul](RELEASE_ACCEPTANCE_TR.md), [entegrasyon](INTEGRATION_LEDGER_TR.md).
+
+## U2 güncel özellik sahipliği — PR #143
+
+Önceki kaynak envanteri U1.1 anını anlatır. Aşağıdaki U2 sınıfları güncel davranış kararlarıdır; eski PR'ların durumunu değiştirmez. INTEGRATED, kapsamındaki davranışın birleşik üretim yoluna alınmasıdır; bütün PR'ın merge veya fiziksel kabul edildiği anlamına gelmez.
+
+| PR | U2 durumu | Gerçek üretim karşılığı / açık sınır |
+|---|---|---|
+| #120 | PARTIAL | U1 scripts typecheck onarımı korunur; kalan hijyen/API/CI işi ayrı |
+| #121 | PARTIAL | VOD/Series responsive grid ve fontScale uyumlu iki satır başlık alındı; bağımsız kompakt katalog header/detail panel tasarımı DEFERRED |
+| #122 | INTEGRATED | HomeHeroCarousel yüklü/boş/loading için ortak bounded geometri; orientation/ölçülen alan uyumu |
+| #123 | ALREADY COVERED | Devralınan Player/orientation sahipliği korunur; eski fiziksel PASS yeni SHA'ya devredilmez |
+| #124 | ALREADY COVERED | Evrilmiş #133 ResponsiveContentNav, kompakt telefon/tablet menüsü ve gerçek Native FocusButton yolu zaten U1'de |
+| #125 | PARTIAL | Premium token/metrics temeli #132 üzerinden evrilmiş; eski token paleti bütün ekranlarda Elite V2 dönüşümü değildir |
+| #126 | INTEGRATED | PagedMoviesCatalog, GoldenSeriesCatalog ve StalkerGoldenMoviesCatalog artık useResponsiveCatalogGrid kullanır |
+| #127 | INTEGRATED | Mobil/tablet/Preview Hero token sınırları gerçek Home'a bağlandı; Native #138 bütçesi ayrı korunur |
+| #132 | ALREADY COVERED | Tablet kimliği, safe-area ve presentation profile U1 atası; U2 measured grid/Hero tüketimi tamamlandı |
+| #133 | ALREADY COVERED | Adaptif navigasyon U1 atası; U2 kompakt sekmeler mevcut Elite semantic accent/selected token'larını kullanır |
+| #138 | ALREADY COVERED | U1 kaynak izli üç onarım; Native geometri, Java Focus policy, input sahipliği ve Inspector değiştirilmedi |
+| #130/#131 | DEFERRED | U3 performans/cache semantik uzlaştırması; U2 bu PR'ları entegre saymaz |
+| #139–#142 | PARTIAL | Mevcut Elite Live / Film Info / TMDB kaynakları korunur; tam cihaz parity ve canlı metadata bitmedi |
+| TMDB canlı | BLOCKED | TMDB LIVE BLOCKED devam; hosting/issuer/token ve uçtan uca kanıt gerekir |
+
+U2'nin geometri/host otomatik kabulü gerçek cihaz kabulünden ayrıdır. Mevcut telefon katalog portrait kilidi değiştirilmedi; landscape hesapları oluşan yatay viewport için testlidir, serbest telefon katalog rotation özelliği tamamlandı değildir.

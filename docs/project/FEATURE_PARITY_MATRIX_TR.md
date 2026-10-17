@@ -1,13 +1,13 @@
-# Cihaz × Ekran × Özellik — U1.1
+# Cihaz × Ekran × Özellik — U2
 
 Bu tablo kaynak bağlantısını gösterir; Physical PASS tablosu değildir. P=telefon portrait, L=telefon landscape, T=tablet P/L, TV=Native Android TV/Google TV/Box, Preview=telefon/tablette sanal D-pad. Telefon katalog landscape, devralınan policy yüzünden hâlâ açık ürün boşluğudur; landscape Player desteğiyle karıştırılmaz.
 
 | Ekran/özellik | Telefon P | Telefon L | Tablet P/L | Native TV | TV Preview | Kaynak / açık fark |
 |---|---|---|---|---|---|---|
-| Home | Eski HomeDiscovery/touch | Katalog policy kısıtı | Eski HomeDiscovery | Kompakt #138 Hero + raf odak politikası | Eski Home + sanal hedefler; Native geometri uygulanmaz | HomeDiscovery, nativeTvHomeLayout; Elite Cinematic Luxury üretimde tamam değil |
+| Home | Responsive bounded Hero/touch | Katalog policy kısıtı | Responsive bounded Hero | Kompakt #138 Hero + raf odak politikası | Responsive bounded Hero + sanal hedefler; Native bütçe ayrı | HomeDiscovery, nativeTvHomeLayout; Elite Cinematic Luxury üretimde tamam değil |
 | Live TV | Eski liste/drawer | Policy kısıtı | Eski liste/drawer | Gerçek EliteLiveCatalog; seçili/oynayan ayrı | Eski liste/drawer | PagedCatalogViews; Elite Live mobil/tablet/Preview parity açık |
-| Movies/VOD | Grid → Film Info | Policy kısıtı | Eşik grid → Film Info | Native ölçülü grid → Film Info | Preview grid → Film Info | #126 gerçek premium grid bağlantısı ve Home entry point parity açık |
-| Series | Golden/provider katalog | Policy kısıtı | Katalog/genişlik eşikleri | Native hedefli katalog/season/episode | Sanal hedefli katalog | Series Info Elite/TMDB entegrasyonu yok |
+| Movies/VOD | Ölçülü responsive grid → Film Info | Policy kısıtı | Ölçülü responsive grid → Film Info | Native ölçülü grid → Film Info | Ölçülü Preview grid → Film Info | #121/#126 üretime bağlı; Home→Film Info action parity hâlâ açık |
+| Series | Responsive Golden/provider katalog | Policy kısıtı | Ölçülü responsive Golden grid | Native hedefli katalog/season/episode | Responsive grid + sanal hedefli katalog | Series Info Elite/TMDB entegrasyonu yok |
 | Film Info | Yerel öncelikli Elite modal | Modal ölçüsü responsive; katalog policy açık | Mobile layout profili | Native modal scope | Sanal scope; mobile layout profili | MovieInfoModal; matcher/proxy live kapalı; geniş cihaz profili parity açık |
 | Series Info | Eski detay | Policy kısıtı | Eski detay | Eski detay | Eski detay | TMDB series DTO gerçek Series Info ekranı değildir |
 | Player | Aktif V2 touch | Landscape Player | V2 touch | Aynı V2 + native remote sahipliği | Handheld Player yolu | CompatibilityVideoPlayerV2; Back→panel→controls→exit politikası; yeni fiziksel kabul yok |
@@ -32,3 +32,17 @@ Bu tablo kaynak bağlantısını gösterir; Physical PASS tablosu değildir. P=t
 | Provider/playback/identity | Quality içindeki mevcut katalog, Stalker, M3U, Xtream, progress/history/switch kapıları | Test transport/fixture; gerçek provider playback PASS değildir |
 
 Quality sonucu, bu commit'i checkout eden GitHub run/check kaydından okunur; branch adı veya eski yeşil run yeni HEAD için geçerli sayılmaz. Geçerli otomatik ve fiziksel durumlar [kabul defterinde](RELEASE_ACCEPTANCE_TR.md) ayrı izlenir.
+
+## U2 kaynak ve otomatik kapsam
+
+| Özellik | Telefon P / L | Tablet P / L | Native TV / Box | TV Preview | Kabul sınırı |
+|---|---|---|---|---|---|
+| Poster grid yoğunluğu | Ortak profil; L geometri hesaplanır, katalog portrait kilidi korunur | Gerçek ölçülen list width, dp/safe-area/fontScale | Mevcut nativeTvLayout + useNativeTvCatalogGrid | TV sunum profili; fiziksel telefon/tablet kimliği korunur | Geometri modeli; gerçek font layout NOT TESTED |
+| Sütun remount | İlk görünür provider içerik ID'sinden yeni row; dokunma focus üretmez | Aynı anchor yöntemi | Mevcut nativeFocusedId/row restore sahibi değişmez | Odaktaki ID → row → görünürlük/scope kontrollü sanal restore | Host hook; Android scroll/focus kabulü NOT TESTED |
+| Scope değişimi | Provider/kategori/arama/sort değişince eski anchor iptal | Aynı | Mevcut Native yol | Modal scope ve viewport dışı hedef restore edilmez | Fixture/controller testleri; tam UI event akışı değil |
+| Home Hero | Aynı helper: image/empty/loading; kısa ekranda bounded | Tablet P/L profil + ölçülen viewport | #138 bütçe/ilk raf ve JVM grafiği korunur | Kısa Hero, autoplay kapalı, sanal hedefler korunur | Host render; gerçek raf görünürlüğü RC'de |
+| Home raf önceliği | Yatay viewport'ta sayaçlar raflardan sonra | Yatayda raflar önce | Mevcut raflar önce | Raflar önce | Kaynak bağlantısı; physical NOT TESTED |
+| Navigasyon | #133 kompakt dokunmatik; aktif sekme accessible selected | 48dp hedef, tablet profili | FocusButton + gerçek native scope/Back sahibi | Sanal D-pad; native olmayan olay yolu | Elite semantic token yalnız kompakt sekme/kart odak yüzeyinde; tüm ürün dönüşümü değil |
+| Player/Back/orientation | Mevcut policy ve geçici Player sahipliği değişmedi | Serbest tablet policy değişmedi | Native panel/controls/exit sırası değişmedi | Mevcut Preview Back yolu | Mevcut otomatik testler; fiziksel kabul yok |
+
+Üç katalog yolu aynı helper'a bağlıdır; Xtream/M3U/Stalker katalog, bölüm ve playback kimlikleri dönüştürülmez. Grid'deki `providerId` sadece restorasyon scope'udur. TMDB ID ile playback yapılmaz. Series Info, Home→Film Info, mobil/Preview Elite Live ve Elite Home/Player/overlay hâlâ açık ürün işleridir.

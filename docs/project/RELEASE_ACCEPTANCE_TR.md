@@ -4,7 +4,7 @@
 
 **Quality PASS = exact HEAD üzerinde otomatik doğrulama. Physical PASS = ilgili cihazdaki gerçek kabul kanıtı.** Birbirinin yerine geçmez. Kaynak veya metadata sağlayıcısı destek bayrağı runtime kabulü sayılmaz.
 
-U1.1 kaynak birleştirmesidir. Fiziksel testler GLOBAL INTEGRATION & FEATURE COMPLETION boyunca bilinçli ertelenmiştir. Her push/PR için Universal APK yoktur. Bütünleşik RC hazır olmadan ve kullanıcı onayı alınmadan APK/fiziksel kabul başlamaz.
+U1.1 ve U2 kaynak birleştirmesidir. Fiziksel testler GLOBAL INTEGRATION & FEATURE COMPLETION boyunca bilinçli ertelenmiştir. Her push/PR için Universal APK yoktur. Bütünleşik RC hazır olmadan ve kullanıcı onayı alınmadan APK/fiziksel kabul başlamaz.
 
 ## U1.1 otomatik kapı
 
@@ -35,3 +35,15 @@ U1.1 kaynak birleştirmesidir. Fiziksel testler GLOBAL INTEGRATION & FEATURE COM
 5. Xtream, M3U, Stalker için ayrı Live/VOD/episode resolver, switch, favori/history/resume/cache senaryoları; TMDB ID playback kimliği olmaz.
 
 Her gerçek kabul kaydı cihaz/OS, APK/run, exact SHA, adımlar, gözlenen sonuç ve kanıt bağlantısı içermeli. Veri yoksa PASS yerine NOT TESTED veya BLOCKED yazılır. Bu belge fiziksel teste geçiş onayı değildir.
+
+## U2 otomatik kabul eki — fiziksel aşama başlamadı
+
+1. `computePosterGridLayout` üç üretim katalog yoluna bağlanır; provider/category/search/sort scope'u anchor'ı ayırır; aynı ID yeni sütun row'una taşınır. Native yol mevcut hook'a delegedir.
+2. Home'un image/empty/loading durumları aynı responsive yüksekliği kullanır. Ölçülen scroll viewport ve carousel genişliği orientation sonrası yenilenir; seçili Hero ID'si korunur. Preview autoplay odağı değiştirmez.
+3. `u2ResponsiveScenarios`: grid/Hero ölçü matrisi, stable ID row eşlemesi, Preview görünür/scope kontrollü restore ve stale async sonuç iptali. Bu model testi fiziksel PASS değildir.
+4. `u2CatalogHookScenarios`: üretim hook'unun state/ref yaşamı ve layout/viewability callback'leri host adapter ile çalıştırılır; Android FlatList implementasyonu çalıştırılmaz.
+5. `nativeTvHomeRenderScenarios`: mevcut 33 Native TV host render korunur; telefon/tablet P/L ve Preview için ek 30 render ile yüklenmiş/boş/loading yükseklik eşitliği doğrulanır. Gerçek Yoga/font/overscan/firmware kabulü değildir.
+6. Mevcut provider, Player/Back, orientation, Native JVM Focus, Elite Live, Film Info ve TMDB güvenlik testleri kaldırılmaz. Quality'ye iki U2 kapısı eklenmiştir; exact-HEAD checkout kuralı aynıdır. APK workflow'ları değiştirilmez.
+7. Yeni HEAD için yalnız kendi `Quality` run'ı ve `QUALITY_EXACT_HEAD` satırı kabul edilir. Son yayın SHA/run bağlantıları PR #143'ün Checks ve açıklamasında tutulur; belge kendi commit SHA'sını uydurmaz.
+
+Fiziksel matrisin bütün güncel birleşik kaynak hücreleri NOT TESTED / DEFERRED_RC kalır. Eski Homatics FAIL, TMDB LIVE BLOCKED ve legacy 14 SKIP kayıtları U2 otomatik başarılarıyla değişmez.

@@ -9,13 +9,13 @@ Durumlar: OPEN, SOURCE_INTEGRATED, AUTO_VERIFIED, DEFERRED_RC, BLOCKED. Fiziksel
 | TV-003 / P1 | Home Hero yüksekliği / ilk raf | nativeTvHomeLayout + HomeDiscovery; docs/tv/PR138_HOME_COMPACT_REACHABILITY_TR.md | SOURCE_INTEGRATED; geometri/JVM/render testleri; gerçek Android NOT TESTED | Extreme font/safe-area ve görünür hedef kabulü RC'de |
 | TV-004 / P1 | Stalker Native Live hedef bölgesi | #139 `stalker-live:` hedefleri #138 sınıflandırıcısında `content` oluyordu; red/green regresyonu | SOURCE_FIXED; 27-senaryolu native remote kapısı; Physical NOT TESTED | U1 exact-HEAD Quality; resolver değişmez |
 | UI-001 / P1 | Telefon landscape katalog policy | #128/#129 device/presentation politikası; usePlayerOrientation | OPEN; #123'ün Poco 13/13 PASS'i yeni policy'ye devredilmez | #124/#133 ile ürün davranışını uzlaştır; ortak sunum hattı |
-| UI-002 / P1 | Mobil/tablet/Preview grid ve Home | #121/#122/#126/#127 ayrı kollar | OPEN / NOT TESTED | Eski tüm dosyaları kopyalamadan helper→ekran bağlantısını birleştir |
-| UI-003 / P1 | Tablet rotation/scroll | Grid column key/remount davranışı | Kaynak riski; fiziksel FAIL diye etiketlenmedi; NOT TESTED | Scroll/selection restorasyon sözleşmesi + otomatik davranış testi |
+| UI-002 / P1 | Mobil/tablet/Preview grid ve Home | U2: useResponsiveCatalogGrid, catalogGridLayout, homeHeroLayout, HomeDiscovery | SOURCE_INTEGRATED / NOT TESTED; exact-HEAD Quality gerekir | Yeni viewport/font/scope otomatik kapıları; gerçek kabul yalnız RC |
+| UI-003 / P1 | Tablet rotation/scroll | U2 stable-ID anchor ve üretim hook senaryoları | SOURCE_INTEGRATED / NOT TESTED; gerçek Android viewability/layout kanıtı yok | RC rotation + scroll + selected Info/season durumunu doğrula |
 | ELITE-001 / P1 | Home/Live/Player/overlay bütün cihazlar | #139: gerçek Elite Live yalnız Native TV; showcase üretim Home/Player değil | PARTIAL / NOT TESTED | Ortak marka ve action modeli; cihazlara uygun yerleşim |
 | INFO-001 / P1 | Home→Film Info, Series Info | #141 katalog modalı var; Home film yolları farklı; Series metadata ekranı yok | OPEN / NOT TESTED | Resolver'a dokunmadan detail action parity |
 | TMDB-001 / P1 | Metadata live bütün cihazlar | #140–#142 mock matcher/cache/proxy; gerçek deployment/session/secret kanıtı yok | **TMDB LIVE BLOCKED** | Hosting kullanıcı seçimi/onayı, HTTPS + trusted issuer + server token + atıf. Netlify kullanılmaz; sunucu dağıtılmaz |
-| PERF-001 / P1 | Startup/playback ölçüm | #130 ayrı branch | OUTSIDE_U1_1 / NOT TESTED | Gözlem callback ve redaksiyon entegrasyonu |
-| CACHE-001 / P1 | Refresh/provider switch | #131 ayrı branch | OUTSIDE_U1_1 / NOT TESTED | Üç provider için cache/cancel/stale testleri |
+| PERF-001 / P1 | Startup/playback ölçüm | #130 ayrı branch | DEFERRED_U3 / NOT TESTED | Gözlem callback ve redaksiyon entegrasyonu |
+| CACHE-001 / P1 | Refresh/provider switch | #131 ayrı branch | DEFERRED_U3 / NOT TESTED | Üç provider için cache/cancel/stale testleri |
 | HYGIENE-001 / P2 | Araç zinciri/API/ek CI | #120 | Yalnız scripts root typecheck TS18003 onarımı alındı; PR bütünü OPEN | Kalan #120 semantik uzlaşması; tam PR tamamlandı sayılmaz |
 | LEGACY-001 / P2 | 14 onaylı eski branch | 17 Ekim legacy temizliği: **0 DELETED / 14 SKIP / 0 FAILED**; deployment/environment okunamadı ve ref-delete kabiliyeti yok | SKIP / RETAIN; yönetim borcu | Erişim geldiğinde exact-ref ve dependency gate'i yeniden yap; U1'i durdurmaz |
 | ADMIN-001 / P1 | GitHub yönetim koruması | Son okuma main ve 14 stacked parent protection yok; rulesets=[] | BLOCKED; auto-merge/delete kapalı | Yetkili settings erişimiyle koruma ve required typecheck kaynak doğrulaması; hiçbir bypass yok |
@@ -25,3 +25,11 @@ Durumlar: OPEN, SOURCE_INTEGRATED, AUTO_VERIFIED, DEFERRED_RC, BLOCKED. Fiziksel
 `diag/r18-e0p-stalker-epg-probe`, `feat/epg-stream-info`, `feat/premium-player-chrome`, `feat/r18-ui-presentation-foundation`, `feat/stalker-live-catalog-parity`, `feat/stalker-live-parity-current-main`, `fix/large-xtream-anr`, `fix/large-xtream-epg-memory`, `fix/large-xtream-oom-hardening`, `fix/player-controls-regression`, `fix/release-vlc-patch`, `fix/stalker-product-parity-d12-v2`, `fix/stalker-product-parity-d12`, `fix/xtream-real-login`.
 
 Bu U1 görevi branch silme, mevcut PR merge/close/Ready/retarget veya otomatik merge yetkisi vermez. Tarihsel fiziksel senaryoların adımları docs/tv belgelerinde korunmuştur; oradaki APK hazırlık adımları bu aşamada yürütülmez.
+
+## U2 sonrası açık sınırlar
+
+- UI-001 kapanmadı: telefon katalog portrait kilidi korundu; geçici landscape viewport geometri desteği serbest rotation kabulü değildir.
+- #121 kompakt katalog header ve detail panel tasarım farkı DEFERRED; shared grid + iki satır fontScale başlığı üretime alındı.
+- Preview row restorasyonu görünür hedef ve aktif scope doğrulaması ister; sanal D-pad testi Native fiziksel Focus PASS değildir. Host hook ve React host render gerçek Android layout testi değildir.
+- ELITE-001 / INFO-001, Native TV Physical FAIL ve TMDB LIVE BLOCKED kapanmadı. Legacy 14 SKIP listesi aynen geçerlidir. Yeni APK veya fiziksel test yoktur.
+- U3: #130 gözlem/performance ve #131 cache-first refresh; callback ömrü, generation/cancel, stale cache ve provider identity regresyonlarıyla uzlaştırılacak.

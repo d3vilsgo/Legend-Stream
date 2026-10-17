@@ -20,6 +20,7 @@ type FocusContextValue = {
   register: (entry: TVPreviewFocusEntry) => () => void;
   move: (direction: TVPreviewDirection) => Promise<void>;
   getFocusedEntry: () => TVPreviewFocusEntry | null;
+  restoreFocus: (id: string) => Promise<boolean>;
   setViewport: (viewport: { x: number; y: number; width: number; height: number } | null) => void;
   viewport: { x: number; y: number; width: number; height: number } | null;
   activate: () => void;
@@ -90,6 +91,7 @@ export function TVPreviewFocusProvider({ children }: { children: ReactNode }) {
     register: controller.register,
     move: (direction: TVPreviewDirection) => viewport ? controller.move(direction, viewport) : Promise.resolve(),
     getFocusedEntry: controller.getFocusedEntry,
+    restoreFocus: (id: string) => viewport ? controller.restoreFocus(id, viewport) : Promise.resolve(false),
     setViewport,
     viewport,
     activate: controller.activate,

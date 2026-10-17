@@ -56,3 +56,46 @@ Yeni Draft PR'ın base'i **`feature/r19-tmdb-secure-proxy` (#142)** olur. #142 m
 | U1 geneli | Tamamlanmadı | İlk dilimden sonra araç zinciri + mobil/tablet/Preview grid/Hero parity |
 
 Geliştirme, otomatik doğrulama ve fiziksel kabul ayrı sütunlarla izlenir. Bu ilk kaynak diliminin başarılı olması bütün açık geliştirmelerin tamamlandığı anlamına gelmez.
+
+## U2 responsive entegrasyonu — 17 Ekim 2026
+
+Başlangıç PR #143 HEAD: `cd525af7cf1481d375e6e7abeaf808b290435f69`; base `feature/r19-tmdb-secure-proxy` / `98423240d1f966388e74aa4249632b1c921b3c4b`. Güncel main `810adc2f7e82da52d8dd6768fcd5cf1d3040e106`; değiştirilmez. Yalnız mevcut `integration/legendstream-u1` güncellenir; PR #143 Draft ve aynı base kalır. Ayrı detached worktree yerel izolasyondur; yeni remote feature branch/PR oluşturulmaz.
+
+### Yeniden okunan remote kaynaklar
+
+| PR | HEAD SHA | Gerçek base branch | U2 davranış kararı |
+|---|---|---|---|
+| #121 | `4b05e1645ea0fbd79620fbf68586267871639c22` | `main` | PARTIAL: grid + erişilebilir başlık alındı; header/detail farkı ertelendi |
+| #126 | `104a40daef592580ef26a29974d951c7fe53a4cb` | `feature/premium-design-system-foundation` | INTEGRATED: üretim grid bağlantısı |
+| #122 | `9353d8780b7d570a935f33241020f5ac1ffff507` | `main` | INTEGRATED: bounded Hero tüm durumlar |
+| #127 | `cf42aa959fd1e587659f75891552a90a55102932` | `feature/premium-design-system-foundation` | INTEGRATED: premium Hero → gerçek Home |
+| #124 | `576d930d38cef1368009bd5997702439a26aaf99` | `main` | ALREADY COVERED: evrilmiş #133 nav |
+| #133 | `d0f57c5079783a1d4f887aef6aa1429d04dea1a1` | `feature/r18-premium-tablet-design-foundation` | ALREADY COVERED: U1 atası |
+| #125 | `8eaca23b051adca4678a8bb0ecc4482e2b4a12a4` | `main` | PARTIAL: evrilmiş #132 token/metrics temeli |
+| #132 | `138eba1b1e74d2f8bcaf933b6344ec4b81a0856e` | `feature/r18-presentation-foundation-1b` | ALREADY COVERED: U1 atası, tüketiciler U2 bağlandı |
+| #138 | `7591b3ce5d9d5903714749f51ba74ebb48bb3b24` | `feature/r18-tv-remote-focus-inspector` | ALREADY COVERED: U1 kaynak izli üç onarım |
+
+#132 ve #133 gerçek Git atalarıdır. #125/#126/#127 ve #124 ile U1 merge-base'i güncel main `810adc2…`; #121/#122 merge-base'i `e20d940e87705228a0822f87934d42758f3f7af2`; #138 merge-base'i `3755a39b48441fd0904d3a40a7a8c77576ee0281` (üç fix U1'de cherry-pick iziyle). PR başlıklarına bakarak özellik tekrar eklenmedi. Eski PR dosyaları topluca alınmadı; UI davranışları mevcut Film Info/Native scope sahiplerine semantik olarak bağlandı.
+
+### Dosya → kanıt → etki → cihaz → kabul → eylem
+
+| Dosya | Kanıt / değişiklik | Ürün etkisi ve kapsam | Kabul / sonraki eylem |
+|---|---|---|---|
+| `lib/catalogGridLayout.ts`, `hooks/useResponsiveCatalogGrid.ts` | Premium profil + gerçek list width + safe-area/fontScale; ID→row restore, provider/query scope iptali | Telefon/tablet/Preview responsive VOD/Series; Native mevcut hook'a delege | Model + host hook; gerçek Android scroll NOT TESTED |
+| `components/catalog/PagedCatalogViews.tsx`, `components/stalker/StalkerGoldenMoviesCatalog.tsx`, `StalkerSeriesProductSurface.tsx` | Üç grid tüketicisi bağlı; GoldenSeries provider scope taşır; iki satır başlık fontScale ile yer ayırır | Üç provider aynı sunum sözleşmesi; Info/episode/resolver callback'leri korunur | Tam Quality; fiziksel katalog→Player→Back RC'de |
+| `lib/homeHeroLayout.ts`, `components/home/HomeDiscovery.tsx`, iki Home shell | Premium bounded height + ölçülen viewport; loaded/empty/loading eşit; yatay/Preview raflar önce; seçili Hero stable ID | Telefon/tablet/Preview; Native #138 budget/input/focus grafiği korunur | Ek host render; Native 33 render ve JVM kapıları korunur |
+| `lib/tvPreviewFocus.ts`, `components/tvPreview/TVPreviewFocus.tsx` | Restore yalnız kayıtlı, görünür, aktif scope hedefi; async revision guard | Preview sütun değişiminde modal arkasına kaçmaz | Controller ve hook testi; fiziksel Native PASS değil |
+| `CompactLandscapeNavButton.tsx` | Mevcut Elite accent/selected semantic token + eliteVisual beyaz Focus | Telefon/tablet/Preview kompakt tab; aktif/focus/içerik seçimi ayrı | Tam Elite Home/Player/Live parity değildir |
+| `.github/workflows/quality.yml` | İki U2 test kapısı eklendi; mevcut kapılar ve exact checkout korundu | Yeni HEAD'in gerçek otomatik doğrulaması | PR Checks + log SHA eşitliği gerekir; APK tetiklenmez |
+
+Native `useNativeTvCatalogGrid`, `nativeTvHomeLayout`, `nativeTvResponsive`, production Java Focus policy/native input modülü; Player/orientation sahipleri; TMDB matcher/cache/proxy, MovieInfoModal, EliteLiveCatalog ve provider resolver kaynakları U1 başlangıcına göre değiştirilmez. StalkerSeriesProductSurface değişikliği yalnız `providerId` sunum scope prop'udur; playback mapping değişmez.
+
+### Regresyon ve teslim kaydı
+
+Yerel 62 Quality shell kapısının tamamı doğrulandı (katalog parity kapısı yeni source sözleşmeleri sonrası yeniden geçti). Yeni geometri/Preview controller 94 senaryo; üretim hook 9 senaryo; ek Home host render 30 senaryo. Mevcut Native Home host render 33 senaryo korunur. Tam Quality'nin kapıları test atlamadan çalıştırılır. Yerel TSX IPC kısıtı için sadece çalıştırıcıda `node --import tsx` kullanılır; CI'daki normal TSX girişleri değiştirilmez. Yerel pnpm 10 ve script binary PATH'i kullanılır; dependency/lockfile değişmez.
+
+Eski Stalker boundary testinin width>=900 gibi sabit eşik zorlaması yeni ortak hook sözleşmesine güncellendi. Loading/disabled/provider-only dekorasyonun olmaması koşulları korunur; kart başlığı için fontScale minHeight artık açık bir erişilebilirlik koşuludur. Eski poster genişliği üst sınırı korunur; helper'da poster `columnWidth` ile toplam `cellWidth` ayrıldı. Bu testler kaldırılmadı.
+
+Final SHA ve exact-SHA Quality bağlantısı PR #143'te sunulur. Bu dilim U1 ürün programını tamamlamaz. Sonraki dilim U3: #130/#131 performans/cache. Telefon katalog rotation politikası, #121 header/detail, tam Elite ekran parity, Home→Film Info/Series Info ve TMDB canlı işlerinin sahipliği roadmap'te açık kalır. Physical FAIL / NOT TESTED, TMDB LIVE BLOCKED ve 14 SKIP legacy kaydı aynen korunur.
+
+U2 son tam regresyonunda eski EPG privacy testinin bütün trace metninde kısa `101` portal ID'sini aradığı, gerçek `at` zaman damgası `1792267910101` olduğunda yanlış FAIL verdiği görüldü. Üretim log/EPG kaynağı değiştirilmedi. Test, event+details payload'ının tamamında ID sızıntısını denetler; URL/MAC/title yokluğu denetimleri korunur. Aynı çakışan timestamp açık fixture olarak eklendi ve payload'ın değişmediği doğrulanır. Kontrol atlanmadı veya devre dışı bırakılmadı.

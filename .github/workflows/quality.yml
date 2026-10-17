@@ -253,6 +253,10 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/designSystemScenarios.ts
       - name: Premium catalog grid layout scenarios
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/catalogGridLayoutScenarios.ts
+      - name: U2 cross-device geometry and Preview restoration
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/u2ResponsiveScenarios.ts
+      - name: U2 production responsive catalog hook
+        run: node artifacts/legendstream-xplayer/tests/u2CatalogHookScenarios.mjs
       - name: Premium Home hero scenarios
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/premiumHomeHeroScenarios.ts
       - name: Premium tablet design foundation scenarios (11/11 required)

@@ -529,7 +529,7 @@ export default function StalkerMainPage() {
 
       {presentedView !== "live" && presentedView !== "movies" && presentedView !== "series" && presentedView !== "history" ? (
         <ScrollView
-          onLayout={Platform.isTV ? event => setHomeViewportHeight(event.nativeEvent.layout.height) : undefined}
+          onLayout={event => setHomeViewportHeight(event.nativeEvent.layout.height)}
           style={{ flex: 1, minHeight: 0 }}
           contentContainerStyle={[s.content, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]}
           keyboardShouldPersistTaps="handled"
