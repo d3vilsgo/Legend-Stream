@@ -311,6 +311,10 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvResponsiveScenarios.ts
       - name: TMDB metadata matching cache and identity foundation
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tmdbFoundationScenarios.ts
+      - name: U4 Home Film Info provider ownership and action parity
+        run: node artifacts/legendstream-xplayer/tests/u4HomeMovieInfoScenarios.mjs
+      - name: U4 Home Film Info hook and test formatting
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/hooks/useHomeMovieInfo.ts artifacts/legendstream-xplayer/tests/u4HomeMovieInfoScenarios.mjs
       - name: TMDB Film Info mock behavior and access policy
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tmdbMovieInfoScenarios.ts
       - name: TMDB secure proxy behavior (mock upstream, no live claim)

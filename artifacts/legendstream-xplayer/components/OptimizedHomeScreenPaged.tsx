@@ -1,3 +1,5 @@
+import { useHomeMovieInfo } from "@/hooks/useHomeMovieInfo";
+import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
 import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
 import { TVRemoteInspectorSetting } from "@/components/tvPreview/TVRemoteInspector";
 import { tvInspector } from "@/lib/tvRemoteInspector";
@@ -239,6 +241,14 @@ export default function OptimizedHomeScreenPaged() {
   }, [homeChannels, resolvedHomeIdentityChannels]);
   const homeMovies = provider?.type === "stalker" ? [] : activeSnapshot?.movies ?? [];
   const homeSeries = provider?.type === "stalker" ? [] : activeSnapshot?.series ?? [];
+  const homeMovieInfo = useHomeMovieInfo({
+    providerId: provider?.id,
+    providerType: provider?.type,
+    revision: String(lastSuccessfulAt ?? 0) + ":" + String(m3uCatalogCommit?.sequence ?? 0),
+    items: [...homeMovies, ...(activeSnapshot?.newMovies ?? [])],
+    enabled: view === "home" && !adding && !editingProviderId && !switchingProviderId,
+    onPlay: item => openMovie(item, "home"),
+  });
 
   const m3uCatalogRevision =
     provider?.type === "m3u" &&
@@ -429,13 +439,13 @@ export default function OptimizedHomeScreenPaged() {
       });
   };
 
-  const openMovie = (item: XtreamVodItem) => {
+  const openMovie = (item: XtreamVodItem, returnTo: ContentView = "movies") => {
     beginPlaybackAttempt(provider.type as ProviderKind);
     const requestProviderId = provider.id;
     void resolveCatalogPlaybackSource({ kind: "movie", item }, provider)
       .then(({ url }) => {
         if (activeProviderIdRef.current !== requestProviderId) return;
-        setPlayable({ title: item.name, subtitle: item.genre || t("movies"), url, kind: "movie", returnTo: "movies", vodIdentity: { providerId: provider.id, itemId: String(item.stream_id) } });
+        setPlayable({ title: item.name, subtitle: item.genre || t("movies"), url, kind: "movie", returnTo, vodIdentity: { providerId: provider.id, itemId: String(item.stream_id) } });
         setView("player");
       })
       .catch(() => {
@@ -523,7 +533,7 @@ export default function OptimizedHomeScreenPaged() {
 
     {view === "history" ? <HistoryView providerId={provider.id} channels={resolvedFullHistoryIdentityChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
 
-    {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? <ScrollView onLayout={event => setHomeViewportHeight(event.nativeEvent.layout.height)} style={{ flex: 1, minHeight: 0 }} contentContainerStyle={[s.content, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEnabled={!catalogDrawerOpen}>
+    {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? <ScrollView onLayout={event => setHomeViewportHeight(event.nativeEvent.layout.height)} style={{ flex: 1, minHeight: 0 }} contentContainerStyle={[s.content, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEnabled={!catalogDrawerOpen && !homeMovieInfo.movie}>
       {view === "home" ? <HomeDiscovery
         tvViewportHeight={homeViewportHeight}
         provider={provider}
@@ -542,7 +552,7 @@ export default function OptimizedHomeScreenPaged() {
         newSeries={provider.type === "stalker" ? [] : activeSnapshot?.newSeries ?? []}
         onNavigate={navigate}
         onOpenLive={openLive}
-        onOpenMovie={openMovie}
+        onOpenMovie={homeMovieInfo.select}
         onOpenSeries={(item) => void openSeries(item)}
         onOpenMedia={openProgress}
         onRemoveLive={(id) => void removeWatched(id)}
@@ -551,6 +561,13 @@ export default function OptimizedHomeScreenPaged() {
       {view === "settings" ? <Settings provider={provider} providers={providers} busy={providerSwitchBusy} switchingProviderId={switchingProviderId} onEdit={() => setEditingProviderId(provider.id)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
     </ScrollView> : null}
 
+    {homeMovieInfo.movie && homeMovieInfo.input && homeMovieInfo.local ? <MovieInfoModal
+      key={`${provider.id}:${homeMovieInfo.movie.stream_id}`}
+      input={homeMovieInfo.input}
+      local={homeMovieInfo.local}
+      onClose={homeMovieInfo.close}
+      onPlay={homeMovieInfo.play}
+    /> : null}
     </NativeTVFocusScope>
   );
 
