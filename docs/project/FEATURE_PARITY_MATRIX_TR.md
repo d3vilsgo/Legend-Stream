@@ -1,4 +1,4 @@
-# Cihaz × Ekran × Özellik — U3
+# Cihaz × Ekran × Özellik — U4.1
 
 Bu tablo kaynak bağlantısını gösterir; Physical PASS tablosu değildir. P=telefon portrait, L=telefon landscape, T=tablet P/L, TV=Native Android TV/Google TV/Box, Preview=telefon/tablette sanal D-pad. Telefon katalog landscape, devralınan policy yüzünden hâlâ açık ürün boşluğudur; landscape Player desteğiyle karıştırılmaz.
 
@@ -6,7 +6,7 @@ Bu tablo kaynak bağlantısını gösterir; Physical PASS tablosu değildir. P=t
 |---|---|---|---|---|---|---|
 | Home | Responsive bounded Hero/touch | Katalog policy kısıtı | Responsive bounded Hero | Kompakt #138 Hero + raf odak politikası | Responsive bounded Hero + sanal hedefler; Native bütçe ayrı | HomeDiscovery, nativeTvHomeLayout; Elite Cinematic Luxury üretimde tamam değil |
 | Live TV | Eski liste/drawer | Policy kısıtı | Eski liste/drawer | Gerçek EliteLiveCatalog; seçili/oynayan ayrı | Eski liste/drawer | PagedCatalogViews; Elite Live mobil/tablet/Preview parity açık |
-| Movies/VOD | Ölçülü responsive grid → Film Info | Policy kısıtı | Ölçülü responsive grid → Film Info | Native ölçülü grid → Film Info | Ölçülü Preview grid → Film Info | #121/#126 üretime bağlı; Home→Film Info action parity hâlâ açık |
+| Movies/VOD | Ölçülü responsive grid → Film Info | Policy kısıtı | Ölçülü responsive grid → Film Info | Native ölçülü grid → Film Info | Ölçülü Preview grid → Film Info | #121/#126 üretime bağlı; Xtream/M3U Home→Info U4.1; Stalker Home exact-item Info açık |
 | Series | Responsive Golden/provider katalog | Policy kısıtı | Ölçülü responsive Golden grid | Native hedefli katalog/season/episode | Responsive grid + sanal hedefli katalog | Series Info Elite/TMDB entegrasyonu yok |
 | Film Info | Yerel öncelikli Elite modal | Modal ölçüsü responsive; katalog policy açık | Mobile layout profili | Native modal scope | Sanal scope; mobile layout profili | MovieInfoModal; matcher/proxy live kapalı; geniş cihaz profili parity açık |
 | Series Info | Eski detay | Policy kısıtı | Eski detay | Eski detay | Eski detay | TMDB series DTO gerçek Series Info ekranı değildir |
@@ -61,3 +61,13 @@ Quality sonucu, bu commit'i checkout eden GitHub run/check kaydından okunur; br
 Provider kapsamı: Xtream Live/VOD/Series ayrı başarı/retained-cache semantiğini korur. M3U staged tam katalog değişimi ve kalıcı referanslar korunur. Stalker otomatik politika **Live** içindir; VOD/Series session/page/lazy yolları aynı kalır. Stalker EPG probu üretim EPG özelliği sayılmaz. EPG'nin mevcut bağımsız freshness/iptal sistemi katalog 24/72 saat politikasına çevrilmez.
 
 Home Hero, adaptive navigation, Native Focus/Hero/Inspector, Player Back/orientation, Elite Live ve Film Info üretim davranışları U2 tabanından korunur. Tam Elite marka/ekran parity bu veri katmanı entegrasyonuyla tamamlanmaz.
+
+## U4.1 Home → Film Info eylem matrisi
+
+| Provider / eylem | Telefon portrait | Telefon landscape | Tablet P/L | Native TV/Box | TV Preview | Kabul |
+|---|---|---|---|---|---|---|
+| Xtream/M3U Home film → Info | Ortak modal | Modal responsive; katalog orientation boşluğu sürer | Ortak modal | Aynı modal/native scope | Aynı modal/sanal scope | SOURCE_CONNECTED; host hook testi; fiziksel NOT TESTED |
+| Info → İzle → Back | Provider resolver → Home | Mevcut Player orientation | Mevcut Player yolu → Home | Mevcut Player/Back → Home | Mevcut Player yolu → Home | Kaynak sözleşmesi; gerçek cihaz restorasyonu DEFERRED_RC |
+| Stalker Home film | Movies sekmesi | Movies sekmesi | Movies sekmesi | Movies sekmesi | Movies sekmesi | DEFERRED; seçilen filme doğrudan Info parity eksik |
+
+Home yenilenirken modal aynı kimlik için yeni sunum nesnesini kullanır; film snapshot'tan kalkarsa kapanır. TMDB kimliği playback kimliği olmaz. Bu kayıt tam Elite Home tasarımı, Series Info veya bütün cihazlarda görsel kabul anlamına gelmez.

@@ -79,3 +79,9 @@ U2'nin geometri/host otomatik kabulü gerçek cihaz kabulünden ayrıdır. Mevcu
 | Kalıcı katalog için toplam disk kotası/LRU | DEFER | Kaynak #131'de yok; katalogları sessiz kesmemek için keyfî sınır eklenmedi |
 
 Sonraki önerilen dilim **U4: Elite V2 ekran/action parity** — Home, mobil/tablet/Preview Live, Player/overlay, Home→Film Info ve Series Info; telefon katalog orientation politikası ayrı kabul maddesi. U3'ün disk bütçesi ve ayrıntılı Stalker lazy VOD/Series ölçüm boşlukları açık izlenir. Fiziksel kabul yalnız bütünleşik RC ve kullanıcı onayıyla başlar.
+
+## U4.1 — Home film eylemi (sınırlı kaynak dilimi)
+
+Xtream/M3U Home Hero ve film rafları artık mevcut Elite Film Info modalına gider; doğrudan oynatma yalnız modalın İzle eyleminden başlar. `useHomeMovieInfo` provider-scoped içerik kimliğini saklar, güncel Home snapshot nesnesini yeniden seçer; kaldırılmış içerik, provider değişimi ve eski callback oynatmayı başlatamaz. Movies kataloğunun mevcut Info→Player yolu korunur; Home üzerinden Player çıkışı Home'a döner.
+
+**U4 bütünü PARTIAL**. Stalker Home özeti yalnız portal ID ve sunum verisi taşır; Home film seçimi hâlâ Movies sekmesini açar. Sonraki dilimde güvenli current-session yeniden bulma, cancellation ve exact-item Film Info yolu kurulmalı. Series Info, tam Elite Home, touch/tablet/Preview Live ve Player/overlay görsel parity açık kalır. Telefon katalog orientation politikası bu işte değiştirilmez.

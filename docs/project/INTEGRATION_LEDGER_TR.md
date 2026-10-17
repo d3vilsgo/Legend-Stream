@@ -176,3 +176,15 @@ Native TV Physical FAIL, TMDB LIVE BLOCKED ve legacy 14 SKIP aynen korunur. APK/
 History/Continue Watching ve yerel download açılışları da yeni playback denemesi başlatır. PLAYER_EXIT sonrası active attempt temizlenir; geç VLC callback eski raporu yeni oturum gibi tamamlayamaz. Bu ek yalnız tanılama çağrısıdır; history referansı veya resolver davranışı değişmez.
 
 Eski 1,25 saniyelik M3U scheduler kaldırıldıktan sonra tüketilmeyen activationProviders Set/mark çağrıları da kaldırıldı; sıcak cache işaretleri gereksiz bellekte birikmez. Tazelik kararının tek sahibi CatalogSync olur. Yerel tam Quality 69/69 shell kapısında geçti; final yayın yine yeni exact-HEAD GitHub push ve PR koşularını gerektirir.
+
+## U4.1 — Home film eylemi; 18 Ekim 2026 (Türkiye)
+
+Başlangıç remote #143 HEAD `3eb8b55230b77e26e7f634be88aafbaefa3d6a1e`; base `feature/r19-tmdb-secure-proxy`; PR Draft. Yalnız `integration/legendstream-u1` ileri taşınır. U4.1 için eski feature branch'lerden toplu dosya kopyalanmaz.
+
+`OptimizedHomeScreenPaged.tsx` Home seçimini `useHomeMovieInfo` üzerinden mevcut `MovieInfoModal` bileşenine bağlar. Modalın yerel fallback, TMDB erişim politikası, movie-info scope/Back ve Inspector uygulaması değiştirilmez. İzle mevcut `resolveCatalogPlaybackSource` kullanır; Home kökenli oynatma `returnTo: home`, Movies katalog kökenli oynatma mevcut `movies` dönüşünü korur. Provider-scoped kimlik ve refresh sonrası güncel nesne kullanılır; eski modal ve çift Play engellenir.
+
+Sınıflandırma: Xtream/M3U Home film eylemi **INTEGRATED (source)**; mevcut Film Info sunumu/resolver **ALREADY COVERED**; Stalker exact-item Home Info **DEFERRED**; Series Info ve Elite Home/Live/Player/overlay parity **PARTIAL / OPEN**. Tam U4 bitmedi.
+
+Yeni test: 15 host-hook/kaynak sözleşmesi senaryosu. Yerel ve remote final Quality sonuçları PR Checks / exact-SHA run metadata üzerinden izlenir; aşağıdaki yeni run doğrulanmadan önceki PASS devralınmaz. Fiziksel kabul yoktur; Native TV tarihsel FAIL, TMDB LIVE BLOCKED ve 14 SKIP legacy kaydı korunur.
+
+U4.1 yerel doğrulama: mevcut Quality tanımındaki **71 shell kapısı / 71 PASS**, test kaldırılmadı veya atlanmadı. TSX girişleri yerelde `node --import tsx` ile aynı senaryolara çalıştırıldı; GitHub standart Quality komutlarını kullanır. Yeni U4 testi **15/15 PASS**. Mobil/API/tam workspace typecheck geçti. Bu sonuç henüz remote final SHA Quality veya fiziksel PASS değildir.

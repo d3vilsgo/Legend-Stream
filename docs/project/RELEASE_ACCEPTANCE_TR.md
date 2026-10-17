@@ -59,3 +59,11 @@ Fiziksel matrisin bütün güncel birleşik kaynak hücreleri NOT TESTED / DEFER
 - Final otomatik kabul yalnız final HEAD'i checkout eden push ve PR Quality ile verilir; `QUALITY_EXACT_HEAD` eşitliği şarttır. Eski U2 run'ları U3 için PASS değildir. Son SHA/run bağlantıları PR #143 açıklaması/Checks içinde tutulur.
 
 Tanılama yalnız güvenli alanları tutar; olaylar diske yazılmaz. Fiziksel performans kazancı veya hız yüzdesi ölçülmedi. APK/fiziksel test yoktur; Native TV FAIL, TMDB LIVE BLOCKED ve RC onay politikası aynıdır.
+
+## U4.1 otomatik kapsam ve RC borcu
+
+`u4HomeMovieInfoScenarios.mjs` gerçek production hook'unu host üzerinden çalıştırır: seçim oynatmaz, provider kimliği korunur, güncel snapshot kullanılır, kaldırılmış içerik/provider switch/eski callback engellenir, çift Play tek başlatmaya iner, modal kapatma oynatmaz. Shell ve mevcut modal bağlantısı kaynak sözleşmesiyle ayrıca kontrol edilir. Bunlar Android event dispatch veya fiziksel cihaz testi değildir.
+
+Bu dilimin CI kabulü yalnız yeni final HEAD'deki exact-SHA Quality ile yapılır; U3 `3eb8b55230b77e26e7f634be88aafbaefa3d6a1e` yeşili yeni değişikliğe devredilmez. Mevcut responsive, Hero/Native Focus, Player/Back, provider, TMDB ve U3 cache/performance kapıları tutulur. Yeni U4 host test ve biçim kontrolü mevcut Quality'ye eklenir; APK tetikleyicileri değiştirilmez.
+
+RC'de daha sonra kullanıcı onayıyla: Home Hero/raf seçimi → Info → Geri aynı konum/odak; Info → İzle → Player panelleri/kontrolleri → çıkış Home; orientation; provider değişimi; refresh sırasında kaldırılan film; TV Preview scope ve Native D-pad. Stalker ve Series Info eksikleri çözülmeden bütün action parity kabulü verilemez.

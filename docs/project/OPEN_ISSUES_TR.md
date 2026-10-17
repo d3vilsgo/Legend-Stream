@@ -49,3 +49,10 @@ Bu U1 görevi branch silme, mevcut PR merge/close/Ready/retarget veya otomatik m
 | CACHE-004 / P2 | DOCUMENTED | Otomatik hata aynı activation/timestamp/policy anahtarında döngüsel retry yapmaz; manuel yenileme, provider aktivasyonu veya politika değişimi yeni denemeyi açar |
 
 ELITE-001, INFO-001 ve UI-001 açık kalır. Native TV tarihsel **Physical FAIL**, güncel birleşik kaynak **NOT TESTED / DEFERRED_RC**, **TMDB LIVE BLOCKED** ve legacy **14 SKIP / 0 DELETED / 0 FAILED** değiştirilmedi.
+
+## U4.1 güncellemesi
+
+- **U4-ACTION-001 / PARTIAL**: Xtream/M3U Home film → mevcut Film Info kaynak yolu eklendi. Provider değişimi, kaldırılan içerik, eski callback ve çift Play otomatik kontrol altında. Native fiziksel Back/scroll/focus restorasyonu **NOT TESTED / DEFERRED_RC**.
+- **U4-ACTION-002 / OPEN / P1**: Stalker Home seçimi gerçek filme Info açmak yerine Movies sekmesine gider. Özet yalnız portal ID/sunum alanları içerir; cmd veya oturum URL'si saklanmaz. Sonraki iş: seçilen portal ID'yi güncel session'da yeniden bulma ve iptal/sahiplik korumasıyla ortak Info akışı. Stalker resolver'ı bu dilimde değiştirilmedi.
+- **U4-ACTION-003 / OPEN / P1**: Home Series → Series Info eylem ve metadata parity tamam değil. Tam Elite Home/Live/Player/overlay işleri açık.
+- Tarihsel Native TV **Physical FAIL**, TMDB **LIVE BLOCKED**, legacy cleanup **14 SKIP / 0 DELETED** aynen sürer. Yeni fiziksel kabul veya APK yoktur.
