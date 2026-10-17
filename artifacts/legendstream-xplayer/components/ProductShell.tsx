@@ -1,3 +1,5 @@
+import { MovieInfoServiceProvider } from "./tmdb/MovieInfoServiceProvider";
+import type { ProxyAccess } from "@/lib/tmdbProxy/transport";
 import { TVRemoteInspectorOverlay, TVRemoteInspectorCollector } from "@/components/tvPreview/TVRemoteInspector";
 import React from "react";
 import { View } from "react-native";
@@ -31,8 +33,9 @@ function ProductShellContent() {
 }
 
 
-export default function ProductShell() {
+export default function ProductShell({ metadataAccess }: { metadataAccess?: ProxyAccess } = {}) {
   return (
+    <MovieInfoServiceProvider access={metadataAccess}>
     <UiPresentationProvider>
       <TVPreviewFocusProvider>
         <View style={{ flex: 1, minHeight: 0 }}>
@@ -43,5 +46,6 @@ export default function ProductShell() {
         </View>
       </TVPreviewFocusProvider>
     </UiPresentationProvider>
+    </MovieInfoServiceProvider>
   );
 }

@@ -2,6 +2,7 @@ import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
+import tmdbRouter from "./routes/tmdb";
 import { logger } from "./lib/logger";
 
 const app: Express = express();
@@ -47,6 +48,8 @@ app.use(cors({
     callback(null, !origin || corsAllowlist.has(origin));
   },
 }));
+// Authenticate TMDB before its bounded parser; parser errors never echo request data.
+app.use("/api/tmdb", tmdbRouter);
 app.use(express.json({ limit: "32kb" }));
 app.use(express.urlencoded({ extended: true, limit: "32kb" }));
 
