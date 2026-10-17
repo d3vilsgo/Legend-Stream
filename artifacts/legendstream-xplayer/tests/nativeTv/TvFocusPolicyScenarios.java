@@ -87,6 +87,19 @@ public class TvFocusPolicyScenarios {
       check(move(own,"right",List.of(home,own,neighbor,stale),"content")==neighbor,"Screen region ignores another screen's stale target "+regionName);
       check(move(own,"up",List.of(home,own,neighbor),"content")==home,"Screen region can return to navigation "+regionName);
     }
+    // U1: #138's region isolation must coexist with #139 Elite Live and #141 Film Info.
+    Target eliteCategory=t(200,"live:category:all","content","live",0,120);
+    Target eliteChannel=t(201,"live:channel:77","content","live",110,120);
+    Target staleHome=t(202,"home-shelf:live:77","content","home",105,120);
+    check(move(eliteCategory,"right",List.of(eliteCategory,eliteChannel,staleHome),"content")==eliteChannel,"U1 Elite Live ignores a nearer stale Home shelf");
+    Target infoBack=t(203,"movie-info:back","movie-info","player",0,120);
+    Target infoPlay=t(204,"movie-info:play","movie-info","player",110,120);
+    Target staleMovie=t(205,"vod:77","content","movies",105,120);
+    List<Target> mixed=List.of(infoBack,infoPlay,staleMovie,eliteCategory,eliteChannel,staleHome);
+    check(move(infoBack,"right",mixed,"movie-info")==infoPlay,"U1 Film Info action stays in its modal scope");
+    check(move(infoPlay,"right",mixed,"movie-info")==null,"U1 Film Info boundary cannot escape into catalog");
+    check(move(staleMovie,"right",mixed,"movie-info")==null,"U1 underlying movie cannot own modal navigation");
+    check(move(eliteCategory,"right",mixed,"content")==eliteChannel,"U1 released modal scope leaves Elite Live row navigable");
     System.out.println("Native JVM focus scenarios: "+passed+"/"+passed+" passed");
   }
 }

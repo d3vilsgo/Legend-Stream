@@ -2,9 +2,9 @@ name: Quality
 
 on:
   pull_request:
-    branches: [feature/r19-tmdb-secure-proxy,feature/r19-tmdb-film-info,feature/r19-tmdb-enrichment-foundation,feature/r18-legend-elite-design-v1,feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, feature/r18-native-tv-universal-apk, main, feature/r18-presentation-foundation-1b, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad]
+    branches: [integration/legendstream-u1, feature/r19-tmdb-secure-proxy,feature/r19-tmdb-film-info,feature/r19-tmdb-enrichment-foundation,feature/r18-legend-elite-design-v1,feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, feature/r18-native-tv-universal-apk, main, feature/r18-presentation-foundation-1b, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad]
   push:
-    branches: [feature/r19-tmdb-secure-proxy,feature/r19-tmdb-film-info,feature/r19-tmdb-enrichment-foundation,feature/r18-legend-elite-design-v1,feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, main, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad, feature/r18-native-tv-universal-apk]
+    branches: [integration/legendstream-u1, feature/r19-tmdb-secure-proxy,feature/r19-tmdb-film-info,feature/r19-tmdb-enrichment-foundation,feature/r18-legend-elite-design-v1,feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, main, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad, feature/r18-native-tv-universal-apk]
 
 # Deterministic, read-only CI: dependency resolution must match pnpm-lock.yaml exactly.
 # Storage security gate: 6 credential scenarios + 24 backup scenarios must all pass.
@@ -38,6 +38,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact checked-out HEAD
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "$EXPECTED_HEAD_SHA"
+          echo "QUALITY_EXACT_HEAD=$actual_sha"
+          echo "Quality exact HEAD: \`$actual_sha\`" >> "$GITHUB_STEP_SUMMARY"
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -313,3 +323,5 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references
         run: pnpm exec tsc -b artifacts/api-server/tsconfig.json --pretty false
+      - name: Typecheck complete workspace including scripts
+        run: pnpm run typecheck
