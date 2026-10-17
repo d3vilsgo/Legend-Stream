@@ -444,7 +444,7 @@ function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel
       maxToRenderPerBatch={8}
       windowSize={5}
       renderItem={({ item, index: itemIndex }) => <TvFocusPressable
-        focusId={`home-shelf:${item.id}`}
+        focusId={`home-shelf:${title}:${item.id}`}
         onPress={item.onPress}
         onLongPress={Platform.isTV ? item.onRemove : undefined}
         onFocus={() => listRef.current?.scrollToIndex({ index: itemIndex, animated: true, viewPosition: 0.45 })}
@@ -503,6 +503,6 @@ const s = StyleSheet.create({
   homeShelfSkeletonRow: { flexDirection: "row", gap: 11, paddingVertical: 3 },
   homeShelfSkeletonCard: { width: 142, borderWidth: 1, borderRadius: 16, padding: 7, gap: 9 },
   homeShelfSkeletonImage: { width: "100%", aspectRatio: 2 / 3, borderRadius: 11, opacity: 0.72 },
-  homeTvFocusBase: { borderWidth: 2, borderColor: "transparent" },
-  homeTvFocusActive: { borderWidth: 3, shadowOpacity: 0.78, shadowRadius: 12, shadowOffset: { width: 0, height: 0 }, elevation: 8, transform: [{ scale: 1.025 }] },
+  homeTvFocusBase: { borderWidth: 4, borderColor: "transparent" },
+  homeTvFocusActive: { borderWidth: 4, shadowOpacity: 0.78, shadowRadius: 12, shadowOffset: { width: 0, height: 0 }, elevation: 8 },
 });

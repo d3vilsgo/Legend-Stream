@@ -1,3 +1,4 @@
+import {inspectorFocusLabel,inspectorCorner} from "../lib/tvRemoteInspector";
 import assert from 'node:assert/strict';
 import {InspectorHistory} from '../lib/tvRemoteInspector';
 let n=0;function test(name:string,fn:()=>void){fn();process.stdout.write(`ok inspector ${++n} - ${name}\n`);}
@@ -26,4 +27,10 @@ test('duplicate dispatch is not an action',()=>{const s=fresh();s.native(event({
 test('late repeat reported',()=>{const s=fresh();s.native(event({kind:'dispatch',delivery:'late-repeat',phase:'REPEAT',handled:true}));assert.match(s.records[0].result,/repeat bastırıldı/);});
 test('UP does not fabricate focus',()=>{const s=fresh();s.native(event({phase:'UP',inputAgeMs:0}));assert.equal(s.records[0].type,'input');assert.equal(s.records[0].withoutInput,false);});
 test('snapshot never claims a physical movement',()=>{const s=fresh();s.native(event({kind:'snapshot',focus:'player:audio',scope:'player-panel:audio'}));assert.equal(s.records[0].type,'snapshot');assert.equal(s.records[0].withoutInput,false);assert.equal(s.scope,'player-panel:audio');});
+test('default panel is compact without changing input',()=>{const s=fresh();assert.equal(s.collapsed,true);assert.equal(s.records.length,0);});
+test('expected target is independent of actual focus',()=>{const s=fresh();s.native(event({kind:'dispatch',focus:'catalog:channel:1',expectedFocus:'catalog:channel:2',moveOutcome:'request-failed',expectedVisible:false}));const r=s.records[0];assert.equal(r.after,'catalog:channel:1');assert.equal(r.expected,'catalog:channel:2');assert.equal(r.outcome,'request-failed');assert.equal(r.expectedVisible,false);});
+test('unsafe expected target is redacted',()=>{const s=fresh();s.native(event({kind:'dispatch',expectedFocus:'https://secret-token@provider',moveOutcome:'secret-token'}));assert(!JSON.stringify(s.records).includes('secret-token'));});
+test('meaningful labels contain no provider title',()=>{assert.equal(inspectorFocusLabel('navigation:live'),'Canlı TV');assert.match(inspectorFocusLabel('catalog:channel:1234'),/Kanal/);assert.equal(inspectorFocusLabel('private movie title'),'Gizlenmiş hedef');});
+test('corner avoids focused upper or lower region',()=>{assert.equal(inspectorCorner(40,540),'bottom');assert.equal(inspectorCorner(480,540),'top');});
+test('inspector on off cannot change the navigation outcome',()=>{const active=fresh(),off=new InspectorHistory();const input=event({kind:'dispatch',focus:'catalog:channel:2',expectedFocus:'catalog:channel:2',moveOutcome:'moved'});active.native(input);off.native(input);assert.equal(active.records[0].outcome,'moved');assert.equal(off.records.length,0);assert.equal(input.focus,'catalog:channel:2');});
 process.stdout.write(`TV remote inspector: ${n}/${n} passed\n`);

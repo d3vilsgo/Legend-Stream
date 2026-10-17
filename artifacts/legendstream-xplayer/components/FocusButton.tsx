@@ -62,7 +62,7 @@ export function FocusButton({
     onFocusChange?.(next);
     if (!Platform.isTV) return;
     Animated.spring(scale, {
-      toValue: next ? 1.055 : 1,
+      toValue: 1,
       damping: 18,
       stiffness: 210,
       mass: 0.45,
