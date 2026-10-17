@@ -80,6 +80,13 @@ public class TvFocusPolicyScenarios {
     Target recycledReplacement=t(140,"home-shelf:stable","content","content",0,200);
     check(move(a,"down",List.of(a,recycledReplacement),"content")==recycledReplacement,"Recycled mount uses current tag with stable logical ID");
     check(move(a,"diagonal",grid,"content")==null,"Unsupported input cannot move focus");
+    for(String regionName:List.of("home","live","movies","series")) {
+      Target own=t(150,"regionName:first","content",regionName,0,120);
+      Target neighbor=t(151,"regionName:next","content",regionName,110,120);
+      Target stale=t(152,"other:stale","content",regionName.equals("home")?"movies":"home",105,120);
+      check(move(own,"right",List.of(home,own,neighbor,stale),"content")==neighbor,"Screen region ignores another screen's stale target "+regionName);
+      check(move(own,"up",List.of(home,own,neighbor),"content")==home,"Screen region can return to navigation "+regionName);
+    }
     System.out.println("Native JVM focus scenarios: "+passed+"/"+passed+" passed");
   }
 }

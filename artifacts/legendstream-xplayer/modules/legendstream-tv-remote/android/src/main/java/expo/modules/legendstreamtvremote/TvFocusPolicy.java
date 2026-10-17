@@ -13,6 +13,7 @@ public final class TvFocusPolicy {
       this.x=x; this.y=y; this.width=width; this.height=height;
     }
   }
+  private static boolean screen(String region) {return region.equals("home")||region.equals("live")||region.equals("movies")||region.equals("series");}
   public static Target move(Target current, String direction, List<Target> targets, String scope) {
     if (current == null || !current.scope.equals(scope)) return null;
     if (!(direction.equals("left") || direction.equals("right") || direction.equals("up") || direction.equals("down"))) return null;
@@ -23,6 +24,7 @@ public final class TvFocusPolicy {
     for(Target t:targets) {
       if(t.tag==current.tag || !t.scope.equals(scope) || t.width<=0 || t.height<=0)continue;
       boolean targetNavigation=t.region.equals("navigation");
+      if(screen(current.region)&&screen(t.region)&&!current.region.equals(t.region))continue;
       if(navigation && horizontal && !targetNavigation)continue;
       if(navigation && direction.equals("down") && targetNavigation)continue;
       if(!navigation && (horizontal||direction.equals("down")) && targetNavigation)continue;
