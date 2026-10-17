@@ -14,6 +14,18 @@ public final class TvFocusPolicy {
     }
   }
   private static boolean screen(String region) {return region.equals("home")||region.equals("live")||region.equals("movies")||region.equals("series");}
+  private static boolean hero(Target t) {return t.region.equals("home")&&t.id.startsWith("home-hero:");}
+  private static String shelf(Target t) {
+    if(!t.region.equals("home")||!t.id.startsWith("home-shelf:"))return "";
+    int end=t.id.indexOf(':',11);
+    return end<0?"":t.id.substring(0,end);
+  }
+  private static boolean more(Target t) {return !shelf(t).isEmpty()&&t.id.endsWith(":more");}
+  private static boolean hasCards(Target t,List<Target> targets,String scope) {
+    String row=shelf(t);
+    for(Target candidate:targets)if(candidate.scope.equals(scope)&&shelf(candidate).equals(row)&&!more(candidate)&&candidate.width>0&&candidate.height>0)return true;
+    return false;
+  }
   public static Target move(Target current, String direction, List<Target> targets, String scope) {
     if (current == null || !current.scope.equals(scope)) return null;
     if (!(direction.equals("left") || direction.equals("right") || direction.equals("up") || direction.equals("down"))) return null;
@@ -28,6 +40,22 @@ public final class TvFocusPolicy {
       if(navigation && horizontal && !targetNavigation)continue;
       if(navigation && direction.equals("down") && targetNavigation)continue;
       if(!navigation && (horizontal||direction.equals("down")) && targetNavigation)continue;
+      String currentShelf=shelf(current), targetShelf=shelf(t);
+      boolean sameShelf=!currentShelf.isEmpty()&&currentShelf.equals(targetShelf);
+      boolean homeHorizontal=current.region.equals("home")&&horizontal;
+      if(homeHorizontal && hero(current) && !hero(t))continue;
+      if(homeHorizontal && !currentShelf.isEmpty() && (!sameShelf || !more(current)&&more(t)))continue;
+      if(!horizontal && current.region.equals("home")) {
+        if(hero(current)&&hero(t))continue;
+        if(sameShelf) {
+          boolean headerDown=more(current)&&direction.equals("down")&&!more(t);
+          boolean cardUp=!more(current)&&direction.equals("up")&&more(t)&&Math.abs(t.x+t.width/2-current.x-current.width/2)<=(t.width+current.width)/2;
+          if(!headerDown&&!cardUp)continue;
+        }
+        // DOWN enters a card, not a distant header's duplicate See All action.
+        if(!sameShelf&&more(t)&&hasCards(t,targets,scope))continue;
+      }
+      if(navigation&&direction.equals("down")&&more(t)&&hasCards(t,targets,scope))continue;
       float dx=t.x+t.width/2-current.x-current.width/2;
       float dy=t.y+t.height/2-current.y-current.height/2;
       float primary=direction.equals("left")?-dx:direction.equals("right")?dx:direction.equals("up")?-dy:dy;
@@ -35,7 +63,7 @@ public final class TvFocusPolicy {
       float overlapX=Math.min(t.x+t.width,current.x+current.width)-Math.max(t.x,current.x);
       float overlapY=Math.min(t.y+t.height,current.y+current.height)-Math.max(t.y,current.y);
       // Horizontal motion stays in its measured row. A row boundary never jumps diagonally.
-      if(horizontal && overlapY < Math.min(t.height,current.height)*0.5f)continue;
+      if(horizontal && !sameShelf && overlapY < Math.min(t.height,current.height)*0.5f)continue;
       if(!horizontal && overlapY > Math.min(t.height,current.height)*0.5f)continue;
       float cross=horizontal?Math.abs(dy):Math.abs(dx);
       // First choose the adjacent measured row, then the nearest column in that row.

@@ -174,6 +174,7 @@ export default function StalkerMainPage() {
   const [playable, setPlayable] = useState<Playable | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
+  const [homeViewportHeight, setHomeViewportHeight] = useState<number | undefined>(undefined);
   const [switchingProviderId, setSwitchingProviderId] = useState<string | null>(null);
   const switchingProviderRef = useRef<string | null>(null);
   const historyPlaybackAbortRef = useRef<AbortController | null>(null);
@@ -528,6 +529,7 @@ export default function StalkerMainPage() {
 
       {presentedView !== "live" && presentedView !== "movies" && presentedView !== "series" && presentedView !== "history" ? (
         <ScrollView
+          onLayout={Platform.isTV ? event => setHomeViewportHeight(event.nativeEvent.layout.height) : undefined}
           style={{ flex: 1, minHeight: 0 }}
           contentContainerStyle={[s.content, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]}
           keyboardShouldPersistTaps="handled"
@@ -536,6 +538,7 @@ export default function StalkerMainPage() {
         >
           {presentedView === "home" ? (
             <HomeDiscovery
+              tvViewportHeight={homeViewportHeight}
               provider={provider}
               live={liveCatalog.countKnown ? liveCatalog.totalCount : null}
               vod={productCounts.vod}
