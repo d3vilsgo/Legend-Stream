@@ -1,3 +1,4 @@
+import { beginPerformanceMeasurement, finishPerformanceMeasurement } from "@/lib/performanceDiagnostics";
 import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
 import { currentMovie, pagedMovieInput, localXtreamMovie } from "@/lib/tmdb/movieInfoModel";
 import { EliteLiveCatalog } from "@/components/elite/EliteLiveCatalog";
@@ -104,13 +105,16 @@ function useCategories(providerId: string, kind: "live" | "vod" | "series", diag
   const generationRef = useRef(0);
   const reload = () => {
     const generation = ++generationRef.current;
+    const measurement = beginPerformanceMeasurement("FIRST_CATEGORY");
     void getCachedCatalogCategories(providerId, kind, diagnosticM3U)
       .then((next) => {
         if (generationRef.current === generation) {
           setResult({ providerId, categories: next });
-        }
+          finishPerformanceMeasurement(measurement);
+        } else finishPerformanceMeasurement(measurement, "CANCELLED");
       })
       .catch(() => {
+        finishPerformanceMeasurement(measurement, generationRef.current === generation ? "ERROR" : "CANCELLED");
         if (generationRef.current === generation) {
           setResult({ providerId, categories: [] });
         }

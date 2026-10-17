@@ -30,6 +30,8 @@ export type CatalogSyncState = {
   total: number;
   message?: string;
   updatedAt: number;
+  lastFullSyncAt?: number | null;
+  lastBackgroundSyncAt?: number | null;
 };
 
 export type CatalogCounts = {
@@ -409,8 +411,10 @@ export async function getCatalogSyncState(providerId: string): Promise<CatalogSy
     total: number;
     message: string | null;
     updated_at: number;
+    last_full_sync_at: number | null;
+    last_background_sync_at: number | null;
   }>(
-    "SELECT provider_id, phase, completed, total, message, updated_at FROM catalog_sync_state WHERE provider_id = ?",
+    "SELECT provider_id, phase, completed, total, message, updated_at, last_full_sync_at, last_background_sync_at FROM catalog_sync_state WHERE provider_id = ?",
     providerId,
   );
   return row
@@ -421,6 +425,8 @@ export async function getCatalogSyncState(providerId: string): Promise<CatalogSy
         total: row.total,
         message: row.message ?? undefined,
         updatedAt: row.updated_at,
+        lastFullSyncAt: row.last_full_sync_at,
+        lastBackgroundSyncAt: row.last_background_sync_at,
       }
     : null;
 }

@@ -1,3 +1,4 @@
+import { CatalogRefreshSettings } from "@/components/CatalogRefreshSettings";
 import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
 import { TVRemoteInspectorSetting } from "@/components/tvPreview/TVRemoteInspector";
 import { tvInspector } from "@/lib/tvRemoteInspector";
@@ -707,6 +708,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onSwitch, on
           ))}
         </ScrollView>
       </View>
+      <CatalogRefreshSettings />
       <PlayerChromeTimeoutSetting />
       <ProviderBackupPanel />
       <CredentialDiagnosticsPanel />

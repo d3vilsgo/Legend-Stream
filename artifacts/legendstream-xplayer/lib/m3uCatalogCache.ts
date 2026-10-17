@@ -378,8 +378,9 @@ async function failClosedWrite(options: {
 export async function persistM3UProviderCache(
   provider: M3UCatalogCacheProvider,
   loaded: ProviderLoadResult,
+  isCurrent?: () => boolean,
 ): Promise<boolean> {
-  if (provider.type !== "m3u") return false;
+  if (provider.type !== "m3u" || (isCurrent && !isCurrent())) return false;
   const startedAt = Date.now();
   const liveInput = loaded.liveChannels ?? loaded.channels;
   const movieInput = loaded.movieItems ?? [];
@@ -512,6 +513,7 @@ export async function persistM3UProviderCache(
     sqliteStage = "set-ready";
     const committedCounts = await swapStagingToProvider({
       providerId: provider.id,
+      assertStillOwned: () => { if (isCurrent && !isCurrent()) throw new Error("M3U cache ownership expired."); },
       vodCategories: categories(movieInput.map((item) => item.category)),
       seriesCategories: categories(seriesInput.map((item) => item.category)),
       readyMessage: "M3U cache ready",
@@ -554,6 +556,7 @@ export async function persistM3UProviderCache(
     } catch (cleanupCaught) {
       safeLog.error("LS_M3U_CACHE_STAGING_CLEANUP", cleanupCaught);
     }
+    if (isCurrent && !isCurrent()) return false;
     const progress = snapshotM3USqliteBatchProgress(batchProgress);
     let schemaFingerprint: Partial<M3USqliteSchemaFingerprint> = {};
     try {
