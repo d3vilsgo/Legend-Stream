@@ -144,7 +144,7 @@ export default function OptimizedHomeScreenPaged() {
     error, scopedError, m3uCatalogCommit, connectProvider, cancelProviderConnect, recoverLegacyCatalogFallback, toggleFavorite, recordWatched,
     removeWatched, resolveProviderForSwitch, setActiveProvider, removeProvider, disconnectProvider, clearError, clearScopedError,
   } = usePlayer();
-  const { snapshot, hasUsableCache, isSyncing, isRefreshing, refreshSnapshot, refreshCatalog, refreshPolicy, refreshPolicyReady, lastSuccessfulAt, setRefreshPolicy, syncState } = useCatalogSync();
+  const { snapshot, hasUsableCache, isSyncing, isRefreshing, refreshSnapshot, refreshCatalog, lastSuccessfulAt, syncState } = useCatalogSync();
   useCredentialDiagnosticsStartup();
 
   const [view, setView] = useState<ViewName>("home");
@@ -548,7 +548,7 @@ export default function OptimizedHomeScreenPaged() {
         onRemoveLive={(id) => void removeWatched(id)}
       /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
-      {view === "settings" ? <Settings provider={provider} providers={providers} busy={providerSwitchBusy} switchingProviderId={switchingProviderId} refreshPolicy={refreshPolicy} refreshPolicyReady={refreshPolicyReady} lastSuccessfulAt={lastSuccessfulAt} syncing={isSyncing || isRefreshing || isLoading} syncPhase={snapshot.providerId === provider.id ? syncState?.phase ?? null : null} onRefreshNow={() => refreshPagedCatalog()} onSetRefreshPolicy={setRefreshPolicy} onEdit={() => setEditingProviderId(provider.id)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
+      {view === "settings" ? <Settings provider={provider} providers={providers} busy={providerSwitchBusy} switchingProviderId={switchingProviderId} onEdit={() => setEditingProviderId(provider.id)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
     </ScrollView> : null}
 
     </NativeTVFocusScope>
@@ -671,11 +671,8 @@ function HistoryView({ providerId, channels, favorites, history, onOpen, onOpenM
   />;
 }
 
-function Settings({ provider, providers, busy, switchingProviderId, refreshPolicy, refreshPolicyReady, lastSuccessfulAt, syncing, syncPhase, onRefreshNow, onSetRefreshPolicy, onEdit, onAdd, onSwitch, onDisconnect, onRemove }: {
+function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAdd, onSwitch, onDisconnect, onRemove }: {
   provider: ProviderConfig; providers: ProviderConfig[]; busy: boolean; switchingProviderId: string | null;
-  refreshPolicy: ReturnType<typeof useCatalogSync>["refreshPolicy"];
-  refreshPolicyReady: boolean; lastSuccessfulAt: number | null; syncing: boolean; syncPhase: string | null;
-  onRefreshNow: () => void; onSetRefreshPolicy: (policy: typeof refreshPolicy) => Promise<void>;
   onEdit: () => void; onAdd: () => void; onSwitch: (id: string) => void; onDisconnect: () => void; onRemove: (id: string) => void;
 }) {
   const colors = useColors();

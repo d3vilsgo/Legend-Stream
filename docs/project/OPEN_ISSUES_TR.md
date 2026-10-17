@@ -14,8 +14,8 @@ Durumlar: OPEN, SOURCE_INTEGRATED, AUTO_VERIFIED, DEFERRED_RC, BLOCKED. Fiziksel
 | ELITE-001 / P1 | Home/Live/Player/overlay bütün cihazlar | #139: gerçek Elite Live yalnız Native TV; showcase üretim Home/Player değil | PARTIAL / NOT TESTED | Ortak marka ve action modeli; cihazlara uygun yerleşim |
 | INFO-001 / P1 | Home→Film Info, Series Info | #141 katalog modalı var; Home film yolları farklı; Series metadata ekranı yok | OPEN / NOT TESTED | Resolver'a dokunmadan detail action parity |
 | TMDB-001 / P1 | Metadata live bütün cihazlar | #140–#142 mock matcher/cache/proxy; gerçek deployment/session/secret kanıtı yok | **TMDB LIVE BLOCKED** | Hosting kullanıcı seçimi/onayı, HTTPS + trusted issuer + server token + atıf. Netlify kullanılmaz; sunucu dağıtılmaz |
-| PERF-001 / P1 | Startup/playback ölçüm | #130 ayrı branch | DEFERRED_U3 / NOT TESTED | Gözlem callback ve redaksiyon entegrasyonu |
-| CACHE-001 / P1 | Refresh/provider switch | #131 ayrı branch | DEFERRED_U3 / NOT TESTED | Üç provider için cache/cancel/stale testleri |
+| PERF-001 / P1 | Startup/playback ölçüm | U3 #130 adaptasyonu; performanceDiagnostics + üretim olayları | SOURCE_INTEGRATED / Physical NOT TESTED | RC gerçek cihaz örnekleri; ölçülmemiş hız yüzdesi yok |
+| CACHE-001 / P1 | Refresh/provider switch | U3 #131 adaptasyonu; CatalogSync + retained-window + M3U transaction gate | SOURCE_INTEGRATED / Physical NOT TESTED | RC offline/switch/yenileme ve aynı scroll/selection/focus kabulü |
 | HYGIENE-001 / P2 | Araç zinciri/API/ek CI | #120 | Yalnız scripts root typecheck TS18003 onarımı alındı; PR bütünü OPEN | Kalan #120 semantik uzlaşması; tam PR tamamlandı sayılmaz |
 | LEGACY-001 / P2 | 14 onaylı eski branch | 17 Ekim legacy temizliği: **0 DELETED / 14 SKIP / 0 FAILED**; deployment/environment okunamadı ve ref-delete kabiliyeti yok | SKIP / RETAIN; yönetim borcu | Erişim geldiğinde exact-ref ve dependency gate'i yeniden yap; U1'i durdurmaz |
 | ADMIN-001 / P1 | GitHub yönetim koruması | Son okuma main ve 14 stacked parent protection yok; rulesets=[] | BLOCKED; auto-merge/delete kapalı | Yetkili settings erişimiyle koruma ve required typecheck kaynak doğrulaması; hiçbir bypass yok |
@@ -33,3 +33,19 @@ Bu U1 görevi branch silme, mevcut PR merge/close/Ready/retarget veya otomatik m
 - Preview row restorasyonu görünür hedef ve aktif scope doğrulaması ister; sanal D-pad testi Native fiziksel Focus PASS değildir. Host hook ve React host render gerçek Android layout testi değildir.
 - ELITE-001 / INFO-001, Native TV Physical FAIL ve TMDB LIVE BLOCKED kapanmadı. Legacy 14 SKIP listesi aynen geçerlidir. Yeni APK veya fiziksel test yoktur.
 - U3: #130 gözlem/performance ve #131 cache-first refresh; callback ömrü, generation/cancel, stale cache ve provider identity regresyonlarıyla uzlaştırılacak.
+
+## U3 açık sınırlar ve çözülen kaynak kusurları
+
+| ID | Durum | Kanıt / sonraki eylem |
+|---|---|---|
+| U3-FIX-01 | SOURCE_FIXED | Geç snapshot timestamp'i ownership guard arkasına taşındı; üretim coordinator host testi |
+| U3-FIX-02 | SOURCE_FIXED | #131 M3U sahiplik release sonrası kontrolü başarıyı false yapıyordu; finishOwnedCatalogCommit sonucu release öncesi doğrular |
+| U3-FIX-03 | SOURCE_FIXED | Refresh revision'ı listeyi boşaltıyordu; mevcut pencere korunur ve yeni pencere tek yayında değişir |
+| U3-FIX-04 | SOURCE_FIXED | M3U queued/staged yazımda artık current ownership ve transaction assertStillOwned kontrolü var |
+| PERF-002 / P2 | OPEN / NOT OBSERVED | Android native heap/PSS ve gerçek ilk piksel/ilk frame ölçümü yok; JS heap yalnız runtime sunuyorsa numeric gözlem |
+| PERF-003 / P2 | PARTIAL | FIRST_CATEGORY veri hazırlığı, FIRST_CONTENT paged React commit içindir; Stalker lazy VOD/Series iç fazları ve gerçek görünürlük ayrı ölçüm ister |
+| CACHE-002 / P1 | OPEN | Kalıcı SQLite katalog toplam disk boyutu/row eviction kotası kaynakta yok; ürün veri kaybını önleyen bütçe tasarımı ayrı dilim |
+| CACHE-003 / P2 | OPEN | M3U transport abort bu dilimde eklenmedi; mevcut 20s fetch timeout + generation discard + queued/SQL publication iptali korunur |
+| CACHE-004 / P2 | DOCUMENTED | Otomatik hata aynı activation/timestamp/policy anahtarında döngüsel retry yapmaz; manuel yenileme, provider aktivasyonu veya politika değişimi yeni denemeyi açar |
+
+ELITE-001, INFO-001 ve UI-001 açık kalır. Native TV tarihsel **Physical FAIL**, güncel birleşik kaynak **NOT TESTED / DEFERRED_RC**, **TMDB LIVE BLOCKED** ve legacy **14 SKIP / 0 DELETED / 0 FAILED** değiştirilmedi.

@@ -47,3 +47,15 @@ Her gerçek kabul kaydı cihaz/OS, APK/run, exact SHA, adımlar, gözlenen sonu�
 7. Yeni HEAD için yalnız kendi `Quality` run'ı ve `QUALITY_EXACT_HEAD` satırı kabul edilir. Son yayın SHA/run bağlantıları PR #143'ün Checks ve açıklamasında tutulur; belge kendi commit SHA'sını uydurmaz.
 
 Fiziksel matrisin bütün güncel birleşik kaynak hücreleri NOT TESTED / DEFERRED_RC kalır. Eski Homatics FAIL, TMDB LIVE BLOCKED ve legacy 14 SKIP kayıtları U2 otomatik başarılarıyla değişmez.
+
+## U3 otomatik kabul sözleşmesi
+
+- #130 kaynak testi 19 senaryo korunur; ek performans lifecycle/privacy/bounds testi deneme korelasyonu, duplicate/missing olaylar, timeout ve retention sınırlarını sınar.
+- Cache policy testi 24/72 saat, otomatik açık/kapalı, cache yok/mevcut, clock rollback ve eski v1 tercih davranışını korur. Geçersiz/eksik tercih sürümü güvenli v1 varsayılanına döner; katalog dosyası sıfırlanmaz.
+- Üretim CatalogSyncProvider host effect testi: warm cache, single-flight, başarı/hata, provider switch, geç timestamp, eski timer callback, expiry ve otomatik kapatma. Gerçek React Native scheduling testi değildir.
+- Üretim catalogCache gerçek host SQLite testi: cold/legacy NULL timestamps, transaction rollback, başarılı swap, failed-refresh cache retention, provider isolation ve credential-free DTO. Android Expo SQLite/firmware kabulü değildir.
+- Refresh window ve ownership completion testi: yüklü pencere/ID korunması, iptal, offline, ilerlemeyen cursor, eski policy ve release sırası. Scroll piksel/Android Focus fiziksel kanıtı değildir.
+- Mevcut U2, Native JVM Focus/stability/reachability, Preview D-pad, Player/Back, orientation, provider/identity, Elite Live/Film Info ve TMDB güvenlik kapıları çalışır; test silme/skip yoktur.
+- Final otomatik kabul yalnız final HEAD'i checkout eden push ve PR Quality ile verilir; `QUALITY_EXACT_HEAD` eşitliği şarttır. Eski U2 run'ları U3 için PASS değildir. Son SHA/run bağlantıları PR #143 açıklaması/Checks içinde tutulur.
+
+Tanılama yalnız güvenli alanları tutar; olaylar diske yazılmaz. Fiziksel performans kazancı veya hız yüzdesi ölçülmedi. APK/fiziksel test yoktur; Native TV FAIL, TMDB LIVE BLOCKED ve RC onay politikası aynıdır.

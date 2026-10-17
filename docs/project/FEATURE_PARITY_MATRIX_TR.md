@@ -1,4 +1,4 @@
-# Cihaz × Ekran × Özellik — U2
+# Cihaz × Ekran × Özellik — U3
 
 Bu tablo kaynak bağlantısını gösterir; Physical PASS tablosu değildir. P=telefon portrait, L=telefon landscape, T=tablet P/L, TV=Native Android TV/Google TV/Box, Preview=telefon/tablette sanal D-pad. Telefon katalog landscape, devralınan policy yüzünden hâlâ açık ürün boşluğudur; landscape Player desteğiyle karıştırılmaz.
 
@@ -46,3 +46,18 @@ Quality sonucu, bu commit'i checkout eden GitHub run/check kaydından okunur; br
 | Player/Back/orientation | Mevcut policy ve geçici Player sahipliği değişmedi | Serbest tablet policy değişmedi | Native panel/controls/exit sırası değişmedi | Mevcut Preview Back yolu | Mevcut otomatik testler; fiziksel kabul yok |
 
 Üç katalog yolu aynı helper'a bağlıdır; Xtream/M3U/Stalker katalog, bölüm ve playback kimlikleri dönüştürülmez. Grid'deki `providerId` sadece restorasyon scope'udur. TMDB ID ile playback yapılmaz. Series Info, Home→Film Info, mobil/Preview Elite Live ve Elite Home/Player/overlay hâlâ açık ürün işleridir.
+
+## U3 ortak veri/performance sözleşmesi
+
+| Alan | Telefon P/L | Tablet P/L | Native TV/Box | TV Preview | Sınır |
+|---|---|---|---|---|---|
+| Warm katalog | Kullanılabilir SQLite cache önce | Aynı | Aynı | Aynı | Fiziksel hız ölçülmedi; telefon portrait policy değişmedi |
+| Otomatik refresh | Ortak 24/72 saat politika | Aynı | Aynı | Aynı | TTL silme süresi değildir; hata cache'i silmez |
+| Ayarlar/tanılama | Ortak CatalogRefreshSettings/PerformanceDiagnosticsPanel | Aynı | FocusButton ile aynı kontrol | Sanal hedeflerle aynı kontrol | İki ürün shell'i de ortak bileşeni kullanır |
+| Provider switch | Provider+generation ve request ownership | Aynı | Aynı | Aynı | M3U ağ isteğinde fiziksel abort eklenmedi; geç yanıt ve queued/transaction yayın iptali var |
+| Paged grid yenileme | Mevcut pencere tutulur, sonuç tek yayında değişir | Aynı | Native Focus hook'u korunur | Scope/focus controller korunur | Model/host testi; gerçek Android scroll/selection/focus kabulü NOT TESTED |
+| Performans olayları | Ortak runtime, RAM'de bounded kayıt | Aynı | Aynı | Aynı | Callback/React commit zamanları; fiziksel performans PASS değildir |
+
+Provider kapsamı: Xtream Live/VOD/Series ayrı başarı/retained-cache semantiğini korur. M3U staged tam katalog değişimi ve kalıcı referanslar korunur. Stalker otomatik politika **Live** içindir; VOD/Series session/page/lazy yolları aynı kalır. Stalker EPG probu üretim EPG özelliği sayılmaz. EPG'nin mevcut bağımsız freshness/iptal sistemi katalog 24/72 saat politikasına çevrilmez.
+
+Home Hero, adaptive navigation, Native Focus/Hero/Inspector, Player Back/orientation, Elite Live ve Film Info üretim davranışları U2 tabanından korunur. Tam Elite marka/ekran parity bu veri katmanı entegrasyonuyla tamamlanmaz.

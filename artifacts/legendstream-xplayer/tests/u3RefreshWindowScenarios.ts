@@ -1,3 +1,7 @@
+import {
+  finishOwnedCatalogCommit,
+  ProviderLoadRequestGate,
+} from "../lib/catalogAvailability";
 import assert from "node:assert/strict";
 import { refreshCatalogWindow } from "../lib/catalogRefreshWindow";
 import {
@@ -78,8 +82,43 @@ async function main() {
     }),
     true,
   );
+  const gate = new ProviderLoadRequestGate();
+  const owner = gate.beginForeground("m3u");
+  const committed = await finishOwnedCatalogCommit(
+    Promise.resolve(true),
+    () => gate.isCurrent(owner),
+    () => {
+      gate.finish(owner);
+    },
+  );
+  assert.equal(committed, true);
+  assert.equal(gate.isCurrent(owner), false);
+  const stale = gate.beginForeground("m3u");
+  gate.invalidateAll();
+  assert.equal(
+    await finishOwnedCatalogCommit(
+      Promise.resolve(true),
+      () => gate.isCurrent(stale),
+      () => {
+        gate.finish(stale);
+      },
+    ),
+    false,
+  );
+  const failed = gate.beginForeground("m3u");
+  assert.equal(
+    await finishOwnedCatalogCommit(
+      Promise.resolve(false),
+      () => gate.isCurrent(failed),
+      () => {
+        gate.finish(failed);
+      },
+    ),
+    false,
+  );
+  assert.equal(gate.isCurrent(failed), false);
   console.log(
-    "U3 refresh window/policy compatibility: 6/6 passed; MODEL_NOT_PHYSICAL",
+    "U3 refresh window/policy compatibility: 9/9 passed; MODEL_NOT_PHYSICAL",
   );
 }
 void main();

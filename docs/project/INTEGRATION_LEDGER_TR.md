@@ -99,3 +99,76 @@ Eski Stalker boundary testinin width>=900 gibi sabit eşik zorlaması yeni ortak
 Final SHA ve exact-SHA Quality bağlantısı PR #143'te sunulur. Bu dilim U1 ürün programını tamamlamaz. Sonraki dilim U3: #130/#131 performans/cache. Telefon katalog rotation politikası, #121 header/detail, tam Elite ekran parity, Home→Film Info/Series Info ve TMDB canlı işlerinin sahipliği roadmap'te açık kalır. Physical FAIL / NOT TESTED, TMDB LIVE BLOCKED ve 14 SKIP legacy kaydı aynen korunur.
 
 U2 son tam regresyonunda eski EPG privacy testinin bütün trace metninde kısa `101` portal ID'sini aradığı, gerçek `at` zaman damgası `1792267910101` olduğunda yanlış FAIL verdiği görüldü. Üretim log/EPG kaynağı değiştirilmedi. Test, event+details payload'ının tamamında ID sızıntısını denetler; URL/MAC/title yokluğu denetimleri korunur. Aynı çakışan timestamp açık fixture olarak eklendi ve payload'ın değişmediği doğrulanır. Kontrol atlanmadı veya devre dışı bırakılmadı.
+
+## U3 performance/cache — 18 Ekim 2026 (Türkiye)
+
+### Remote source gate ve gerçek fark
+
+| Kaynak | Doğrulanan SHA | Base / karar |
+|---|---|---|
+| main | `810adc2f7e82da52d8dd6768fcd5cf1d3040e106` | Değiştirilmez |
+| #143 başlangıç | `f68b5157a41e2d5fe8656e394a3bdd2d5db82fc3` | Draft; base feature/r19-tmdb-secure-proxy / 98423240d1f966388e74aa4249632b1c921b3c4b |
+| #130 | `90fda3b1abe696f07aa2c64ed9be32b5ac6f6dea` | Base feature/r18-presentation-foundation-1b / 72b1e1f2f484c1a627ee2fc5c19d88cbf2d6adaa |
+| #131 | `fb87735ce4a95464ba85f1d4922e5f616e6d3112` | Base feature/r18-performance-observability / 90fda3b1abe696f07aa2c64ed9be32b5ac6f6dea |
+
+#130 ile U2 merge-base'i 72b1e1f…; #131'in kendi base→HEAD farkı #130'u tekrar saymaz. #130 kendi farkı 16 dosya, #131 kendi farkı 13 dosyadır (workflow/package/test dahil). Üretim patch'leri üç yönlü olarak temiz uygulandı; daha yeni dosyalar bütünüyle kopyalanmadı. U2 Hero/native fixes ve #143 geçmişi korunur. Source workflow filtreleri ve package dosyası kopyalanmaz; test kapıları mevcut exact-HEAD Quality'ye eklenir, APK workflow'ları değişmez.
+
+### Özellik fark kararları
+
+| Özellik | Sınıf | Gerekçe / gerçek dosya |
+|---|---|---|
+| Cache hydration / ayrı provider identity / staged atomic yayın | ALREADY COVERED | catalogAvailability, catalogCache, m3uCatalogCache, xtreamKindCache, stalkerLiveSync; mevcut temel korunur |
+| Startup/provider/cache/query/VLC paneli | ADAPT | performanceDiagnostics, RootLayout, PlayerContext, CatalogSyncContext, HomeDiscovery, catalogRuntime, VlcPlaybackSurface |
+| 24/72 saat refresh policy ve timestamp okuma | INTEGRATE | catalogRefreshPolicy, CatalogSyncContext, catalogCache mevcut nullable sütunları |
+| Tek koordinatör ve ayarlar | ADAPT | CatalogSync refreshCatalog; CatalogRefreshSettings iki shell'de |
+| #131 M3U completion ve late snapshot | ADAPT | Sonuç ownership release öncesi doğrulanır; UI timestamp publication guard'dan sonra |
+| Görünür listeyi boşaltan reload | ADAPT | useCatalogPage + catalogRefreshWindow; sadece yüklü pencere yeniden okunur |
+| Her aktivasyonda eski 1.25s otomatik çağrı | REJECT WITH REASON | Kullanıcı tazelik tercihini atlar ve istek üretir |
+| Yeni toplam disk/LRU kotası, native heap/PSS ve gerçek frame ölçümü | DEFER | Kaynak PR'larda yok; ölçüm/ürün sözleşmesi olmadan keyfî sınır veya PASS yok |
+
+### Ölçüm sözleşmesi
+
+Birim **ms**; monotonic performance.now (yoksa Date.now fallback), negatif fark sıfıra sınırlandırılır. Generic sample durumları PENDING/SUCCESS/ERROR/CANCELLED/TIMEOUT. Eksik alt event çifti NOT_OBSERVED; duplicate VLC/buffering olayları bir kez tutulur. Tanılama deadline'ı standart fazlarda 120.000 ms, katalog refresh'te 600.000 ms; bunlar yalnız örnek sınıflandırır, iş/transport iptal etmez. Timeout snapshot okunurken veya bitiş olayında değerlendirilir; polling timer eklenmez.
+
+| Ölçüm | Başlangıç → bitiş | Kanıt / sınır |
+|---|---|---|
+| APP_STARTUP | Root mount → Home ilk kullanılabilir React effect | RootLayout/HomeDiscovery; ilk fiziksel piksel değildir |
+| PROVIDER_PREPARATION | Player readState hydration başı → başarı/hata | PlayerContext; portal handshake'in ayrı cihaz süresi değildir |
+| CACHE_HYDRATION | Snapshot read başı → current snapshot yayını | CatalogSyncContext; eski ownership CANCELLED |
+| FIRST_CATEGORY | Paged category reload → current category verisi hazır | PagedCatalogViews; gerçek görünürlük veya Stalker lazy VOD/Series iç fazları değildir |
+| FIRST_CONTENT | İlk paged query → React state commit effect | useCatalogPage; gerçek frame ölçümü değildir |
+| PROVIDER_SWITCH | setActiveProvider başı → mevcut async sonucun boolean sonucu | PlayerContext; cold/warm karşılaştırması fiziksel PASS değildir |
+| PLAYBACK_START | Bilinen entry tap → VLC_PLAYING/ERROR/EXIT | beginPlaybackAttempt + URI'ye bağlı callback token; eksik callback NOT_OBSERVED/TIMEOUT |
+| LIVE_SWITCH | Player queue canlı seçim isteği → VLC_PLAYING/ERROR/EXIT | Aynı engine; yalnız tanılama eklenir |
+| CATALOG_REFRESH | Üç provider koordinatör işi → commit/retained error/cancel | Stalker Live-only; Xtream kinds ayrı; M3U commit boolean |
+
+Kayıtlar RAM'de: 5 startup (cold + son warm), startup başına 192 olay, 8 playback ve deneme başına en çok 64 olay, 32 generic sample, 7 whitelisted gauge. Yalnız açık/kapalı tercihi AsyncStorage'da kalır. Tercih yüklenirken erken olaylar yalnız bounded, credentialsız alanlarla geçici tutulur; varsayılan kapalı. Snapshot raporu kullanıcı kopyalayana kadar ağ/disk gönderimi yoktur. İzleyici hatası ürün işini durdurmaz.
+
+Gauge'lar: katalog/Home satır sayıları; kullanılabilir cache okuma hit/miss gözlemleri; bilinen stamp ile expired refresh gözlemi; yenileme hata sayacı; runtime varsa JS heap byte. Android heap/PSS mevcut değilse NOT_OBSERVED. Kayda provider URL/ID/name, username/password, MAC/token, oynatma URL/query, TMDB/proxy/session secret alınmaz; provider yalnız enum türüdür. Stalker trace→attempt bağlantısı son 8 iç ID ile sınırlıdır.
+
+### Cache ve refresh sözleşmesi
+
+- #131 ile aynı v1 varsayılan: otomatik açık, **24 saat**; alternatif **72 saat**. Manuel yenileme tercihten bağımsızdır. Aralık **tazelik/eşitleme** süresidir; cache silme/oynatma URL TTL'si değildir.
+- Kullanılabilir cache önce sunulur; warm activation'da otomatik politika yüklenene kadar network işi başlatılmaz. Cold/boş catalog mevcut provider ingest/initial yolunu kullanır; manuel yenileme açıktır.
+- Provider+generation sahipliği snapshot, timestamp, timer callback ve publication sınırında denetlenir. M3U current-predicate queue başında ve transaction swap assertStillOwned içinde uygulanır. Provider değişince eski yanıt yeni UI oturumuna yayımlanmaz.
+- Aynı current run paylaşılır. Otomatik hata aynı activation/başarılı stamp/policy anahtarında sürekli denenmez; manual, provider aktivasyonu veya politika değişimi yeni deneme fırsatıdır. Transport timeout değerleri korunur; M3U gerçek network abort eklenmedi, logical discard ve SQL rollback vardır.
+- Mevcut kategori/arama/sort/query kimliği değiştirilmez. Refresh listeyi sıfırlamaz; yüklenmiş prefix cache'den tekrar okunup tek state yayınıyla değişir. Eski pagination/ID'ler sadece yeni sonuç doğrulanınca değiştirilir. Offline hata mevcut pencere ve devam cursor'unu tutar; kaldırılmış içerik için eski Info kapatılması hâlâ geçerlidir.
+- Xtream Live/VOD/Series bağımsız sync ve başarısız türün cache'ini tutma davranışı korunur. Terminal partial/error sonucu da UI'ye yeni cache okuma revision'ı verir; yalnız tam başarılı stamp TTL'yi ilerletir.
+- M3U katalog staging swap kalır; kimlikler yeniden yazılmaz. Background EPG yalnız EPG kaynağı değiştiğinde invalidate edilir; mevcut bağımsız EPG sistemi 24/72 saat katalog policy'sine çevrilmez.
+- Stalker policy Live içindir; VOD/Series page/session/create_link ayrı kalır. Geçici link kalıcı ID olmaz; Stalker EPG tanı probu üretim EPG özelliği sayılmaz.
+- Mevcut Home preview 48, yeni içerik 24, paged sorgu 100/default ve 200/max, SQL logical batch 200 sınırları korunur. Refresh pencere sınırı kullanıcının zaten yüklediği satır sayısıdır. Kalıcı tam katalog için global row/byte eviction kotası **yoktur**; bu açık CACHE-002'dir. Keyfî kota ile içerik kırpılmadı. Eski DB nullable timestamp sütunları zaten vardı; schema reset/migration yapılmadı; NULL stamp'li kayıt okunur.
+
+### Kaynak kusurları ve test kanıtı
+
+1. Eski snapshot timestamp'inin ownership kontrolünden önce yazılması giderildi; gerçek CatalogSyncProvider host testinde provider A/B geç yanıtı korunur.
+2. #131'in observeM3UCacheWrite finally release'i sonrasındaki isCurrent kontrolü her başarıyı false yapıyordu. finishOwnedCatalogCommit sonucu release öncesi doğrular; başarılı/stale/failed üç grup testi var.
+3. useCatalogPage reload önce emptyState yayımlıyordu. Kaynak window helper'a bağlandı; query/provider değişimi ayrı reset kalır; refresh hata/iptal eski pencereyi silmez.
+4. Source #131'in çıkardığı background ownership kaynak kontrolleri yeniden güçlendirildi; yeni üçüncü persistence predicate argümanı denetlenir. Hiçbir test kaldırılmaz/skip edilmez. İmza değişimlerine ilişkin statik marker'lar güncellenir; gerçek coordinator + SQLite testleri ek kanıttır.
+
+Yeni kapılar: #130 diagnostics 19; U3 lifecycle/privacy 10; policy senaryoları; production coordinator 9; production host SQLite 6; window/policy/ownership 9. Host adapter ve SQLite testleri Android layout/scheduling/firmware veya gerçek provider performansı değildir. Mevcut U2 ve Native JVM/Player/Back/orientation/Elite/TMDB kapıları korunur.
+
+### Teslim ve açık işler
+
+Yalnız integration/legendstream-u1 normal ileri güncellenir; küçük logical commit'ler kaynak SHA ve adaptasyon izini taşır. GitHub blob/tree SHA eşitliği yerel doğrulanan commit ağaçlarıyla karşılaştırılır; final ref update eski HEAD lease'i ve force=false ile yapılır. PR #143 Draft ve base #142 kalır. Final HEAD ve iki Quality run, PR açıklaması/Checks içinde doğrulanır; belge kendi commit SHA'sını uydurmaz.
+
+Native TV Physical FAIL, TMDB LIVE BLOCKED ve legacy 14 SKIP aynen korunur. APK/workflow dispatch veya sunucu dağıtımı yapılmaz. U3 tamamlandı diye U2 telefon portrait policy açığı veya Elite Home/Live/Player/Series Info parity kapanmaz. U4 için ortak Elite ekran/action parity önerilir; fiziksel test ancak bütünleşik RC ve kullanıcı onayıyla.

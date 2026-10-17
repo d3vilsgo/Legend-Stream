@@ -255,6 +255,8 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/catalogGridLayoutScenarios.ts
       - name: Startup and playback performance diagnostics
         run: pnpm --filter @workspace/legendstream-xplayer exec node --import tsx tests/performanceDiagnosticsScenarios.ts
+      - name: U3 source formatting
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/lib/performanceDiagnostics.ts artifacts/legendstream-xplayer/lib/catalogRefreshPolicy.ts artifacts/legendstream-xplayer/lib/catalogRefreshWindow.ts artifacts/legendstream-xplayer/components/CatalogRefreshSettings.tsx artifacts/legendstream-xplayer/tests/u3PerformanceScenarios.ts artifacts/legendstream-xplayer/tests/u3CatalogCoordinatorScenarios.mjs artifacts/legendstream-xplayer/tests/u3RefreshWindowScenarios.ts artifacts/legendstream-xplayer/tests/u3CatalogSqliteScenarios.mjs
       - name: Cache-first catalog refresh policy
         run: pnpm --filter @workspace/legendstream-xplayer exec node --import tsx tests/catalogRefreshPolicyScenarios.ts
       - name: U3 production cache coordinator

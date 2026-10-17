@@ -12,7 +12,7 @@ Proje aşaması: **GLOBAL INTEGRATION & FEATURE COMPLETION**. APK ve fiziksel ka
 |---|---|---|---|
 | U1.1 | #142 kaynak ağacı + #138'in eksik üç Native TV onarımı | Bu branch; exact-HEAD Quality ve Draft PR ile izlenir. Ürün bütünü tamamlandı değildir. | U1 kaynak entegrasyonu |
 | U2 | #121/#126 grid, #122/#127 Hero, #124/#133 navigasyon, #125/#132 sunum temeli | Kaynak bağlantıları bu branch'te; exact-HEAD Quality zorunlu. Telefon katalog portrait politikası ve tam Elite ekran parity açık kalır. | Ortak sunum |
-| U3 | #130 performans gözlemi + #131 cache-first refresh | DEFERRED; U2 sonrasında callback/iptal/kimlik/redaksiyon regresyonlarıyla üç provider ayrı ayrı | Provider/cache/performance |
+| U3 | #130 performans gözlemi + #131 cache-first refresh | SOURCE_INTEGRATED / ADAPTED; bounded tanılama, 24/72 saat politika, sahiplik ve cache window koruması; exact-HEAD Quality gerekir | Provider/cache/performance |
 | U1.4 | Gerçek Elite Home, Live touch/Preview parity, Player/kanal overlay, Series Info ve Home→Film Info | Açık; aynı marka/action sözleşmesi, cihazlara uyarlanmış düzen | Elite ürün parity |
 | U1.5 | TMDB canlı bağlantı | LIVE BLOCKED; onaylı HTTPS hosting, güvenilir session issuer, sunucu secret bağlantısı, atıf ve gerçek uçtan uca kanıt gerekir | Metadata/backend |
 | RC | Bütünleşik otomatik doğrulama + tek kaynaklı RC kabulü | Henüz başlamadı; fiziksel test yalnız kullanıcı onayıyla | Release kabulü |
@@ -60,3 +60,22 @@ Bağlı kayıtlar: [parity](FEATURE_PARITY_MATRIX_TR.md), [kusurlar](OPEN_ISSUES
 | TMDB canlı | BLOCKED | TMDB LIVE BLOCKED devam; hosting/issuer/token ve uçtan uca kanıt gerekir |
 
 U2'nin geometri/host otomatik kabulü gerçek cihaz kabulünden ayrıdır. Mevcut telefon katalog portrait kilidi değiştirilmedi; landscape hesapları oluşan yatay viewport için testlidir, serbest telefon katalog rotation özelliği tamamlandı değildir.
+
+## U3 güncel kararlar — U2 tablosunun performans/cache satırlarını günceller
+
+#130 ve #131'in uygun üretim davranışları **INTEGRATED / ADAPTED**. PR'lar merge edilmiş veya fiziksel kabul edilmiş değildir. Kaynak #130: `90fda3b1abe696f07aa2c64ed9be32b5ac6f6dea`; #131: `fb87735ce4a95464ba85f1d4922e5f616e6d3112`. #131'in gerçek base'i #130'dur; miras dosyaları iki ayrı özellik gibi sayılmaz.
+
+| Kaynak işi | Gap kararı | Güncel karşılık |
+|---|---|---|
+| #130 startup/hydration/query/VLC ölçümleri ve rapor paneli | ADAPT | Üretime bağlı; token korelasyonu, olay sınırları, whitelist, eksik/timeout durumu eklendi |
+| #130 provider trace/URL loglarıyla ölçüm ilişkilendirme | ADAPT | Yalnız iç trace→attempt ID eşlemesi; URL/token/MAC tanılama girdisi olmaz |
+| #131 cache-first aktivasyon | ALREADY COVERED + ADAPT | Var olan cache hydration korunur; otomatik istekleri 24/72 saat tazelik politikasına bağlar |
+| #131 varsayılan açık/24 saat, seçenek 72 saat, elle yenileme | INTEGRATE | Aynı v1 preference; iki ürün shell'inde ortak ayarlar |
+| #131 single-flight / provider scope | ADAPT | Timestamp yayını sahiplik arkasında; timer callback guard; M3U transaction assertStillOwned |
+| #131 M3U boolean completion | ADAPT | Sonuç sahiplik bırakılmadan doğrulanır; sonradan gate sorgulayıp başarıyı FAIL yapma kusuru giderildi |
+| #131 yenilemede görünüm durumu | ADAPT | Liste boşaltılmaz; yüklenmiş pencere yeniden okunup atomik yayımlanır; query/provider değişimi ayrı reset |
+| Eski 1,25 saniyelik her aktivasyonda otomatik yenileme | REJECT WITH REASON | Yeni tazelik tercihini atlar ve gereksiz provider çağrısı üretir |
+| Native PSS/heap, frame görünürlük ölçümü, cihaz hız yüzdesi | DEFER | Gerçek cihaz verisi yok; NOT OBSERVED / NOT TESTED |
+| Kalıcı katalog için toplam disk kotası/LRU | DEFER | Kaynak #131'de yok; katalogları sessiz kesmemek için keyfî sınır eklenmedi |
+
+Sonraki önerilen dilim **U4: Elite V2 ekran/action parity** — Home, mobil/tablet/Preview Live, Player/overlay, Home→Film Info ve Series Info; telefon katalog orientation politikası ayrı kabul maddesi. U3'ün disk bütçesi ve ayrıntılı Stalker lazy VOD/Series ölçüm boşlukları açık izlenir. Fiziksel kabul yalnız bütünleşik RC ve kullanıcı onayıyla başlar.

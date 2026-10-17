@@ -35,6 +35,7 @@ import { persistM3ULoadInBackground } from "@/lib/m3uCacheWriteRunner";
 import {
   ProviderLoadRequestGate,
   publishSuccessfulCatalogCommitIfCurrent,
+  finishOwnedCatalogCommit,
   type CatalogSyncOwnership,
   type ProviderLoadRequestOwnership,
 } from "@/lib/catalogAvailability";
@@ -1039,7 +1040,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }));
       },
     );
-    return publication.finally(() => {
+    return finishOwnedCatalogCommit(publication, () => !requestOwnership || isCurrentProviderLoad(requestOwnership), () => {
       if (requestOwnership) providerLoadGateRef.current.finish(requestOwnership);
     });
   };
@@ -1324,7 +1325,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (cacheWriteTask) {
         persistenceOwnsRequest = true;
         const published = await observeM3UCacheWrite(providerId, generation, cacheWriteTask, ownership);
-        if (!published || !isCurrentProviderLoad(ownership)) return false;
+        return published;
       }
       return isCurrentProviderLoad(ownership);
     } catch (caught) {
@@ -1389,7 +1390,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (!cacheWriteTask) return false;
       persistenceOwnsRequest = true;
       const published = await observeM3UCacheWrite(providerId, generation, cacheWriteTask, ownership);
-      return published && isCurrentProviderLoad(ownership);
+      return published;
     } catch {
       return false;
     } finally {

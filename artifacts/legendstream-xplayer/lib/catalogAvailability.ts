@@ -128,3 +128,9 @@ export function freshCatalogRunState(
 export function abortCatalogRequest(controller: Pick<AbortController, "abort"> | null) {
   controller?.abort();
 }
+
+/** Capture the result before releasing ownership; checking the gate afterwards always fails. */
+export async function finishOwnedCatalogCommit(completion: Promise<boolean>, isCurrent: () => boolean, release: () => void): Promise<boolean> {
+  try { return await completion && isCurrent(); }
+  finally { release(); }
+}
