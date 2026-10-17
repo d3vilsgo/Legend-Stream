@@ -2,9 +2,9 @@ name: Quality
 
 on:
   pull_request:
-    branches: [feature/r19-tmdb-enrichment-foundation,feature/r18-legend-elite-design-v1,feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, feature/r18-native-tv-universal-apk, main, feature/r18-presentation-foundation-1b, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad]
+    branches: [feature/r19-tmdb-secure-proxy,feature/r19-tmdb-film-info,feature/r19-tmdb-enrichment-foundation,feature/r18-legend-elite-design-v1,feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, feature/r18-native-tv-universal-apk, main, feature/r18-presentation-foundation-1b, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad]
   push:
-    branches: [feature/r19-tmdb-film-info,feature/r19-tmdb-enrichment-foundation,feature/r18-legend-elite-design-v1,feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, main, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad, feature/r18-native-tv-universal-apk]
+    branches: [feature/r19-tmdb-secure-proxy,feature/r19-tmdb-film-info,feature/r19-tmdb-enrichment-foundation,feature/r18-legend-elite-design-v1,feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, main, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad, feature/r18-native-tv-universal-apk]
 
 # Deterministic, read-only CI: dependency resolution must match pnpm-lock.yaml exactly.
 # Storage security gate: 6 credential scenarios + 24 backup scenarios must all pass.
@@ -279,6 +279,10 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tmdbFoundationScenarios.ts
       - name: TMDB Film Info mock behavior and access policy
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tmdbMovieInfoScenarios.ts
+      - name: TMDB secure proxy behavior (mock upstream, no live claim)
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tmdbSecureProxyScenarios.ts
+      - name: TMDB secure proxy formatting
+        run: pnpm exec prettier --check artifacts/api-server/src/lib/tmdb artifacts/api-server/src/routes/tmdb.ts artifacts/legendstream-xplayer/lib/tmdbProxy artifacts/legendstream-xplayer/tests/tmdbSecureProxyScenarios.ts
       - name: TMDB Film Info source formatting
         run: pnpm exec prettier --check artifacts/legendstream-xplayer/components/tmdb artifacts/legendstream-xplayer/tests/tmdbMovieInfoScenarios.ts
       - name: TMDB foundation formatting

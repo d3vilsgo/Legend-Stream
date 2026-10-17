@@ -25,10 +25,11 @@ import {
 } from "@/lib/tmdb/movieInfoModel";
 import {
   beginMovieEnrichment,
-  unconfiguredMovieInfoService,
   type MovieEnrichment,
   type MovieInfoService,
 } from "@/lib/tmdb/movieInfoService";
+
+import { useMovieInfoService } from "./MovieInfoServiceProvider";
 
 /** Local IPTV data renders immediately. No fixture data, TMDB token or playback resolution here. */
 export function MovieInfoModal({
@@ -36,7 +37,7 @@ export function MovieInfoModal({
   local,
   onClose,
   onPlay,
-  service = unconfiguredMovieInfoService,
+  service: injectedService,
 }: {
   input: EnrichmentInput;
   local: LocalMovieInfo;
@@ -44,6 +45,8 @@ export function MovieInfoModal({
   onPlay: () => void;
   service?: MovieInfoService;
 }) {
+  const contextualService = useMovieInfoService();
+  const service = injectedService ?? contextualService;
   const { width, height, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const layout = eliteLayout(
