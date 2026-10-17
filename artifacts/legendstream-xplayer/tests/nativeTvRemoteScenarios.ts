@@ -35,4 +35,8 @@ test('native target identities classify independent screen regions',()=>{
  for(const [id,region] of [['nav:live','navigation'],['home-hero:a','home'],['home-shelf:a','home'],['live:a','live'],['live-favorite:a','live'],['vod:a','movies'],['stalker:vod:a','movies'],['series:a','series'],['episode:a','series']])assert.equal(nativeTvRegion(id!),region);
  assert.equal(nativeTvRegion('catalog:sort'),'content');
 });
+test('U1 Stalker Live legacy and Elite targets share the live region',()=>{
+ for(const id of ['stalker-live:77','stalker-live:category:all','stalker-live:channel:77'])assert.equal(nativeTvRegion(id),'live');
+ assert.equal(nativeTvRegion('stalker:vod:77'),'movies');
+});
 process.stdout.write(`Native TV remote scenarios: ${passed}/${passed} passed\n`);

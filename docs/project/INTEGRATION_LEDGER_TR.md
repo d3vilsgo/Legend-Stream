@@ -25,6 +25,10 @@ Quality'ye U1 push/base kapsamı ve checkout sonrası exact SHA eşitliği eklen
 
 Production `TvFocusPolicy` JVM testine beş U1 sınır senaryosu eklendi: Elite Live'ın stale Home rafını seçmemesi; Film Info içi hareket; modal sınırından kataloğa kaçmama; alttaki Movies hedefinin modal sahipliği alamaması; content scope'ta Live hareketinin korunması. Bunlar Android Dialog'un gerçek event dispatch testi değildir.
 
+Birleşik kaynak incelemesinde #139 Stalker Elite/legacy hedeflerinin `stalker-live:` prefiksinin #138'den taşınan `nativeTvRegion` içinde genel `content` değerine düştüğü saptandı. Regresyon testi önce `content != live` ile başarısız oldu; yalnız bu hedef prefiksi `live` bölgesine eklendi. Böylece var olan ekran izolasyonu bu hedeflere de uygulanır; Stalker resolver/transport/identity değiştirilmez. `nativeTvRemoteScenarios` artık 27 senaryo içerir. Bu, fiziksel olay davranışı için PASS değildir.
+
+İzleme: [Draft PR #143](https://github.com/d3vilsgo/Legend-Stream/pull/143). İlk adayın 60 yerel shell Quality kapısında 17 adım standart girişle geçti; TSX CLI IPC ortam kısıtına takılan 43 kapı aynı test girişleriyle `node --import tsx` üzerinden geçti. Sonraki kaynak değişikliği için aynı HEAD'de yeni GitHub Quality sonucu zorunludur; eski run sonucu devredilmez.
+
 Yerel tam workspace typecheck, mobil ve API'yi geçtikten sonra devralınan `scripts/tsconfig.json` içindeki var olmayan `src` girdisinde TS18003 verdi. #120 HEAD `faf0105a87633693161995b8801e0962d168f97c` içindeki yalnız bu küçük onarım seçilerek alındı: mevcut `check-console-usage.mjs` gerçek JS typecheck girdisi oldu; `allowJs/checkJs` açıldı. Bu config kaynakla birebir eşleştirildi; #120'nin geri kalanı entegre sayılmadı. Quality'ye mevcut kontroller kaldırılmadan tam workspace typecheck eklendi.
 
 Normal Git push kimlik doğrulaması bulunmadığı için yayın, GitHub Git-data commit/ref araçlarıyla aynı dosya ağaçları ve kaynak izli mesajlar üzerinden yapılır. Sunucunun ürettiği commit SHA'ları yerel cherry-pick SHA'larından farklı olabilir; her remote tree kimliği yerel doğrulanan tree ile karşılaştırılır. Eski branch/ref geçmişi değiştirilmez, force-push yapılmaz.
