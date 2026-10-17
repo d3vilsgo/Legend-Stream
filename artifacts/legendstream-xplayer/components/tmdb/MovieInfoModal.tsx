@@ -149,7 +149,12 @@ export function MovieInfoModal({
                 onError={() => setPosterFailed(true)}
               />
             ) : null}
-            <View style={{ flex: 1, minWidth: 0, gap: 14 }}>
+            <View
+              style={[
+                { minWidth: 0, gap: 14 },
+                width < 720 ? { width: "100%" } : { flex: 1 },
+              ]}
+            >
               <Text
                 accessibilityRole="header"
                 selectable={!Platform.isTV}
