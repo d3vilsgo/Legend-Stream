@@ -55,6 +55,38 @@ public class TvFocusPolicyScenarios {
     check(move(live,"down",grid,"content")==search,"Legacy search target is reachable from navigation");
     check(move(search,"down",grid,"content")==b,"Legacy controls retain access to registered catalog rows");
     check(move(search,"up",grid,"content")==live,"Legacy control returns to navigation");
+    // Regression: weighted-distance search used to jump into another shelf on RIGHT.
+    Target rowEnd=t(100,"home-shelf:a:end","content","content",300,200);
+    Target diagonal=t(101,"home-shelf:b:first","content","content",410,290);
+    check(move(rowEnd,"right",List.of(rowEnd,diagonal),"content")==null,"Shelf RIGHT boundary does not jump diagonally");
+    Target nextRow=t(102,"home-shelf:b:next","content","content",600,290);
+    Target farRow=t(103,"home-shelf:c:first","content","content",300,500);
+    check(move(rowEnd,"down",List.of(rowEnd,nextRow,farRow),"content")==nextRow,"DOWN chooses next shelf before a distant aligned shelf");
+    check(move(home,"up",grid,"content")==null,"Navigation UP is a defined boundary");
+    Target rowMain=new Target(110,"live:row","content","content",0,200,800,90);
+    Target favorite=new Target(111,"live:favorite","content","content",810,200,60,60);
+    Target rowNext=new Target(112,"live:next","content","content",0,300,800,90);
+    check(move(favorite,"down",List.of(rowMain,favorite,rowNext),"content")==rowNext,"Different target heights cannot send DOWN sideways within one row");
+    check(move(rowMain,"right",List.of(rowMain,favorite,rowNext),"content")==favorite,"Channel favorite stays reachable horizontally");
+    for(float scale:new float[]{0.5f,1f,2f}) {
+      Target nav=new Target(120,"nav:home","content","navigation",20*scale,20*scale,100*scale,60*scale);
+      Target hero=new Target(121,"home-hero:one","content","content",20*scale,110*scale,500*scale,160*scale);
+      Target shelf=new Target(122,"home-shelf:one","content","content",20*scale,320*scale,100*scale,100*scale);
+      List<Target> matrix=List.of(nav,hero,shelf);
+      check(move(nav,"down",matrix,"content")==hero,"Scaled window navigation DOWN enters Hero "+scale);
+      check(move(hero,"down",matrix,"content")==shelf,"Scaled window Hero DOWN enters shelf "+scale);
+      check(move(shelf,"up",matrix,"content")==hero && move(hero,"up",matrix,"content")==nav,"Scaled window shelf returns through Hero to menu "+scale);
+    }
+    Target recycledReplacement=t(140,"home-shelf:stable","content","content",0,200);
+    check(move(a,"down",List.of(a,recycledReplacement),"content")==recycledReplacement,"Recycled mount uses current tag with stable logical ID");
+    check(move(a,"diagonal",grid,"content")==null,"Unsupported input cannot move focus");
+    for(String regionName:List.of("home","live","movies","series")) {
+      Target own=t(150,"regionName:first","content",regionName,0,120);
+      Target neighbor=t(151,"regionName:next","content",regionName,110,120);
+      Target stale=t(152,"other:stale","content",regionName.equals("home")?"movies":"home",105,120);
+      check(move(own,"right",List.of(home,own,neighbor,stale),"content")==neighbor,"Screen region ignores another screen's stale target "+regionName);
+      check(move(own,"up",List.of(home,own,neighbor),"content")==home,"Screen region can return to navigation "+regionName);
+    }
     System.out.println("Native JVM focus scenarios: "+passed+"/"+passed+" passed");
   }
 }

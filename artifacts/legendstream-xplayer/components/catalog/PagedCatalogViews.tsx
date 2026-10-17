@@ -1,3 +1,5 @@
+import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
+import { useNativeTvCatalogGrid } from "@/hooks/useNativeTvCatalogGrid";
 import {TVRemoteInspectorOverlay} from "@/components/tvPreview/TVRemoteInspector";
 import { Feather } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -251,8 +253,8 @@ function CatalogHeader({
   const { t } = useI18n();
   return <View style={s.catalogHeaderRoot}>
     <View style={s.catalogHead}>
-      <View>
-        <Text style={[s.title, { color: colors.foreground }]}>{title}</Text>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text numberOfLines={Platform.isTV ? 1 : undefined} style={[s.title, { color: colors.foreground }]}>{title}</Text>
         <Text style={{ color: colors.mutedForeground }}>{detail}</Text>
       </View>
       <FocusButton
@@ -263,7 +265,8 @@ function CatalogHeader({
         disabled={loading}
       />
     </View>
-    <View style={[s.search, { borderColor: colors.border, backgroundColor: colors.card }]}>
+    <View style={Platform.isTV ? { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12 } : undefined}>
+    <View style={[s.search, Platform.isTV && { flexGrow: 1, flexBasis: 240, minWidth: 180, marginBottom: 0 }, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Feather name="search" size={18} color={colors.mutedForeground} />
       <TextInput
         value={search}
@@ -274,12 +277,13 @@ function CatalogHeader({
         style={{ flex: 1, color: colors.foreground, minHeight: 44, opacity: searchEnabled ? 1 : 0.55 }}
       />
     </View>
-    {activeCategoryLabel ? <View style={[s.activeCategoryChip, { borderColor: colors.border, backgroundColor: colors.card }]}>
+    {activeCategoryLabel ? <View style={[s.activeCategoryChip, Platform.isTV && { maxWidth: 240 }, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Feather name="tag" size={14} color={colors.primary} />
       <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700", flex: 1 }}>{activeCategoryLabel}</Text>
     </View> : null}
     {Platform.isTV && onCategories ? <TVPreviewPressable focusId="catalog:categories" accessibilityRole="button" accessibilityLabel="Kategoriler" onPress={onCategories} style={[s.sortDropdownButton, { borderColor: colors.border, backgroundColor: colors.card }]}><Feather name="grid" size={22} color={colors.foreground} /><Text style={{ color: colors.foreground, fontSize: 18 }}>Kategoriler</Text></TVPreviewPressable> : null}
-    {children}
+    <View style={Platform.isTV ? { flexBasis: 200, flexGrow: 0, minWidth: 0, maxWidth: "100%" } : undefined}>{children}</View>
+    </View>
   </View>;
 }
 
@@ -507,7 +511,7 @@ function GridCard({ focusId, title, image, onPress }: { focusId: string; title: 
   return <TVPreviewPressable focusId={focusId} accessibilityRole="button" accessibilityLabel={title} onPress={onPress} style={s.card}>
     <View style={[s.media, { borderColor: colors.border, backgroundColor: colors.card }]}> 
       {image
-        ? <Image source={{ uri: image }} style={s.posterBig} resizeMode="cover" />
+        ? <Image source={{ uri: image }} style={s.posterBig} resizeMode={Platform.isTV ? "contain" : "cover"} />
         : <View style={[s.posterBig, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}>
             <Feather name="play-circle" size={30} color={colors.primary} />
           </View>}
@@ -544,6 +548,7 @@ export function PagedLiveCatalog({
   onDrawerVisibilityChange: (visible: boolean) => void;
 }) {
   const colors = useColors();
+  const tvLayout = useNativeTvLayout();
   const { t } = useI18n();
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -637,7 +642,7 @@ export function PagedLiveCatalog({
   return <View style={{ flex: 1, minHeight: 0 }} {...drawerSwipe.panHandlers}>
     <FlatList
       style={{ flex: 1, minHeight: 0 }}
-      contentContainerStyle={s.liveListContent}
+      contentContainerStyle={[s.liveListContent, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]}
       data={page.items}
       keyExtractor={(channel) => channel.id}
       ListHeaderComponent={<CatalogHeader
@@ -780,7 +785,8 @@ export function PagedMoviesCatalog({
   });
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const columns = tvPreview
+  const grid = useNativeTvCatalogGrid<(typeof page.items)[number]>(page.items.map(item => `vod:${item.stream_id}`));
+  const columns = Platform.isTV ? grid.columns : tvPreview
     ? width >= 1600 ? 7 : width >= 1200 ? 6 : width >= 800 ? 5 : 4
     : width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
 
@@ -790,9 +796,10 @@ export function PagedMoviesCatalog({
 
   return <View style={{ flex: 1, minHeight: 0 }} {...drawerSwipe.panHandlers}>
     <FlatList
+      {...grid.listProps}
       key={`movies-${columns}`}
       style={{ flex: 1, minHeight: 0 }}
-      contentContainerStyle={s.gridListContent}
+      contentContainerStyle={[s.gridListContent, grid.contentStyle]}
       data={page.items}
       numColumns={columns}
       keyExtractor={(item) => String(item.stream_id)}
@@ -897,7 +904,8 @@ export function GoldenSeriesCatalog({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const columns = tvPreview
+  const grid = useNativeTvCatalogGrid<(typeof items)[number]>(items.map(item => `series:${item.id}`));
+  const columns = Platform.isTV ? grid.columns : tvPreview
     ? width >= 1600 ? 7 : width >= 1200 ? 6 : width >= 800 ? 5 : 4
     : width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
   const orderedSeasons = useMemo(
@@ -1010,9 +1018,10 @@ export function GoldenSeriesCatalog({
 
   return <View style={{ flex: 1, minHeight: 0 }} {...drawerSwipe.panHandlers}>
     <FlatList
+      {...grid.listProps}
       key={`golden-series-${columns}`}
       style={{ flex: 1, minHeight: 0 }}
-      contentContainerStyle={s.gridListContent}
+      contentContainerStyle={[s.gridListContent, grid.contentStyle]}
       data={items}
       numColumns={columns}
       keyExtractor={(item) => item.id}

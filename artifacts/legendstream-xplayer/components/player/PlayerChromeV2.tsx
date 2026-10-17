@@ -1,7 +1,9 @@
+import { nativeTvLayout } from "@/lib/nativeTvResponsive";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { PlayerRemotePressable as Pressable, PlayerRemoteFocusBoundary } from "./PlayerRemotePressable";
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
-import React, { memo, useMemo, useState } from "react";
+import React, { createContext, useContext, memo, useMemo, useState } from "react";
 import {
   FlatList,
   LayoutChangeEvent,
@@ -91,8 +93,12 @@ const fitLabel = (mode: PlayerFitMode) => {
   return "FIT";
 };
 
+const TvMetrics = createContext<ReturnType<typeof nativeTvLayout> | null>(null);
+
 export const PlayerChrome = memo(function PlayerChrome(props: Props) {
-  const { width, height } = useWindowDimensions();
+  const { width, height, fontScale } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const tv = nativeTvLayout({ width, height, fontScale, safeArea: insets }, 5 + (props.canNavigate ? 3 : props.selectableItems.length ? 1 : 0) + Number(props.pipSupported) + Number(props.allowDownload));
   const [seekWidth, setSeekWidth] = useState(1);
   const landscape = width >= height;
   const progress = props.duration > 0
@@ -100,8 +106,8 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
     : 0;
 
   const panelStyle = useMemo(
-    () => [styles.panel, landscape ? styles.panelLandscape : styles.panelPortrait],
-    [landscape],
+    () => [styles.panel, landscape ? styles.panelLandscape : styles.panelPortrait, Platform.isTV && { top: tv.top, bottom: tv.bottom, right: tv.right, left: undefined, width: tv.panelWidth, maxWidth: tv.usableWidth }],
+    [landscape, tv.top, tv.bottom, tv.right, tv.panelWidth, tv.usableWidth],
   );
 
   const onSeekLayout = (event: LayoutChangeEvent) => {
@@ -109,7 +115,7 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
   };
 
   return (
-    <View style={styles.overlay} pointerEvents="box-none">
+    <TvMetrics.Provider value={Platform.isTV ? tv : null}><View style={styles.overlay} pointerEvents="box-none">
       <PlayerGestureLayer
         enabled={!props.panel && !Platform.isTV}
         volume={props.volume}
@@ -165,21 +171,21 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
       ) : null}
 
       {props.controlsVisible && props.canExit ? (
-        <Pressable onPress={props.onExit} style={({ pressed }) => [styles.back, pressed && styles.pressed]} hitSlop={10}>
+        <Pressable onPress={props.onExit} style={({ pressed }) => [styles.back, Platform.isTV && { top: tv.top, left: tv.left, width: tv.target, height: tv.target }, pressed && styles.pressed]} hitSlop={10}>
           <Feather name="arrow-left" size={25} color="#fff" />
         </Pressable>
       ) : null}
 
       {props.controlsVisible ? (
         <>
-          <View style={styles.center} pointerEvents="box-none">
+          <View style={[styles.center, Platform.isTV && { top: tv.centerTop, left: tv.left, right: tv.right, gap: tv.gap * 3 }]} pointerEvents="box-none">
             {props.mediaKind !== "live" ? (
               <RoundAction onPress={() => props.onSeekBy(-10)} icon="rotate-ccw" badge="10" />
             ) : props.canNavigate ? (
               <RoundAction onPress={() => props.onMoveRelative(-1)} icon="skip-back" disabled={props.currentIndex <= 0} />
             ) : null}
 
-            <Pressable onPress={props.onTogglePause} style={({ pressed }) => [styles.playShell, pressed && styles.playPressed]} hitSlop={10}>
+            <Pressable onPress={props.onTogglePause} style={({ pressed }) => [styles.playShell, Platform.isTV && { width: tv.playSize, height: tv.playSize }, pressed && styles.playPressed]} hitSlop={10}>
               <LinearGradient colors={["#a5f3fc", "#22d3ee", "#0ea5e9"]} style={styles.playGradient}>
                 <Feather name={props.paused ? "play" : "pause"} size={34} color="#02131b" />
               </LinearGradient>
@@ -192,7 +198,7 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
             ) : null}
           </View>
 
-          <View style={styles.bottom} pointerEvents="box-none">
+          <View style={[styles.bottom, Platform.isTV && { left: tv.left, right: tv.right, bottom: tv.bottom, paddingHorizontal: 0, paddingBottom: 0 }]} pointerEvents="box-none">
             {props.mediaKind !== "live" ? (
               <View style={styles.seekCard}>
                 <Text style={styles.time}>{formatTime(props.position)}</Text>
@@ -220,8 +226,8 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
             <View style={styles.dockShell}>
               <ScrollView
                 horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.dockContent}
+                showsHorizontalScrollIndicator={Platform.isTV}
+                contentContainerStyle={[styles.dockContent, Platform.isTV && { gap: tv.gap, padding: tv.gutter }]}
               >
                 {props.canNavigate ? (
                   <ToolButton
@@ -319,7 +325,7 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
           </View>
         </View>
       ) : null}
-    </View>
+    </View></TvMetrics.Provider>
   );
 });
 
@@ -486,27 +492,32 @@ function ToolButton({
   active?: boolean;
   accent?: boolean;
 }) {
+  const tv = useContext(TvMetrics);
   return (
     <Pressable
+      accessibilityLabel={label}
+      showFocusLabel={false}
       onPress={onPress}
       disabled={disabled}
-      style={({ pressed }) => [styles.tool, disabled && styles.disabled, pressed && styles.toolPressed]}
+      style={({ pressed }) => [styles.tool, tv && { width: tv.toolWidth, minHeight: tv.toolHeight, paddingHorizontal: 8, paddingVertical: 8 }, disabled && styles.disabled, pressed && styles.toolPressed]}
       hitSlop={4}
     >
-      <View style={[styles.toolIcon, (active || accent) && styles.toolIconAccent, active && styles.toolIconActive]}>
+      <View style={[styles.toolIcon, tv && { width: tv.icon + 16, height: tv.icon + 12 }, (active || accent) && styles.toolIconAccent, active && styles.toolIconActive]}>
         {glyph ? (
           <Text style={[styles.toolGlyph, (active || accent) && styles.toolGlyphAccent]}>{glyph}</Text>
         ) : icon ? (
-          <Feather name={icon} size={19} color={(active || accent) ? "#67e8f9" : "#f8fafc"} />
+          <Feather name={icon} size={tv ? tv.icon : 19} color={(active || accent) ? "#67e8f9" : "#f8fafc"} />
         ) : null}
       </View>
-      <Text numberOfLines={1} style={[styles.toolLabel, active && styles.toolLabelActive]}>{label}</Text>
-      {meta ? <Text style={styles.toolMeta}>{meta}</Text> : null}
+      <Text numberOfLines={1} style={[styles.toolLabel, tv && { fontSize: tv.labelFont, marginTop: 4 }, active && styles.toolLabelActive]}>{label}</Text>
+      {meta ? <Text numberOfLines={1} style={[styles.toolMeta, tv && { fontSize: tv.metaFont, marginTop: 2 }]}>{meta}</Text> : null}
     </Pressable>
   );
 }
 
 function DockDivider() {
+  const tv = useContext(TvMetrics);
+  if (tv) return null;
   return <View style={styles.dockDivider} />;
 }
 

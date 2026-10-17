@@ -1,3 +1,4 @@
+import { nativeTvRegion } from "../lib/nativeTvRegion";
 import assert from 'node:assert/strict';
 import { claimPlayerBack, hasPlayerBackOwner, resolvePlayerBack } from '../lib/playerRemoteOwnership';
 import { resolveTvRemoteAction as action } from '../lib/tvPlayerRemote';
@@ -30,4 +31,8 @@ const grid = [entry('a',0,0),entry('b',110,0),entry('c',0,90),entry('d',110,90)]
 test('poster row right neighbor', () => assert.equal(resolveTVPreviewFocusTarget(grid[0],'right',grid)?.id,'b'));
 test('poster column down neighbor', () => assert.equal(resolveTVPreviewFocusTarget(grid[0],'down',grid)?.id,'c'));
 test('no target retains boundary instead of random selection', () => assert.equal(resolveTVPreviewFocusTarget(grid[0],'left',grid), null));
+test('native target identities classify independent screen regions',()=>{
+ for(const [id,region] of [['nav:live','navigation'],['home-hero:a','home'],['home-shelf:a','home'],['live:a','live'],['live-favorite:a','live'],['vod:a','movies'],['stalker:vod:a','movies'],['series:a','series'],['episode:a','series']])assert.equal(nativeTvRegion(id!),region);
+ assert.equal(nativeTvRegion('catalog:sort'),'content');
+});
 process.stdout.write(`Native TV remote scenarios: ${passed}/${passed} passed\n`);

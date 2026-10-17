@@ -1,3 +1,4 @@
+import { nativeTvLayout } from "@/lib/nativeTvResponsive";
 import { resolveTvRemoteAction } from "@/lib/tvPlayerRemote";
 import { PlayerRemotePressable as Pressable } from "./PlayerRemotePressable";
 import { configureTvRemote, subscribeTvRemote } from "@/modules/legendstream-tv-remote";
@@ -148,7 +149,7 @@ const formatRemaining = (end?: number) => {
 };
 
 export function PlayerChrome(props: Props) {
-  const { width, height } = useWindowDimensions();
+  const { width, height, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const portrait = height > width;
   const shortEdge = Math.max(1, Math.min(width, height));
@@ -300,19 +301,20 @@ export function PlayerChrome(props: Props) {
     }] : []),
   ];
 
+  const tv = nativeTvLayout({ width, height, fontScale, safeArea: insets }, actions.length);
   const gap = Math.round((portrait ? 4 : 9) * uiScale);
-  const outerPadding = Platform.isTV ? 40 : Math.round((portrait ? 8 : 22) * uiScale);
+  const outerPadding = Platform.isTV ? tv.left : Math.round((portrait ? 8 : 22) * uiScale);
   const availableWidth = Math.max(1, width - insets.left - insets.right - outerPadding * 2);
-  const buttonSize = Platform.isTV ? 64 : clamp(
+  const buttonSize = Platform.isTV ? tv.target : clamp(
     Math.floor((availableWidth - gap * Math.max(0, actions.length - 1)) / Math.max(1, actions.length)),
     Math.round(38 * uiScale),
     Math.round((portrait ? 44 : 48) * uiScale),
   );
-  const dockIconSize = Platform.isTV ? 28 : clamp(Math.round((portrait ? 20 : 22) * uiScale), 17, 23);
+  const dockIconSize = Platform.isTV ? tv.icon : clamp(Math.round((portrait ? 20 : 22) * uiScale), 17, 23);
   const progressScale = clamp(width / (portrait ? 390 : 840), 0.82, 1.12);
   const timeWidth = clamp(Math.round(50 * progressScale), 42, 58);
   const timeFontSize = clamp(Math.round(10 * progressScale), 9, 12);
-  const topY = Math.max(insets.top + Math.round((portrait ? 5 : 4) * uiScale), portrait ? 8 : 6);
+  const topY = Platform.isTV ? tv.top : Math.max(insets.top + Math.round((portrait ? 5 : 4) * uiScale), portrait ? 8 : 6);
   const logoSafeLeft = portrait ? width * 0.2 : width * 0.16;
   const infoLeft = Math.max(
     logoSafeLeft,
@@ -364,10 +366,10 @@ export function PlayerChrome(props: Props) {
           style={({ pressed }) => [
             styles.back,
             {
-              left: Math.max(insets.left + 10, Math.round((portrait ? 14 : 18) * uiScale)),
+              left: Platform.isTV ? tv.left : Math.max(insets.left + 10, Math.round((portrait ? 14 : 18) * uiScale)),
               top: topY,
-              width: Math.round((portrait ? 48 : 54) * uiScale),
-              height: Math.round((portrait ? 48 : 54) * uiScale),
+              width: Platform.isTV ? tv.target : Math.round((portrait ? 48 : 54) * uiScale),
+              height: Platform.isTV ? tv.target : Math.round((portrait ? 48 : 54) * uiScale),
             },
             pressed && styles.pressed,
           ]}
@@ -385,6 +387,7 @@ export function PlayerChrome(props: Props) {
             styles.center,
             portrait ? styles.centerPortrait : styles.centerLandscape,
             { opacity: controlsOpacity },
+            Platform.isTV && { top: tv.centerTop, transform: [], gap: tv.gap * 3 },
           ]}
           pointerEvents="box-none"
         >
@@ -395,7 +398,7 @@ export function PlayerChrome(props: Props) {
               disabled={Platform.isTV && chrome.duration <= 0}
               label={Platform.isTV && chrome.duration <= 0 ? "Süre bilgisi bekleniyor" : "10 saniye geri"}
               onPress={() => chrome.onSeekBy(-10)}
-              size={Math.round((portrait ? 54 : 58) * uiScale)}
+              size={Platform.isTV ? tv.target : Math.round((portrait ? 54 : 58) * uiScale)}
               iconSize={Math.round((portrait ? 27 : 30) * uiScale)}
             />
           ) : null}
@@ -410,8 +413,8 @@ export function PlayerChrome(props: Props) {
             style={({ pressed }) => [
               styles.playShell,
               {
-                width: Math.round((portrait ? 72 : 80) * uiScale),
-                height: Math.round((portrait ? 72 : 80) * uiScale),
+                width: Platform.isTV ? tv.playSize : Math.round((portrait ? 72 : 80) * uiScale),
+                height: Platform.isTV ? tv.playSize : Math.round((portrait ? 72 : 80) * uiScale),
                 borderRadius: Math.round((portrait ? 36 : 40) * uiScale),
               },
               pressed && styles.pressed,
@@ -431,7 +434,7 @@ export function PlayerChrome(props: Props) {
               disabled={Platform.isTV && chrome.duration <= 0}
               label={Platform.isTV && chrome.duration <= 0 ? "Süre bilgisi bekleniyor" : "15 saniye ileri"}
               onPress={() => chrome.onSeekBy(15)}
-              size={Math.round((portrait ? 54 : 58) * uiScale)}
+              size={Platform.isTV ? tv.target : Math.round((portrait ? 54 : 58) * uiScale)}
               iconSize={Math.round((portrait ? 27 : 30) * uiScale)}
             />
           ) : null}
@@ -444,9 +447,9 @@ export function PlayerChrome(props: Props) {
             styles.bottom,
             {
               opacity: controlsOpacity,
-              bottom: Math.max(Platform.isTV ? 40 : 0, insets.bottom + 2, Math.round((portrait ? 8 : 10) * uiScale)),
+              bottom: Platform.isTV ? tv.bottom : Math.max(insets.bottom + 2, Math.round((portrait ? 8 : 10) * uiScale)),
               paddingLeft: Math.max(outerPadding, insets.left + 8),
-              paddingRight: Math.max(outerPadding, insets.right + 8),
+              paddingRight: Platform.isTV ? tv.right : Math.max(outerPadding, insets.right + 8),
             },
           ]}
           pointerEvents="box-none"
@@ -481,13 +484,14 @@ export function PlayerChrome(props: Props) {
 
           <ScrollView
             horizontal
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={[styles.dockRow, { gap }]}
+            showsHorizontalScrollIndicator={Platform.isTV}
+            contentContainerStyle={[styles.dockRow, { gap }, Platform.isTV && { paddingHorizontal: tv.gutter, paddingTop: tv.gutter, paddingBottom: tv.gutter }]}
           >
             {actions.map((action) => (
               <AdaptiveDockButton
                 key={action.key}
                 action={action}
+                tv={Platform.isTV ? tv : undefined}
                 size={buttonSize}
                 iconSize={dockIconSize}
               />
@@ -618,10 +622,11 @@ function RoundButton({ icon, badge, label, onPress, size, iconSize, disabled = f
   );
 }
 
-function AdaptiveDockButton({ action, size, iconSize }: { action: Action; size: number; iconSize: number }) {
+function AdaptiveDockButton({ action, size, iconSize, tv }: { action: Action; size: number; iconSize: number; tv?: ReturnType<typeof nativeTvLayout> }) {
   const highlighted = Boolean(action.active || action.accent);
   return (
     <Pressable
+      showFocusLabel={!tv}
       accessibilityRole="button"
       nativeID={`player:action:${action.key}`}
       accessibilityLabel={action.label}
@@ -631,7 +636,7 @@ function AdaptiveDockButton({ action, size, iconSize }: { action: Action; size: 
       hitSlop={Math.max(10, Math.ceil((50 - size) / 2))}
       style={({ pressed }) => [
         styles.dockButton,
-        { width: size, height: size },
+        tv ? { width: tv.toolWidth, minHeight: tv.toolHeight, padding: 8 } : { width: size, height: size },
         action.disabled && styles.disabled,
         pressed && !action.disabled && styles.pressed,
       ]}
@@ -641,8 +646,9 @@ function AdaptiveDockButton({ action, size, iconSize }: { action: Action; size: 
       ) : action.icon ? (
         <EmbossedIcon name={action.icon} size={iconSize} accent={highlighted} />
       ) : null}
+      {tv ? <Text numberOfLines={1} style={{ color: "#f8fafc", fontSize: tv.labelFont, fontWeight: "700", marginTop: 4, maxWidth: "100%" }}>{action.label}</Text> : null}
       {action.subLabel ? (
-        <Text numberOfLines={1} style={[styles.actionSubLabel, highlighted && styles.actionSubLabelAccent]}>{action.subLabel}</Text>
+        <Text numberOfLines={1} style={[styles.actionSubLabel, highlighted && styles.actionSubLabelAccent, tv && { position: "relative", bottom: undefined, fontSize: tv.metaFont, maxWidth: "100%" }]}>{action.subLabel}</Text>
       ) : null}
     </Pressable>
   );

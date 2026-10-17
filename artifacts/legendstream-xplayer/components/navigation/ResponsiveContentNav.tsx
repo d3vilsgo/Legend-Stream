@@ -1,3 +1,4 @@
+import { nativeTvLayout } from "@/lib/nativeTvResponsive";
 import { hasPlayerBackOwner } from "@/lib/playerRemoteOwnership";
 import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -34,11 +35,12 @@ export function ResponsiveContentNav<Key extends string>({
 }: Props<Key>) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { width, height } = useWindowDimensions();
+  const { width, height, fontScale } = useWindowDimensions();
+  const tv = nativeTvLayout({ width, height, fontScale, safeArea: insets }, items.length);
   const presentation = useUiPresentation();
   const [open, setOpen] = useState(Platform.isTV || presentation.tvPreview);
   const [preferInitialFocus, setPreferInitialFocus] = useState(Platform.isTV);
-  const navigationFocusedRef = useRef(false);
+  const navigationFocusedIds = useRef(new Set<string>());
   const profile = useMemo(() => resolvePremiumCatalogProfile({
     width,
     height,
@@ -69,7 +71,7 @@ export function ResponsiveContentNav<Key extends string>({
     const backTarget = model.backTarget;
     const back = BackHandler.addEventListener("hardwareBackPress", () => {
       if (hasPlayerBackOwner()) return false;
-      if (!navigationFocusedRef.current) return false;
+      if (navigationFocusedIds.current.size === 0) return false;
       onSelect(backTarget);
       return true;
     });
@@ -85,8 +87,8 @@ export function ResponsiveContentNav<Key extends string>({
     return (
       <ScrollView
         horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={[styles.tvNav, { paddingHorizontal: Math.max(profile.horizontalPadding, insets.left, insets.right) }]}
+        showsHorizontalScrollIndicator
+        contentContainerStyle={[styles.tvNav, { paddingLeft: tv.left, paddingRight: tv.right, paddingTop: tv.top, paddingBottom: tv.gutter }]}
         accessibilityLabel="Ana gezinme"
       >
         {items.map((item) => (
@@ -100,9 +102,11 @@ export function ResponsiveContentNav<Key extends string>({
             accessibilityRole="tab"
             accessibilityState={{ selected: activeKey === item.key }}
             hasTVPreferredFocus={preferInitialFocus && activeKey === item.key && activeKey === homeKey}
-            onFocusChange={(focused) => { navigationFocusedRef.current = focused; }}
+            onFocusChange={(focused) => { if (focused) navigationFocusedIds.current.add(item.key); else navigationFocusedIds.current.delete(item.key); }}
             onPress={() => select(item.key)}
-            style={styles.tvTarget}
+            labelLines={1}
+            labelStyle={{ fontSize: tv.labelFont, flexShrink: 1 }}
+            style={[styles.tvTarget, { width: tv.navWidth, minHeight: tv.target, paddingHorizontal: 10 }]}
           />
         ))}
       </ScrollView>

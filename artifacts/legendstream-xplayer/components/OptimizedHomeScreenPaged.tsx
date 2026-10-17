@@ -1,3 +1,4 @@
+import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
 import { TVRemoteInspectorSetting } from "@/components/tvPreview/TVRemoteInspector";
 import { tvInspector } from "@/lib/tvRemoteInspector";
 import { NativeTVFocusScope } from "@/components/tvPreview/NativeTVFocusScope";
@@ -134,6 +135,7 @@ function snapshotCount(providerId: string, snapshotProviderId: string | undefine
 export default function OptimizedHomeScreenPaged() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const tvLayout = useNativeTvLayout();
   const { t } = useI18n();
   const {
     provider, providers, channels, epgByChannel, favorites, history, isHydrating, isLoading, isEpgLoading,
@@ -153,6 +155,7 @@ export default function OptimizedHomeScreenPaged() {
   const [selectedSeries, setSelectedSeries] = useState<XtreamSeriesItem | null>(null);
   const [seriesInfo, setSeriesInfo] = useState<XtreamSeriesInfo | null>(null);
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
+  const [homeViewportHeight, setHomeViewportHeight] = useState<number | undefined>(undefined);
   const [categoryMetadataRefresh, setCategoryMetadataRefresh] = useState(0);
   const [categoryMetadata, setCategoryMetadata] = useState<(CatalogCategoryMetadata & { providerId: string }) | null>(null);
   const [switchingProviderId, setSwitchingProviderId] = useState<string | null>(null);
@@ -515,8 +518,9 @@ export default function OptimizedHomeScreenPaged() {
 
     {view === "history" ? <HistoryView providerId={provider.id} channels={resolvedFullHistoryIdentityChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
 
-    {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={s.content} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEnabled={!catalogDrawerOpen}>
+    {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? <ScrollView onLayout={Platform.isTV ? event => setHomeViewportHeight(event.nativeEvent.layout.height) : undefined} style={{ flex: 1, minHeight: 0 }} contentContainerStyle={[s.content, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEnabled={!catalogDrawerOpen}>
       {view === "home" ? <HomeDiscovery
+        tvViewportHeight={homeViewportHeight}
         provider={provider}
         live={provider.type === "stalker" ? homeLiveSource.totalCount : countKnown ? snapshot.counts.live : null}
         vod={vodCount.totalCount}

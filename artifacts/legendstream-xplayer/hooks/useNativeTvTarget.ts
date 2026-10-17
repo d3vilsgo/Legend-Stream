@@ -1,3 +1,4 @@
+import { nativeTvRegion } from "@/lib/nativeTvRegion";
 import { useCallback, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { findNodeHandle, Platform, type View } from "react-native";
 import { registerTvTarget, unregisterTvTarget, subscribeNativeTvFocus } from "@/modules/legendstream-tv-remote";
@@ -14,7 +15,7 @@ export function useNativeTvTarget(ref: RefObject<View | null>, id: string, scope
   if(current.current && (disabled || current.current.tag!==tag))void unregisterTvTarget(current.current.tag);
   current.current={tag,identity};
   if(disabled){setFocused(false);return;}
-  void registerTvTarget(tag,id,scope,scope==="content"?region:"player",preferred);
+  void registerTvTarget(tag,id,scope,scope==="content"?nativeTvRegion(id,region):"player",preferred);
  },[disabled,id,preferred,ref,region,scope]);
  useLayoutEffect(()=>{register();},[register]);
  useLayoutEffect(()=>{

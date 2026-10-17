@@ -2,11 +2,13 @@ import { inspectorAction } from "@/lib/tvRemoteInspector";
 import { useNativeTvTarget } from "@/hooks/useNativeTvTarget";
 import { Feather } from '@expo/vector-icons';
 import React, { ReactNode, useId, useEffect, useRef, useState } from 'react';
-import { type AccessibilityRole, type AccessibilityState, Animated, Platform, Pressable, StyleProp, StyleSheet, Text, View, ViewStyle } from 'react-native';
+import { type AccessibilityRole, type AccessibilityState, Animated, Platform, Pressable, StyleProp, StyleSheet, Text, TextStyle, View, ViewStyle } from 'react-native';
 import { useColors } from '@/hooks/useColors';
 
 interface FocusButtonProps {
   label: string;
+  labelLines?: number;
+  labelStyle?: StyleProp<TextStyle>;
   icon?: keyof typeof Feather.glyphMap;
   onPress: () => void;
   variant?: 'primary' | 'secondary' | 'ghost';
@@ -23,6 +25,8 @@ interface FocusButtonProps {
 
 export function FocusButton({
   label,
+  labelLines,
+  labelStyle,
   icon,
   onPress,
   variant = 'secondary',
@@ -58,7 +62,7 @@ export function FocusButton({
     onFocusChange?.(next);
     if (!Platform.isTV) return;
     Animated.spring(scale, {
-      toValue: next ? 1.055 : 1,
+      toValue: 1,
       damping: 18,
       stiffness: 210,
       mass: 0.45,
@@ -95,7 +99,7 @@ export function FocusButton({
         accessibilityLabel={label}
       >
         {icon ? <Feather name={icon} size={18} color={foregroundColor} /> : null}
-        {children ?? <Text style={[styles.label, { color: foregroundColor }]}>{label}</Text>}
+        {children ?? <Text numberOfLines={labelLines} style={[styles.label, { color: foregroundColor }, labelStyle]}>{label}</Text>}
       </Pressable>
     </Animated.View>
   );

@@ -1,3 +1,4 @@
+import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
 import { TVRemoteInspectorSetting } from "@/components/tvPreview/TVRemoteInspector";
 import { tvInspector } from "@/lib/tvRemoteInspector";
 import { NativeTVFocusScope } from "@/components/tvPreview/NativeTVFocusScope";
@@ -135,6 +136,7 @@ function isStalkerProductProvider(
 export default function StalkerMainPage() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
+  const tvLayout = useNativeTvLayout();
   const { t } = useI18n();
   const {
     provider,
@@ -172,6 +174,7 @@ export default function StalkerMainPage() {
   const [playable, setPlayable] = useState<Playable | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
+  const [homeViewportHeight, setHomeViewportHeight] = useState<number | undefined>(undefined);
   const [switchingProviderId, setSwitchingProviderId] = useState<string | null>(null);
   const switchingProviderRef = useRef<string | null>(null);
   const historyPlaybackAbortRef = useRef<AbortController | null>(null);
@@ -526,14 +529,16 @@ export default function StalkerMainPage() {
 
       {presentedView !== "live" && presentedView !== "movies" && presentedView !== "series" && presentedView !== "history" ? (
         <ScrollView
+          onLayout={Platform.isTV ? event => setHomeViewportHeight(event.nativeEvent.layout.height) : undefined}
           style={{ flex: 1, minHeight: 0 }}
-          contentContainerStyle={s.content}
+          contentContainerStyle={[s.content, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
           scrollEnabled={!catalogDrawerOpen}
         >
           {presentedView === "home" ? (
             <HomeDiscovery
+              tvViewportHeight={homeViewportHeight}
               provider={provider}
               live={liveCatalog.countKnown ? liveCatalog.totalCount : null}
               vod={productCounts.vod}

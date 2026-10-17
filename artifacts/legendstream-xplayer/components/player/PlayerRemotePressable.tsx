@@ -2,7 +2,7 @@ import {useOptionalTVPreviewFocus} from "@/components/tvPreview/TVPreviewFocus";
 import { inspectorAction } from "@/lib/tvRemoteInspector";
 import { useNativeTvTarget } from "@/hooks/useNativeTvTarget";
 import React, { createContext, useContext, useLayoutEffect, useState, useRef, useId } from "react";
-import { Platform, Pressable, Text, View, type PressableProps } from "react-native";
+import { Platform, Pressable, Text, View, useWindowDimensions, type PressableProps } from "react-native";
 
 const PlayerFocusContext=createContext("player");
 export function PlayerRemoteFocusBoundary({scope,children}:{scope:string;children:React.ReactNode}) {
@@ -11,7 +11,8 @@ export function PlayerRemoteFocusBoundary({scope,children}:{scope:string;childre
  return <PlayerFocusContext.Provider value={scope}>{children}</PlayerFocusContext.Provider>;
 }
 /** Same action callbacks as mobile, with a physical-focus outline and visible action name. */
-export function PlayerRemotePressable({ children, style, accessibilityLabel, ...props }: PressableProps) {
+export function PlayerRemotePressable({ children, style, accessibilityLabel, showFocusLabel = true, ...props }: PressableProps & { showFocusLabel?: boolean }) {
+  const { fontScale } = useWindowDimensions();
   const scope=useContext(PlayerFocusContext);
   const activeScope=useOptionalTVPreviewFocus()?.nativeScope;
   const [paperFocused, setFocused] = useState(false);
@@ -27,6 +28,6 @@ export function PlayerRemotePressable({ children, style, accessibilityLabel, ...
     style={(state) => [typeof style === "function" ? style(state) : style,
       Platform.isTV && { minWidth: 56, minHeight: 56, borderRadius: 10, borderWidth: 3, borderColor: focused ? "#fff" : "transparent", backgroundColor: focused ? "#075985" : "rgba(0,0,0,.35)" }]}>
       {children as React.ReactNode}
-      {Platform.isTV && focused && accessibilityLabel ? <Text pointerEvents="none" style={{ position: "absolute", bottom: -28, color: "white", fontSize: 15, fontWeight: "700", backgroundColor: "#082f49", paddingHorizontal: 8, paddingVertical: 3 }}>{accessibilityLabel}</Text> : null}
+      {Platform.isTV && showFocusLabel && focused && accessibilityLabel ? <Text numberOfLines={1} pointerEvents="none" style={{ maxWidth: 230, position: "absolute", bottom: -Math.ceil(20 * fontScale + 8), color: "white", fontSize: 15, fontWeight: "700", backgroundColor: "#082f49", paddingHorizontal: 8, paddingVertical: 3 }}>{accessibilityLabel}</Text> : null}
   </Pressable>;
 }
