@@ -438,7 +438,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
       fit,
     });
     onPlaying();
-  }, [codecMode, diagnosticM3ULive, fit, onPlaying, runtimeCodecMode]);
+  }, [performanceAttempt, codecMode, diagnosticM3ULive, fit, onPlaying, runtimeCodecMode]);
 
   const handlePaused = useCallback(() => {
     const traceId = getActiveStalkerTraceId(); if (traceId) traceStalker("VLC_PAUSED", { traceId });
@@ -486,7 +486,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
       fit,
     });
     onError();
-  }, [codecMode, fit, onError, runtimeCodecMode]);
+  }, [performanceAttempt, codecMode, fit, onError, runtimeCodecMode]);
 
   return (
     <View style={styles.surface} pointerEvents="none">

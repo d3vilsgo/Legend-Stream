@@ -535,7 +535,7 @@ export function CompatibilityVideoPlayer({
   const canNavigate = selectableItems.length > 1 && currentIndex >= 0;
 
   const switchTo = useCallback(async (item: PlayerSelectableItem, reason = "explicit-selection") => {
-    beginPlaybackAttempt((provider?.type ?? "unknown") as ProviderKind);
+    beginPlaybackAttempt((provider?.type ?? "unknown") as ProviderKind, item.isLive);
     const traceId = getActiveStalkerTraceId();
     if (traceId) traceStalker("PLAYER_SOURCE_TRANSITION", { traceId, kind: item.isLive ? "live" : inferMediaKind(item.source), previousFingerprint: fingerprintPlaybackSource(effectiveUri || currentSource), nextFingerprint: fingerprintPlaybackSource(item.source), previousItemId: tracedItemId.current ?? undefined, nextItemId: item.id, reason });
     tracedItemId.current = item.id;
@@ -601,7 +601,7 @@ export function CompatibilityVideoPlayer({
       onFullscreenExit?.();
       orientation.releaseWhenLayoutReady();
     }
-  }, [clearControlsTimer, clearInfoTimer, onFullscreenExit, orientation, persistProgress]);
+  }, [performanceAttempt, clearControlsTimer, clearInfoTimer, onFullscreenExit, orientation, persistProgress]);
 
   useEffect(() => claimPlayerBack(), []);
   useEffect(() => {
@@ -811,7 +811,7 @@ export function CompatibilityVideoPlayer({
     tracedSourceFingerprint.current = metadata.sourceFingerprint;
     traceStalker("PLAYER_MOUNT", { traceId, sourceKind: classifyPlaybackSource(effectiveUri), resolved: true });
     traceStalker("VLC_SOURCE_SET", { traceId, kind: currentKind, ...metadata });
-  }, [currentKind, currentLiveIdentity?.channelId, currentVodIdentity?.itemId, effectiveUri, progressRef]);
+  }, [performanceAttempt, currentKind, currentLiveIdentity?.channelId, currentVodIdentity?.itemId, effectiveUri, progressRef]);
 
   if (!orientation.ready || orientation.exiting) {
     return (
