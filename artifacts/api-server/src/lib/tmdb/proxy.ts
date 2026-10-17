@@ -49,6 +49,7 @@ export function verifySession(
   key: string,
   issuer: string,
   now = Date.now(),
+  minimumIssuedAt = 0,
 ): string {
   try {
     if (
@@ -79,6 +80,7 @@ export function verifySession(
       !Number.isInteger(c.iat) ||
       !Number.isInteger(c.exp) ||
       c.iat > sec ||
+      c.iat < minimumIssuedAt ||
       c.exp <= sec ||
       c.exp <= c.iat ||
       c.exp - c.iat > 300 ||
@@ -201,6 +203,7 @@ export class TmdbProxy {
     private token: () => string | undefined,
     private request: typeof fetch = fetch,
     private now = Date.now,
+    private timeoutMs = 8000,
   ) {
     this.global = new WindowLimit(120, 1, now);
   }
@@ -249,7 +252,7 @@ export class TmdbProxy {
       if (q.year) u.searchParams.set("primary_release_year", String(q.year));
     } else u.searchParams.set("append_to_response", "credits,similar");
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8000);
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
       const r = await this.request(u, {
         headers: {
@@ -262,7 +265,14 @@ export class TmdbProxy {
       if (r.status === 429) {
         const h = r.headers.get("retry-after");
         const seconds =
-          h && /^\d+$/.test(h) ? Math.min(3600, Math.max(1, Number(h))) : 60;
+          h && /^\d+$/.test(h)
+            ? Math.min(3600, Math.max(1, Number(h)))
+            : h && Number.isFinite(Date.parse(h))
+              ? Math.min(
+                  3600,
+                  Math.max(1, Math.ceil((Date.parse(h) - this.now()) / 1000)),
+                )
+              : 60;
         this.retryAt = this.now() + seconds * 1000;
         throw new ProxyFailure(429, "upstream-backoff", seconds);
       }

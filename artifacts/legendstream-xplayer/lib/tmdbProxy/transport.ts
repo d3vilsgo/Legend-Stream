@@ -3,6 +3,8 @@ import type { MovieMetadataTransport } from "../tmdb/movieInfoService";
 import { TmdbRateLimit } from "../tmdb/requestGate";
 export type ProxyAccess = Readonly<{
   origin: string;
+  /** Session/account lifetime cancellation; no impact on playback. */
+  signal?: AbortSignal;
   /** Trusted login/session integration supplies a short-lived app session. Never a TMDB token. */
   getSession: () => Promise<string | null>;
 }>;
@@ -27,6 +29,7 @@ export function proxyOrigin(value: string): string {
 export function createMovieProxyTransport(
   access: ProxyAccess,
   request: typeof fetch = fetch,
+  timeoutMs = 10000,
 ): MovieMetadataTransport {
   const origin = proxyOrigin(access.origin);
   async function send(body: object): Promise<unknown> {
@@ -37,8 +40,11 @@ export function createMovieProxyTransport(
       !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(session)
     )
       throw new Error("application-session-required");
+    if (access.signal?.aborted) throw new Error("proxy-unavailable");
     const abort = new AbortController();
-    const timer = setTimeout(() => abort.abort(), 10000);
+    const cancel = () => abort.abort();
+    access.signal?.addEventListener("abort", cancel, { once: true });
+    const timer = setTimeout(() => abort.abort(), timeoutMs);
     try {
       const r = await request(`${origin}/api/tmdb/metadata`, {
         method: "POST",
@@ -69,6 +75,7 @@ export function createMovieProxyTransport(
       throw new Error("proxy-unavailable");
     } finally {
       clearTimeout(timer);
+      access.signal?.removeEventListener("abort", cancel);
     }
   }
   const detail: MovieMetadataTransport["detail"] = async (identity, locale) => {

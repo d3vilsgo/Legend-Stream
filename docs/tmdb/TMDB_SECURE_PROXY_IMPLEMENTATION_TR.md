@@ -64,3 +64,7 @@ Yerel: yeni proxy 29/29, mevcut foundation 57/57, Film Info mock 34/34; mobile T
 Deployment sonrası ayrı canlı kabul: yetkisiz istek401; eksik secret503; izin dışı alan400; kota429; doğrulanmış bilinen filmde Türkçe açıklama/görsel/oyuncu/yönetmen/süre/yıl/tür/puan; eksik Türkçe alanda İngilizce fallback; yanlış provider ID/yılda yerel bilgi; her üç provider'da İzle'nin mevcut resolver üzerinden açılması; token/provider bilgilerinin request/response/log/APK'da bulunmaması. Onaylı TMDB logo/attribution ve ticari kullanım şartları canlı UI yayını öncesi tamamlanmalıdır. Mevcut attribution metni/about bağlantısı tek başına logo gereğini karşılamaz.
 
 Gerçek TV kumandası, Player çıkışı veya fiziksel playback sürekliliği bu işin kabulü değildir; Native TV Physical PASS verilmez. Sonraki küçük PR: gerçek issuer/deployment bağlama ve canlı Film Info kanıtı; ardından kalıcı cache. Player/Back düzeltmeleri ayrı kalmalıdır.
+
+## Ek: PR #142 ikinci güvenlik turu
+
+Bu raporun ilk bölümündeki 29/29 proxy testi ilk teslimata aittir. Güncel turda proxy senaryoları 32/32, ayrı loopback HTTP testleri 15/15'tir. Yeni HTTP sınırı 2 KB'dir; genel API parser'ının 32 KB sınırı TMDB yolunda artık kullanılmaz. Güncel mimari ve kurulum engellerinin ayrıntısı `docs/tmdb/PR142_SECURE_CONNECTION_GATE_TR.md` içindedir. Canlı bağlantı durumu değişmemiştir.

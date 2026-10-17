@@ -297,6 +297,75 @@ async function main() {
       (e: any) => e instanceof TmdbRateLimit && e.retryAfterMs === 5000,
     );
   });
+  await test("client timeout aborts request", async () => {
+    let aborted = false;
+    const t = createMovieProxyTransport(
+      {
+        origin: "https://metadata.example.org",
+        getSession: async () => session,
+      },
+      async (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              reject(new Error("fixture-abort"));
+            },
+            { once: true },
+          );
+        }),
+      5,
+    );
+    await assert.rejects(
+      t.detail({ kind: "movie", id: 1 }, "tr-TR"),
+      /proxy-unavailable/,
+    );
+    assert(aborted);
+  });
+  await test("account lifetime cancellation aborts in flight request", async () => {
+    const lifetime = new AbortController();
+    let aborted = false;
+    const t = createMovieProxyTransport(
+      {
+        origin: "https://metadata.example.org",
+        getSession: async () => session,
+        signal: lifetime.signal,
+      },
+      async (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => {
+              aborted = true;
+              reject(new Error("fixture-abort"));
+            },
+            { once: true },
+          );
+          lifetime.abort();
+        }),
+    );
+    await assert.rejects(t.detail({ kind: "movie", id: 1 }, "tr-TR"));
+    assert(aborted);
+  });
+  await test("cancelled account lifetime never starts HTTP", async () => {
+    const lifetime = new AbortController();
+    lifetime.abort();
+    let n = 0;
+    const t = createMovieProxyTransport(
+      {
+        origin: "https://metadata.example.org",
+        getSession: async () => session,
+        signal: lifetime.signal,
+      },
+      async () => {
+        n++;
+        return json({});
+      },
+    );
+    await assert.rejects(t.detail({ kind: "movie", id: 1 }, "tr-TR"));
+    assert.equal(n, 0);
+  });
   console.log(
     `TMDB secure proxy scenarios: ${count}/${count} passed; LIVE_TMDB_NOT_TESTED`,
   );

@@ -281,6 +281,8 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tmdbMovieInfoScenarios.ts
       - name: TMDB secure proxy behavior (mock upstream, no live claim)
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tmdbSecureProxyScenarios.ts
+      - name: TMDB proxy HTTP boundary and timeout behavior
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx "$GITHUB_WORKSPACE/artifacts/api-server/src/lib/tmdb/proxyHttp.test.ts"
       - name: TMDB secure proxy formatting
         run: pnpm exec prettier --check artifacts/api-server/src/lib/tmdb artifacts/api-server/src/routes/tmdb.ts artifacts/legendstream-xplayer/lib/tmdbProxy artifacts/legendstream-xplayer/tests/tmdbSecureProxyScenarios.ts
       - name: TMDB Film Info source formatting
