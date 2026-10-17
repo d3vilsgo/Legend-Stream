@@ -134,6 +134,7 @@ async function main() {
   const stalkerCatalog = source("../components/catalog/StalkerLiveCatalog.tsx");
   const home = source("../components/OptimizedHomeScreenPaged.tsx");
   const sync = source("../lib/stalkerLiveSync.ts");
+  const syncContext = source("../context/CatalogSyncContext.tsx");
 
   await scenario("PlayerContext gates Stalker before generic legacy loadProvider routing", () => {
     const smart = blockBetween(player, "async function loadProviderSmart(", "function xtreamBaseUrl(");
@@ -191,10 +192,20 @@ async function main() {
     assert.match(home, /selectHomeLiveSource\(/);
   });
 
-  await scenario("Home Stalker refresh entry remains routed through PlayerContext refreshProvider", () => {
+  await scenario("Home manual refresh delegates to the shared catalog coordinator", () => {
     const refresh = blockBetween(home, "const refreshPagedCatalog = async", "const switchProvider = async");
-    assert.match(refresh, /provider\.type === "stalker"/);
-    assert.match(refresh, /await refreshProvider\(\)/);
+    assert.match(refresh, /await refreshCatalog\(\)/);
+    assert.doesNotMatch(refresh, /refreshProvider\(/);
+
+    const coordinator = blockBetween(syncContext, "const refreshCatalog = useCallback", "const cancelInitialSync = useCallback");
+    assert.match(coordinator, /provider\?\.type === "stalker"\) await runStalkerSync\("manual"\)/);
+
+    const stalkerRefresh = blockBetween(syncContext, "const runStalkerSync = useCallback", "const runM3URefresh = useCallback");
+    assert.match(stalkerRefresh, /executeStalkerCatalogLifecycleSync/);
+    assert.match(stalkerRefresh, /sync:\s*syncStalkerLiveCatalog/);
+    assert.match(stalkerRefresh, /signal:\s*controller\.signal/);
+    assert.match(stalkerRefresh, /isCurrent/);
+    assert.match(stalkerRefresh, /runningRef\.current/);
   });
 
   await scenario("R7 publish revision remains downstream of successful canonical commit only", () => {

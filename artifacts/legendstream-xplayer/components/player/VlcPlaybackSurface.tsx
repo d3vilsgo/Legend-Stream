@@ -4,6 +4,7 @@ import { VLCPlayer } from "react-native-vlc-media-player";
 import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { logPlayerDiagnostic } from "@/lib/playerDiagnostics";
 import { classifyStalkerTraceError, getActiveStalkerTraceId, shouldTraceStalkerBuffering, traceStalker } from "@/lib/stalkerPlaybackTrace";
+import { getActivePlaybackAttemptId, markPlaybackEvent } from "@/lib/performanceDiagnostics";
 import {
   resetPlayerRuntimeInfo,
   updatePlayerRuntimeInfo,
@@ -351,7 +352,9 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
     return { size, fps, codec };
   }, [isLikelyWindowSurface]);
 
+  const performanceAttempt = useMemo(() => getActivePlaybackAttemptId(), [uri]);
   const handleLoad = useCallback((event: VlcLoadEvent) => {
+    markPlaybackEvent("VLC_OPENING", performanceAttempt);
     const traceId = getActiveStalkerTraceId(); if (traceId) traceStalker("VLC_OPENING", { traceId });
     setFirstFramePending(false);
     const previous = lastLoadEvent.current;
@@ -387,7 +390,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
       duration: Number(mergedEvent?.duration || 0),
     });
     onLoad(mergedEvent);
-  }, [acceptRuntimeMetrics, isLikelyWindowSurface, onLoad]);
+  }, [acceptRuntimeMetrics, isLikelyWindowSurface, onLoad, performanceAttempt]);
 
   const handleProgress = useCallback((event: VlcProgressEvent) => {
     setFirstFramePending(false);
@@ -424,6 +427,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [acceptRuntimeMetrics, onLoad, onProgress]);
 
   const handlePlaying = useCallback(() => {
+    markPlaybackEvent("VLC_PLAYING", performanceAttempt);
     const traceId = getActiveStalkerTraceId(); if (traceId) traceStalker("VLC_PLAYING", { traceId });
     setFirstFramePending(false);
     setPlaybackReady(true);
@@ -434,7 +438,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
       fit,
     });
     onPlaying();
-  }, [codecMode, diagnosticM3ULive, fit, onPlaying, runtimeCodecMode]);
+  }, [performanceAttempt, codecMode, diagnosticM3ULive, fit, onPlaying, runtimeCodecMode]);
 
   const handlePaused = useCallback(() => {
     const traceId = getActiveStalkerTraceId(); if (traceId) traceStalker("VLC_PAUSED", { traceId });
@@ -452,6 +456,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
   }, [onEnd]);
 
   const handleError = useCallback((event?: Record<string, unknown>) => {
+    markPlaybackEvent("VLC_ERROR", performanceAttempt);
     const traceId = getActiveStalkerTraceId();
     const payload = eventPayload(event); const rawCode = (payload as any)?.code ?? (payload as any)?.errorCode ?? (payload as any)?.status;
     const safeNativeCode = typeof rawCode === "number" && Number.isFinite(rawCode) ? String(rawCode) : typeof rawCode === "string" && /^[A-Z0-9_-]{1,32}$/i.test(rawCode) ? rawCode : undefined;
@@ -481,7 +486,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
       fit,
     });
     onError();
-  }, [codecMode, fit, onError, runtimeCodecMode]);
+  }, [performanceAttempt, codecMode, fit, onError, runtimeCodecMode]);
 
   return (
     <View style={styles.surface} pointerEvents="none">
@@ -503,7 +508,7 @@ const VlcPlaybackSurfaceImpl = forwardRef<any, Props>(function VlcPlaybackSurfac
           onEnd={handleEnd}
           onError={handleError as any}
           {...({
-            onBuffering: (event: any) => { const traceId = getActiveStalkerTraceId(); const payload = eventPayload(event); const raw = Number((payload as any)?.bufferRate ?? (payload as any)?.bufferPercent ?? (payload as any)?.percent); const bufferPercent = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : undefined; if (traceId && shouldTraceStalkerBuffering(traceId, bufferPercent)) traceStalker("VLC_BUFFERING", { traceId, bufferPercent }); },
+            onBuffering: (event: any) => { markPlaybackEvent("VLC_BUFFERING", performanceAttempt); const traceId = getActiveStalkerTraceId(); const payload = eventPayload(event); const raw = Number((payload as any)?.bufferRate ?? (payload as any)?.bufferPercent ?? (payload as any)?.percent); const bufferPercent = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : undefined; if (traceId && shouldTraceStalkerBuffering(traceId, bufferPercent)) traceStalker("VLC_BUFFERING", { traceId, bufferPercent }); },
             onStopped: () => { const traceId = getActiveStalkerTraceId(); if (traceId) traceStalker("VLC_STOPPED", { traceId }); },
           } as any)}
         />

@@ -302,7 +302,8 @@ async function main() {
       },
     });
     assert.match(output, /m3u\.writeOutcome=sqlite-error/);
-    assert.match(writeRunnerSource, /const persisted = await persistM3UProviderCache\(provider, loaded\);/);
+    assert.match(writeRunnerSource, /if \(isCurrent && !isCurrent\(\)\) return false;/);
+    assert.match(writeRunnerSource, /const persisted = await persistM3UProviderCache\(provider, loaded, isCurrent\);/);
     assert.match(writeRunnerSource, /if \(!persisted\)/);
     assert.doesNotMatch(writeRunnerSource, /\.catch\(\(\) => undefined\)/);
   });

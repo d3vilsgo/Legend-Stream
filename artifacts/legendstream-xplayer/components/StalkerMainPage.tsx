@@ -1,3 +1,5 @@
+import { beginPlaybackAttempt } from "@/lib/performanceDiagnostics";
+import { CatalogRefreshSettings } from "@/components/CatalogRefreshSettings";
 import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
 import { TVRemoteInspectorSetting } from "@/components/tvPreview/TVRemoteInspector";
 import { tvInspector } from "@/lib/tvRemoteInspector";
@@ -174,6 +176,7 @@ export default function StalkerMainPage() {
   const [playable, setPlayable] = useState<Playable | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
+  const [homeViewportHeight, setHomeViewportHeight] = useState<number | undefined>(undefined);
   const [switchingProviderId, setSwitchingProviderId] = useState<string | null>(null);
   const switchingProviderRef = useRef<string | null>(null);
   const historyPlaybackAbortRef = useRef<AbortController | null>(null);
@@ -258,6 +261,7 @@ export default function StalkerMainPage() {
   };
 
   const openDownload = (item: DownloadedMedia) => {
+    beginPlaybackAttempt("unknown");
     openResolvedPlayable({
       title: item.title,
       subtitle: item.subtitle,
@@ -305,6 +309,7 @@ export default function StalkerMainPage() {
   };
 
   const openProgress = async (item: MediaProgress) => {
+    beginStalkerPlaybackTrace();
     historyPlaybackAbortRef.current?.abort();
     const sequence = ++historyPlaybackSequenceRef.current;
     if (item.playbackRef.type === "stalker-episode") {
@@ -528,6 +533,7 @@ export default function StalkerMainPage() {
 
       {presentedView !== "live" && presentedView !== "movies" && presentedView !== "series" && presentedView !== "history" ? (
         <ScrollView
+          onLayout={event => setHomeViewportHeight(event.nativeEvent.layout.height)}
           style={{ flex: 1, minHeight: 0 }}
           contentContainerStyle={[s.content, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]}
           keyboardShouldPersistTaps="handled"
@@ -536,6 +542,7 @@ export default function StalkerMainPage() {
         >
           {presentedView === "home" ? (
             <HomeDiscovery
+              tvViewportHeight={homeViewportHeight}
               provider={provider}
               live={liveCatalog.countKnown ? liveCatalog.totalCount : null}
               vod={productCounts.vod}
@@ -704,6 +711,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onSwitch, on
           ))}
         </ScrollView>
       </View>
+      <CatalogRefreshSettings />
       <PlayerChromeTimeoutSetting />
       <ProviderBackupPanel />
       <CredentialDiagnosticsPanel />

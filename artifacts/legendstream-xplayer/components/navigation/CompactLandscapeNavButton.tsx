@@ -1,3 +1,4 @@
+import { eliteTokens } from "@/lib/design/eliteTokens";
 import { Feather } from "@expo/vector-icons";
 import React from "react";
 import { StyleSheet, Text } from "react-native";
@@ -18,6 +19,7 @@ export function CompactLandscapeNavButton({ label, shortLabel, icon, active, min
   const colors = useColors();
   return (
     <TVPreviewPressable
+      eliteVisual
       focusId={`navigation:${label}`}
       accessibilityRole="tab"
       accessibilityState={{ selected: active }}
@@ -26,11 +28,11 @@ export function CompactLandscapeNavButton({ label, shortLabel, icon, active, min
       style={({ pressed }) => [
         styles.button,
         { minHeight: minTarget, minWidth: Math.max(48, minTarget) },
-        { borderColor: active ? colors.primary : colors.border, backgroundColor: active ? colors.secondary : "transparent" },
+        { borderColor: active ? eliteTokens.color.accent : eliteTokens.color.border, backgroundColor: active ? eliteTokens.color.selected : eliteTokens.color.surface },
         pressed && styles.pressed,
       ]}
     >
-      <Feather name={icon} size={19} color={active ? colors.primary : colors.foreground} />
+      <Feather name={icon} size={19} color={active ? eliteTokens.color.accent : eliteTokens.color.text} />
       {showLabel ? <Text numberOfLines={1} style={[styles.label, { color: colors.foreground }]}>{shortLabel ?? label}</Text> : null}
     </TVPreviewPressable>
   );

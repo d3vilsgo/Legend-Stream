@@ -1,8 +1,9 @@
+import { beginPerformanceMeasurement, finishPerformanceMeasurement } from "@/lib/performanceDiagnostics";
 import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
 import { currentMovie, pagedMovieInput, localXtreamMovie } from "@/lib/tmdb/movieInfoModel";
 import { EliteLiveCatalog } from "@/components/elite/EliteLiveCatalog";
 import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
-import { useNativeTvCatalogGrid } from "@/hooks/useNativeTvCatalogGrid";
+import { useResponsiveCatalogGrid } from "@/hooks/useResponsiveCatalogGrid";
 import {TVRemoteInspectorOverlay} from "@/components/tvPreview/TVRemoteInspector";
 import { Feather } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -104,13 +105,16 @@ function useCategories(providerId: string, kind: "live" | "vod" | "series", diag
   const generationRef = useRef(0);
   const reload = () => {
     const generation = ++generationRef.current;
+    const measurement = beginPerformanceMeasurement("FIRST_CATEGORY");
     void getCachedCatalogCategories(providerId, kind, diagnosticM3U)
       .then((next) => {
         if (generationRef.current === generation) {
           setResult({ providerId, categories: next });
-        }
+          finishPerformanceMeasurement(measurement);
+        } else finishPerformanceMeasurement(measurement, "CANCELLED");
       })
       .catch(() => {
+        finishPerformanceMeasurement(measurement, generationRef.current === generation ? "ERROR" : "CANCELLED");
         if (generationRef.current === generation) {
           setResult({ providerId, categories: [] });
         }
@@ -511,14 +515,15 @@ function Poster({ uri, title }: { uri?: string; title: string }) {
 
 function GridCard({ focusId, title, image, onPress }: { focusId: string; title: string; image?: string; onPress: () => void }) {
   const colors = useColors();
-  return <TVPreviewPressable focusId={focusId} accessibilityRole="button" accessibilityLabel={title} onPress={onPress} style={s.card}>
+  const { fontScale } = useWindowDimensions();
+  return <TVPreviewPressable eliteVisual focusId={focusId} accessibilityRole="button" accessibilityLabel={title} onPress={onPress} style={s.card}>
     <View style={[s.media, { borderColor: colors.border, backgroundColor: colors.card }]}> 
       {image
         ? <Image source={{ uri: image }} style={s.posterBig} resizeMode={Platform.isTV ? "contain" : "cover"} />
         : <View style={[s.posterBig, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}>
             <Feather name="play-circle" size={30} color={colors.primary} />
           </View>}
-      <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", padding: 9 }}>{title}</Text>
+      <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", fontSize: 14, lineHeight: 18, minHeight: Math.ceil(36 * fontScale + 18), padding: 9 }}>{title}</Text>
     </View>
   </TVPreviewPressable>;
 }
@@ -798,10 +803,8 @@ export function PagedMoviesCatalog({
   });
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const grid = useNativeTvCatalogGrid<(typeof page.items)[number]>(page.items.map(item => `vod:${item.stream_id}`));
-  const columns = Platform.isTV ? grid.columns : tvPreview
-    ? width >= 1600 ? 7 : width >= 1200 ? 6 : width >= 800 ? 5 : 4
-    : width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const grid = useResponsiveCatalogGrid<(typeof page.items)[number]>(page.items.map(item => `vod:${item.stream_id}`), JSON.stringify([provider.id, category, search, effectiveSort]));
+  const columns = grid.columns;
 
   useEffect(() => { if(infoMovie && !currentMovie(page.items,String(infoMovie.stream_id),item=>String(item.stream_id))) setInfoMovie(null); },[page.items,infoMovie]);
   useEffect(() => onDrawerVisibilityChange(drawerOpen || infoMovie !== null), [drawerOpen, infoMovie, onDrawerVisibilityChange]);
@@ -859,6 +862,7 @@ export function PagedMoviesCatalog({
 }
 
 export function GoldenSeriesCatalog({
+  providerId,
   categories,
   selectedCategory,
   onSelectCategory,
@@ -887,6 +891,7 @@ export function GoldenSeriesCatalog({
   onDrawerVisibilityChange,
   activeCategoryLabel,
 }: {
+  providerId: string;
   categories: CategoryOption[];
   selectedCategory: string;
   onSelectCategory: (id: string) => void;
@@ -923,10 +928,8 @@ export function GoldenSeriesCatalog({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const grid = useNativeTvCatalogGrid<(typeof items)[number]>(items.map(item => `series:${item.id}`));
-  const columns = Platform.isTV ? grid.columns : tvPreview
-    ? width >= 1600 ? 7 : width >= 1200 ? 6 : width >= 800 ? 5 : 4
-    : width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const grid = useResponsiveCatalogGrid<(typeof items)[number]>(items.map(item => `series:${item.id}`), JSON.stringify([providerId, selectedCategory, search, sortMode]));
+  const columns = grid.columns;
   const orderedSeasons = useMemo(
     () => orderGoldenSeriesSeasons(detail?.seasons ?? []),
     [detail],
@@ -1153,6 +1156,7 @@ export function PagedSeriesCatalog({
   } : null;
 
   return <GoldenSeriesCatalog
+    providerId={provider.id}
     categories={drawerItems}
     selectedCategory={category}
     onSelectCategory={setCategory}

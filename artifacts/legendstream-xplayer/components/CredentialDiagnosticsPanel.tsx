@@ -23,6 +23,7 @@ import {
 import { subscribeCatalogMeasurementFreshness } from "@/lib/catalogMeasurementFreshness";
 import { redactSensitiveText, safeLog } from "@/lib/safeLog";
 import { clearStalkerTraceEntries, formatStalkerTrace, getStalkerTraceEntries, subscribeStalkerTrace } from "@/lib/stalkerPlaybackTrace";
+import { PerformanceDiagnosticsPanel } from "@/components/PerformanceDiagnosticsPanel";
 
 const formatDiagnosticsWithCryptoRuntime = (report: CredentialDiagnosticsReport) =>
   `${formatCredentialDiagnostics(report)}\ncryptoAvailable=${cryptoAvailable}\nnobleCryptoRuntimeTypes=${JSON.stringify(nobleCryptoRuntimeTypes())}`;
@@ -149,6 +150,7 @@ export function CredentialDiagnosticsPanel() {
   return (
     <View style={{ marginTop: 24, gap: 10 }}>
       <Text style={{ color: colors.foreground, fontSize: 18, fontWeight: "800" }}>Tanılama</Text>
+      <PerformanceDiagnosticsPanel />
       <Text style={{ color: colors.mutedForeground }}>
         Salt okunur credential tanısı. Kimlik bilgisi değerleri gösterilmez; yalnız kayıt varlığı, alan adları ve hatalar raporlanır.
       </Text>

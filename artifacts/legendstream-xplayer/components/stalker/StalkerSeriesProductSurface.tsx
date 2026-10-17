@@ -408,6 +408,7 @@ export function StalkerSeriesProductSurface({
   };
 
   return <GoldenSeriesCatalog
+    providerId={provider.id}
     categories={goldenCategories}
     selectedCategory={selectedCategoryId ?? goldenCategories[0]?.id ?? ""}
     onSelectCategory={selectCategoryById}

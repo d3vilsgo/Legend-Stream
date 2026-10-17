@@ -1,8 +1,12 @@
+import { responsiveHomeHeroLayout } from "@/lib/homeHeroLayout";
+import { useUiPresentation } from "@/context/UiPresentationContext";
+import { nativeTvHomeLayout } from "@/lib/design/nativeTvHomeLayout";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { FlatList, Image, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
-import type { ImageStyle, StyleProp, ViewStyle } from "react-native";
+import type { ImageStyle, LayoutChangeEvent, StyleProp, ViewStyle } from "react-native";
 import type { ProviderConfig } from "@/context/PlayerContext";
 import type { MediaProgress } from "@/context/MediaLibraryContext";
 import { useMediaLibrary } from "@/context/MediaLibraryContext";
@@ -13,6 +17,7 @@ import { visibleProgressRatio } from "@/lib/historyPresentation";
 import { TVPreviewPressable } from "@/components/tvPreview/TVPreviewFocus";
 import type { Channel } from "@/lib/iptv";
 import type { XtreamSeriesItem, XtreamVodItem } from "@/lib/xtreamCatalog";
+import { markStartupEvent } from "@/lib/performanceDiagnostics";
 
 export type HomeContentView = "home" | "live" | "movies" | "series" | "history" | "downloads" | "settings";
 
@@ -40,6 +45,7 @@ type CatalogImageStyle = StyleProp<ImageStyle & ViewStyle>;
 
 export function HomeDiscovery({
   provider,
+  tvViewportHeight,
   live,
   vod,
   series,
@@ -61,6 +67,7 @@ export function HomeDiscovery({
   onRemoveLive,
 }: {
   provider: ProviderConfig;
+  tvViewportHeight?: number;
   live: number | null;
   vod: number | null;
   series: number | null;
@@ -82,6 +89,9 @@ export function HomeDiscovery({
   onRemoveLive: (id: string) => void;
 }) {
   const colors = useColors();
+  const { width: homeWidth, height: homeHeight } = useWindowDimensions();
+  const { tvPreview } = useUiPresentation();
+  const shelvesFirst = Platform.isTV || tvPreview || homeWidth > homeHeight;
   const { t, language } = useI18n();
   const { entries, loaded: mediaLibraryLoaded, removeProgress } = useMediaLibrary();
   const copy = language === "tr"
@@ -238,10 +248,22 @@ export function HomeDiscovery({
   const effectiveLoading = !homeMovies.length && !homeSeries.length && !homeChannels.length && (
     catalogLoading || live === null || vod === null || series === null
   );
+  useEffect(() => {
+    if (!effectiveLoading) markStartupEvent("HOME_FIRST_USABLE_RENDER");
+  }, [effectiveLoading]);
+
+  const sectionCards = (
+    <View style={s.homeCompactStats}>
+      <HomeCountCard focusId="home:live" icon="radio" label={t("liveTv")} value={liveValue} accent={colors.primary} preferredFocus={false} onPress={() => onNavigate("live")} />
+      <HomeCountCard focusId="home:movies" icon="film" label={t("movies")} value={movieValue} accent="#49B9FF" onPress={() => onNavigate("movies")} />
+      <HomeCountCard focusId="home:series" icon="tv" label={t("series")} value={seriesValue} accent="#8C8CFF" onPress={() => onNavigate("series")} />
+    </View>
+  );
 
   return <View style={s.homeDiscoveryShell}>
     <HomeHeroCarousel
       items={heroItems}
+      tvViewportHeight={tvViewportHeight}
       eyebrow={copy.featured}
       providerName={provider.name}
       onOpen={(item) => item.movie ? onOpenMovie(item.movie) : item.series ? onOpenSeries(item.series) : undefined}
@@ -249,11 +271,7 @@ export function HomeDiscovery({
       discoverLabel={copy.discover}
       loading={effectiveLoading}
     />
-    <View style={s.homeCompactStats}>
-      <HomeCountCard focusId="home:live" icon="radio" label={t("liveTv")} value={liveValue} accent={colors.primary} preferredFocus={!heroItems.length} onPress={() => onNavigate("live")} />
-      <HomeCountCard focusId="home:movies" icon="film" label={t("movies")} value={movieValue} accent="#49B9FF" onPress={() => onNavigate("movies")} />
-      <HomeCountCard focusId="home:series" icon="tv" label={t("series")} value={seriesValue} accent="#8C8CFF" onPress={() => onNavigate("series")} />
-    </View>
+    {!shelvesFirst ? sectionCards : null}
     {continueShelf.length || !mediaLibraryLoaded ? <HomeShelf title={copy.continue} seeAll={copy.seeAll} items={continueShelf} onSeeAll={() => onNavigate("history")} loading={!mediaLibraryLoaded} /> : null}
     {recentShelf.length ? <HomeShelf title={copy.recent} seeAll={copy.seeAll} items={recentShelf} onSeeAll={() => onNavigate("history")} compact /> : null}
     <HomeShelf title={t("liveTv")} seeAll={copy.seeAll} items={liveShelf} onSeeAll={() => onNavigate("live")} compact emptyLabel={live === 0 ? copy.noLive : copy.discover} loading={live === null} />
@@ -262,22 +280,26 @@ export function HomeDiscovery({
     {newMovieShelf.length ? <HomeShelf title={copy.newMovies} seeAll={copy.seeAll} items={newMovieShelf} onSeeAll={() => onNavigate("movies")} /> : null}
     {newSeriesShelf.length ? <HomeShelf title={copy.newSeries} seeAll={copy.seeAll} items={newSeriesShelf} onSeeAll={() => onNavigate("series")} /> : null}
     {newChannelShelf.length ? <HomeShelf title={copy.newChannels} seeAll={copy.seeAll} items={newChannelShelf} onSeeAll={() => onNavigate("live")} compact /> : null}
+    {shelvesFirst ? sectionCards : null}
   </View>;
 }
 
-function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = false, style, onFocus, focusId }: {
+function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = false, style, onFocus, onLayout, focusId, accessibilityLabel }: {
   children: React.ReactNode;
   onPress: () => void;
   onLongPress?: () => void;
   preferredFocus?: boolean;
   style?: StyleProp<ViewStyle>;
   onFocus?: () => void;
+  onLayout?: (event: LayoutChangeEvent) => void;
   focusId?: string;
+  accessibilityLabel?: string;
 }) {
   const colors = useColors();
   const [focused, setFocused] = useState(false);
   return <TVPreviewPressable
     focusId={focusId}
+    accessibilityLabel={accessibilityLabel}
     focusable
     hasTVPreferredFocus={Platform.isTV && preferredFocus}
     onFocus={() => {
@@ -285,6 +307,7 @@ function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = fal
       onFocus?.();
     }}
     onBlur={() => Platform.isTV && setFocused(false)}
+    onLayout={onLayout}
     onPress={onPress}
     onLongPress={onLongPress}
     style={[
@@ -295,11 +318,12 @@ function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = fal
   >{children}</TVPreviewPressable>;
 }
 
-function ResilientCatalogImage({ uri, style, resizeMode = "cover", fallbackIcon = "film" }: {
+function ResilientCatalogImage({ uri, style, resizeMode = "cover", fallbackIcon = "film", showFallbackIcon = true }: {
   uri?: string;
   style: CatalogImageStyle;
   resizeMode?: "cover" | "contain" | "stretch" | "repeat" | "center";
   fallbackIcon?: keyof typeof Feather.glyphMap;
+  showFallbackIcon?: boolean;
 }) {
   const colors = useColors();
   const normalized = normalizeImageUrl(uri);
@@ -307,14 +331,15 @@ function ResilientCatalogImage({ uri, style, resizeMode = "cover", fallbackIcon 
   useEffect(() => setFailed(false), [normalized]);
   if (!normalized || failed) {
     return <View style={[style, { alignItems: "center", justifyContent: "center", backgroundColor: colors.muted }]}>
-      <Feather name={fallbackIcon} size={30} color={colors.primary} />
+      {showFallbackIcon ? <Feather name={fallbackIcon} size={30} color={colors.primary} /> : null}
     </View>;
   }
   return <Image source={{ uri: normalized }} resizeMode={resizeMode} style={style} onError={() => setFailed(true)} />;
 }
 
-function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, discoverLabel, loading = false }: {
+export function HomeHeroCarousel({ items, tvViewportHeight, eyebrow, providerName, onOpen, onDiscover, discoverLabel, loading = false }: {
   items: HomeHeroEntry[];
+  tvViewportHeight?: number;
   eyebrow: string;
   providerName: string;
   onOpen: (item: HomeHeroEntry) => void;
@@ -323,27 +348,51 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
   loading?: boolean;
 }) {
   const colors = useColors();
-  const { width } = useWindowDimensions();
-  const [measuredWidth, setMeasuredWidth] = useState<number | null>(null);
-  const cardWidth = Platform.isTV ? Math.max(1, measuredWidth ?? width - 112) : Math.max(280, Math.min(width - 36, 1464));
+  const { width, height, fontScale } = useWindowDimensions();
+  const insets = useSafeAreaInsets();
+  const tvHero = nativeTvHomeLayout({ width, height, fontScale, safeArea: insets, viewportHeight: tvViewportHeight });
+  const { tvPreview } = useUiPresentation();
+  const [measured, setMeasured] = useState<{ width: number; windowWidth: number } | null>(null);
+  const measuredWidth = measured?.windowWidth === width ? measured.width : undefined;
+  const measureHero = (event: LayoutChangeEvent) => { const nextWidth = event.nativeEvent.layout.width; setMeasured(current => current?.width === nextWidth && current.windowWidth === width ? current : { width: nextWidth, windowWidth: width }); };
+  const responsive = responsiveHomeHeroLayout({ width, height, fontScale, safeArea: insets, tvPreview, viewportHeight: tvViewportHeight, containerWidth: measuredWidth });
+  const heroHeight = Platform.isTV ? tvHero.heroHeight : responsive.height;
+  const nativeGeometry = { height: heroHeight, minHeight: heroHeight, maxHeight: heroHeight, aspectRatio: undefined };
+  const nativeTitle = Platform.isTV ? { fontSize: tvHero.titleFont, lineHeight: tvHero.titleLineHeight } : { fontSize: responsive.titleFont, lineHeight: responsive.titleLineHeight };
+  const nativeMeta = Platform.isTV ? { fontSize: tvHero.metaFont, lineHeight: tvHero.metaLineHeight, marginTop: 6 } : { fontSize: 12, lineHeight: 16, marginTop: 6 };
+  const titleLines = Platform.isTV ? tvHero.titleLines : responsive.titleLines;
+  const showMeta = Platform.isTV ? tvHero.showMeta : responsive.showMeta;
+  const padding = Platform.isTV ? tvHero.padding : responsive.captionPadding;
+  const cardWidth = Platform.isTV ? Math.max(1, measuredWidth ?? width - 112) : responsive.width;
   const listRef = useRef<FlatList<HomeHeroEntry>>(null);
   const [index, setIndex] = useState(0);
+  const selectedId = useRef<string | null>(null);
+  const itemIds = items.map(item => item.id).join("\u0000");
+  useEffect(() => {
+    if (Platform.isTV) return;
+    const selectedIndex = items.findIndex(item => item.id === selectedId.current);
+    const next = selectedIndex < 0 ? 0 : selectedIndex;
+    setIndex(next);
+    selectedId.current = items[next]?.id ?? null;
+    if (items.length) listRef.current?.scrollToOffset({ offset: cardWidth * next, animated: false });
+  }, [cardWidth, itemIds]);
 
   useEffect(() => {
-    if (Platform.isTV || items.length < 2) return;
+    if (Platform.isTV || tvPreview || items.length < 2) return;
     const timer = setInterval(() => {
       setIndex((current) => {
         const next = (current + 1) % items.length;
+        selectedId.current = items[next]?.id ?? null;
         listRef.current?.scrollToIndex({ index: next, animated: true });
         return next;
       });
     }, 5600);
     return () => clearInterval(timer);
-  }, [items.length]);
+  }, [items, tvPreview]);
 
   if (!items.length) {
     if (loading) {
-      return <View style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}>
+      return <View onLayout={measureHero} style={[s.homeHeroEmpty, nativeGeometry, { padding }, { borderColor: colors.border, backgroundColor: colors.card }]}>
         <LinearGradient colors={["rgba(0,212,255,0.10)", "rgba(5,9,20,0.02)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
         <View style={{ flex: 1, justifyContent: "flex-end", gap: 10 }}>
           <View style={[s.homeSkeletonLine, { width: "28%", backgroundColor: colors.muted }]} />
@@ -352,39 +401,42 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
         </View>
       </View>;
     }
-    return <TvFocusPressable focusId="home:discover" preferredFocus onPress={onDiscover} style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}>
+    return <TvFocusPressable onLayout={measureHero} focusId="home-hero:empty" accessibilityLabel={discoverLabel} preferredFocus onPress={onDiscover} style={[s.homeHeroEmpty, nativeGeometry, { padding }, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <LinearGradient colors={["rgba(0,212,255,0.12)", "rgba(5,9,20,0.02)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
       <View style={{ flex: 1, justifyContent: "flex-end" }}>
-        <Text style={[s.homeHeroEyebrow, { color: colors.primary }]}>{providerName}</Text>
-        <Text style={[s.homeHeroTitle, { color: colors.foreground }]}>{discoverLabel}</Text>
-        <Text style={[s.homeHeroMeta, { color: colors.mutedForeground }]}>{eyebrow}</Text>
+        {!Platform.isTV && responsive.showEyebrow ? <Text style={[s.homeHeroEyebrow, { color: colors.primary }]}>{providerName}</Text> : null}
+        <Text numberOfLines={titleLines} style={[s.homeHeroTitle, nativeTitle, { color: colors.foreground }]}>{discoverLabel}</Text>
+        {showMeta ? <Text numberOfLines={1} style={[s.homeHeroMeta, nativeMeta, { color: colors.mutedForeground }]}>{eyebrow}</Text> : null}
       </View>
     </TvFocusPressable>;
   }
 
-  return <View onLayout={Platform.isTV ? event => setMeasuredWidth(event.nativeEvent.layout.width) : undefined}>
+  return <View onLayout={measureHero}>
     <FlatList
       ref={listRef}
       data={items}
       horizontal
       pagingEnabled
+      removeClippedSubviews={Platform.isTV ? false : undefined}
       showsHorizontalScrollIndicator={false}
       keyExtractor={(item) => item.id}
       getItemLayout={(_data, itemIndex) => ({ length: cardWidth, offset: cardWidth * itemIndex, index: itemIndex })}
-      onMomentumScrollEnd={(event) => setIndex(Math.round(event.nativeEvent.contentOffset.x / cardWidth))}
+      onMomentumScrollEnd={(event) => { const next = Math.max(0, Math.min(items.length - 1, Math.round(event.nativeEvent.contentOffset.x / cardWidth))); setIndex(next); selectedId.current = items[next]?.id ?? null; }}
+      onScrollToIndexFailed={({ index: target }) => listRef.current?.scrollToOffset({ offset: target * cardWidth, animated: false })}
       renderItem={({ item, index: itemIndex }) => <TvFocusPressable
         focusId={`home-hero:${item.id}`}
+        accessibilityLabel={item.title}
         preferredFocus={itemIndex === 0}
         onPress={() => onOpen(item)}
         onFocus={() => listRef.current?.scrollToIndex({ index: itemIndex, animated: true })}
-        style={[s.homeHeroCard, { width: cardWidth, borderColor: "transparent" }]}
+        style={[s.homeHeroCard, nativeGeometry, { width: cardWidth, borderColor: "transparent" }]}
       >
-        <ResilientCatalogImage uri={item.image} resizeMode="cover" style={StyleSheet.absoluteFill} />
+        <ResilientCatalogImage uri={item.image} showFallbackIcon={!Platform.isTV} resizeMode="cover" style={StyleSheet.absoluteFill} />
         <LinearGradient colors={["rgba(2,6,16,0.02)", "rgba(2,6,16,0.18)", "rgba(2,6,16,0.92)"]} locations={[0, 0.5, 1]} style={StyleSheet.absoluteFill} pointerEvents="none" />
-        <View style={s.homeHeroCaption}>
-          <Text style={[s.homeHeroEyebrow, { color: colors.primary }]}>{eyebrow}</Text>
-          <Text numberOfLines={2} style={s.homeHeroImageTitle}>{item.title}</Text>
-          <Text numberOfLines={1} style={s.homeHeroImageMeta}>{item.subtitle}</Text>
+        <View style={[s.homeHeroCaption, { paddingTop: padding, paddingBottom: padding }, !Platform.isTV && { maxWidth: responsive.captionMaxWidth + padding * 2 }]}>
+          {!Platform.isTV && responsive.showEyebrow ? <Text style={[s.homeHeroEyebrow, { color: colors.primary }]}>{eyebrow}</Text> : null}
+          <Text numberOfLines={titleLines} style={[s.homeHeroImageTitle, nativeTitle]}>{item.title}</Text>
+          {showMeta ? <Text numberOfLines={1} style={[s.homeHeroImageMeta, nativeMeta]}>{item.subtitle}</Text> : null}
         </View>
       </TvFocusPressable>}
     />
@@ -436,6 +488,7 @@ function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel
     {items.length ? <FlatList
       ref={listRef}
       horizontal
+      removeClippedSubviews={Platform.isTV ? false : undefined}
       data={items}
       keyExtractor={(item) => item.id}
       showsHorizontalScrollIndicator={false}
@@ -444,7 +497,7 @@ function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel
       maxToRenderPerBatch={8}
       windowSize={5}
       renderItem={({ item, index: itemIndex }) => <TvFocusPressable
-        focusId={`home-shelf:${item.id}`}
+        focusId={`home-shelf:${title}:${item.id}`}
         onPress={item.onPress}
         onLongPress={Platform.isTV ? item.onRemove : undefined}
         onFocus={() => listRef.current?.scrollToIndex({ index: itemIndex, animated: true, viewPosition: 0.45 })}
@@ -503,6 +556,6 @@ const s = StyleSheet.create({
   homeShelfSkeletonRow: { flexDirection: "row", gap: 11, paddingVertical: 3 },
   homeShelfSkeletonCard: { width: 142, borderWidth: 1, borderRadius: 16, padding: 7, gap: 9 },
   homeShelfSkeletonImage: { width: "100%", aspectRatio: 2 / 3, borderRadius: 11, opacity: 0.72 },
-  homeTvFocusBase: { borderWidth: 2, borderColor: "transparent" },
-  homeTvFocusActive: { borderWidth: 3, shadowOpacity: 0.78, shadowRadius: 12, shadowOffset: { width: 0, height: 0 }, elevation: 8, transform: [{ scale: 1.025 }] },
+  homeTvFocusBase: { borderWidth: 4, borderColor: "transparent" },
+  homeTvFocusActive: { borderWidth: 4, shadowOpacity: 0.78, shadowRadius: 12, shadowOffset: { width: 0, height: 0 }, elevation: 8 },
 });

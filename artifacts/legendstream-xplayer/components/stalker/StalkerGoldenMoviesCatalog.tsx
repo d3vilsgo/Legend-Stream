@@ -1,7 +1,7 @@
 import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
 import { currentMovie, localStalkerMovie } from "@/lib/tmdb/movieInfoModel";
 import { stalkerMovieInput } from "@/lib/tmdb/providerInput";
-import { useNativeTvCatalogGrid } from "@/hooks/useNativeTvCatalogGrid";
+import { useResponsiveCatalogGrid } from "@/hooks/useResponsiveCatalogGrid";
 import { TVPreviewPressable } from "@/components/tvPreview/TVPreviewFocus";
 import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -80,8 +80,8 @@ export function StalkerGoldenMoviesCatalog({
     category.id === catalog.selectedCategoryId && category.id !== globalCategoryId,
   )?.title;
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const grid = useNativeTvCatalogGrid<StalkerVodItem>(sortedItems.map(item => `stalker:vod:${item.portalId}`));
-  const columns = Platform.isTV ? grid.columns : width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const grid = useResponsiveCatalogGrid<StalkerVodItem>(sortedItems.map(item => `stalker:vod:${item.portalId}`), JSON.stringify([provider.id, catalog.selectedCategoryId, catalog.search, sort]));
+  const columns = grid.columns;
 
   if (shouldUseWholeCatalogLoadingSkeleton(catalog.loadingInitial, catalog.visibleItems.length, catalog.search)) {
     return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
@@ -336,12 +336,13 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
 
 function GridCard({ focusId, title, image, onPress }: { focusId: string; title: string; image?: string; onPress: () => void }) {
   const colors = useColors();
-  return <TVPreviewPressable focusId={focusId} accessibilityLabel={title} onPress={onPress} style={s.card}>
+  const { fontScale } = useWindowDimensions();
+  return <TVPreviewPressable eliteVisual focusId={focusId} accessibilityLabel={title} onPress={onPress} style={s.card}>
     <View style={[s.media, { borderColor: colors.border, backgroundColor: colors.card }]}>
       {image
         ? <Image source={{ uri: image }} style={s.posterBig} resizeMode={Platform.isTV ? "contain" : "cover"} />
         : <View style={[s.posterBig, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}><Feather name="play-circle" size={30} color={colors.primary} /></View>}
-      <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", padding: 9 }}>{title}</Text>
+      <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", fontSize: 14, lineHeight: 18, minHeight: Math.ceil(36 * fontScale + 18), padding: 9 }}>{title}</Text>
     </View>
   </TVPreviewPressable>;
 }

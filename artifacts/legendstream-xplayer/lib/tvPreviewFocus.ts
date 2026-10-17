@@ -132,6 +132,19 @@ export function createTVPreviewFocusController(
       // A recycled or unmounted virtualized cell cannot be focused.
     }
   };
+  const restoreFocus = async (id: string, viewport?: TVPreviewViewport) => {
+    const entry = entries.get(id);
+    if (!entry || (entry.scope ?? "content") !== activeScope) return false;
+    const revision = ++moveRevision;
+    try {
+      const bounds = entry.measure ? await entry.measure() : entry.bounds;
+      if (revision !== moveRevision || entries.get(id) !== entry || !bounds) return false;
+      entry.bounds = bounds;
+      if (!isVisibleInViewport(entry, viewport)) return false;
+      focus(id);
+      return true;
+    } catch { return false; }
+  };
   const activate = () => {
     if (!focusedId) return;
     const active = entries.get(focusedId);
@@ -174,6 +187,7 @@ export function createTVPreviewFocusController(
   return {
     register,
     focusFirst,
+    restoreFocus,
     move,
     activate,
     setBackAction,
