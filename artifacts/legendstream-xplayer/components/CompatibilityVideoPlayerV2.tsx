@@ -39,6 +39,7 @@ import {
 } from "@/lib/playerLiveQueue";
 import { registerEpgChannels } from "@/lib/epgRuntime";
 import { classifyPlaybackSource, classifyStalkerTraceError, describePlaybackSourceSafely, fingerprintPlaybackSource, getActiveStalkerTraceId, traceStalker } from "@/lib/stalkerPlaybackTrace";
+import { beginPlaybackAttempt, getActivePlaybackAttemptId, markPlaybackEvent, type ProviderKind } from "@/lib/performanceDiagnostics";
 import type { Channel } from "@/lib/iptv";
 import { usePlayerOrientation } from "@/hooks/usePlayerOrientation";
 import {
@@ -534,6 +535,7 @@ export function CompatibilityVideoPlayer({
   const canNavigate = selectableItems.length > 1 && currentIndex >= 0;
 
   const switchTo = useCallback(async (item: PlayerSelectableItem, reason = "explicit-selection") => {
+    beginPlaybackAttempt((provider?.type ?? "unknown") as ProviderKind);
     const traceId = getActiveStalkerTraceId();
     if (traceId) traceStalker("PLAYER_SOURCE_TRANSITION", { traceId, kind: item.isLive ? "live" : inferMediaKind(item.source), previousFingerprint: fingerprintPlaybackSource(effectiveUri || currentSource), nextFingerprint: fingerprintPlaybackSource(item.source), previousItemId: tracedItemId.current ?? undefined, nextItemId: item.id, reason });
     tracedItemId.current = item.id;
@@ -586,9 +588,11 @@ export function CompatibilityVideoPlayer({
     void switchTo(selectableItems[next], "relative-navigation");
   }, [canNavigate, currentIndex, selectableItems, switchTo]);
 
+  const performanceAttempt = useMemo(() => getActivePlaybackAttemptId(), [effectiveUri]);
   const exitPlayer = useCallback(async () => {
     if (exitStarted.current) return;
     exitStarted.current = true;
+    markPlaybackEvent("PLAYER_EXIT", performanceAttempt);
     orientation.beginExit();
     clearControlsTimer();
     clearInfoTimer();
@@ -798,7 +802,9 @@ export function CompatibilityVideoPlayer({
 
   useEffect(() => {
     const traceId = getActiveStalkerTraceId();
-    if (!traceId || !effectiveUri) return;
+    if (!effectiveUri) return;
+    markPlaybackEvent("SOURCE_SET", performanceAttempt);
+    if (!traceId) return;
     const metadata = describePlaybackSourceSafely(effectiveUri);
     const previousFingerprint = tracedSourceFingerprint.current;
     if (previousFingerprint && previousFingerprint !== metadata.sourceFingerprint) traceStalker("PLAYER_SOURCE_TRANSITION", { traceId, kind: currentKind, previousFingerprint, nextFingerprint: metadata.sourceFingerprint, previousItemId: tracedItemId.current ?? undefined, nextItemId: currentLiveIdentity?.channelId ?? currentVodIdentity?.itemId ?? (progressRef?.type === "stalker-episode" ? progressRef.episodeId : undefined), reason: "effective-source-change" });

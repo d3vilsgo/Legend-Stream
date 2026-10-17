@@ -17,6 +17,7 @@ import { visibleProgressRatio } from "@/lib/historyPresentation";
 import { TVPreviewPressable } from "@/components/tvPreview/TVPreviewFocus";
 import type { Channel } from "@/lib/iptv";
 import type { XtreamSeriesItem, XtreamVodItem } from "@/lib/xtreamCatalog";
+import { markStartupEvent } from "@/lib/performanceDiagnostics";
 
 export type HomeContentView = "home" | "live" | "movies" | "series" | "history" | "downloads" | "settings";
 
@@ -247,6 +248,9 @@ export function HomeDiscovery({
   const effectiveLoading = !homeMovies.length && !homeSeries.length && !homeChannels.length && (
     catalogLoading || live === null || vod === null || series === null
   );
+  useEffect(() => {
+    if (!effectiveLoading) markStartupEvent("HOME_FIRST_USABLE_RENDER");
+  }, [effectiveLoading]);
 
   const sectionCards = (
     <View style={s.homeCompactStats}>

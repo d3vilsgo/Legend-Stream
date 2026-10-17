@@ -18,6 +18,7 @@ import {
   fingerprintM3USqliteColumnNames,
   type M3USqliteSchemaFingerprint,
 } from "./sqliteWriteDiagnostics";
+import { markStartupEvent } from "./performanceDiagnostics";
 
 export type { CatalogKind } from "./catalogPersistence";
 export type CatalogSyncPhase = "idle" | "preparing" | "syncing" | "ready" | "cancelled" | "error";
@@ -134,6 +135,7 @@ export function stagingProviderId(providerId: string) {
 
 async function database() {
   if (!databasePromise) {
+    markStartupEvent("CATALOG_DB_OPEN_BEGIN");
     databasePromise = SQLite.openDatabaseAsync(DB_NAME).then(async (db) => {
       await db.execAsync(`
         PRAGMA journal_mode = WAL;
@@ -182,7 +184,12 @@ async function database() {
         CREATE INDEX IF NOT EXISTS idx_catalog_items_new
           ON catalog_items(provider_id, kind, is_new, first_seen_at DESC);
       `);
+      markStartupEvent("CATALOG_DB_OPEN_END");
       return db;
+    }).catch((error) => {
+      markStartupEvent("CATALOG_DB_OPEN_END");
+      databasePromise = null;
+      throw error;
     });
   }
   return databasePromise;
@@ -341,6 +348,7 @@ async function insertRows(
 export async function initCatalogCache() {
   const db = await database();
   if (!startupStagingCleanupPromise) {
+    markStartupEvent("STAGING_CLEANUP_BEGIN");
     startupStagingCleanupPromise = enqueueCatalogDbWrite(async () => {
       await db.withExclusiveTransactionAsync(async (txn) => {
         await txn.runAsync(
@@ -359,7 +367,10 @@ export async function initCatalogCache() {
           STAGING_PROVIDER_PREFIX,
         );
       });
-    }).catch((caught) => {
+    }).then(() => {
+      markStartupEvent("STAGING_CLEANUP_END");
+    }, (caught) => {
+      markStartupEvent("STAGING_CLEANUP_END");
       startupStagingCleanupPromise = null;
       throw caught;
     });

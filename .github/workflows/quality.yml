@@ -253,6 +253,10 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/designSystemScenarios.ts
       - name: Premium catalog grid layout scenarios
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/catalogGridLayoutScenarios.ts
+      - name: Startup and playback performance diagnostics
+        run: pnpm --filter @workspace/legendstream-xplayer exec node --import tsx tests/performanceDiagnosticsScenarios.ts
+      - name: U3 performance lifecycle privacy and bounds
+        run: pnpm --filter @workspace/legendstream-xplayer exec node --import tsx tests/u3PerformanceScenarios.ts
       - name: U2 cross-device geometry and Preview restoration
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/u2ResponsiveScenarios.ts
       - name: U2 production responsive catalog hook

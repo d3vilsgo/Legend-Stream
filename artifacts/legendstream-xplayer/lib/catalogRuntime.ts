@@ -30,6 +30,7 @@ import { reacquireStalkerLiveChannel } from "./stalkerLiveRuntimeLocator";
 import type { StalkerPortalSession } from "./stalkerPortal";
 import { safeLog } from "./safeLog";
 import { classifyPlaybackSource, classifyStalkerTraceError, getActiveStalkerTraceId, shortSafeId, traceStalker } from "./stalkerPlaybackTrace";
+import { getActivePlaybackAttemptId, markPlaybackEvent } from "./performanceDiagnostics";
 
 export type CatalogRuntimeProvider = {
   id: string;
@@ -408,6 +409,8 @@ export async function resolveCatalogPlaybackSource(
   provider: CatalogRuntimeProvider,
   signal?: AbortSignal,
 ): Promise<CatalogPlaybackResolution> {
+  const performanceAttempt = getActivePlaybackAttemptId();
+  markPlaybackEvent("RESOLVE_BEGIN", performanceAttempt);
   const startedAt = Date.now();
   const providerType = provider.type;
   const contentKind = request.kind;
@@ -493,8 +496,10 @@ export async function resolveCatalogPlaybackSource(
       elapsedMs: Math.max(0, Date.now() - startedAt),
       ...playbackSourceMetadata(resolved),
     });
+    markPlaybackEvent("RESOLVE_END", performanceAttempt);
     return { url: resolved, strategy };
   } catch (caught) {
+    markPlaybackEvent("RESOLVE_END", performanceAttempt);
     safeLog.warn("PLAYBACK_RESOLVE_FAIL", {
       providerType,
       contentKind,

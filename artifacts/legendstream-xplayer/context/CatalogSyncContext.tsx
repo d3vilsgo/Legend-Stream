@@ -82,6 +82,12 @@ import {
 import { runIndependentCatalogKinds } from "@/lib/xtreamKindSync";
 import { stableXtreamLiveId } from "@/lib/xtreamIdentity";
 import { safeLog } from "@/lib/safeLog";
+import {
+  bindStartupProvider,
+  markStartupEvent,
+  observeStartupPromise,
+  type ProviderKind,
+} from "@/lib/performanceDiagnostics";
 import { syncStalkerLiveCatalog } from "@/lib/stalkerLiveSync";
 import {
   executeStalkerCatalogLifecycleSync,
@@ -221,21 +227,25 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
       setHasUsableCache(false);
       return;
     }
+    bindStartupProvider(ownership.generation, active.type as ProviderKind);
     await initCatalogCache();
     const [counts, state] = await Promise.all([
-      getCatalogCounts(active.id),
-      getCatalogSyncState(active.id),
+      observeStartupPromise("COUNTS_BEGIN", "COUNTS_END", getCatalogCounts(active.id)),
+      observeStartupPromise("SYNC_STATE_BEGIN", "SYNC_STATE_END", getCatalogSyncState(active.id)),
     ]);
     const ready = state?.phase === "ready";
     const usable = hasUsableCatalogCache(counts);
-    const [live, movies, series, newChannels, newMovies, newSeries] = await Promise.all([
-      getCachedLiveItems(active, undefined, HOME_SAMPLE_LIMIT),
-      getCachedVodItems(active, undefined, HOME_SAMPLE_LIMIT),
-      getCachedSeriesItems(active, undefined, HOME_SAMPLE_LIMIT),
-      getNewCachedLiveItems(active, NEW_SAMPLE_LIMIT),
-      getNewCachedVodItems(active, NEW_SAMPLE_LIMIT),
-      getNewCachedSeriesItems(active, NEW_SAMPLE_LIMIT),
+    const [live, movies, series, newContent] = await Promise.all([
+      observeStartupPromise("HOME_LIVE_QUERY_BEGIN", "HOME_LIVE_QUERY_END", getCachedLiveItems(active, undefined, HOME_SAMPLE_LIMIT)),
+      observeStartupPromise("HOME_VOD_QUERY_BEGIN", "HOME_VOD_QUERY_END", getCachedVodItems(active, undefined, HOME_SAMPLE_LIMIT)),
+      observeStartupPromise("HOME_SERIES_QUERY_BEGIN", "HOME_SERIES_QUERY_END", getCachedSeriesItems(active, undefined, HOME_SAMPLE_LIMIT)),
+      observeStartupPromise("HOME_NEW_CONTENT_QUERY_BEGIN", "HOME_NEW_CONTENT_QUERY_END", Promise.all([
+        getNewCachedLiveItems(active, NEW_SAMPLE_LIMIT),
+        getNewCachedVodItems(active, NEW_SAMPLE_LIMIT),
+        getNewCachedSeriesItems(active, NEW_SAMPLE_LIMIT),
+      ])),
     ]);
+    const [newChannels, newMovies, newSeries] = newContent;
     if (!isCatalogSyncOwnershipCurrent(
       latestProviderIdRef.current,
       generationRef.current,
@@ -252,6 +262,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
       newMovies,
       newSeries,
     });
+    markStartupEvent("SNAPSHOT_PUBLISH");
     setHasUsableCache(usable);
     if (activeRunIdRef.current === null) setSyncStateLocal(state);
   }, []);
@@ -812,6 +823,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
     setIsRefreshing(false);
 
     if (isHydrating || !active) return;
+    bindStartupProvider(lifecycleOwnership.generation, active.type as ProviderKind);
     let disposed = false;
     let backgroundTimer: ReturnType<typeof setTimeout> | undefined;
     cancelRef.current = false;
@@ -831,7 +843,7 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
             isCurrent: lifecycleIsCurrent,
             readLiveCount: async () => {
               await initCatalogCache();
-              return (await getCatalogCounts(active.id)).live;
+              return (await observeStartupPromise("COUNTS_BEGIN", "COUNTS_END", getCatalogCounts(active.id))).live;
             },
             refreshSnapshot: async () => {
               await refreshSnapshotFor(active, lifecycleOwnership);
@@ -858,8 +870,8 @@ export function CatalogSyncProvider({ children }: { children: ReactNode }) {
 
         await initCatalogCache();
         const [counts, state] = await Promise.all([
-          getCatalogCounts(active.id),
-          getCatalogSyncState(active.id),
+          observeStartupPromise("COUNTS_BEGIN", "COUNTS_END", getCatalogCounts(active.id)),
+          observeStartupPromise("SYNC_STATE_BEGIN", "SYNC_STATE_END", getCatalogSyncState(active.id)),
         ]);
         if (!lifecycleIsCurrent()) return;
         const usable = hasUsableCatalogCache(counts);
