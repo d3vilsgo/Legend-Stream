@@ -1,3 +1,6 @@
+import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
+import { currentMovie, localStalkerMovie } from "@/lib/tmdb/movieInfoModel";
+import { stalkerMovieInput } from "@/lib/tmdb/providerInput";
 import { useNativeTvCatalogGrid } from "@/hooks/useNativeTvCatalogGrid";
 import { TVPreviewPressable } from "@/components/tvPreview/TVPreviewFocus";
 import { Feather } from "@expo/vector-icons";
@@ -47,14 +50,16 @@ export function StalkerGoldenMoviesCatalog({
 }) {
   const { t } = useI18n();
   const { width } = useWindowDimensions();
+  const [infoMovie, setInfoMovie] = useState<StalkerVodItem | null>(null);
   const [sort, setSort] = useState<CatalogSortMode>("default");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const catalog = useStalkerMoviesCatalog({ provider, moviesLabel: t("movies"), onPlayable });
 
+  useEffect(() => { if(infoMovie && !currentMovie(catalog.visibleItems,infoMovie.portalId,item=>item.portalId)) setInfoMovie(null); },[catalog.visibleItems,infoMovie]);
   useEffect(() => {
-    onDrawerVisibilityChange(drawerOpen);
+    onDrawerVisibilityChange(drawerOpen || infoMovie !== null);
     return () => onDrawerVisibilityChange(false);
-  }, [drawerOpen, onDrawerVisibilityChange]);
+  }, [drawerOpen, infoMovie, onDrawerVisibilityChange]);
 
   useEffect(() => {
     onError(catalog.error);
@@ -113,7 +118,7 @@ export function StalkerGoldenMoviesCatalog({
           focusId={`stalker:vod:${item.portalId}`}
           title={item.title}
           image={item.posterUrl}
-          onPress={() => void catalog.openMovie(item)}
+          onPress={() => setInfoMovie(item)}
         />
       </View>}
       initialNumToRender={Math.max(8, columns * 3)}
@@ -123,6 +128,10 @@ export function StalkerGoldenMoviesCatalog({
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     />
+    {infoMovie ? <MovieInfoModal key={`${provider.id}:${infoMovie.portalId}`}
+      input={stalkerMovieInput(provider.id,"catalog",infoMovie)} local={localStalkerMovie(infoMovie)}
+      onClose={() => setInfoMovie(null)} onPlay={() => { const current=currentMovie(catalog.visibleItems,infoMovie.portalId,item=>item.portalId); if(current) void catalog.openMovie(current); }}
+    /> : null}
     <CategoryDrawer
       visible={drawerOpen}
       items={categoryOptions}
