@@ -81,10 +81,10 @@ const mocks = {
   "@/lib/performanceDiagnostics":
     "export const beginPlaybackAttempt=()=>{},getActivePlaybackAttemptId=()=>null,markPlaybackEvent=()=>{},markStartupEvent=()=>{};",
 
-  react: `const h=globalThis.__visible;export const useState=v=>h.state(v),useRef=v=>h.ref(v),useMemo=(f,d)=>h.memo(f,d),useCallback=(f,d)=>h.memo(()=>f,d),useReducer=(reduce,v)=>{const [state,set]=h.state(v);return [state,event=>set(now=>reduce(now,event))]},useEffect=(f,d)=>h.effect(f,d);export const memo=f=>f,createContext=v=>({value:v,Provider:'Provider'}),useContext=c=>c.value;export default {createElement:(tag,props,...children)=>({tag,props:{...props,children}})};`,
-  "react-native": `export const View='View',Text='Text',Pressable='Button',Image='Image',FlatList='FlatList',ScrollView='ScrollView',Modal='Modal',KeyboardAvoidingView='KeyboardAvoidingView',TextInput='TextInput',ActivityIndicator='ActivityIndicator';export const Platform={get isTV(){return globalThis.__visible.native},OS:'android'};export const StyleSheet={create:s=>s,absoluteFill:{},absoluteFillObject:{}};export const useWindowDimensions=()=>globalThis.__visible;export const Keyboard={addListener:(name,f)=>{globalThis.__visible.listeners[name]=f;return {remove(){delete globalThis.__visible.listeners[name]}}}};export const AppState={addEventListener:()=>({remove(){}})};export const BackHandler={addEventListener:(name,f)=>{globalThis.__visible.hardwareBack=f;return {remove(){}}}};`,
+  react: `const h=globalThis.__visible;export const useState=v=>h.state(v),useRef=v=>h.ref(v),useMemo=(f,d)=>h.memo(f,d),useCallback=(f,d)=>h.memo(()=>f,d),useReducer=(reduce,v)=>{const [state,set]=h.state(v);return [state,event=>set(now=>reduce(now,event))]},useEffect=(f,d)=>h.effect(f,d);export const useSyncExternalStore=(s,g)=>g();export const memo=f=>f,createContext=v=>({value:v,Provider:'Provider'}),useContext=c=>c.value;export default {createElement:(tag,props,...children)=>({tag,props:{...props,children}})};`,
+  "react-native": `export const View='View',Text='Text',Pressable='Button',Image='Image',FlatList='FlatList',ScrollView='ScrollView',Modal='Modal',KeyboardAvoidingView='KeyboardAvoidingView',TextInput='TextInput',ActivityIndicator='ActivityIndicator';export const Animated={Value:class{},View:'AnimatedView',timing:()=>({start(){}})};export const Platform={get isTV(){return globalThis.__visible.native},OS:'android'};export const StyleSheet={create:s=>s,absoluteFill:{},absoluteFillObject:{}};export const useWindowDimensions=()=>globalThis.__visible;export const Keyboard={addListener:(name,f)=>{globalThis.__visible.listeners[name]=f;return {remove(){delete globalThis.__visible.listeners[name]}}}};export const AppState={addEventListener:()=>({remove(){}})};export const BackHandler={addEventListener:(name,f)=>{globalThis.__visible.hardwareBack=f;return {remove(){}}}};`,
   "react-native-safe-area-context": `export const useSafeAreaInsets=()=>({top:0,bottom:20,left:0,right:0});`,
-  "@expo/vector-icons": `export const Feather='Icon';`,
+  "@expo/vector-icons": `export const Feather='Icon',MaterialIcons='Icon';`,
   "expo-linear-gradient": `export const LinearGradient='Gradient';`,
   "@/context/UiPresentationContext": `export const useUiPresentation=()=>({tvPreview:globalThis.__visible.preview});`,
   "@/hooks/useColors": `export const useColors=()=>({primary:'#67e8d1',foreground:'white',mutedForeground:'#aaa',border:'#333',card:'#111'});`,
@@ -137,7 +137,7 @@ const test = (name, f) => {
 try {
   await build({
     stdin: {
-      contents: `export {CompatibilityVideoPlayer} from './components/CompatibilityVideoPlayerV2';export {EliteLiveCatalog} from './components/elite/EliteLiveCatalog';export {CategoryPicker} from './components/navigation/CategoryPicker';export {useHomeMovieInfo} from './hooks/useHomeMovieInfo';export {HomeHeroCarousel} from './components/home/HomeDiscovery';export {ResponsiveContentNav} from './components/navigation/ResponsiveContentNav';export {PlayerChrome,PanelContent} from './components/player/PlayerChromeV2';`,
+      contents: `export {CompatibilityVideoPlayer} from './components/CompatibilityVideoPlayerV2';export {EliteLiveCatalog} from './components/elite/EliteLiveCatalog';export {CategoryPicker} from './components/navigation/CategoryPicker';export {useHomeMovieInfo} from './hooks/useHomeMovieInfo';export {HomeHeroCarousel} from './components/home/HomeDiscovery';export {ResponsiveContentNav} from './components/navigation/ResponsiveContentNav';export {PlayerChrome,PanelContent} from './components/player/PlayerChromeV2';export {PlayerChrome as ProductionPlayerChrome} from './components/player/PlayerChrome';`,
       resolveDir: app,
       loader: "tsx",
     },
@@ -177,6 +177,7 @@ try {
     HomeHeroCarousel,
     ResponsiveContentNav,
     PlayerChrome,
+    ProductionPlayerChrome,
     PanelContent,
     CompatibilityVideoPlayer,
     EliteLiveCatalog,
@@ -443,6 +444,57 @@ try {
           (n) => typeof n.tag === "function" && n.tag.name === "RoundAction",
         ),
       );
+    }
+  });
+  test("active production PlayerChrome capability gate and panel callbacks", () => {
+    for (const native of [false, true]) {
+      h.native = native;
+      const seeks = [],
+        panels = [];
+      const props = {
+        controlsVisible: true,
+        mediaKind: "movie",
+        duration: 120,
+        position: 10,
+        selectableItems: [],
+        onSeekBy: (n) => seeks.push(n),
+        onTogglePanel: (p) => panels.push(p),
+      };
+      let tree = render(() => ProductionPlayerChrome(props));
+      const buttons = nodes(tree).filter(
+        (n) => typeof n.tag === "function" && n.tag.name === "RoundButton",
+      );
+      assert.equal(buttons.length, 2);
+      buttons.forEach((n) => {
+        assert.equal(n.props.disabled, false);
+        n.props.onPress();
+      });
+      assert.deepEqual(seeks, [-10, 15]);
+      const actions = nodes(tree).filter(
+        (n) =>
+          typeof n.tag === "function" && n.tag.name === "AdaptiveDockButton",
+      );
+      for (const key of ["cc", "audio", "codec"])
+        actions.find((n) => n.props.action.key === key).props.action.onPress();
+      assert.deepEqual(panels, ["subtitles", "audio", "codec"]);
+      for (const duration of [0, NaN, Infinity]) {
+        tree = render(() => ProductionPlayerChrome({ ...props, duration }));
+        const disabled = nodes(tree).filter(
+          (n) => typeof n.tag === "function" && n.tag.name === "RoundButton",
+        );
+        assert.equal(disabled.length, 2);
+        disabled.forEach((n) => {
+          assert.equal(n.props.disabled, true);
+          n.props.onPress();
+        });
+        assert.deepEqual(seeks, [-10, 15]);
+        assert.equal(
+          nodes(tree).find((n) =>
+            n.props?.accessibilityLabel?.startsWith("İlerleme;"),
+          ).props.disabled,
+          true,
+        );
+      }
     }
   });
   test("TV channel row offsets exclude variable panel header", () => {

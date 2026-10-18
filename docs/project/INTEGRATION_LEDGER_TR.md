@@ -345,12 +345,10 @@ SUCCESS: https://github.com/d3vilsgo/Legend-Stream/actions/runs/39169832551 .
 Bu dilim **PARTIAL**: tüm Elite V2 ekranlarının görsel dönüşümü tamamlanmadı.
 Film Info artık sağlayıcının mevcut başlık, görsel, özet, tür, oyuncu, yönetmen ve
  yıl bilgisini korur; TMDB yalnız eksikleri tamamlar. TMDB puanı ayrı TMDB kaynağıdır.
-Player TV zaman çizgisi dokunma koordinatından komut üretmez/odak almaz;
-kumanda mevcut -10/+15 saniye eylemlerini kullanır. Sonlu pozitif süre yokken
-sarma eylemi/gesture devre dışıdır. Oynat/duraklat, çıkış ve merkez kanal/sarma
+Aktif PlayerChrome TV zaman çizgisinin koordinat koruması başlangıçta zaten vardı; yeni onarım diye sayılmaz. Yeni sonlu pozitif süre kapısı aktif PlayerChrome merkez düğmeleri, mobil zaman çizgisi ve remote seek callback yoluna bağlandı. PlayerChromeV2 yardımcı yüzeyi de aynı kapıyı kullanır. Kumanda mevcut -10/+15 saniye eylemlerini kullanır. Sonlu pozitif süre yokken sarma devre dışıdır. Oynat/duraklat, çıkış ve merkez kanal/sarma
 aksiyonları erişilebilir ad taşır. VLC/provider resolver değiştirilmedi.
 
-Otomatik kanıt: Visible Home/Player production host 17/17; Film Info mock 35/35;
+Otomatik kanıt: Visible Home/Player production host 18/18; Film Info mock 35/35;
 P1 Movies/Series production host 8/8 profil; U4.3 Series 32/32;
 Home Film Info 15/15; orientation 14/14; U2 geometry 94/94, hook 10/10;
 U3 coordinator 9/9, SQLite 6/6, performance 11/11, refresh 9/9;
@@ -366,3 +364,5 @@ TMDB LIVE BLOCKED ve legacy 14 SKIP / 0 DELETED korunur.
 APK, fiziksel test, deployment, merge, base/PR durum değişikliği yapılmaz.
 
 Güncel remote yerel eski 5d967fd taslağından 53 commit ilerideydi. Eski, yayımlanmamış rail/global-search taslağı korunarak ayrı tutuldu ve yeni kaynak üzerine kopyalanmadı. Yeni kaynak doğrulanmış 45db89f üzerinde incelendi; P1 testleri yeniden yazılmadı. Üretim+test bir commit, beş proje kaydı tek takip commit'i; final Quality bağlantısı teslim raporu/PR'da tutulur.
+
+Üretim çağrı zinciri doğrulaması: aktif kontroller PlayerChrome, V2 hata/panel yardımcısıdır. İlk ara belge V2 kontrol düzeltmesini aktif TV onarımı gibi ifade etti; bu kayıt düzeltilmiştir. Aktif PlayerChrome ayrıca host içinde doğrudan derlenip merkez seek ve ses/altyazı/codec callbackleri test edildi (18/18). Tarihçe yeniden yazılmadan düzeltici commit eklenir; ilk belge commit son kabul değildir.

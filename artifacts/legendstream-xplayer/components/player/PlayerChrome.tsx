@@ -1,9 +1,17 @@
 import { nativeTvLayout } from "@/lib/nativeTvResponsive";
 import { resolveTvRemoteAction } from "@/lib/tvPlayerRemote";
 import { PlayerRemotePressable as Pressable } from "./PlayerRemotePressable";
-import { configureTvRemote, subscribeTvRemote } from "@/modules/legendstream-tv-remote";
+import {
+  configureTvRemote,
+  subscribeTvRemote,
+} from "@/modules/legendstream-tv-remote";
 import { Feather, MaterialIcons } from "@expo/vector-icons";
-import React, { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import React, {
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   Animated,
   LayoutChangeEvent,
@@ -124,7 +132,9 @@ const normalizeResolution = (value?: string) => {
 };
 
 const safeTimestamp = (value?: number) =>
-  Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : undefined;
+  Number.isFinite(Number(value)) && Number(value) > 0
+    ? Number(value)
+    : undefined;
 
 const safeProgramTitle = (value?: string) => {
   const text = typeof value === "string" ? value.trim() : "";
@@ -135,7 +145,10 @@ const formatClock = (timestamp?: number) => {
   const safe = safeTimestamp(timestamp);
   if (!safe) return "--:--";
   try {
-    return new Date(safe).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" });
+    return new Date(safe).toLocaleTimeString("tr-TR", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   } catch {
     return "--:--";
   }
@@ -176,22 +189,43 @@ export function PlayerChrome(props: Props) {
   useEffect(() => {
     if (!Platform.isTV) return;
     const subscription = subscribeTvRemote(({ key, code }) => {
-      if(key==="back") return; // The player root owns Back even while chrome is unmounted.
+      if (key === "back") return; // The player root owns Back even while chrome is unmounted.
       const p = remoteProps.current;
-      const action = resolveTvRemoteAction(key, code, p.mediaKind === "live", p.paused, p.controlsVisible);
+      const action = resolveTvRemoteAction(
+        key,
+        code,
+        p.mediaKind === "live",
+        p.paused,
+        p.controlsVisible,
+      );
       if (action === "togglePause") p.onTogglePause();
       else if (action === "exit") p.onExit();
       else if (action === "codec") p.onTogglePanel("codec");
       else if (action === "reveal") p.onBackgroundPress();
-      else if (action === "previous" || action === "next") p.onMoveRelative(action === "previous" ? -1 : 1);
-      else if (action === "seekBack" || action === "seekForward") p.onSeekBy(action === "seekBack" ? -10 : 15);
+      else if (action === "previous" || action === "next")
+        p.onMoveRelative(action === "previous" ? -1 : 1);
+      else if (
+        (action === "seekBack" || action === "seekForward") &&
+        p.mediaKind !== "live" &&
+        Number.isFinite(p.duration) &&
+        p.duration > 0
+      )
+        p.onSeekBy(action === "seekBack" ? -10 : 15);
     });
-    return () => { subscription?.remove(); };
+    return () => {
+      subscription?.remove();
+    };
   }, []);
   useEffect(() => {
-    if (Platform.isTV) void configureTvRemote(true, !chrome.errorText && !chrome.controlsVisible && !chrome.panel);
+    if (Platform.isTV)
+      void configureTvRemote(
+        true,
+        !chrome.errorText && !chrome.controlsVisible && !chrome.panel,
+      );
   }, [chrome.controlsVisible, chrome.panel, chrome.errorText]);
-  const controlsOpacity = useRef(new Animated.Value(chrome.controlsVisible ? 1 : 0)).current;
+  const controlsOpacity = useRef(
+    new Animated.Value(chrome.controlsVisible ? 1 : 0),
+  ).current;
 
   useEffect(() => {
     Animated.timing(controlsOpacity, {
@@ -201,53 +235,78 @@ export function PlayerChrome(props: Props) {
     }).start();
   }, [chrome.controlsVisible, controlsOpacity]);
 
-  const resolution = normalizeResolution(resolutionOverride ?? runtime.resolution);
+  const resolution = normalizeResolution(
+    resolutionOverride ?? runtime.resolution,
+  );
   const fps = formatFps(fpsOverride ?? runtime.fps);
   const streamCodec = normalizeCodec(codecOverride ?? runtime.codec);
-  const technicalParts = [streamCodec, resolution, fps].filter((part): part is string => Boolean(part));
-  const technicalLabel = technicalParts.length ? technicalParts.join(" · ") : undefined;
-  const safeMeta = typeof chrome.meta === "string" && chrome.meta.trim() ? chrome.meta.trim() : undefined;
-  const bottomInfo = [technicalLabel, safeMeta].filter((part): part is string => Boolean(part)).join("   ·   ") || undefined;
-  const progress = chrome.duration > 0 ? clamp(chrome.position / chrome.duration, 0, 1) : 0;
-  const hasBlockingStatus = typeof chrome.errorText === "string" && chrome.errorText.trim().length > 0;
-  const showChrome = chrome.controlsVisible && !chrome.panel && !hasBlockingStatus;
+  const technicalParts = [streamCodec, resolution, fps].filter(
+    (part): part is string => Boolean(part),
+  );
+  const technicalLabel = technicalParts.length
+    ? technicalParts.join(" · ")
+    : undefined;
+  const safeMeta =
+    typeof chrome.meta === "string" && chrome.meta.trim()
+      ? chrome.meta.trim()
+      : undefined;
+  const bottomInfo =
+    [technicalLabel, safeMeta]
+      .filter((part): part is string => Boolean(part))
+      .join("   ·   ") || undefined;
+  const canSeek =
+    chrome.mediaKind !== "live" &&
+    Number.isFinite(chrome.duration) &&
+    chrome.duration > 0;
+  const progress = canSeek ? clamp(chrome.position / chrome.duration, 0, 1) : 0;
+  const hasBlockingStatus =
+    typeof chrome.errorText === "string" && chrome.errorText.trim().length > 0;
+  const showChrome =
+    chrome.controlsVisible && !chrome.panel && !hasBlockingStatus;
   const showCenter = showChrome && !hasBlockingStatus;
 
-  const liveNavigationActions: Action[] = chrome.mediaKind === "live" && chrome.selectableItems.length
-    ? [
-        {
-          key: "previous",
-          label: "Önceki kanal",
-          icon: "skip-back" as FeatherName,
-          disabled: chrome.currentIndex <= 0,
-          onPress: () => chrome.onMoveRelative(-1),
-        },
-        {
-          key: "list",
-          label: "Kanallar",
-          icon: "list" as FeatherName,
-          active: chrome.panel === "content",
-          onPress: () => chrome.onTogglePanel("content"),
-        },
-        {
-          key: "next",
-          label: "Sonraki kanal",
-          icon: "skip-forward" as FeatherName,
-          disabled: chrome.currentIndex < 0 || chrome.currentIndex >= chrome.selectableItems.length - 1,
-          onPress: () => chrome.onMoveRelative(1),
-        },
-      ]
-    : [];
+  const liveNavigationActions: Action[] =
+    chrome.mediaKind === "live" && chrome.selectableItems.length
+      ? [
+          {
+            key: "previous",
+            label: "Önceki kanal",
+            icon: "skip-back" as FeatherName,
+            disabled: chrome.currentIndex <= 0,
+            onPress: () => chrome.onMoveRelative(-1),
+          },
+          {
+            key: "list",
+            label: "Kanallar",
+            icon: "list" as FeatherName,
+            active: chrome.panel === "content",
+            onPress: () => chrome.onTogglePanel("content"),
+          },
+          {
+            key: "next",
+            label: "Sonraki kanal",
+            icon: "skip-forward" as FeatherName,
+            disabled:
+              chrome.currentIndex < 0 ||
+              chrome.currentIndex >= chrome.selectableItems.length - 1,
+            onPress: () => chrome.onMoveRelative(1),
+          },
+        ]
+      : [];
 
   const actions: Action[] = [
     ...liveNavigationActions,
-    ...(chrome.mediaKind !== "live" && chrome.selectableItems.length ? [{
-      key: "list",
-      label: "Liste",
-      icon: "list" as FeatherName,
-      active: chrome.panel === "content",
-      onPress: () => chrome.onTogglePanel("content"),
-    }] : []),
+    ...(chrome.mediaKind !== "live" && chrome.selectableItems.length
+      ? [
+          {
+            key: "list",
+            label: "Liste",
+            icon: "list" as FeatherName,
+            active: chrome.panel === "content",
+            onPress: () => chrome.onTogglePanel("content"),
+          },
+        ]
+      : []),
     {
       key: "fit",
       label: `Görüntü ${fitLabel(chrome.fitMode)}`,
@@ -255,20 +314,30 @@ export function PlayerChrome(props: Props) {
       accent: chrome.fitMode === "fit",
       onPress: chrome.onCycleFit,
     },
-    ...(!Platform.isTV ? [{
-      key: "rotate",
-      label: "Döndür",
-      icon: "rotate-cw" as FeatherName,
-      onPress: chrome.onRotate,
-    }] : []),
-    ...((chrome.pipSupported || Platform.isTV) ? [{
-      key: "pip",
-      label: chrome.pipSupported ? "Picture in Picture" : "PiP bu cihazda desteklenmiyor",
-      disabled: !chrome.pipSupported,
-      materialIcon: "picture-in-picture" as MaterialName,
-      subLabel: chrome.pipSupported ? "PiP" : "PiP yok",
-      onPress: chrome.onEnterPip,
-    }] : []),
+    ...(!Platform.isTV
+      ? [
+          {
+            key: "rotate",
+            label: "Döndür",
+            icon: "rotate-cw" as FeatherName,
+            onPress: chrome.onRotate,
+          },
+        ]
+      : []),
+    ...(chrome.pipSupported || Platform.isTV
+      ? [
+          {
+            key: "pip",
+            label: chrome.pipSupported
+              ? "Picture in Picture"
+              : "PiP bu cihazda desteklenmiyor",
+            disabled: !chrome.pipSupported,
+            materialIcon: "picture-in-picture" as MaterialName,
+            subLabel: chrome.pipSupported ? "PiP" : "PiP yok",
+            onPress: chrome.onEnterPip,
+          },
+        ]
+      : []),
     {
       key: "cc",
       label: "Altyazı",
@@ -292,29 +361,57 @@ export function PlayerChrome(props: Props) {
       active: chrome.panel === "codec",
       onPress: () => chrome.onTogglePanel("codec"),
     },
-    ...(chrome.allowDownload ? [{
-      key: "download",
-      label: chrome.downloadState === "done" ? "İndirildi" : "İndir",
-      icon: (chrome.downloadState === "done" ? "check-circle" : chrome.downloadState === "error" ? "alert-circle" : "download") as FeatherName,
-      active: chrome.downloadState === "done",
-      onPress: chrome.onDownload,
-    }] : []),
+    ...(chrome.allowDownload
+      ? [
+          {
+            key: "download",
+            label: chrome.downloadState === "done" ? "İndirildi" : "İndir",
+            icon: (chrome.downloadState === "done"
+              ? "check-circle"
+              : chrome.downloadState === "error"
+                ? "alert-circle"
+                : "download") as FeatherName,
+            active: chrome.downloadState === "done",
+            onPress: chrome.onDownload,
+          },
+        ]
+      : []),
   ];
 
-  const tv = nativeTvLayout({ width, height, fontScale, safeArea: insets }, actions.length);
-  const gap = Math.round((portrait ? 4 : 9) * uiScale);
-  const outerPadding = Platform.isTV ? tv.left : Math.round((portrait ? 8 : 22) * uiScale);
-  const availableWidth = Math.max(1, width - insets.left - insets.right - outerPadding * 2);
-  const buttonSize = Platform.isTV ? tv.target : clamp(
-    Math.floor((availableWidth - gap * Math.max(0, actions.length - 1)) / Math.max(1, actions.length)),
-    Math.round(38 * uiScale),
-    Math.round((portrait ? 44 : 48) * uiScale),
+  const tv = nativeTvLayout(
+    { width, height, fontScale, safeArea: insets },
+    actions.length,
   );
-  const dockIconSize = Platform.isTV ? tv.icon : clamp(Math.round((portrait ? 20 : 22) * uiScale), 17, 23);
+  const gap = Math.round((portrait ? 4 : 9) * uiScale);
+  const outerPadding = Platform.isTV
+    ? tv.left
+    : Math.round((portrait ? 8 : 22) * uiScale);
+  const availableWidth = Math.max(
+    1,
+    width - insets.left - insets.right - outerPadding * 2,
+  );
+  const buttonSize = Platform.isTV
+    ? tv.target
+    : clamp(
+        Math.floor(
+          (availableWidth - gap * Math.max(0, actions.length - 1)) /
+            Math.max(1, actions.length),
+        ),
+        Math.round(38 * uiScale),
+        Math.round((portrait ? 44 : 48) * uiScale),
+      );
+  const dockIconSize = Platform.isTV
+    ? tv.icon
+    : clamp(Math.round((portrait ? 20 : 22) * uiScale), 17, 23);
   const progressScale = clamp(width / (portrait ? 390 : 840), 0.82, 1.12);
   const timeWidth = clamp(Math.round(50 * progressScale), 42, 58);
   const timeFontSize = clamp(Math.round(10 * progressScale), 9, 12);
-  const topY = Platform.isTV ? tv.top : Math.max(insets.top + Math.round((portrait ? 5 : 4) * uiScale), portrait ? 8 : 6);
+  const topY = Platform.isTV
+    ? tv.top
+    : Math.max(
+        insets.top + Math.round((portrait ? 5 : 4) * uiScale),
+        portrait ? 8 : 6,
+      );
   const logoSafeLeft = portrait ? width * 0.2 : width * 0.16;
   const infoLeft = Math.max(
     logoSafeLeft,
@@ -366,10 +463,19 @@ export function PlayerChrome(props: Props) {
           style={({ pressed }) => [
             styles.back,
             {
-              left: Platform.isTV ? tv.left : Math.max(insets.left + 10, Math.round((portrait ? 14 : 18) * uiScale)),
+              left: Platform.isTV
+                ? tv.left
+                : Math.max(
+                    insets.left + 10,
+                    Math.round((portrait ? 14 : 18) * uiScale),
+                  ),
               top: topY,
-              width: Platform.isTV ? tv.target : Math.round((portrait ? 48 : 54) * uiScale),
-              height: Platform.isTV ? tv.target : Math.round((portrait ? 48 : 54) * uiScale),
+              width: Platform.isTV
+                ? tv.target
+                : Math.round((portrait ? 48 : 54) * uiScale),
+              height: Platform.isTV
+                ? tv.target
+                : Math.round((portrait ? 48 : 54) * uiScale),
             },
             pressed && styles.pressed,
           ]}
@@ -387,7 +493,11 @@ export function PlayerChrome(props: Props) {
             styles.center,
             portrait ? styles.centerPortrait : styles.centerLandscape,
             { opacity: controlsOpacity },
-            Platform.isTV && { top: tv.centerTop, transform: [], gap: tv.gap * 3 },
+            Platform.isTV && {
+              top: tv.centerTop,
+              transform: [],
+              gap: tv.gap * 3,
+            },
           ]}
           pointerEvents="box-none"
         >
@@ -395,10 +505,16 @@ export function PlayerChrome(props: Props) {
             <RoundButton
               icon="rotate-ccw"
               badge="10"
-              disabled={Platform.isTV && chrome.duration <= 0}
-              label={Platform.isTV && chrome.duration <= 0 ? "Süre bilgisi bekleniyor" : "10 saniye geri"}
-              onPress={() => chrome.onSeekBy(-10)}
-              size={Platform.isTV ? tv.target : Math.round((portrait ? 54 : 58) * uiScale)}
+              disabled={!canSeek}
+              label={!canSeek ? "Süre bilgisi bekleniyor" : "10 saniye geri"}
+              onPress={() => {
+                if (canSeek) chrome.onSeekBy(-10);
+              }}
+              size={
+                Platform.isTV
+                  ? tv.target
+                  : Math.round((portrait ? 54 : 58) * uiScale)
+              }
               iconSize={Math.round((portrait ? 27 : 30) * uiScale)}
             />
           ) : null}
@@ -413,8 +529,12 @@ export function PlayerChrome(props: Props) {
             style={({ pressed }) => [
               styles.playShell,
               {
-                width: Platform.isTV ? tv.playSize : Math.round((portrait ? 72 : 80) * uiScale),
-                height: Platform.isTV ? tv.playSize : Math.round((portrait ? 72 : 80) * uiScale),
+                width: Platform.isTV
+                  ? tv.playSize
+                  : Math.round((portrait ? 72 : 80) * uiScale),
+                height: Platform.isTV
+                  ? tv.playSize
+                  : Math.round((portrait ? 72 : 80) * uiScale),
                 borderRadius: Math.round((portrait ? 36 : 40) * uiScale),
               },
               pressed && styles.pressed,
@@ -431,10 +551,16 @@ export function PlayerChrome(props: Props) {
             <RoundButton
               icon="rotate-cw"
               badge="15"
-              disabled={Platform.isTV && chrome.duration <= 0}
-              label={Platform.isTV && chrome.duration <= 0 ? "Süre bilgisi bekleniyor" : "15 saniye ileri"}
-              onPress={() => chrome.onSeekBy(15)}
-              size={Platform.isTV ? tv.target : Math.round((portrait ? 54 : 58) * uiScale)}
+              disabled={!canSeek}
+              label={!canSeek ? "Süre bilgisi bekleniyor" : "15 saniye ileri"}
+              onPress={() => {
+                if (canSeek) chrome.onSeekBy(15);
+              }}
+              size={
+                Platform.isTV
+                  ? tv.target
+                  : Math.round((portrait ? 54 : 58) * uiScale)
+              }
               iconSize={Math.round((portrait ? 27 : 30) * uiScale)}
             />
           ) : null}
@@ -447,45 +573,104 @@ export function PlayerChrome(props: Props) {
             styles.bottom,
             {
               opacity: controlsOpacity,
-              bottom: Platform.isTV ? tv.bottom : Math.max(insets.bottom + 2, Math.round((portrait ? 8 : 10) * uiScale)),
+              bottom: Platform.isTV
+                ? tv.bottom
+                : Math.max(
+                    insets.bottom + 2,
+                    Math.round((portrait ? 8 : 10) * uiScale),
+                  ),
               paddingLeft: Math.max(outerPadding, insets.left + 8),
-              paddingRight: Platform.isTV ? tv.right : Math.max(outerPadding, insets.right + 8),
+              paddingRight: Platform.isTV
+                ? tv.right
+                : Math.max(outerPadding, insets.right + 8),
             },
           ]}
           pointerEvents="box-none"
         >
           {chrome.mediaKind !== "live" ? (
-            <View style={[styles.seekRow, { height: Math.round(28 * progressScale), gap: Math.max(5, Math.round(7 * progressScale)) }]}>
-              <Text style={[styles.time, { width: timeWidth, fontSize: timeFontSize }]}>{formatTime(chrome.position)}</Text>
+            <View
+              style={[
+                styles.seekRow,
+                {
+                  height: Math.round(28 * progressScale),
+                  gap: Math.max(5, Math.round(7 * progressScale)),
+                },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.time,
+                  { width: timeWidth, fontSize: timeFontSize },
+                ]}
+              >
+                {formatTime(chrome.position)}
+              </Text>
               <Pressable
-                onLayout={(event: LayoutChangeEvent) => setSeekWidth(Math.max(1, event.nativeEvent.layout.width))}
-                focusable={!Platform.isTV}
+                onLayout={(event: LayoutChangeEvent) =>
+                  setSeekWidth(Math.max(1, event.nativeEvent.layout.width))
+                }
+                disabled={!canSeek || Platform.isTV}
+                focusable={!Platform.isTV && canSeek}
                 accessibilityLabel="İlerleme; kumandada geri ve ileri düğmelerini kullanın"
-                onPress={(event) => { if (!Platform.isTV) chrome.onSeekRatio(clamp(event.nativeEvent.locationX / seekWidth, 0, 1)); }}
+                onPress={(event) => {
+                  if (
+                    !Platform.isTV &&
+                    canSeek &&
+                    Number.isFinite(event.nativeEvent.locationX)
+                  )
+                    chrome.onSeekRatio(
+                      clamp(event.nativeEvent.locationX / seekWidth, 0, 1),
+                    );
+                }}
                 style={styles.seekTouch}
                 hitSlop={{ top: 14, bottom: 14, left: 0, right: 0 }}
               >
                 <View style={styles.seekTrack}>
-                  <View style={[styles.seekFill, { width: `${progress * 100}%` }]} />
-                  <View style={[styles.seekThumb, { left: `${progress * 100}%` }]} />
+                  <View
+                    style={[styles.seekFill, { width: `${progress * 100}%` }]}
+                  />
+                  <View
+                    style={[styles.seekThumb, { left: `${progress * 100}%` }]}
+                  />
                 </View>
               </Pressable>
-              <Text style={[styles.time, styles.timeRight, { width: timeWidth, fontSize: timeFontSize }]}>{formatTime(chrome.duration)}</Text>
+              <Text
+                style={[
+                  styles.time,
+                  styles.timeRight,
+                  { width: timeWidth, fontSize: timeFontSize },
+                ]}
+              >
+                {formatTime(chrome.duration)}
+              </Text>
             </View>
           ) : null}
 
-          {Platform.isTV && chrome.mediaKind !== "live" && chrome.duration <= 0 ? <Text style={{ color: "#cbd5e1", textAlign: "center", marginBottom: 8 }}>İlerletme için süre bilgisi bekleniyor.</Text> : null}
+          {Platform.isTV &&
+          chrome.mediaKind !== "live" &&
+          chrome.duration <= 0 ? (
+            <Text
+              style={{ color: "#cbd5e1", textAlign: "center", marginBottom: 8 }}
+            >
+              İlerletme için süre bilgisi bekleniyor.
+            </Text>
+          ) : null}
           {bottomInfo ? (
-            <VideoInfoBand
-              text={bottomInfo}
-              scale={uiScale}
-            />
+            <VideoInfoBand text={bottomInfo} scale={uiScale} />
           ) : null}
 
           <ScrollView
             horizontal
             showsHorizontalScrollIndicator={Platform.isTV}
-            contentContainerStyle={[styles.dockRow, { gap }, Platform.isTV && { paddingHorizontal: tv.gutter, paddingTop: tv.gutter, paddingBottom: tv.gutter }]}
+            contentContainerStyle={[
+              styles.dockRow,
+              { gap },
+              Platform.isTV && {
+                paddingHorizontal: tv.gutter,
+                paddingTop: tv.gutter,
+                paddingBottom: tv.gutter,
+              },
+            ]}
           >
             {actions.map((action) => (
               <AdaptiveDockButton
@@ -503,7 +688,19 @@ export function PlayerChrome(props: Props) {
   );
 }
 
-function InfoCard({ opacity, portrait, scale, top, left, right, title, live, epgNow, epgNext, epgLoading }: {
+function InfoCard({
+  opacity,
+  portrait,
+  scale,
+  top,
+  left,
+  right,
+  title,
+  live,
+  epgNow,
+  epgNext,
+  epgLoading,
+}: {
   opacity: Animated.Value;
   portrait: boolean;
   scale: number;
@@ -516,7 +713,12 @@ function InfoCard({ opacity, portrait, scale, top, left, right, title, live, epg
   epgNext?: PlayerProgramInfo;
   epgLoading?: boolean;
 }) {
-  const safeTitle = typeof title === "string" && title.trim() ? title.trim() : live ? "Canlı yayın" : "İçerik";
+  const safeTitle =
+    typeof title === "string" && title.trim()
+      ? title.trim()
+      : live
+        ? "Canlı yayın"
+        : "İçerik";
   const nowTitle = safeProgramTitle(epgNow?.title);
   const nowEnd = safeTimestamp(epgNow?.end);
   const nextTitle = safeProgramTitle(epgNext?.title);
@@ -533,27 +735,68 @@ function InfoCard({ opacity, portrait, scale, top, left, right, title, live, epg
         <View style={[styles.titleRow, { gap: Math.round(7 * scale) }]}>
           {live ? (
             <View style={[styles.liveInline, { gap: Math.round(4 * scale) }]}>
-              <Feather name="circle" size={Math.max(7, Math.round(8 * scale))} color="#22d3ee" style={styles.cyanTextShadow} />
-              <Text style={[styles.liveText, { fontSize: Math.round((portrait ? 10 : 10.5) * scale) }]}>CANLI</Text>
+              <Feather
+                name="circle"
+                size={Math.max(7, Math.round(8 * scale))}
+                color="#22d3ee"
+                style={styles.cyanTextShadow}
+              />
+              <Text
+                style={[
+                  styles.liveText,
+                  { fontSize: Math.round((portrait ? 10 : 10.5) * scale) },
+                ]}
+              >
+                CANLI
+              </Text>
             </View>
           ) : null}
           <Text
             numberOfLines={1}
-            style={[styles.title, { fontSize: Math.round((portrait ? 15 : 17) * scale) }]}
+            style={[
+              styles.title,
+              { fontSize: Math.round((portrait ? 15 : 17) * scale) },
+            ]}
           >
             {safeTitle}
           </Text>
         </View>
 
-        {live && Platform.isTV && !hasEpg ? <Text style={styles.epgMuted}>Bu yayında program bilgisi yok.</Text> : null}
+        {live && Platform.isTV && !hasEpg ? (
+          <Text style={styles.epgMuted}>Bu yayında program bilgisi yok.</Text>
+        ) : null}
         {live && hasEpg ? (
           <View style={[styles.epgBlock, { marginTop: Math.round(2 * scale) }]}>
             {epgLoading && !epgNow ? (
-              <Text numberOfLines={1} style={[styles.epgMuted, { fontSize: Math.round(9.5 * scale) }]}>Program bilgisi yükleniyor…</Text>
+              <Text
+                numberOfLines={1}
+                style={[styles.epgMuted, { fontSize: Math.round(9.5 * scale) }]}
+              >
+                Program bilgisi yükleniyor…
+              </Text>
             ) : epgNow ? (
               <>
-                <Text numberOfLines={1} style={[styles.epgNow, { fontSize: Math.round((portrait ? 10.5 : 11) * scale) }]}>Şimdi: {nowTitle}{remaining ? ` · ${remaining}` : ""}</Text>
-                {epgNext ? <Text numberOfLines={1} style={[styles.epgNext, { fontSize: Math.round((portrait ? 9.5 : 10) * scale) }]}>Sıradaki: {nextTitle} · {formatClock(nextStart)}</Text> : null}
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    styles.epgNow,
+                    { fontSize: Math.round((portrait ? 10.5 : 11) * scale) },
+                  ]}
+                >
+                  Şimdi: {nowTitle}
+                  {remaining ? ` · ${remaining}` : ""}
+                </Text>
+                {epgNext ? (
+                  <Text
+                    numberOfLines={1}
+                    style={[
+                      styles.epgNext,
+                      { fontSize: Math.round((portrait ? 9.5 : 10) * scale) },
+                    ]}
+                  >
+                    Sıradaki: {nextTitle} · {formatClock(nextStart)}
+                  </Text>
+                ) : null}
               </>
             ) : null}
           </View>
@@ -565,14 +808,37 @@ function InfoCard({ opacity, portrait, scale, top, left, right, title, live, epg
 
 function VideoInfoBand({ text, scale }: { text: string; scale: number }) {
   return (
-    <View pointerEvents="none" style={[styles.videoInfoBand, { marginBottom: Math.max(3, Math.round(5 * scale)) }]}>
-      <EmbossedIcon name="monitor" size={Math.round(11 * scale)} accent compact />
-      <Text numberOfLines={1} style={[styles.videoInfoText, { fontSize: Math.round(9.5 * scale) }]}>{text}</Text>
+    <View
+      pointerEvents="none"
+      style={[
+        styles.videoInfoBand,
+        { marginBottom: Math.max(3, Math.round(5 * scale)) },
+      ]}
+    >
+      <EmbossedIcon
+        name="monitor"
+        size={Math.round(11 * scale)}
+        accent
+        compact
+      />
+      <Text
+        numberOfLines={1}
+        style={[styles.videoInfoText, { fontSize: Math.round(9.5 * scale) }]}
+      >
+        {text}
+      </Text>
     </View>
   );
 }
 
-function TopModeCluster({ opacity, top, right, scale, fit, codec }: {
+function TopModeCluster({
+  opacity,
+  top,
+  right,
+  scale,
+  fit,
+  codec,
+}: {
   opacity: Animated.Value;
   top: number;
   right: number;
@@ -581,23 +847,65 @@ function TopModeCluster({ opacity, top, right, scale, fit, codec }: {
   codec: Props["codecMode"];
 }) {
   return (
-    <Animated.View pointerEvents="none" style={[styles.topModes, { opacity, top, right, gap: Math.round(12 * scale) }]}>
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        styles.topModes,
+        { opacity, top, right, gap: Math.round(12 * scale) },
+      ]}
+    >
       <ModeChip icon="maximize-2" text={fitLabel(fit)} scale={scale} />
-      <ModeChip icon="cpu" text={playerCodecLabel(codec)} scale={scale} accent={codec === "auto"} />
+      <ModeChip
+        icon="cpu"
+        text={playerCodecLabel(codec)}
+        scale={scale}
+        accent={codec === "auto"}
+      />
     </Animated.View>
   );
 }
 
-function ModeChip({ icon, text, scale, accent }: { icon: FeatherName; text: string; scale: number; accent?: boolean }) {
+function ModeChip({
+  icon,
+  text,
+  scale,
+  accent,
+}: {
+  icon: FeatherName;
+  text: string;
+  scale: number;
+  accent?: boolean;
+}) {
   return (
     <View style={[styles.modeChip, { gap: Math.round(4 * scale) }]}>
-      <EmbossedIcon name={icon} size={Math.round(12 * scale)} accent={accent} compact />
-      <Text style={[styles.modeText, accent && styles.modeTextAccent, { fontSize: Math.round(10 * scale) }]}>{text}</Text>
+      <EmbossedIcon
+        name={icon}
+        size={Math.round(12 * scale)}
+        accent={accent}
+        compact
+      />
+      <Text
+        style={[
+          styles.modeText,
+          accent && styles.modeTextAccent,
+          { fontSize: Math.round(10 * scale) },
+        ]}
+      >
+        {text}
+      </Text>
     </View>
   );
 }
 
-function RoundButton({ icon, badge, label, onPress, size, iconSize, disabled = false }: {
+function RoundButton({
+  icon,
+  badge,
+  label,
+  onPress,
+  size,
+  iconSize,
+  disabled = false,
+}: {
   icon: FeatherName;
   badge?: string;
   label: string;
@@ -614,7 +922,11 @@ function RoundButton({ icon, badge, label, onPress, size, iconSize, disabled = f
       accessibilityLabel={label}
       onPress={onPress}
       hitSlop={14}
-      style={({ pressed }) => [styles.roundButton, { width: size, height: size }, pressed && styles.pressed]}
+      style={({ pressed }) => [
+        styles.roundButton,
+        { width: size, height: size },
+        pressed && styles.pressed,
+      ]}
     >
       <EmbossedIcon name={icon} size={iconSize} />
       {badge ? <Text style={styles.roundBadge}>{badge}</Text> : null}
@@ -622,7 +934,17 @@ function RoundButton({ icon, badge, label, onPress, size, iconSize, disabled = f
   );
 }
 
-function AdaptiveDockButton({ action, size, iconSize, tv }: { action: Action; size: number; iconSize: number; tv?: ReturnType<typeof nativeTvLayout> }) {
+function AdaptiveDockButton({
+  action,
+  size,
+  iconSize,
+  tv,
+}: {
+  action: Action;
+  size: number;
+  iconSize: number;
+  tv?: ReturnType<typeof nativeTvLayout>;
+}) {
   const highlighted = Boolean(action.active || action.accent);
   return (
     <Pressable
@@ -636,25 +958,63 @@ function AdaptiveDockButton({ action, size, iconSize, tv }: { action: Action; si
       hitSlop={Math.max(10, Math.ceil((50 - size) / 2))}
       style={({ pressed }) => [
         styles.dockButton,
-        tv ? { width: tv.toolWidth, minHeight: tv.toolHeight, padding: 8 } : { width: size, height: size },
+        tv
+          ? { width: tv.toolWidth, minHeight: tv.toolHeight, padding: 8 }
+          : { width: size, height: size },
         action.disabled && styles.disabled,
         pressed && !action.disabled && styles.pressed,
       ]}
     >
       {action.materialIcon ? (
-        <EmbossedMaterialIcon name={action.materialIcon} size={iconSize + 1} accent={highlighted} />
+        <EmbossedMaterialIcon
+          name={action.materialIcon}
+          size={iconSize + 1}
+          accent={highlighted}
+        />
       ) : action.icon ? (
         <EmbossedIcon name={action.icon} size={iconSize} accent={highlighted} />
       ) : null}
-      {tv ? <Text numberOfLines={1} style={{ color: "#f8fafc", fontSize: tv.labelFont, fontWeight: "700", marginTop: 4, maxWidth: "100%" }}>{action.label}</Text> : null}
+      {tv ? (
+        <Text
+          numberOfLines={1}
+          style={{
+            color: "#f8fafc",
+            fontSize: tv.labelFont,
+            fontWeight: "700",
+            marginTop: 4,
+            maxWidth: "100%",
+          }}
+        >
+          {action.label}
+        </Text>
+      ) : null}
       {action.subLabel ? (
-        <Text numberOfLines={1} style={[styles.actionSubLabel, highlighted && styles.actionSubLabelAccent, tv && { position: "relative", bottom: undefined, fontSize: tv.metaFont, maxWidth: "100%" }]}>{action.subLabel}</Text>
+        <Text
+          numberOfLines={1}
+          style={[
+            styles.actionSubLabel,
+            highlighted && styles.actionSubLabelAccent,
+            tv && {
+              position: "relative",
+              bottom: undefined,
+              fontSize: tv.metaFont,
+              maxWidth: "100%",
+            },
+          ]}
+        >
+          {action.subLabel}
+        </Text>
       ) : null}
     </Pressable>
   );
 }
 
-function EmbossedIcon({ name, size, accent = false, compact = false }: {
+function EmbossedIcon({
+  name,
+  size,
+  accent = false,
+  compact = false,
+}: {
   name: FeatherName;
   size: number;
   accent?: boolean;
@@ -665,37 +1025,90 @@ function EmbossedIcon({ name, size, accent = false, compact = false }: {
   const lowlight = accent ? "#036f8b" : "#475569";
   const box = compact ? size + 4 : size + 10;
   return (
-    <View pointerEvents="none" style={{ width: box, height: box, alignItems: "center", justifyContent: "center" }}>
+    <View
+      pointerEvents="none"
+      style={{
+        width: box,
+        height: box,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
       <Feather
         name={name}
         size={size}
         color="rgba(0,0,0,.92)"
-        style={[styles.embossLayer, styles.depthDrop, { transform: [{ translateX: 1.4 }, { translateY: 2.4 }, { scale: 1.03 }] }]}
+        style={[
+          styles.embossLayer,
+          styles.depthDrop,
+          {
+            transform: [
+              { translateX: 1.4 },
+              { translateY: 2.4 },
+              { scale: 1.03 },
+            ],
+          },
+        ]}
       />
       <Feather
         name={name}
         size={size}
         color={lowlight}
-        style={[styles.embossLayer, { opacity: 0.96, transform: [{ translateX: 0.7 }, { translateY: 1.15 }, { scale: 1.025 }] }]}
+        style={[
+          styles.embossLayer,
+          {
+            opacity: 0.96,
+            transform: [
+              { translateX: 0.7 },
+              { translateY: 1.15 },
+              { scale: 1.025 },
+            ],
+          },
+        ]}
       />
       <Feather
         name={name}
         size={size}
         color={highlight}
-        style={[styles.embossLayer, { opacity: 0.94, transform: [{ translateX: -0.95 }, { translateY: -1.05 }, { scale: 1.025 }] }]}
+        style={[
+          styles.embossLayer,
+          {
+            opacity: 0.94,
+            transform: [
+              { translateX: -0.95 },
+              { translateY: -1.05 },
+              { scale: 1.025 },
+            ],
+          },
+        ]}
       />
       <Feather
         name={name}
         size={size}
         color={accent ? "rgba(190,250,255,.78)" : "rgba(255,255,255,.72)"}
-        style={[styles.embossLayer, { opacity: 0.58, transform: [{ translateX: -0.35 }, { translateY: -0.45 }] }]}
+        style={[
+          styles.embossLayer,
+          {
+            opacity: 0.58,
+            transform: [{ translateX: -0.35 }, { translateY: -0.45 }],
+          },
+        ]}
       />
-      <Feather name={name} size={size} color={main} style={accent ? styles.cyanTextShadow : styles.iconTextShadow} />
+      <Feather
+        name={name}
+        size={size}
+        color={main}
+        style={accent ? styles.cyanTextShadow : styles.iconTextShadow}
+      />
     </View>
   );
 }
 
-function EmbossedMaterialIcon({ name, size, accent = false }: {
+function EmbossedMaterialIcon({
+  name,
+  size,
+  accent = false,
+}: {
   name: MaterialName;
   size: number;
   accent?: boolean;
@@ -704,32 +1117,81 @@ function EmbossedMaterialIcon({ name, size, accent = false }: {
   const highlight = accent ? "#e6fdff" : "#ffffff";
   const lowlight = accent ? "#036f8b" : "#475569";
   return (
-    <View pointerEvents="none" style={{ width: size + 10, height: size + 10, alignItems: "center", justifyContent: "center" }}>
+    <View
+      pointerEvents="none"
+      style={{
+        width: size + 10,
+        height: size + 10,
+        alignItems: "center",
+        justifyContent: "center",
+      }}
+    >
       <MaterialIcons
         name={name}
         size={size}
         color="rgba(0,0,0,.92)"
-        style={[styles.embossLayer, styles.depthDrop, { transform: [{ translateX: 1.4 }, { translateY: 2.4 }, { scale: 1.03 }] }]}
+        style={[
+          styles.embossLayer,
+          styles.depthDrop,
+          {
+            transform: [
+              { translateX: 1.4 },
+              { translateY: 2.4 },
+              { scale: 1.03 },
+            ],
+          },
+        ]}
       />
       <MaterialIcons
         name={name}
         size={size}
         color={lowlight}
-        style={[styles.embossLayer, { opacity: 0.96, transform: [{ translateX: 0.7 }, { translateY: 1.15 }, { scale: 1.025 }] }]}
+        style={[
+          styles.embossLayer,
+          {
+            opacity: 0.96,
+            transform: [
+              { translateX: 0.7 },
+              { translateY: 1.15 },
+              { scale: 1.025 },
+            ],
+          },
+        ]}
       />
       <MaterialIcons
         name={name}
         size={size}
         color={highlight}
-        style={[styles.embossLayer, { opacity: 0.94, transform: [{ translateX: -0.95 }, { translateY: -1.05 }, { scale: 1.025 }] }]}
+        style={[
+          styles.embossLayer,
+          {
+            opacity: 0.94,
+            transform: [
+              { translateX: -0.95 },
+              { translateY: -1.05 },
+              { scale: 1.025 },
+            ],
+          },
+        ]}
       />
       <MaterialIcons
         name={name}
         size={size}
         color={accent ? "rgba(190,250,255,.78)" : "rgba(255,255,255,.72)"}
-        style={[styles.embossLayer, { opacity: 0.58, transform: [{ translateX: -0.35 }, { translateY: -0.45 }] }]}
+        style={[
+          styles.embossLayer,
+          {
+            opacity: 0.58,
+            transform: [{ translateX: -0.35 }, { translateY: -0.45 }],
+          },
+        ]}
       />
-      <MaterialIcons name={name} size={size} color={main} style={accent ? styles.cyanTextShadow : styles.iconTextShadow} />
+      <MaterialIcons
+        name={name}
+        size={size}
+        color={main}
+        style={accent ? styles.cyanTextShadow : styles.iconTextShadow}
+      />
     </View>
   );
 }
@@ -749,7 +1211,12 @@ const styles = StyleSheet.create({
   liveText: { color: "#c8fbff", fontWeight: "900", ...TEXT_SHADOW },
   epgBlock: { minWidth: 0 },
   epgNow: { color: "#fff", fontWeight: "800", ...TEXT_SHADOW },
-  epgNext: { marginTop: 1, color: "#f1f5f9", fontWeight: "700", ...TEXT_SHADOW },
+  epgNext: {
+    marginTop: 1,
+    color: "#f1f5f9",
+    fontWeight: "700",
+    ...TEXT_SHADOW,
+  },
   epgMuted: { color: "#e2e8f0", fontWeight: "700", ...TEXT_SHADOW },
 
   topModes: {
@@ -759,7 +1226,11 @@ const styles = StyleSheet.create({
     alignItems: "center",
     backgroundColor: "transparent",
   },
-  modeChip: { flexDirection: "row", alignItems: "center", backgroundColor: "transparent" },
+  modeChip: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "transparent",
+  },
   modeText: { color: "#fff", fontWeight: "900", ...TEXT_SHADOW },
   modeTextAccent: { color: "#9af4ff" },
 
@@ -787,7 +1258,13 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     backgroundColor: "transparent",
   },
-  roundBadge: { position: "absolute", color: "#fff", fontSize: 8, fontWeight: "900", ...TEXT_SHADOW },
+  roundBadge: {
+    position: "absolute",
+    color: "#fff",
+    fontSize: 8,
+    fontWeight: "900",
+    ...TEXT_SHADOW,
+  },
   playShell: {
     borderWidth: 1.25,
     borderColor: "rgba(103,232,249,.72)",
@@ -800,14 +1277,52 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 0 },
   },
 
-  bottom: { position: "absolute", zIndex: 62, left: 0, right: 0, backgroundColor: "transparent" },
-  seekRow: { width: "100%", marginBottom: 6, flexDirection: "row", alignItems: "center" },
-  time: { color: "#fff", fontWeight: "800", fontVariant: ["tabular-nums"], ...TEXT_SHADOW },
+  bottom: {
+    position: "absolute",
+    zIndex: 62,
+    left: 0,
+    right: 0,
+    backgroundColor: "transparent",
+  },
+  seekRow: {
+    width: "100%",
+    marginBottom: 6,
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  time: {
+    color: "#fff",
+    fontWeight: "800",
+    fontVariant: ["tabular-nums"],
+    ...TEXT_SHADOW,
+  },
   timeRight: { textAlign: "right" },
   seekTouch: { flex: 1, height: 26, justifyContent: "center" },
-  seekTrack: { height: 8, justifyContent: "center", backgroundColor: "transparent" },
-  seekFill: { position: "absolute", left: 0, top: 3, height: 2, borderTopWidth: 2, borderColor: "#22d3ee", backgroundColor: "transparent" },
-  seekThumb: { position: "absolute", top: 0, marginLeft: -5, width: 10, height: 10, borderRadius: 5, borderWidth: 2, borderColor: "#bff8ff", backgroundColor: "transparent" },
+  seekTrack: {
+    height: 8,
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+  seekFill: {
+    position: "absolute",
+    left: 0,
+    top: 3,
+    height: 2,
+    borderTopWidth: 2,
+    borderColor: "#22d3ee",
+    backgroundColor: "transparent",
+  },
+  seekThumb: {
+    position: "absolute",
+    top: 0,
+    marginLeft: -5,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    borderWidth: 2,
+    borderColor: "#bff8ff",
+    backgroundColor: "transparent",
+  },
   videoInfoBand: {
     width: "100%",
     minHeight: 18,
@@ -824,8 +1339,19 @@ const styles = StyleSheet.create({
     textAlign: "center",
     ...TEXT_SHADOW,
   },
-  dockRow: { flexGrow: 1, minWidth: "100%", flexDirection: "row", alignItems: "center", justifyContent: "center", backgroundColor: "transparent" },
-  dockButton: { alignItems: "center", justifyContent: "center", backgroundColor: "transparent" },
+  dockRow: {
+    flexGrow: 1,
+    minWidth: "100%",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
+  dockButton: {
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: "transparent",
+  },
   actionSubLabel: {
     position: "absolute",
     bottom: -1,
