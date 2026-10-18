@@ -299,7 +299,7 @@ export function EliteLiveCatalog({
         {!panelOpen || !geometry.stacked ? <ScrollView
           style={[
             s.details,
-            panelOpen && !geometry.stacked && { flex: 0, width: Math.min(260, Math.max(160, bounds.width * 0.22)) },
+            panelOpen && !geometry.stacked && { flex: 0, width: geometry.detailWidth },
             geometry.stacked &&
               panelOpen && {
                 flex: 0,
