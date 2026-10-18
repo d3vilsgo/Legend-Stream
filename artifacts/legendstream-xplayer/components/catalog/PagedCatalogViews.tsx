@@ -258,6 +258,11 @@ function CatalogHeader({
   const colors = useColors();
   const { t } = useI18n();
   const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<TextInput>(null);
+  useEffect(() => {
+    if (searchOpen && searchEnabled) searchInputRef.current?.focus();
+    else searchInputRef.current?.blur();
+  }, [searchOpen, searchEnabled]);
   return <View style={s.catalogHeaderRoot}>
     <View style={s.catalogHead}>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -287,6 +292,9 @@ function CatalogHeader({
     {searchOpen ? <View style={[s.search, Platform.isTV && { flexGrow: 1, flexBasis: 240, minWidth: 180, marginBottom: 0 }, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Feather name="search" size={18} color={colors.mutedForeground} />
       <TextInput
+        ref={searchInputRef}
+        accessibilityLabel={`${title} arama sorgusu`}
+        returnKeyType="search"
         value={search}
         onChangeText={onSearch}
         editable={searchEnabled}
