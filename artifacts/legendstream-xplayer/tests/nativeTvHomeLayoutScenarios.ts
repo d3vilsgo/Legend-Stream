@@ -99,4 +99,3 @@ console.log(JSON.stringify(measurements));
 console.log(
   `Native TV Home geometry: ${passed}/${passed} passed; ANDROID_RENDERER_NOT_TESTED`,
 );
-
