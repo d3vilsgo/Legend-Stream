@@ -19,6 +19,7 @@ interface FocusButtonProps {
   hasTVPreferredFocus?: boolean;
   focusId?: string;
   accessibilityRole?: AccessibilityRole;
+  accessibilityLabel?: string;
   accessibilityState?: AccessibilityState;
   onFocusChange?: (focused: boolean) => void;
 }
@@ -36,6 +37,7 @@ export function FocusButton({
   testID,
   hasTVPreferredFocus = false,
   accessibilityRole = 'button',
+  accessibilityLabel,
   accessibilityState,
   onFocusChange,
   focusId,
@@ -96,7 +98,7 @@ export function FocusButton({
         ]}
         accessibilityRole={accessibilityRole}
         accessibilityState={accessibilityState}
-        accessibilityLabel={label}
+        accessibilityLabel={accessibilityLabel ?? label}
       >
         {icon ? <Feather name={icon} size={18} color={foregroundColor} /> : null}
         {children ?? <Text numberOfLines={labelLines} style={[styles.label, { color: foregroundColor }, labelStyle]}>{label}</Text>}
