@@ -1,5 +1,7 @@
 # U1 Entegrasyon Defteri
 
+Son geometri kontrolü: Native Hero pager köşeden eylem satırına taşındı; Watch→Info→pager LEFT/RIGHT ve Hero↔ilk raf için beş yeni üretim-policy JVM senaryosu eklendi. Aşırı font ölçeğinde ikincil eyebrow yalnız başlığa yeterli yükseklik varsa gösterilir. Fiziksel kabul iddiası değildir.
+
 ## Visible Home & TV Remote Repair — 18 Ekim 2026
 
 Remote gate: PR #143 OPEN/DRAFT; branch integration/legendstream-u1; başlangıç `ed94a373ce64ff1a006c27b712b731a8ed1eda3e`; base feature/r19-tmdb-secure-proxy. Quality #1265/#1266 SUCCESS aynı SHA. Mevcut Universal APK #506 (39131986336) SUCCESS aynı SHA. Videolarda build kimliği bulunmadığından fiziksel kaydı SHA'ya kesin bağlama yok.

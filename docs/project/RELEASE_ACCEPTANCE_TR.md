@@ -1,5 +1,7 @@
 # Geliştirme, Quality ve Release Kabulü
 
+Son geometri kontrolü: Native Hero pager köşeden eylem satırına taşındı; Watch→Info→pager LEFT/RIGHT ve Hero↔ilk raf için beş yeni üretim-policy JVM senaryosu eklendi. Aşırı font ölçeğinde ikincil eyebrow yalnız başlığa yeterli yükseklik varsa gösterilir. Fiziksel kabul iddiası değildir.
+
 ## Güncel kabul — Visible Home & TV Remote Repair
 
 Kullanıcı bu dilimde final exact-SHA Quality sonrası mevcut android-apk.yml üzerinden Universal denemesini ayrıca yetkilendirdi. Eski genel erteleme notları tarihsel politikadır; bu yetki otomatik fiziksel PASS, merge veya yeni APK tetikleme commit'i anlamına gelmez.

@@ -46,6 +46,18 @@ public class TvHomeReachabilityScenarios {
    String press=TvFocusStability.eventId(1,100,20,0,0);guard.release(press);check(guard.lateRepeat(press,0,2),"Release rejects trailing repeat");
    int[] playback={0};Map<Integer,Runnable> actions=Map.of(a.tag,()->playback[0]++);Target focus=move(b,"left",ts);check(playback[0]==0,"Navigation never starts playback");actions.get(focus.tag).run();check(playback[0]==1&&focus.id.equals(a.id),"OK action belongs to actual focused card");
   }
+  // Production Hero actions share one measured row. The pager cannot live in an
+  // isolated top corner that the semantic Home policy refuses to enter vertically.
+  Target watch=t(101,"home-hero:movie-7:watch","home",400,140,100,56);
+  Target info=t(102,"home-hero:movie-7:info","home",510,140,150,56);
+  Target pager=t(103,"home-hero:next","home",670,140,56,56);
+  Target shelf=t(104,"home-shelf:Filmler:movie-7","home",400,260,142,220);
+  List<Target> actions=List.of(watch,info,pager,shelf);
+  check(move(watch,"right",actions)==info,"New Hero Watch RIGHT reaches Info");
+  check(move(info,"right",actions)==pager,"New Hero Info RIGHT reaches inline pager");
+  check(move(pager,"left",actions)==info,"New Hero pager LEFT restores Info");
+  check(move(watch,"down",actions)==shelf,"New Hero Watch DOWN enters real shelf");
+  check(move(shelf,"up",actions)==watch,"New shelf UP restores same Hero action");
   System.out.println("Native Home reachability: "+passed+"/"+passed+" passed; PHYSICAL_FOCUS_NOT_TESTED");
  }
 }

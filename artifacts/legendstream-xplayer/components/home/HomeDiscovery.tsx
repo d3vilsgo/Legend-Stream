@@ -475,7 +475,7 @@ export function HomeHeroCarousel({
         <View
           style={{ flex: 1, minWidth: 0, justifyContent: "flex-end", gap: 6 }}
         >
-          <Text
+          {(!Platform.isTV || heroHeight >= native.titleLineHeight * fontScale * native.titleLines + 60) ? <Text
             numberOfLines={1}
             style={{
               color: "#67e8d1",
@@ -486,7 +486,7 @@ export function HomeHeroCarousel({
           >
             LEGEND ELITE ·{" "}
             {loading ? "YÜKLENİYOR" : eyebrow.toLocaleUpperCase("tr")}
-          </Text>
+          </Text> : null}
           <Text
             numberOfLines={Platform.isTV ? native.titleLines : compact ? 1 : 2}
             style={[{ color: "white", fontWeight: "900" }, titleStyle]}
@@ -516,6 +516,7 @@ export function HomeHeroCarousel({
           >
             {action(item?.series ? "Sezon ve bölümler" : "İzle", "watch", true)}
             {action(item ? "Detay / Bilgi" : discoverLabel, "info")}
+            {Platform.isTV && items.length > 1 ? <TVPreviewPressable eliteVisual focusId="home-hero:next" accessibilityLabel="Sonraki öne çıkan içerik" disabled={paused} onPress={()=>setIndex(current=>(current+1)%items.length)} style={{minWidth:56,minHeight:56,padding:12,borderRadius:12,backgroundColor:"#1c252d",justifyContent:"center",alignItems:"center"}}><Text style={{color:"white",fontSize:22}}>→</Text></TVPreviewPressable> : null}
           </View>
         ) : (
           <Text accessibilityRole="progressbar" style={{ color: "#c4d0d5" }}>
@@ -523,7 +524,7 @@ export function HomeHeroCarousel({
           </Text>
         )}
       </View>
-      {items.length > 1 && !loading ? (
+      {!Platform.isTV && items.length > 1 && !loading ? (
         <View style={{ position: "absolute", right: 12, top: 8 }}>
           <TVPreviewPressable
             eliteVisual
