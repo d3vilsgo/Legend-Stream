@@ -123,10 +123,12 @@ scenario("the navigation surface uses device profiles independently of orientati
   const context = source("context/UiPresentationContext.tsx");
   assert.match(context, /registerCatalogOrientationPolicy/);
 });
-scenario("TV nav scroll and focus ownership coexist with persistent mobile tabs", () => {
+scenario("TV nav bounded focus targets coexist with persistent mobile tabs", () => {
   const nav = source("components/navigation/ResponsiveContentNav.tsx");
-  // Native TV keeps the scroll affordance visible; phone/tablet closed menus still unmount their tabs.
-  assert.ok(nav.includes("showsHorizontalScrollIndicator"));
+  // Native TV no longer needs a horizontal scroll affordance; Preview retains its own separate scroll owner.
+  assert.match(nav, /if \(model.nativeTv\)[\s\S]*?<View/);
+  assert.match(nav, /width: targetWidth/);
+  assert.ok(nav.includes("if (presentation.tvPreview)"));
   for (const label of ["Ana Sayfa", "Canlı", "Filmler", "Diziler", "Kitaplık"]) assert.ok(nav.includes(label));
   assert.ok(nav.includes('placement === "bottom"'));
   assert.ok(nav.includes("if(keyboardOpen) return null"));
