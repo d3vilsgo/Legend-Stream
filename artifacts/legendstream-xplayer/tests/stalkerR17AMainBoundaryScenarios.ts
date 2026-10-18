@@ -97,7 +97,7 @@ async function main() {
     assert.match(stalkerSeriesSource, /controller\.resolveEpisode\(detail\.seriesId, seasonId, episodeId/);
     assert.match(stalkerSeriesSource, /emitPlayable\(buildStalkerSeriesPlayableIntent/);
     assert.doesNotMatch(stalkerSeriesSource, /NativeVideoPlayer/);
-    assert.match(stalkerMainSource, /const openSeriesEpisode = \(intent: StalkerSeriesPlayableIntent\)[\s\S]*?returnTo: "series"/);
+    assert.match(stalkerMainSource, /const openSeriesEpisode = \(intent: StalkerSeriesPlayableIntent, returnTo: StalkerContentView = "series"\)[\s\S]*?returnTo,/);
     assert.match(stalkerMainSource, /Series adapts protocol data into the shared Golden Series catalog/);
   });
 

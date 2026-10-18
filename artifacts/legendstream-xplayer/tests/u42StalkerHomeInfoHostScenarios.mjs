@@ -366,11 +366,11 @@ try {
     );
     assert.match(
       main,
-      /scrollEnabled=\{!catalogDrawerOpen && !homeMovieInfo.state && view !== "player"\}/,
+      /scrollEnabled=\{!catalogDrawerOpen && !homeMovieInfo.state && !homeSeriesInfo && view !== "player"\}/,
     );
     assert.match(
       main,
-      /interactionBlocked=\{Boolean\(homeMovieInfo.state\) \|\| view === "player"\}/,
+      /interactionBlocked=\{Boolean\(homeMovieInfo.state\) \|\| Boolean\(homeSeriesInfo\) \|\| view === "player"\}/,
     );
     assert.match(home, /paused=\{interactionBlocked\}/);
     assert.match(home, /if \(paused\) return;/);

@@ -1,3 +1,4 @@
+import type { StalkerSeriesProductItem } from "@/lib/stalkerSeriesProduct";
 import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
 import { useStalkerHomeMovieInfo } from "@/hooks/useStalkerHomeMovieInfo";
 import { beginPlaybackAttempt } from "@/lib/performanceDiagnostics";
@@ -172,6 +173,9 @@ export default function StalkerMainPage() {
     return () => traceStalker("STALKER_RUNTIME_OWNER_UNMOUNT", { providerShortId: shortSafeId(provider.id), mountGeneration });
   }, [provider?.id, provider?.type]);
 
+  const homeSeriesSequence = useRef(0);
+  const [homeSeriesInfo,setHomeSeriesInfo] = useState<{providerId:string;item:StalkerSeriesProductItem;request:number}|null>(null);
+  useEffect(()=>setHomeSeriesInfo(null),[provider?.id,provider?.url,provider?.mac]);
   const [view, setView] = useState<StalkerViewName>("home");
   useEffect(() => { tvInspector.observeScreen(view); }, [view]);
   const { setBackAction } = useTVPreviewFocus();
@@ -296,7 +300,7 @@ export default function StalkerMainPage() {
     });
   };
 
-  const openSeriesEpisode = (intent: StalkerSeriesPlayableIntent) => {
+  const openSeriesEpisode = (intent: StalkerSeriesPlayableIntent, returnTo: StalkerContentView = "series") => {
     if (intent.identity.providerId !== provider.id) {
       setCatalogError("Bölüm artık etkin sağlayıcıya ait değil.");
       return;
@@ -306,7 +310,7 @@ export default function StalkerMainPage() {
       subtitle: intent.subtitle,
       url: intent.url,
       kind: intent.kind,
-      returnTo: "series",
+      returnTo,
       seriesIdentity: intent.identity,
       progressRef: {
         type: "stalker-episode",
@@ -525,7 +529,7 @@ export default function StalkerMainPage() {
 
       {presentedView === "series" ? (
         <StalkerProductErrorBoundary product="series" providerId={provider.id} onBack={() => navigate("home")}>
-          <StalkerSeriesProductSurface provider={provider} onPlayable={openSeriesEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} />
+          <StalkerSeriesProductSurface provider={provider} onPlayable={openSeriesEpisode} detailSuspended={view === "player"} onDrawerVisibilityChange={setCatalogDrawerOpen} />
         </StalkerProductErrorBoundary>
       ) : null}
 
@@ -547,11 +551,11 @@ export default function StalkerMainPage() {
           contentContainerStyle={[s.content, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
-          scrollEnabled={!catalogDrawerOpen && !homeMovieInfo.state && view !== "player"}
+          scrollEnabled={!catalogDrawerOpen && !homeMovieInfo.state && !homeSeriesInfo && view !== "player"}
         >
           {presentedView === "home" ? (
             <HomeDiscovery
-              interactionBlocked={Boolean(homeMovieInfo.state) || view === "player"}
+              interactionBlocked={Boolean(homeMovieInfo.state) || Boolean(homeSeriesInfo) || view === "player"}
               tvViewportHeight={homeViewportHeight}
               provider={provider}
               live={liveCatalog.countKnown ? liveCatalog.totalCount : null}
@@ -570,7 +574,10 @@ export default function StalkerMainPage() {
               onNavigate={navigate}
               onOpenLive={openLive}
               onOpenMovie={item => homeMovieInfo.select(String(item.stream_id))}
-              onOpenSeries={() => navigate("series")}
+              onOpenSeries={item => {
+                if(!homeSummary.series.some(row=>String(row.series_id)===String(item.series_id)))return;
+                setHomeSeriesInfo({providerId:provider.id,request:++homeSeriesSequence.current,item:{id:String(item.series_id),title:item.name,posterUrl:item.cover,description:item.plot,genre:item.genre}});
+              }}
               onOpenMedia={openProgress}
               onRemoveLive={(id) => void removeWatched(id)}
             />
@@ -590,6 +597,7 @@ export default function StalkerMainPage() {
         </ScrollView>
       ) : null}
 
+      {homeSeriesInfo?.providerId === provider.id && presentedView === "home" ? <StalkerProductErrorBoundary product="series" providerId={provider.id} onBack={()=>setHomeSeriesInfo(null)}><StalkerSeriesProductSurface key={`${provider.id}:${homeSeriesInfo.request}`} provider={provider} initialSeries={homeSeriesInfo.item} onDetailClose={()=>setHomeSeriesInfo(current=>current?.request === homeSeriesInfo.request ? null : current)} onPlayable={intent=>openSeriesEpisode(intent,"home")} detailSuspended={view === "player"}/></StalkerProductErrorBoundary> : null}
       {homeMovieInfo.state && homeMovieInfo.input && homeMovieInfo.local ? <MovieInfoModal
         key={`${provider.id}:${homeMovieInfo.state.preview.id}`}
         input={homeMovieInfo.input} local={homeMovieInfo.local}

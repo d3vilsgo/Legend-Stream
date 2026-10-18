@@ -100,6 +100,15 @@ public class TvFocusPolicyScenarios {
     check(move(infoPlay,"right",mixed,"movie-info")==null,"U1 Film Info boundary cannot escape into catalog");
     check(move(staleMovie,"right",mixed,"movie-info")==null,"U1 underlying movie cannot own modal navigation");
     check(move(eliteCategory,"right",mixed,"content")==eliteChannel,"U1 released modal scope leaves Elite Live row navigable");
+    // U4.3: shared Series Info isolates seasons/episodes from the mounted catalog.
+    Target seriesBack=t(300,"series-info:s:back","series-info","player",0,120);
+    Target seriesSeason=t(301,"series-info:s:season:2","series-info","player",110,120);
+    Target seriesEpisode=t(302,"series-info:s:episode:2:e","series-info","player",110,210);
+    List<Target> seriesModal=List.of(seriesBack,seriesSeason,seriesEpisode,poster,episode,staleHome);
+    check(move(seriesBack,"right",seriesModal,"series-info")==seriesSeason,"U4.3 Series Info reaches season inside modal scope");
+    check(move(seriesSeason,"down",seriesModal,"series-info")==seriesEpisode,"U4.3 season descends to episode");
+    check(move(seriesEpisode,"down",seriesModal,"series-info")==null,"U4.3 episode boundary cannot enter underlying catalog");
+    check(move(poster,"right",seriesModal,"series-info")==null,"U4.3 mounted catalog cannot own Series modal navigation");
     System.out.println("Native JVM focus scenarios: "+passed+"/"+passed+" passed");
   }
 }

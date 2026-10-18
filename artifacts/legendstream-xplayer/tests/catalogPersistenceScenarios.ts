@@ -241,7 +241,7 @@ assert.match(runtimeSource, /export async function resolveCatalogPlaybackSource/
 assert.match(runtimeSource, /buildM3UStreamUrl\(provider\.url \|\| provider\.playlistUrl/);
 assert.match(screenSource, /resolveCatalogPlaybackSource\(\{ kind: "live", item: channel \}, provider\)/);
 assert.match(screenSource, /resolveCatalogPlaybackSource\(\{ kind: "movie", item \}, provider\)/);
-assert.match(screenSource, /resolveCatalogPlaybackSource\(\{ kind: "episode", item: episode \}, provider\)/);
+assert.match(fs.readFileSync(path.join(packageRoot,"hooks/usePagedSeriesInfo.ts"),"utf8"), /resolveCatalogPlaybackSource\(\s*\{ kind: "episode", item: episode \},\s*provider,\s*signal,/);
 assert.match(screenSource, /if \(provider\.type === "stalker"\)[\s\S]*url: channel\.streamUrl/);
 assert.doesNotMatch(JSON.stringify(opaqueDirectLive), /opaque\/channel|streamUrl|direct_source/);
 

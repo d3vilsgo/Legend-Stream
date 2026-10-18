@@ -1,3 +1,5 @@
+import { SeriesInfoModal } from "@/components/series/SeriesInfoModal";
+import { pagedSeriesDetail } from "@/lib/seriesInfo";
 import { beginPerformanceMeasurement, finishPerformanceMeasurement } from "@/lib/performanceDiagnostics";
 import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
 import { currentMovie, pagedMovieInput, localXtreamMovie } from "@/lib/tmdb/movieInfoModel";
@@ -53,10 +55,6 @@ import {
 import type { CatalogPageProviderType, CatalogPageSort } from "@/lib/catalogPaging";
 import type { Channel } from "@/lib/iptv";
 import {
-  goldenSeriesBackTarget,
-  initialGoldenSeriesSeasonId,
-  orderGoldenSeriesSeasons,
-  selectedGoldenSeriesSeason,
   type GoldenSeriesCardModel,
   type GoldenSeriesDetailModel,
   type GoldenSeriesEpisodeModel,
@@ -890,6 +888,9 @@ export function GoldenSeriesCatalog({
   onEpisode,
   onDrawerVisibilityChange,
   activeCategoryLabel,
+  detailSuspended = false,
+  detailOnly = false,
+  playbackBusy = false,
 }: {
   providerId: string;
   categories: CategoryOption[];
@@ -919,6 +920,9 @@ export function GoldenSeriesCatalog({
   onEpisode: (seasonId: string, episodeId: string) => void;
   onDrawerVisibilityChange: (visible: boolean) => void;
   activeCategoryLabel?: string;
+  detailSuspended?: boolean;
+  detailOnly?: boolean;
+  playbackBusy?: boolean;
 }) {
   const colors = useColors();
   const { t } = useI18n();
@@ -926,117 +930,15 @@ export function GoldenSeriesCatalog({
   const { tvPreview } = useUiPresentation();
   const { registerBackAction } = useTVPreviewFocus();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
   const grid = useResponsiveCatalogGrid<(typeof items)[number]>(items.map(item => `series:${item.id}`), JSON.stringify([providerId, selectedCategory, search, sortMode]));
   const columns = grid.columns;
-  const orderedSeasons = useMemo(
-    () => orderGoldenSeriesSeasons(detail?.seasons ?? []),
-    [detail],
-  );
-  const selectedSeason = useMemo(
-    () => selectedGoldenSeriesSeason(orderedSeasons, selectedSeasonId),
-    [orderedSeasons, selectedSeasonId],
-  );
-  const leaveDetailLevel = () => {
-    if (goldenSeriesBackTarget(selectedSeasonId, orderedSeasons.length) === "seasons") setSelectedSeasonId(null);
-    else onBack();
-  };
-
-  useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
+  useEffect(() => onDrawerVisibilityChange(drawerOpen || Boolean(detail)), [drawerOpen, detail, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
-  useEffect(() => {
-    setSelectedSeasonId(initialGoldenSeriesSeasonId(orderedSeasons));
-  }, [detail?.id, orderedSeasons.length]);
-  useEffect(() => {
-    if (!detail && !detailLoading) return;
-    return registerBackAction(leaveDetailLevel);
-  }, [detail, detailLoading, leaveDetailLevel, registerBackAction]);
 
-  if (detail || detailLoading) {
-    const seasonSelector = <FlatList
-      horizontal
-      data={orderedSeasons}
-      keyExtractor={(season) => season.id}
-      extraData={selectedSeasonId}
-      contentContainerStyle={s.seasonSelectorContent}
-      showsHorizontalScrollIndicator={false}
-      initialNumToRender={8}
-      maxToRenderPerBatch={8}
-      windowSize={5}
-      renderItem={({ item: season }) => {
-        const selected = season.id === selectedSeasonId;
-        return <TVPreviewPressable
-          focusId={`season:${season.id}`}
-          accessibilityRole="button"
-          accessibilityLabel={season.label}
-          onPress={() => setSelectedSeasonId(season.id)}
-          style={[
-            s.seasonChip,
-            {
-              borderColor: selected ? colors.primary : colors.border,
-              backgroundColor: selected ? colors.primary : colors.card,
-            },
-          ]}
-        >
-          <Text style={{ color: selected ? colors.primaryForeground : colors.foreground, fontWeight: "800" }}>
-            {season.label}
-          </Text>
-        </TVPreviewPressable>;
-      }}
-    />;
-    const detailHeader = <View>
-      <FocusButton focusId="series-detail:back" hasTVPreferredFocus={Platform.isTV} label={t("back")} icon="arrow-left" variant="ghost" onPress={leaveDetailLevel} />
-      <Text style={[s.title, { color: colors.foreground, marginTop: 14 }]}>{detail?.title ?? t("series")}</Text>
-      {error ? <CatalogErrorState message={error} onRetry={onRetry} /> : null}
-      {orderedSeasons.length ? <>
-        <Text style={[s.section, { color: colors.foreground, marginTop: 12 }]}>{t("season")}</Text>
-        {seasonSelector}
-      </> : null}
-    </View>;
-
-    if (detailLoading) return <View style={s.seriesDetail}>
-      {detailHeader}
-      <CatalogLoadingSkeleton text={t("loadingEpisodes")} />
-    </View>;
-
-    if (!orderedSeasons.length) return <View style={s.seriesDetail}>
-      {detailHeader}
-      <Text style={[s.seriesDetailMessage, { color: colors.mutedForeground }]}>{t("noEpisodes")}</Text>
-    </View>;
-
-    if (!selectedSeason) return <View style={s.seriesDetail}>
-      {detailHeader}
-      <Text style={[s.seriesDetailMessage, { color: colors.mutedForeground }]}>{t("selectSeason")}</Text>
-    </View>;
-
-    return <FlatList
-      style={s.seriesDetailList}
-      contentContainerStyle={s.seriesEpisodeListContent}
-      data={selectedSeason.episodes}
-      keyExtractor={(episode) => episode.id}
-      ListHeaderComponent={detailHeader}
-      ListEmptyComponent={<Text style={[s.seriesDetailMessage, { color: colors.mutedForeground }]}>{t("seasonHasNoEpisodes")}</Text>}
-      renderItem={({ item: episode }) => <TVPreviewPressable
-        focusId={`episode:${episode.id}`}
-        accessibilityRole="button"
-        accessibilityLabel={episode.title}
-        onPress={() => onEpisode(selectedSeason.id, episode.id)}
-        style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}
-      >
-        <Text style={{ color: colors.foreground, flex: 1 }}>{episode.title}</Text>
-        <Feather name="play-circle" size={24} color={colors.primary} />
-      </TVPreviewPressable>}
-      initialNumToRender={8}
-      maxToRenderPerBatch={10}
-      windowSize={7}
-      removeClippedSubviews={!Platform.isTV && Platform.OS !== "web"}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator
-    />;
-  }
-
-  if (shouldUseWholeCatalogLoadingSkeleton(loadingInitial, items.length, search)) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
+  const seriesModal = detail ? <SeriesInfoModal key={detail.id} providerId={providerId} detail={detail} loading={detailLoading} error={error} busy={playbackBusy} visible={!detailSuspended} onClose={onBack} onRetry={onRetry} onEpisode={onEpisode}/> : null;
+  if(detailOnly) return seriesModal;
+  if (!detail && shouldUseWholeCatalogLoadingSkeleton(loadingInitial, items.length, search)) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
 
   return <View style={{ flex: 1, minHeight: 0 }} {...drawerSwipe.panHandlers}>
     <FlatList
@@ -1079,6 +981,7 @@ export function GoldenSeriesCatalog({
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     />
+    {seriesModal}
     <CategoryDrawer visible={drawerOpen} items={categories} selected={selectedCategory} onClose={() => setDrawerOpen(false)} onSelect={onSelectCategory} />
   </View>;
 }
@@ -1106,6 +1009,11 @@ export function PagedSeriesCatalog({
   onBack,
   onEpisode,
   onDrawerVisibilityChange,
+  detailSuspended = false,
+  detailLoading,
+  detailError,
+  onRetryDetail,
+  playbackBusy = false,
 }: {
   provider: ProviderConfig;
   snapshotCount: SnapshotCount;
@@ -1118,7 +1026,12 @@ export function PagedSeriesCatalog({
   info: XtreamSeriesInfo | null;
   onOpen: (item: XtreamSeriesItem) => void;
   onBack: () => void;
-  onEpisode: (episode: XtreamEpisode) => void;
+  onEpisode: (episode: XtreamEpisode, seasonId: string) => void;
+  detailSuspended?: boolean;
+  detailLoading?: boolean;
+  detailError?: string | null;
+  onRetryDetail?: () => void;
+  playbackBusy?: boolean;
   onDrawerVisibilityChange: (visible: boolean) => void;
 }) {
   const { t } = useI18n();
@@ -1135,25 +1048,11 @@ export function PagedSeriesCatalog({
     catalogRevision,
     search,
     sort: effectiveSort,
-    enabled: providerType !== null && selected === null,
+    enabled: providerType !== null,
     snapshotCount: allOnlySnapshotCount(category, search, snapshotCount),
   });
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
-  const detail = selected ? {
-    id: `${provider.id}:${String(selected.series_id)}`,
-    title: selected.name,
-    seasons: Object.entries(info?.episodes || {}).map(([season, episodes]) => ({
-      id: season,
-      label: `${t("season")} ${season}`,
-      seasonNumber: /^\\d+$/.test(season.trim()) ? Number(season) : undefined,
-      episodes: episodes.map((episode) => ({
-        id: String(episode.id),
-        title: episode.title || `${t("episode")} ${episode.episode_num ?? ""}`,
-        seasonId: season,
-        episodeNumber: episode.episode_num,
-      })),
-    })),
-  } : null;
+  const detail = selected ? pagedSeriesDetail(provider.id, provider.type === "m3u" ? "m3u" : "xtream", selected, info) : null;
 
   return <GoldenSeriesCatalog
     providerId={provider.id}
@@ -1179,12 +1078,14 @@ export function PagedSeriesCatalog({
     loadingMore={page.loadingMore}
     onLoadMore={page.loadMore}
     detail={detail}
-    detailLoading={Boolean(selected && !info)}
+    detailLoading={detailLoading ?? Boolean(selected && !info)}
+    detailSuspended={detailSuspended} playbackBusy={playbackBusy}
+    error={detailError} onRetry={onRetryDetail}
     onOpen={(id) => { const item = page.items.find((candidate) => String(candidate.series_id) === id); if (item) onOpen(item); }}
     onBack={onBack}
     onEpisode={(seasonId, episodeId) => {
       const episode = info?.episodes?.[seasonId]?.find((candidate) => String(candidate.id) === episodeId);
-      if (episode) onEpisode(episode);
+      if (episode) onEpisode(episode, seasonId);
     }}
     onDrawerVisibilityChange={onDrawerVisibilityChange}
   />;

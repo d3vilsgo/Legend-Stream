@@ -222,7 +222,7 @@ try {
     assert.match(modal, /onRequestClose=\{onClose\}/);
     assert.match(
       shell,
-      /scrollEnabled=\{!catalogDrawerOpen && !homeMovieInfo.movie\}/,
+      /scrollEnabled=\{!catalogDrawerOpen && !homeMovieInfo.movie && !pagedSeries.state\}/,
     );
   });
   console.log(

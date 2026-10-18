@@ -67,7 +67,9 @@ assert.match(xtreamSource,/id:\s*String\(episode\.id\)/);
 assert.match(xtreamSource,/direct_source/);
 assert.match(xtreamSource,/container_extension/);
 
-const pagedSource=readFileSync(resolve(ROOT, "components/catalog/PagedCatalogViews.tsx"),"utf8");
+const pagedCatalogSource=readFileSync(resolve(ROOT, "components/catalog/PagedCatalogViews.tsx"),"utf8");
+assert.match(pagedCatalogSource,/pagedSeriesDetail/);
+const pagedSource=readFileSync(resolve(ROOT, "lib/seriesInfo.ts"),"utf8");
 assert.match(pagedSource,/episodeNumber:\s*episode\.episode_num/);
 assert.match(pagedSource,/id:\s*String\(episode\.id\)/);
 

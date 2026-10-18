@@ -1,3 +1,5 @@
+import { stalkerSeriesDetail } from "@/lib/seriesInfo";
+import { isRegisteredStalkerPortalSession, subscribeStalkerPortalRuntime } from "@/lib/stalkerPortalRuntime";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   GoldenSeriesCatalog,
@@ -38,15 +40,26 @@ export function StalkerSeriesProductSurface({
   provider,
   onPlayable,
   onDrawerVisibilityChange = () => undefined,
+  initialSeries,
+  onDetailClose,
+  detailSuspended = false,
 }: {
   provider: StalkerProductProviderIdentity;
   onPlayable?: (intent: StalkerSeriesPlayableIntent) => void;
   onDrawerVisibilityChange?: (visible: boolean) => void;
+  initialSeries?: StalkerSeriesProductItem;
+  onDetailClose?: () => void;
+  detailSuspended?: boolean;
 }) {
   const { t } = useI18n();
+  const [sessionRevision,setSessionRevision] = useState(0);
+  const providerRef = useRef(provider); providerRef.current = provider;
+  const providerStillCurrent = () => providerRef.current.id===provider.id && providerRef.current.url===provider.url && providerRef.current.playlistUrl===provider.playlistUrl && providerRef.current.mac===provider.mac;
+  const mounted = useRef(true);
+  useEffect(()=>{mounted.current=true;return()=>{mounted.current=false;};},[]);
   const current = useMemo(
     () => readCurrentStalkerProductSession(provider),
-    [provider.id, provider.url, provider.playlistUrl, provider.mac],
+    [provider.id, provider.url, provider.playlistUrl, provider.mac, sessionRevision],
   );
   const session = current.session;
   const providerScopeId = current.providerScopeId;
@@ -56,18 +69,18 @@ export function StalkerSeriesProductSurface({
   );
   const ownership = useMemo(() => new StalkerSeriesPlaybackOwnership(providerScopeId), [providerScopeId]);
 
-  const [screen, setScreen] = useState<"categories" | "list" | "search" | "detail">("categories");
+  const [screen, setScreen] = useState<"categories" | "list" | "search" | "detail">(initialSeries ? "detail" : "categories");
   const [sortMode, setSortMode] = useState<CatalogSortMode>("default");
   const [categories, setCategories] = useState<StalkerSeriesProductCategory[]>([]);
   const [items, setItems] = useState<StalkerSeriesProductItem[]>([]);
   const [detail, setDetail] = useState<StalkerSeriesProductDetail | null>(null);
-  const [selectedSeriesItem, setSelectedSeriesItem] = useState<StalkerSeriesProductItem | null>(null);
+  const [selectedSeriesItem, setSelectedSeriesItem] = useState<StalkerSeriesProductItem | null>(initialSeries ?? null);
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalItems, setTotalItems] = useState<number | undefined>(undefined);
   const [maxPageItems, setMaxPageItems] = useState<number | undefined>(undefined);
   const [hasNextPage, setHasNextPage] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(Boolean(initialSeries));
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pagingError, setPagingError] = useState<string | null>(null);
@@ -108,24 +121,20 @@ export function StalkerSeriesProductSurface({
     id: category.id,
     name: category.id === globalCategory?.id ? t("all") : category.title,
   })), [categories, globalCategory?.id, t]);
-  const goldenDetail = useMemo<GoldenSeriesDetailModel | null>(() => {
-    if (detail) return {
-      id: `${providerScopeId}:${detail.seriesId}`,
-      title: detail.title,
-      seasons: detail.seasons.map((season) => ({
-        id: season.id,
-        label: season.label,
-        episodes: season.episodes.map((episode) => ({
-          id: episode.id,
-          title: episode.label,
-          seasonId: season.id,
-          episodeNumber: episode.episodeNumber,
-        })),
-      })),
-    };
-    if (screen === "detail" && selectedSeriesItem) return { id: `${providerScopeId}:${selectedSeriesItem.id}`, title: selectedSeriesItem.title, seasons: [] };
-    return null;
-  }, [detail, providerScopeId, screen, selectedSeriesItem]);
+  const goldenDetail = useMemo<GoldenSeriesDetailModel | null>(() => selectedSeriesItem
+    ? stalkerSeriesDetail(provider.id,providerScopeId,selectedSeriesItem,detail) : null,
+    [provider.id,providerScopeId,selectedSeriesItem,detail]);
+  const selectedItemRef = useRef(selectedSeriesItem); selectedItemRef.current = selectedSeriesItem;
+  const detailRef = useRef(detail); detailRef.current = detail;
+  const episodeInFlight = useRef(false), episodeConsumed = useRef(false);
+  useEffect(()=>{ if(!detailSuspended) episodeConsumed.current=false; },[detailSuspended]);
+  useEffect(()=>subscribeStalkerPortalRuntime(id=>{
+    if(id!==provider.id)return;
+    requestAbort.current?.abort();searchAbort.current?.abort();requestSequence.current+=1;searchSequence.current+=1;
+    ownership.invalidate();controller.clear();episodeInFlight.current=false;episodeConsumed.current=false;
+    setLoading(false);setPlaybackLoading(false);setDetail(null);
+    setError("Sağlayıcı oturumu değişti. Dizi bilgisini yeniden yükleyin.");
+  }),[provider.id,controller,ownership]);
 
   const beginRequest = () => {
     requestAbort.current?.abort();
@@ -134,7 +143,7 @@ export function StalkerSeriesProductSurface({
     return { abort, sequence: ++requestSequence.current };
   };
   const currentRequest = (sequence: number) =>
-    requestSequence.current === sequence && isCurrentStalkerProductSession(provider, session);
+    mounted.current && requestSequence.current === sequence && providerStillCurrent() && isRegisteredStalkerPortalSession(provider.id, session);
 
   const resetPaging = () => {
     pageInFlight.current = null;
@@ -277,6 +286,8 @@ export function StalkerSeriesProductSurface({
   }, [categories, screen, selectedCategoryId]);
 
   const loadDetail = async (item: StalkerSeriesProductItem) => {
+    if(!mounted.current || !providerStillCurrent() || !isRegisteredStalkerPortalSession(provider.id,session))return;
+    episodeConsumed.current=false;episodeInFlight.current=false;setPlaybackLoading(false);
     const request = beginRequest();
     ownership.invalidate();
     setScreen("detail");
@@ -298,12 +309,15 @@ export function StalkerSeriesProductSurface({
   };
 
   const playEpisode = async (seasonId: string, episodeId: string) => {
-    if (!detail) return;
+    if (!mounted.current || !detail || detailRef.current !== detail || !providerStillCurrent() || !isRegisteredStalkerPortalSession(provider.id,session) || episodeInFlight.current || episodeConsumed.current) return;
+    if(!detail.seasons.some(season=>season.id===seasonId&&season.episodes.some(episode=>episode.id===episodeId))) { setPlaybackError("Seçilen bölüm artık bu sezonda bulunmuyor.");return; }
+    episodeInFlight.current=true;
     const traceId = beginStalkerPlaybackTrace(); traceStalker("STALKER_EPISODE_TAP", { traceId, providerShortId: shortSafeId(provider.id), seriesId: detail.seriesId, seasonId, episodeId });
     const playbackRefState = controller.inspectEpisodePlaybackRef(detail.seriesId, seasonId, episodeId);
     traceStalker("STALKER_EPISODE_PLAYBACK_REF_RESULT", { traceId, found: playbackRefState.found, hasCmd: playbackRefState.hasCmd });
     const emitPlayable = onPlayable;
     if (!emitPlayable) {
+      episodeInFlight.current=false;
       setPlaybackError("Üst seviye oynatıcı sahibi kullanılamıyor.");
       return;
     }
@@ -320,19 +334,21 @@ export function StalkerSeriesProductSurface({
       traceStalker("STALKER_EPISODE_CREATE_LINK_RESULT", { traceId, success: true, hasPlayableUrl: Boolean(source), kind: "episode" });
       if (!currentRequest(request.sequence) || !ownership.isCurrent(ticket)) return;
       traceStalker("STALKER_EPISODE_PLAYER_HANDOFF", { traceId, sourceKind: classifyPlaybackSource(source) });
+      episodeConsumed.current=true;
       emitPlayable(buildStalkerSeriesPlayableIntent(provider.id, detail, seasonId, episodeId, source));
     } catch (caught) {
       traceStalker("STALKER_EPISODE_CREATE_LINK_RESULT", { traceId, success: false, hasPlayableUrl: false, kind: "episode", errorClass: classifyStalkerTraceError(caught, request.abort.signal) });
       if (!currentRequest(request.sequence) || !ownership.isCurrent(ticket)) return;
       setPlaybackError(visibleError(caught, "Bölüm oynatma bağlantısı alınamadı."));
     } finally {
-      if (currentRequest(request.sequence) && ownership.isCurrent(ticket)) setPlaybackLoading(false);
+      if (currentRequest(request.sequence) && ownership.isCurrent(ticket)) { episodeInFlight.current=false;setPlaybackLoading(false); }
     }
   };
 
   useEffect(() => {
     pendingInitialCategoryIdRef.current = null;
-    void loadCategories();
+    if(initialSeries ?? selectedSeriesItem) void loadDetail((initialSeries ?? selectedSeriesItem)!);
+    else void loadCategories();
     return () => {
       requestAbort.current?.abort();
       searchAbort.current?.abort();
@@ -341,7 +357,7 @@ export function StalkerSeriesProductSurface({
       ownership.invalidate();
       controller.clear();
     };
-  }, [controller, session]);
+  }, [controller, session, initialSeries?.id]);
 
   useEffect(() => {
     const query = searchQuery.trim();
@@ -398,6 +414,9 @@ export function StalkerSeriesProductSurface({
   }, [categories, controller, provider, searchQuery, searchReturnScreen, selectedCategoryId, session]);
 
   const retry = () => {
+    if(!mounted.current || !providerStillCurrent() || selectedItemRef.current !== selectedSeriesItem)return;
+    if(!isRegisteredStalkerPortalSession(provider.id,session)) {setSessionRevision(value=>value+1);return;}
+    if(playbackError) {setPlaybackError(null);return;}
     if (screen === "categories") void loadCategories();
     else if (screen === "search") {
       const value = searchQuery;
@@ -430,6 +449,7 @@ export function StalkerSeriesProductSurface({
     onLoadMore={() => { if (screen === "list" && selectedCategory && hasNextPage && !loadingMore && !pagingError) void loadPage(selectedCategory, currentPage + 1, true); }}
     detail={goldenDetail}
     detailLoading={screen === "detail" && loading}
+    detailSuspended={detailSuspended} detailOnly={Boolean(initialSeries)} playbackBusy={playbackLoading}
     error={playbackError || searchError || error}
     onRetry={retry}
     footerError={pagingError}
@@ -438,6 +458,7 @@ export function StalkerSeriesProductSurface({
       : undefined}
     onOpen={(id) => { const item = visibleItems.find((candidate) => candidate.id === id); if (item) void loadDetail(item); }}
     onBack={() => {
+      if(!mounted.current || !providerStillCurrent() || selectedItemRef.current !== selectedSeriesItem)return;
       requestAbort.current?.abort();
       requestSequence.current += 1;
       ownership.invalidate();
@@ -446,7 +467,9 @@ export function StalkerSeriesProductSurface({
       setError(null);
       setDetail(null);
       setSelectedSeriesItem(null);
+      episodeInFlight.current=false;episodeConsumed.current=true;
       setScreen(searchQuery.trim() ? "search" : selectedCategory ? "list" : "categories");
+      onDetailClose?.();
     }}
     onEpisode={(seasonId, episodeId) => {
       void playEpisode(seasonId, episodeId);

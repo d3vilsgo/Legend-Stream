@@ -15,7 +15,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const viewsSource = readFileSync(resolve(ROOT, "components/catalog/PagedCatalogViews.tsx"), "utf8");
 const goldenStart = viewsSource.indexOf("export function GoldenSeriesCatalog");
 const pagedStart = viewsSource.indexOf("export function PagedSeriesCatalog");
-const goldenSource = viewsSource.slice(goldenStart, pagedStart);
+const goldenSource = readFileSync(resolve(ROOT, "components/series/SeriesInfoModal.tsx"), "utf8");
+assert.match(viewsSource.slice(goldenStart, pagedStart), /SeriesInfoModal/);
 
 let passed = 0;
 async function scenario(name: string, run: () => void | Promise<void>) {
@@ -71,7 +72,7 @@ async function main() {
   });
 
   await scenario("season selection neither resolves playback nor creates a link", () => {
-    assert.match(goldenSource, /onPress=\{\(\) => setSelectedSeasonId\(season\.id\)\}/);
+    assert.match(goldenSource, /setSelectedSeasonId\(season\.id\)/);
     assert.doesNotMatch(goldenSource, /create_link|resolveEpisode/);
   });
 
@@ -80,7 +81,7 @@ async function main() {
   });
 
   await scenario("episode tap preserves exact normalized season and episode ids", () => {
-    assert.match(goldenSource, /onEpisode\(selectedSeason\.id, episode\.id\)/);
+    assert.match(goldenSource, /onEpisode\(selectedSeason!\.id, episode\.id\)/);
   });
 
   await scenario("semantic episode ordinal orders one through ten without reinterpreting playback identity", () => {
@@ -98,15 +99,16 @@ async function main() {
   });
 
   await scenario("selected season episodes are owned by a bounded virtualized vertical list", () => {
-    assert.match(goldenSource, /return <FlatList[\s\S]*data=\{selectedSeason\.episodes\}/);
+    assert.match(goldenSource, /<FlatList[\s\S]*data=\{selectedSeason\?\.episodes \?\? \[\]\}/);
     assert.match(goldenSource, /initialNumToRender=\{8\}/);
     assert.match(goldenSource, /maxToRenderPerBatch=\{10\}/);
     assert.match(goldenSource, /windowSize=\{7\}/);
     assert.doesNotMatch(goldenSource, /selectedSeason\.episodes\.map/);
   });
 
-  await scenario("back from a selected multi-season episode list returns to seasons", () => {
+  await scenario("legacy helper preserves season target; U4.3 runtime closes detail to source", () => {
     assert.equal(goldenSeriesBackTarget("2", 3), "seasons");
+    assert.match(goldenSource, /registerBackAction\(onClose\)/);
   });
 
   await scenario("back from the selector or a single season returns to catalog", () => {

@@ -20,7 +20,7 @@ const root = path.resolve(__dirname, "..");
 const source = (relative: string) => fs.readFileSync(path.join(root, relative), "utf8");
 
 const seriesLib = source("lib/stalkerSeriesProduct.ts");
-const seriesCatalog = source("components/catalog/PagedCatalogViews.tsx");
+const seriesCatalog = source("components/catalog/PagedCatalogViews.tsx") + source("components/series/SeriesInfoModal.tsx");
 const seriesSurface = source("components/stalker/StalkerSeriesProductSurface.tsx");
 const vodSurface = source("components/stalker/StalkerVodSurface.tsx");
 const productShell = source("components/OptimizedHomeScreenPaged.tsx");
@@ -127,7 +127,7 @@ async function main() {
   assert.match(seriesCatalog, /FlatList/);
   assert.match(seriesCatalog, /export function GoldenSeriesCatalog/);
   assert.match(seriesCatalog, /orderGoldenSeriesSeasons\(detail\?\.seasons \?\? \[\]\)/);
-  assert.match(seriesCatalog, /data=\{selectedSeason\.episodes\}/);
+  assert.match(seriesCatalog, /data=\{selectedSeason\?\.episodes \?\? \[\]\}/);
   assert.doesNotMatch(seriesCatalog, /detail\.seasons\.map|selectedSeason\.episodes\.map/);
   assert.match(seriesCatalog, /onEndReached/);
   assert.match(seriesSurface, /mergeStalkerSeriesItems/);

@@ -311,6 +311,10 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvResponsiveScenarios.ts
       - name: TMDB metadata matching cache and identity foundation
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tmdbFoundationScenarios.ts
+      - name: U4.3 Series Info identity origin episode and input ownership
+        run: node artifacts/legendstream-xplayer/tests/u43SeriesFlowScenarios.mjs
+      - name: U4.3 shared Series Info and controller formatting
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/components/series/SeriesInfoModal.tsx artifacts/legendstream-xplayer/lib/seriesInfo.ts artifacts/legendstream-xplayer/lib/pagedSeriesFlow.ts artifacts/legendstream-xplayer/hooks/usePagedSeriesInfo.ts artifacts/legendstream-xplayer/tests/u43SeriesFlowScenarios.mjs
       - name: U4.2 Stalker Home Film Info identity and session service regressions
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/u42StalkerHomeMovieScenarios.ts
       - name: U4.2 Stalker production hook shared modal and Preview ownership

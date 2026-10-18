@@ -177,7 +177,7 @@ async function main() {
   const playerSource = source("components/CompatibilityVideoPlayerV2.tsx");
   const surfaceSource = source("components/stalker/StalkerSeriesProductSurface.tsx");
   const historyBlock = mainSource.slice(mainSource.indexOf("const openProgress"), mainSource.indexOf("const switchProvider"));
-  assert.match(mainSource, /returnTo: "series"[\s\S]*?type: "stalker-episode"[\s\S]*?seriesId: intent\.identity\.seriesId/);
+  assert.match(mainSource, /returnTo: StalkerContentView = "series"[\s\S]*?returnTo,[\s\S]*?type: "stalker-episode"[\s\S]*?seriesId: intent\.identity\.seriesId/);
   assert.match(historyBlock, /item\.playbackRef\.type === "stalker-episode"[\s\S]*?resolveStalkerSeriesHistoryEpisode\([\s\S]*?readCurrentStalkerProductSession\(provider\)\.session/);
   assert.match(historyBlock, /returnTo: "history"[\s\S]*?progressRef: item\.playbackRef/);
   assert.match(historyBlock, /historyPlaybackAbortRef\.current\?\.abort\(\)[\s\S]*?\+\+historyPlaybackSequenceRef\.current/);
