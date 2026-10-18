@@ -63,6 +63,7 @@ export function EliteLiveCatalog({
   idPrefix: string;
 }) {
   const [bounds, setBounds] = useState({ width: 960, height: 540 });
+  const [searchOpen, setSearchOpen] = useState(false);
   const [{ panelOpen, selectedId }, dispatch] = useReducer(
     eliteLiveReduce,
     eliteLiveInitial,
@@ -126,6 +127,7 @@ export function EliteLiveCatalog({
           panelOpen ? "Kanal panelini kapat" : "Kanal panelini aç",
           () => dispatch({ type: "togglePanel" }),
         )}
+        {button("search-toggle", searchOpen ? "Aramayı kapat" : "Kanal ara", () => setSearchOpen(value => !value))}
         {button("refresh", "Yenile", onRefresh, loading)}
       </View>
       <View style={[s.body, geometry.stacked && { flexDirection: "column" }]}>
@@ -169,7 +171,7 @@ export function EliteLiveCatalog({
               ))}
             </ScrollView>
             <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
-              <TextInput
+              {searchOpen ? <TextInput
                 accessibilityLabel="Kanal ara"
                 placeholder="Kanal ara…"
                 placeholderTextColor={tokens.color.muted}
@@ -177,7 +179,7 @@ export function EliteLiveCatalog({
                 value={search}
                 onChangeText={onSearch}
                 style={[s.search, text]}
-              />
+              /> : null}
               {error ? (
                 <Text accessibilityRole="alert" style={[meta, { padding: 8 }]}>
                   {error}
@@ -285,13 +287,14 @@ export function EliteLiveCatalog({
         <ScrollView
           style={[
             s.details,
+            panelOpen && !geometry.stacked && { flex: 0, width: Math.min(260, Math.max(160, bounds.width * 0.22)) },
             geometry.stacked &&
               panelOpen && {
                 flex: 0,
                 maxHeight: Math.min(180, bounds.height * 0.25),
               },
           ]}
-          contentContainerStyle={{ padding: 20, gap: 16 }}
+          contentContainerStyle={{ padding: geometry.stacked ? 12 : 14, gap: 10 }}
         >
           {selected ? (
             <>
