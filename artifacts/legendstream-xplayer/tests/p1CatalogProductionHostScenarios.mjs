@@ -215,6 +215,21 @@ try {
     assert.deepEqual(opened, ["series:alpha"], name);
     const poster = exactly(renderedCard, (node) => [node.props?.style].flat(Infinity).some((style) => style?.aspectRatio === 2 / 3));
     assert(poster, name);
+    if (!isTV && list.props.onViewableItemsChanged) {
+      list.props.onViewableItemsChanged({ viewableItems: [{ index: 1, isViewable: true }] });
+      host.width = width < 600 ? 1280 : 320;
+      const resized = host.render(GoldenSeriesCatalog, props);
+      const resizedList = exactly(resized, (node) => node.tag === "FlatList");
+      assert(resizedList.props.numColumns >= 1, name);
+      if (resizedList.props.numColumns !== list.props.numColumns) {
+        const scrollCalls = [];
+        resizedList.props.ref.current = { scrollToIndex: (request) => scrollCalls.push(request) };
+        resizedList.props.onContentSizeChange();
+        assert.equal(scrollCalls.length, 1, name);
+        assert.equal(scrollCalls[0].index, Math.floor(1 / resizedList.props.numColumns), name);
+      }
+      host.width = width;
+    }
     const headerComponent = list.props.ListHeaderComponent;
     host.reset();
     const header = host.render(headerComponent.tag, headerComponent.props);
