@@ -127,7 +127,11 @@ scenario("TV nav bounded focus targets coexist with persistent mobile tabs", () 
   const nav = source("components/navigation/ResponsiveContentNav.tsx");
   // Native TV no longer needs a horizontal scroll affordance; Preview retains its own separate scroll owner.
   assert.match(nav, /if \(model.nativeTv\)[\s\S]*?<View/);
-  assert.match(nav, /width: targetWidth/);
+  assert.match(nav, /width: railWidth/);
+  assert.match(nav, /Math\.min\(220, Math\.max\(160, tv\.usableWidth \* 0\.24\)\)/);
+  assert.match(nav, /flexDirection: "column"/);
+  assert.match(nav, /label=\{open \? item\.label : ""\}/);
+  assert.match(nav, /setOpen\(navigationFocusedIds\.current\.size > 0\)/);
   assert.ok(nav.includes("if (presentation.tvPreview)"));
   for (const label of ["Ana Sayfa", "Canlı", "Filmler", "Diziler", "Kitaplık"]) assert.ok(nav.includes(label));
   assert.ok(nav.includes('placement === "bottom"'));
