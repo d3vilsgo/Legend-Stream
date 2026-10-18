@@ -107,6 +107,7 @@ export function useResponsiveCatalogGrid<T>(
   if (Platform.isTV) return native;
   return {
     columns: layout.columns,
+    cardWidth: layout.columnWidth,
     contentStyle: {
       maxWidth: 1500,
       paddingLeft: layout.paddingLeft,
