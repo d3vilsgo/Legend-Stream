@@ -36,6 +36,7 @@ export function useNativeTvCatalogGrid<T>(ids: readonly string[]) {
   };
   return {
     columns: layout.columns,
+    cardWidth: Math.max(1, layout.usableWidth / layout.columns - 12),
     contentStyle: Platform.isTV ? { maxWidth: undefined, paddingLeft: layout.left, paddingRight: layout.right, paddingTop: layout.gutter, paddingBottom: layout.bottom } : undefined,
     listProps: Platform.isTV ? {
       ref: list,
