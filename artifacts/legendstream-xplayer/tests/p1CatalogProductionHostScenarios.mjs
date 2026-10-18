@@ -82,6 +82,21 @@ const overrides = {
   "@/hooks/useColors": { useColors: () => ({ foreground: "#fff", mutedForeground: "#999", primary: "#5dd", border: "#555", card: "#222", destructive: "#f55" }) },
   "@/context/I18nContext": { useI18n: () => ({ t: (key) => key }) },
   "@/lib/categoryPresentation": { filterCategoryOptions: (items) => items },
+  "@/lib/catalogSearchPresentation": { shouldUseWholeCatalogLoadingSkeleton: () => false },
+  "@/lib/catalogCategoryMemory": {
+    readCatalogCategorySelection: () => "__all__",
+    validateCatalogCategorySelection: () => "__all__",
+    rememberCatalogCategorySelection: (_provider, _kind, category) => category,
+  },
+  "@/hooks/useCatalogPage": { useCatalogPage: ({ search }) => ({
+    items: host.movieItems.filter((item) => item.name.toLowerCase().includes(search.toLowerCase())),
+    loadingInitial: false, loadingMore: false, totalCount: host.movieItems.length,
+    countKnown: true, loadMore() {}, reload() {},
+  }) },
+  "@/lib/tmdb/movieInfoModel": {
+    currentMovie: (items, id, identity) => items.find((item) => identity(item) === id) ?? null,
+    pagedMovieInput: () => ({}), localXtreamMovie: () => ({}),
+  },
   "@/components/FocusButton": { FocusButton: "FocusButton" },
   "@/components/series/SeriesInfoModal": { SeriesInfoModal: "SeriesInfoModal" },
   "@/components/tmdb/MovieInfoModal": { MovieInfoModal: "MovieInfoModal" },
@@ -140,7 +155,7 @@ try {
     if (request.startsWith("@/")) return fallback;
     return originalLoad.call(this, request, parent, isMain);
   };
-  const { GoldenSeriesCatalog } = requireApp(join(directory, "catalog.cjs"));
+  const { GoldenSeriesCatalog, PagedMoviesCatalog } = requireApp(join(directory, "catalog.cjs"));
   let pass = 0;
   const profiles = [
     ["phone portrait", 393, 873, false, false, 1],
@@ -213,6 +228,41 @@ try {
     const closedHeader = host.render(headerComponent.tag, headerComponent.props);
     assert.equal(traverse(closedHeader, (node) => node.tag === "TextInput").length, 0, name);
     pass++;
+    // Production movie catalog: an exact provider media ID survives the info
+    // transition and the Play callback never substitutes a filtered index.
+    host.reset();
+    const openedMovies = [];
+    host.movieItems = [
+      { stream_id: 7, name: "Film Alfa", stream_icon: "" },
+      { stream_id: 12, name: "Film Beta", stream_icon: "" },
+    ];
+    const movieProps = {
+      provider: { id: "provider-a", type: "xtream" },
+      snapshotCount: { totalCount: 2, countKnown: true },
+      sortMode: "default",
+      onSort() {},
+      refreshing: false,
+      onRefresh() {},
+      onOpen: (item) => openedMovies.push(item.stream_id),
+      onDrawerVisibilityChange() {},
+    };
+    let movies = host.render(PagedMoviesCatalog, movieProps);
+    let movieList = exactly(movies, (node) => node.tag === "FlatList");
+    assert(movieList.props.numColumns >= 1, name);
+    assert.equal(movieList.props.keyExtractor(host.movieItems[1]), "12", name);
+    const movieWrapper = movieList.props.renderItem({ item: host.movieItems[1], index: 1 });
+    const movieCard = exactly(movieWrapper, (node) => typeof node.tag === "function");
+    const movieAction = exactly(host.render(movieCard.tag, movieCard.props), (node) => node.props?.focusId === "vod:12");
+    movieAction.props.onPress();
+    movies = host.render(PagedMoviesCatalog, movieProps);
+    const info = exactly(movies, (node) => node.tag === "MovieInfoModal");
+    info.props.onPlay();
+    assert.deepEqual(openedMovies, [12], name);
+    info.props.onClose();
+    movies = host.render(PagedMoviesCatalog, movieProps);
+    assert.equal(traverse(movies, (node) => node.tag === "MovieInfoModal").length, 0, name);
+    movieList = exactly(movies, (node) => node.tag === "FlatList");
+    assert.equal(movieList.props.data[1].stream_id, 12, name);
   }
   console.log(`P1 production GoldenSeriesCatalog render acceptance: ${pass}/${profiles.length} profiles PASS; HOST_NOT_ANDROID_PHYSICAL`);
 } finally {
