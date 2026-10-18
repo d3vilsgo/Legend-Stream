@@ -67,3 +67,42 @@ assert.equal(state.selectedId, null);
 process.stdout.write(
   "Elite Live reducer: focus/selection independence + panel preservation + category reset passed\n",
 );
+
+// Native Live: reserve channel width across compact and large TV windows.
+for (const [width, height] of [
+  [480, 320],
+  [720, 480],
+  [960, 540],
+  [1920, 1080],
+]) {
+  for (const fontScale of [1, 1.5, 2]) {
+    const geometry = eliteLiveLayout({
+      width,
+      height,
+      fontScale,
+      safeArea: { left: 16, right: 16, top: 8, bottom: 8 },
+    });
+    assert(geometry.categoryWidth >= 96);
+    assert(geometry.channelWidth >= 96);
+    if (geometry.stacked)
+      assert(
+        geometry.categoryWidth + geometry.channelWidth + 24 <=
+          geometry.usableWidth + 1,
+      );
+    assert(geometry.rowHeight >= 76);
+  }
+}
+// Focus does not select or play a channel.
+const focusedLive = eliteLiveReduce(eliteLiveInitial, {
+  type: "focus",
+  id: "first",
+});
+assert.deepEqual(focusedLive, eliteLiveInitial);
+const selectedLive = eliteLiveReduce(focusedLive, { type: "select", id: "first" });
+assert.equal(
+  eliteLiveSelection([{ id: "first" }, { id: "second" }], selectedLive.selectedId)
+    ?.id,
+  "first",
+);
+assert.equal(eliteLiveSelection([], selectedLive.selectedId), null);
+console.log("Native TV Live measured geometry and focus-selection: 15/15 passed");
