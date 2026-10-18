@@ -128,9 +128,9 @@ try {
   for(const [width,height] of [[720,480],[1920,1080]]) {
     host.reset();Object.assign(host,{tv:true,preview:false,width,height});
     const channels=[{id:"channel-7",name:"News"},{id:"channel-11",name:"Movies"}];
-    const opened=[];
+    const opened=[],categories=[];
     const liveProps={
-      categories:[{id:"general",name:"General"}],category:"general",onCategory(){},
+      categories:[{id:"general",name:"General"}],category:"general",onCategory:id=>categories.push(id),
       channels,epgByChannel:new Map(),clock:0,favorites:[],loading:false,
       loadingMore:false,search:"",onSearch(){},onRefresh(){},onLoadMore(){},
       onOpen:channel=>opened.push(channel.id),onFavorite(){},idPrefix:"u41",
@@ -141,8 +141,28 @@ try {
     live=host.render(EliteLiveCatalog,liveProps);
     const list=only(live,node=>node.tag==="FlatList");
     assert.equal(list.props.data.length,2);
+    // The category column and channel list remain mounted at both widths.
+    const category=only(live,node=>node.props?.focusId==="u41:category:general");
+    assert.equal(category.props.accessibilityState.selected,true);
+    category.props.onPress();
+    assert.deepEqual(categories,["general"]);
+    const scrollviews=all(live,node=>node.tag==="ScrollView");
+    assert.equal(scrollviews.length,width<1050?1:2);
+    const categoryWidth=scrollviews[0].props.style.width;
+    assert(categoryWidth>=96 && categoryWidth<width*0.4);
+    if(width>=1050){
+      const detailWidth=scrollviews[1].props.style.flat().find(style=>typeof style?.width==="number").width;
+      assert(detailWidth>0 && detailWidth<=300);
+      assert(detailWidth+categoryWidth<width*0.7);
+    }
+    const scrollRequests=[];
+    list.props.ref.current={scrollToIndex:request=>scrollRequests.push(request)};
     const channel=list.props.renderItem({item:channels[1],index:1});
-    only(channel,node=>node.props?.focusId==="u41:channel:channel-11").props.onPress();
+    const focusable=only(channel,node=>node.props?.focusId==="u41:channel:channel-11");
+    focusable.props.onFocus();
+    assert.equal(scrollRequests.at(-1).index,1);
+    assert.deepEqual(opened,[]); // Browsing is never an implicit tune.
+    focusable.props.onPress();
     assert.deepEqual(opened,["channel-11"]);
     passed++;
   }
