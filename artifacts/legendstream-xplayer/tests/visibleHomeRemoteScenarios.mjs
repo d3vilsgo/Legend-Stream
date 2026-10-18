@@ -245,6 +245,29 @@ try {
         .props.onPress();
       assert.equal(h.opened, series);
     });
+  test("large text Hero actions can wrap inside a bounded caption beside the title", () => {
+    for (const [width, height, native] of [
+      [320, 568, false],
+      [873, 393, false],
+      [960, 540, true],
+    ]) {
+      Object.assign(h, { width, height, native, fontScale: 3, preview: false });
+      const tree = render(() => HomeHeroCarousel(heroProps));
+      const group = nodes(tree).find(
+        (n) => n.props?.style?.flexWrap === "wrap",
+      );
+      assert(group);
+      assert.equal(group.props.style.maxWidth, width > height ? "55%" : "100%");
+      const watch = nodes(tree).find((n) =>
+        n.props?.focusId?.endsWith(":watch"),
+      );
+      assert.equal(watch.props.style.maxWidth, "100%");
+      assert.equal(watch.props.style.flexShrink, 1);
+      watch.props.onPress();
+      assert.equal(h.watched, movie);
+    }
+    h.fontScale = 1;
+  });
   test("loading and no artwork have explicit readable copy", () => {
     Object.assign(h, {
       width: 393,

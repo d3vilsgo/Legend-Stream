@@ -419,6 +419,8 @@ export function HomeHeroCarousel({
       disabled={paused || loading}
       onPress={() => item ? id === "watch" && item.movie && onWatch ? onWatch(item) : onOpen(item) : onDiscover()}
       style={{
+        maxWidth: "100%",
+        flexShrink: 1,
         minHeight: Platform.isTV ? 56 : 48,
         paddingHorizontal: 18,
         paddingVertical: 10,
@@ -514,8 +516,10 @@ export function HomeHeroCarousel({
           <View
             style={{
               flexDirection: compact && !Platform.isTV ? "column" : "row",
+              flexWrap: "wrap",
+              maxWidth: compact ? "55%" : "100%",
               gap: 8,
-              flexShrink: 0,
+              flexShrink: 1,
             }}
           >
             {item ? action(item.series ? "Bölümleri Gör" : onWatch ? "İzle" : "Film Bilgisi", "watch", true) : action(discoverLabel, "discover", true)}
