@@ -539,9 +539,11 @@ function Poster({ uri, title }: { uri?: string; title: string }) {
       </View>;
 }
 
-function GridCard({ focusId, title, image, onPress }: { focusId: string; title: string; image?: string; onPress: () => void }) {
+function GridCard({ focusId, title, image, cardWidth, onPress }: { focusId: string; title: string; image?: string; cardWidth: number; onPress: () => void }) {
   const colors = useColors();
   const { fontScale } = useWindowDimensions();
+  const titleFont = Math.max(12, Math.min(17, Math.round(cardWidth / 12)));
+  const titleLine = Math.ceil(titleFont * 1.3);
   return <TVPreviewPressable eliteVisual focusId={focusId} accessibilityRole="button" accessibilityLabel={title} onPress={onPress} style={s.card}>
     <View style={[s.media, { borderColor: colors.border, backgroundColor: colors.card }]}> 
       {image
@@ -549,7 +551,7 @@ function GridCard({ focusId, title, image, onPress }: { focusId: string; title: 
         : <View style={[s.posterBig, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}>
             <Feather name="play-circle" size={30} color={colors.primary} />
           </View>}
-      <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", fontSize: 14, lineHeight: 18, minHeight: Math.ceil(36 * fontScale + 18), padding: 9 }}>{title}</Text>
+      <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", fontSize: titleFont, lineHeight: titleLine, minHeight: Math.ceil(titleLine * 2 * fontScale + 18), padding: cardWidth < 130 ? 6 : 9 }}>{title}</Text>
     </View>
   </TVPreviewPressable>;
 }
@@ -869,7 +871,7 @@ export function PagedMoviesCatalog({
       onEndReached={page.loadMore}
       onEndReachedThreshold={0.55}
       renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
-        <GridCard focusId={`vod:${item.stream_id}`} title={item.name} image={item.stream_icon} onPress={() => setInfoMovie(item)} />
+        <GridCard focusId={`vod:${item.stream_id}`} title={item.name} image={item.stream_icon} cardWidth={grid.cardWidth} onPress={() => setInfoMovie(item)} />
       </View>}
       initialNumToRender={Math.max(8, columns * 3)}
       maxToRenderPerBatch={Math.max(8, columns * 3)}
@@ -1000,7 +1002,7 @@ export function GoldenSeriesCatalog({
       onEndReached={onLoadMore}
       onEndReachedThreshold={0.55}
       renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
-        <GridCard focusId={`series:${item.id}`} title={item.title} image={item.image} onPress={() => onOpen(item.id)} />
+        <GridCard focusId={`series:${item.id}`} title={item.title} image={item.image} cardWidth={grid.cardWidth} onPress={() => onOpen(item.id)} />
       </View>}
       initialNumToRender={Math.max(8, columns * 3)}
       maxToRenderPerBatch={Math.max(8, columns * 3)}
