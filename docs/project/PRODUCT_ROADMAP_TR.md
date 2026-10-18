@@ -13,7 +13,9 @@ Proje aşaması: **GLOBAL INTEGRATION & FEATURE COMPLETION**. APK ve fiziksel ka
 | U1.1 | #142 kaynak ağacı + #138'in eksik üç Native TV onarımı | Bu branch; exact-HEAD Quality ve Draft PR ile izlenir. Ürün bütünü tamamlandı değildir. | U1 kaynak entegrasyonu |
 | U2 | #121/#126 grid, #122/#127 Hero, #124/#133 navigasyon, #125/#132 sunum temeli | Kaynak bağlantıları bu branch'te; exact-HEAD Quality zorunlu. Telefon katalog portrait politikası ve tam Elite ekran parity açık kalır. | Ortak sunum |
 | U3 | #130 performans gözlemi + #131 cache-first refresh | SOURCE_INTEGRATED / ADAPTED; bounded tanılama, 24/72 saat politika, sahiplik ve cache window koruması; exact-HEAD Quality gerekir | Provider/cache/performance |
-| U1.4 | Gerçek Elite Home, Live touch/Preview parity, Player/kanal overlay, Series Info ve Home→Film Info | Açık; aynı marka/action sözleşmesi, cihazlara uyarlanmış düzen | Elite ürün parity |
+| U1.4 | Elite ekranlar ve ortak içerik eylemleri | PARTIAL: Home→Film Info U4.1/U4.2; yerel Series Info U4.3 kaynakta bağlı. Tam Elite Home/Live/Player/overlay açık | Elite ürün parity |
+| U4.2 | Stalker Home Film Info | SOURCE_INTEGRATED; güncel fiziksel NOT TESTED; sayfa-locator sınırı kayıtlı | İçerik detay |
+| U4.3 | Ortak yerel Series Info + Home/Series origin + sezon/bölüm | SOURCE_IMPLEMENTED; final exact-SHA Quality ile izlenir; fiziksel NOT TESTED | İçerik detay |
 | U1.5 | TMDB canlı bağlantı | LIVE BLOCKED; onaylı HTTPS hosting, güvenilir session issuer, sunucu secret bağlantısı, atıf ve gerçek uçtan uca kanıt gerekir | Metadata/backend |
 | RC | Bütünleşik otomatik doğrulama + tek kaynaklı RC kabulü | Henüz başlamadı; fiziksel test yalnız kullanıcı onayıyla | Release kabulü |
 
@@ -95,3 +97,11 @@ Info anında yalnız yerel preview + mevcut metadata servisi kullanır. Açılı
 Home kökeni Home'a, Movies kökeni Movies'e döner. Home/raf ScrollView ve yatay raf bileşenleri Stalker Player arkasında bağlı kalır; modal/Player sırasında Hero autoplay ve dış scroll durur. Odak ilk Back hedefi ve mevcut movie-info scope sistemiyle yönetilir. Gerçek Android scroll/focus ve kumanda dispatch kabulü RC'ye ertelidir.
 
 **U4.3 / OPEN**: Series Info ve Home→seçilen dizi→sezon/bölüm. `StalkerSeriesProductSurface` katalog içinde Golden detail (başlık/sezon/bölüm) üretir; Home yalnız Series sekmesine gider. Xtream/M3U Home `openSeries` seçimi/yüklemesi, Series ekranına geçiş ve dönüş kökeniyle birlikte uzlaştırılmalı. TMDB series DTO tam Elite Series Info ekranı değildir. Bu bir film modalına küçük bağlantı değildir; U4.2 içinde genişletilmedi. Tam Elite Home/Live/Player/overlay ve orientation borçları açık kalır.
+
+## U4.3 uygulama sınırı
+
+Golden dizi detayının ortak sunumu `SeriesInfoModal` içine taşınır; ikinci metadata servisi yoktur. Home ve Series kaynağı aynı yerel detay/season/episode eylem sözleşmesini kullanır. Xtream mevcut getSeriesInfo, M3U yalnız hedefli persisted group hydration, Stalker mevcut movie_id hierarchy/controller/resolver yollarını korur. Film U4.1/U4.2 akışı yeniden uygulanmaz.
+
+Series Player çıkışı açık detayın aynı seçim durumuna; detay Back kaynağı olan Home veya Series'e döner. Eski çok sezonlu inline detayda Back önce sezon seçicisine dönüyordu; U4.3 tek Back ile kaynak ekranına çıkmayı benimser, sezonlar ortak yatay seçicide kalır. Katalog/Home listeleri modal ve episode Player arkasında bağlı tutulur. Gerçek native focus/scroll/orientation kabulü RC'dedir.
+
+Tam U4 bitmedi: Elite Home/Live/Player/overlay görsel parity, telefon katalog rotation politikası ve TV metadata live ayrı açık işlerdir.
