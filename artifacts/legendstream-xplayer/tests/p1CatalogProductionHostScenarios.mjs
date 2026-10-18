@@ -228,6 +228,12 @@ try {
     closeToggle.props.onPress();
     const closedHeader = host.render(headerComponent.tag, headerComponent.props);
     assert.equal(traverse(closedHeader, (node) => node.tag === "TextInput").length, 0, name);
+    host.reset();
+    const filtered = host.render(GoldenSeriesCatalog, { ...props, search: "Birinci", items: [items[0]] });
+    assert.equal(exactly(filtered, (node) => node.tag === "FlatList").props.data.length, 1, name);
+    const drawer = exactly(filtered, (node) => typeof node.tag === "function" && node.tag.name === "CategoryDrawer");
+    drawer.props.onSelect("news");
+    assert.deepEqual(categories, ["news"], name);
     pass++;
     // Production movie catalog: an exact provider media ID survives the info
     // transition and the Play callback never substitutes a filtered index.
