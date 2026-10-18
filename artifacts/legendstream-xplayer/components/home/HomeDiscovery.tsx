@@ -407,7 +407,9 @@ export function HomeHeroCarousel({
     (tvViewportHeight ?? height) - insets.top - insets.bottom,
   );
   const shelfReserve = Math.min(160, Math.max(76, availableHomeHeight * 0.24));
-  const textAndActionFloor = Math.ceil((compact ? 118 : 160) * Math.sqrt(Math.max(1, fontScale)));
+  // Preserve the existing Home action/readability contract in touch layouts.
+  // Never trade away the portrait 310dp or compact 160dp minimum for shelf space.
+  const textAndActionFloor = compact ? 160 : Math.ceil(240 + 70 * Math.max(1, fontScale));
   const heroHeight = Platform.isTV
     ? native.heroHeight
     : Math.max(
