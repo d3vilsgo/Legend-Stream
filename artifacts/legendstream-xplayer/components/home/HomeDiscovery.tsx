@@ -400,11 +400,22 @@ export function HomeHeroCarousel({
   });
   // Very short windows get an explicit compact introduction with actions, never a 1dp strip.
   const compact = width > height || tvPreview || Platform.isTV;
+  // Respect the measured content viewport in Preview and compact touch layouts,
+  // leaving a visible start of the first shelf instead of reserving a fixed 160dp.
+  const availableHomeHeight = Math.max(
+    1,
+    (tvViewportHeight ?? height) - insets.top - insets.bottom,
+  );
+  const shelfReserve = Math.min(160, Math.max(76, availableHomeHeight * 0.24));
+  const textAndActionFloor = Math.ceil((compact ? 118 : 160) * Math.sqrt(Math.max(1, fontScale)));
   const heroHeight = Platform.isTV
     ? native.heroHeight
     : Math.max(
-        compact ? 160 : Math.ceil(240 + 70 * fontScale),
-        responsive.height,
+        textAndActionFloor,
+        Math.min(
+          Math.max(textAndActionFloor, availableHomeHeight - shelfReserve),
+          responsive.height,
+        ),
       );
   const titleStyle = Platform.isTV
     ? { fontSize: native.titleFont, lineHeight: native.titleLineHeight }
