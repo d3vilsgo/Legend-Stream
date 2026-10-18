@@ -204,3 +204,45 @@ Son erişilebilirlik düzeltmesi: Hero aksiyon grubuna wrap ve viewporta bağlı
 - `tests/p1CatalogProductionHostScenarios.mjs` eklendi: gerçek `PagedCatalogViews.tsx` kaynaklarından `GoldenSeriesCatalog` ve `PagedMoviesCatalog` ve gerçek responsive/native grid hook'ları esbuild ile derlenir. Sekiz profil: telefon portrait/landscape, tablet portrait/landscape, 720x480 ve 1920x1080 Native TV, TV Preview, büyük fontScale. Render ağacında grid sütunu, Series kart/Focus kimliği ve OK callback, poster oranı, arama aç/kapat ve sorgu callback, filtreli sonuç/kategori callback; Movies Film Info -> Play exact stream_id -> Close kimliği; son testte viewport değişiminde Series scroll anchor restore doğrulanır.
 - Mevcut Quality workflow'una bağımsız zorunlu P1 host testi eklendi; P0 assertion'ları, provider resolver, Live/Player ve Native focus üretim mantığı değiştirilmedi. İlk host derleme koşusunda Expo font loader kaynaklı kırmızı görüldü, esbuild packages external ile host bağımlılığı düzeltildi. Quality #1367 (run 39169476708) SUCCESS, P1 adımı PASS. Son scroll assertion'ını içeren #1369 (run 39169709065) ve belge commit'i için exact-SHA Quality ayrıca zorunludur.
 - **Kaynak host testleri Android renderer/FocusFinder değildir.** Gerçek TV Focus geçişleri, input klavye focus/Back sahipliği, Movies/Series tam seçim modalı ve tüm Scroll fiziksel kabulü açık. Native TV Physical FAIL ve TMDB LIVE BLOCKED korunur; `PHYSICAL DEFERRED_RC`, `SOURCE/HOST` ayrı. APK/merge/fiziksel test yapılmaz.
+
+
+## U4 Elite V2 parity — 19 Ekim 2026 güncel kaynak dilimi
+
+Başlangıç `45db89f25dfb53d255a939cb8ffbf039ee3c68b2`; PR #143 Draft,
+base `feature/r19-tmdb-secure-proxy`. Başlangıç exact-SHA Quality #1371
+SUCCESS: https://github.com/d3vilsgo/Legend-Stream/actions/runs/39169832551 .
+Üretim/test commit: `6240a3992643443806844a87c63bfeb1d8e8e542`.
+
+Bu dilim **PARTIAL**: tüm Elite V2 ekranlarının görsel dönüşümü tamamlanmadı.
+Film Info artık sağlayıcının mevcut başlık, görsel, özet, tür, oyuncu, yönetmen ve
+ yıl bilgisini korur; TMDB yalnız eksikleri tamamlar. TMDB puanı ayrı TMDB kaynağıdır.
+Player TV zaman çizgisi dokunma koordinatından komut üretmez/odak almaz;
+kumanda mevcut -10/+15 saniye eylemlerini kullanır. Sonlu pozitif süre yokken
+sarma eylemi/gesture devre dışıdır. Oynat/duraklat, çıkış ve merkez kanal/sarma
+aksiyonları erişilebilir ad taşır. VLC/provider resolver değiştirilmedi.
+
+Otomatik kanıt: Visible Home/Player production host 17/17; Film Info mock 35/35;
+P1 Movies/Series production host 8/8 profil; U4.3 Series 32/32;
+Home Film Info 15/15; orientation 14/14; U2 geometry 94/94, hook 10/10;
+U3 coordinator 9/9, SQLite 6/6, performance 11/11, refresh 9/9;
+Native Focus JVM 66/66, stability 21/21, reachability 93/93;
+TMDB proxy mock 32/32. Typecheck ve değişen dört dosya Prettier PASS.
+Bunlar gerçek Android renderer veya fiziksel kabul değildir.
+Final doküman HEAD Quality sonucu ayrıca doğrulanacak; başlangıç #1371 yeni
+kod için PASS sayılmaz. Yeni assertion eklendi; skip yok. Eski metadata başlık
+beklentisi yeni sağlayıcı önceliği sözleşmesine göre kesin eşitlikle güncellendi.
+
+Tarihsel Native TV Physical FAIL, güncel NOT TESTED / DEFERRED_RC,
+TMDB LIVE BLOCKED ve legacy 14 SKIP / 0 DELETED korunur.
+APK, fiziksel test, deployment, merge, base/PR durum değişikliği yapılmaz.
+
+| Ekran | Kaynak/otomatik kabul | Açık sınır |
+|---|---|---|
+| Home | Mevcut film İzle/Bilgi ve dizi kimliği host testleri korundu | Dokunma ile fiziksel D-pad dönüş/raf viewport kabulü ayrı |
+| Live | Mevcut OK kanal açma, focus/selection ayrımı, loading ve P0 host korundu | Homatics görünür liste ve gerçek Back ölçümü açık |
+| Movies | Sekiz profil grid, Info/Play kimliği ve kategori/arama P1 host PASS | Tüm provider ve gerçek pencere/klavye restorasyonu PARTIAL |
+| Series | Sezon/bölüm kimliği, dönüş ve provider/session stale testleri PASS | M3U gerçek hiyerarşi yoksa destek uydurulmaz |
+| Film Info | Yerel veri önceliği eklendi, metadata fixture testleri PASS | Canlı TMDB BLOCKED |
+| Player | TV koordinat-sarma engeli, süre kapısı ve erişilebilir adlar eklendi | Native/Preview tüm panel eylemleri ve fiziksel odak PARTIAL |
+
+Telefon/tablet host kapsamı mobil orientation sözleşmesini değiştirmez. Native JVM Android pencere kanıtı değildir. Preview sonucu Native TV Physical PASS değildir.
