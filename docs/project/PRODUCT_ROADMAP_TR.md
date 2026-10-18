@@ -1,5 +1,17 @@
 # LegendStream XPlayer — Tek Ürün Yol Haritası
 
+## Güncel dilim — Visible Home & TV Remote Repair (18 Ekim 2026)
+
+Bu dilim U4.3 sonrasında kullanıcının açık uygulama talebidir. U3/U4.1/U4.2/U4.3 tekrar uygulanmadı. Native TV ve mobil gerçek HomeDiscovery yolu yenilendi; yalnız showcase/altyapı teslimi değildir. Tam Elite Home/Live/Player dönüşümü veya U4 bütünü tamamlandı sayılmaz.
+
+Sıra: (1) Dialog onShow + Player error/exit ve kanal görünürlüğü; (2) gerçek katalog nesnesiyle belirgin featured Home + beşli mobil gezinme; (3) kategori arama alt paneli, Preview için ayrılmış kumanda alanı, seçili sezonun viewport restorasyonu; (4) birleşik regresyon ve exact-SHA CI. Kaynak uygulama tamamlandı, **SOURCE_FIXED / PHYSICAL_RETEST_REQUIRED**. Başlangıç `ed94a373ce64ff1a006c27b712b731a8ed1eda3e`; base/Draft değişmez.
+
+Telefon: Ana Sayfa/Canlı/Filmler/Diziler/Kitaplık. Kitaplık mevcut History/Favoriler/Devam Et ve Downloads yollarına bağlanır; yeni indirme yeteneği uydurulmaz. Yatay/tablet aynı beş hedefin kompakt yatay düzenini kullanır; kalıcı dikey rail bu dilimde yok. Native TV mobil alt barı kullanmaz. Search kısayolu mevcut Canlı arama ekranına gider; birleşik tüm-katalog araması değildir.
+
+Sonraki tek sınırlı görev: yeni kaynak APK'sı üzerinde Home→Info→Player→Back, Dialog odak ve hata çıkışının Poco/Homatics görsel/remote retesti. Kullanıcı bu dilimde final Quality sonrası Universal denemesini açıkça yetkilendirdi; her push'ta APK üretimi veya otomatik fiziksel PASS yetkisi yoktur. TMDB LIVE BLOCKED, tarihsel FAIL ve 14 legacy SKIP korunur.
+
+---
+
 ## Hedef ve çalışma politikası
 
 Tek uygulama; telefon, tablet, Android TV/Google TV/TV Box ve TV Preview için aynı Legend Elite V2 marka, içerik ve temel davranış sözleşmesi. Ekran geometrisi ve giriş yöntemi uyarlanır. Xtream, M3U ve Stalker resolver/oturum mekanizmaları ayrı kalır.

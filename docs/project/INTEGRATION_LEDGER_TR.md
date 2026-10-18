@@ -1,5 +1,21 @@
 # U1 Entegrasyon Defteri
 
+## Visible Home & TV Remote Repair — 18 Ekim 2026
+
+Remote gate: PR #143 OPEN/DRAFT; branch integration/legendstream-u1; başlangıç `ed94a373ce64ff1a006c27b712b731a8ed1eda3e`; base feature/r19-tmdb-secure-proxy. Quality #1265/#1266 SUCCESS aynı SHA. Mevcut Universal APK #506 (39131986336) SUCCESS aynı SHA. Videolarda build kimliği bulunmadığından fiziksel kaydı SHA'ya kesin bağlama yok.
+
+1. `7a3fee9ba49a71e9b6019accde73a65c85ee0948` — Dialog onShow'da native target/window yenileme, scope/currentFocus ayrımı, frame post ile mevcut ticket kontrollü restore; zaman gecikmesine dayalı loop yok. Player-error retry/exit, hata Back, panel başlığı/72dp row offset ayrımı, TV clipping, etiket wrap. Native dedupe DOWN/UP/repeat üretim TvFocusStability kapıları korunur. Inspector tanı/overlay erişimi korunur.
+2. `f01eb07888d5a2432b0ff2efebdddc2f566a279f` — mevcut production HomeDiscovery featured tasarım, görseli olmayan katalog öğesini de okunur fallback ile kabul; film/dizi nesnesi mevcut Info handler'a gider. Home İzle ve Bilgi güvenli Info girişini paylaşır; gerçek playback yalnız mevcut Info/episode eylemiyle. Mobilden bölüm dropdown kaldırıldı; beşli in-flow alt bar ve mevcut library yolları. Search kısayolu Live arama yüzeyine gider. Kategori arama alt paneli kimlik/sıra/paging değiştirmez. Preview dock ayrı alan, modal kendi dock'u ve viewport owner stack; sezon viewport restorasyonu.
+3. Bu belge commit'i — beş proje kaydı, fiziksel bulgular, sınırlar ve kabul matrisi. Final exact-SHA CI PR Checks'ten ayrıca doğrulanır. İki kaynak commit'inin dosya ağaçları yerel test edilen tree ile byte-identical doğrulandı; yalnız integration ref fast-forward güncellenir.
+
+Yerel son tur: **77/77** Quality komutu PASS; typecheck mobile/API/workspace, U2/U3/provider/cache, Native policy, Preview, Film Info/Series ve TMDB güvenliği korunur. Yeni host **10/10**, Home **33+30**, U4.2 host **13/13**, U4.3 **31/31**. Eski menü/floating dock ve birebir format assertion'ları yeni ürün sözleşmesine göre güncellendi; test silinmedi/skip eklenmedi. Category label filtering ayrı presentation helper'a taşındı; katalog repository/persistence/resolver değişmedi.
+
+Somut sınırlar: Native Android Kotlin/Window fiziksel çalışması yerelde derlenmedi; JVM/host PASS fiziksel PASS değil. Chromium indirmesi geçerli arşiv vermedi; gerçek runtime screenshot yok. Web önizleme yalnız izole production-component/örnek katalog incelemesidir; uygulama görüntüsü sayılmaz. Kategori Modal Preview dock parity açık. Tablet yatay kompakt bar var, ayrı dikey rail yok. Live yayın başarısızlığı nedeni video genel mesajından çözülemez. Tam Elite Live/Player ve TMDB dizi servisi tamamlanmadı.
+
+Native TV tarihsel FAIL, güncel fiziksel NOT TESTED/RETEST_REQUIRED; TMDB LIVE BLOCKED; legacy **14 SKIP / 0 DELETED** aynen korunur. Main/base/diğer PR kaynakları değişmez; merge/Ready/close/rebase/force-push/branch deletion/deployment yapılmaz. APK yalnız mevcut workflow_dispatch kabiliyeti varsa final Quality sonrası denenir.
+
+---
+
 ## U1.1 kaynak gate — 17 Ekim 2026
 
 | Kaynak | Doğrulanan SHA | Karar |

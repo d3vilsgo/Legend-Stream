@@ -1,5 +1,24 @@
 # Cihaz × Ekran × Özellik — U4.3
 
+## Güncel sunum farkı — Visible Home / TV Remote Repair
+
+Aşağıdaki tablo bu dilimin güncel durumudur; önceki U2/U3/U4 tabloları kendi aşamalarının tarihsel kapsamıdır.
+
+| Özellik | Telefon portre | Yatay / tablet | Native TV | TV Preview | Kabul |
+|---|---|---|---|---|---|
+| Featured Home | Başlık, katalog görseli/fallback, tür/yıl varsa, iki eylem | Okunur kompakt tanıtım; kısa pencerede scroll | Aynı gerçek katalog; Native #138 Hero bütçesi ve raf policy korunur | 1dp şerit yerine en az 160dp kompakt giriş | SOURCE_FIXED; host render; fiziksel retest |
+| Home eylemi | Film → mevcut Info; dizi → mevcut sezon/bölüm Info | Aynı provider nesnesi ve kimlik | Aynı | Aynı | İzle de güvenli Info kapısından ilerler; iki ayrı resolver yok, Home'dan doğrudan URL üretimi yok |
+| Ana gezinme | Beşli safe-area alt bar, Player/klavyede gizli | Kompakt yatay beşli bar; dikey rail yok | Mevcut D-pad üst gezinme | Mevcut sanal gezinme | Host davranış; fiziksel NOT TESTED |
+| Kitaplık | Mevcut Favoriler/Geçmiş/Devam Et + İndirmeler | Aynı | Mevcut sekmeler korunur | Mevcut sekmeler korunur | Yeni özellik/indirme protokolü eklenmez |
+| Kategori | Aktif kategori + aranabilir alt panel; tek seçimle kapanış | Aynı, sanallaştırma korunur | Mevcut scope ve panel; kategori isimleri aranabilir | Mevcut sanal scope; kategori Dialog'unda ayrı dock entegrasyonu açık | Provider/kategori/search/sort kimlikleri değişmez |
+| Film/dizi modal | Yerel Info, hata/fallback, Back korunur | Aynı | onShow'da gerçek Dialog callback/target doğrulaması; OK bir kez | Modalın kendi dock'u ve viewport sahipliği; kapanışta alttaki viewport geri gelir | Android Dialog fiziksel retest zorunlu |
+| Player hata | Kalıcı yeniden dene/kataloğa dön | Aynı | Bağımsız player-error focus scope; hata Back doğrudan çıkış | Dokunmatik hata eylemleri; Player sanal D-pad tam parity bu dilimde yok | Host test; akış hatasının network/auth/decoder nedeni bilinmiyor |
+| Sezon görünürlüğü | Sabit 180dp slot ile seçili sezonu görünür yapma | Aynı | Aynı model + mevcut Native focus | Aynı | State, episode offset ve season viewport ayrı sahipler; fiziksel retest |
+
+Üretim playback/identity/cache servisleri değiştirilmedi. TMDB dizi servisi eklenmedi. Örnek verili web incelemesi gerçek cihaz görüntüsü değildir; kullanılan üretim React Native bileşenlerinin izole web adaptasyonudur. Yeni Native ve mobil görsel kabul henüz verilmedi.
+
+---
+
 Bu tablo kaynak bağlantısını gösterir; Physical PASS tablosu değildir. P=telefon portrait, L=telefon landscape, T=tablet P/L, TV=Native Android TV/Google TV/Box, Preview=telefon/tablette sanal D-pad. Telefon katalog landscape, devralınan policy yüzünden hâlâ açık ürün boşluğudur; landscape Player desteğiyle karıştırılmaz.
 
 | Ekran/özellik | Telefon P | Telefon L | Tablet P/L | Native TV | TV Preview | Kaynak / açık fark |

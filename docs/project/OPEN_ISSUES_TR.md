@@ -1,5 +1,25 @@
 # Açık İş ve Kusur Defteri
 
+## Güncel fiziksel bulgu kaydı — 18 Ekim / Home & Remote Repair
+
+Videolar `1000304408.mp4` (Homatics) ve `1000304369.mp4` (Poco) erişildi; seçilmiş kareler incelendi. Tam frame-by-frame video incelemesi yapılmadı. APK #506 / run 39131986336 / `ed94a373ce64ff1a006c27b712b731a8ed1eda3e` remote SUCCESS; videolarda uygulama içi build kimliği yok. Dolayısıyla video→APK/SHA eşlemesi kesin kabul edilmez, kusurlar yine geçerlidir.
+
+| ID / öncelik | Bulgu / tekrar adımı | Kaynak sahibi / uygulama | Güncel durum |
+|---|---|---|---|
+| TV-005 / P0 | Film Info aç → Geri/İzle'ye DPAD/OK ile erişim ve Back dönüşü başarısız | MovieInfoModal + native remote: Dialog onShow native modalShown; gerçek window callback, registered target/scope/currentFocus yeniden okunur; Play synchronous gate, stale callback kapanır | SOURCE_FIXED / PHYSICAL_RETEST_REQUIRED; Android olay iziyle kök neden kesinleştirilmedi |
+| TV-006 / P0 | Yayın başarısız → hata ekranından çıkış güvenilir değil | PlayerChromeV2 kalıcı retry/exit; player-error scope, hidden input semantiği kapalı; CompatibilityV2 hata Back çıkışı ve mevcut resolver üzerinden retry | SOURCE_FIXED / PHYSICAL_RETEST_REQUIRED |
+| TV-007 / P1 | Kanal paneli aç → görünmeyen satırda seçim değişebiliyor | PanelContent sabit 72dp row hesabından değişken başlık ayrıldı; TV clipping kapalı; native requestRectangleOnScreen korunur | SOURCE_FIXED / PHYSICAL_RETEST_REQUIRED; tek kanıtlanmış kaynak geometri kusuru, cihaz kök nedeni için event izi gerekir |
+| TV-008 / P1 | Player odak etiketleri kesiliyor | PlayerRemotePressable etiket hedef içinde, iki satır | SOURCE_FIXED / PHYSICAL_RETEST_REQUIRED |
+| PLAY-001 / P1 | Homatics yaklaşık 01:07 Live başarısızlığı | Video genel mesajı network/auth/resolver/decoder ayrımı sağlamaz; codec arızası ilan edilmedi | OPEN; gizli veri içermeyen provider/resolver/VLC olay izi gerekli. Çıkış onarımını engellemez |
+| UI-004 / P1 | Poco Preview Hero şerit; kumanda içeriği örtüyor | HomeDiscovery okunur alt sınır; ProductShell/TVPreviewControls ayrı alan; Info modallarında kendi dock'u/viewport sahipliği | SOURCE_FIXED / PHYSICAL_RETEST_REQUIRED |
+| UI-005 / P1 | Player→Series Info dönüşünde seçili sezon ekran dışında | SeriesInfoModal: ayrı seasonStrip ref + exact selected-ID index / onShow / content-size restore | SOURCE_FIXED / PHYSICAL_RETEST_REQUIRED |
+| UI-006 / P1 | Mobil/TV eski Home ve uygunsuz açılır bölüm menüsü | HomeDiscovery featured başlık, görsel/fallback/loading/CTA; ResponsiveContentNav beşli mobile + library | SOURCE_IMPLEMENTED / VISUAL_REVIEW_REQUIRED; tam Elite dönüşümü değil |
+| PREVIEW-004 / P2 | Kategori Dialog'unda Activity dock'u erişilebilir değil | Film/Series Info kendi dock'unu aldı; kategori Dialog dock'u ayrıca uzlaştırılmalı | OPEN; kategori seçimi dokunmatik/Native ile sürer, Preview tam kumanda parity iddiası yok |
+
+Inspector odağı çalıyor varsayımı yapılmadı; overlay focus alamayan tanımı korunur. Inspector açık/kapalı fiziksel karşılaştırma henüz yok. Tarihsel TV-001/002 FAIL, yeni kaynak NOT TESTED, TMDB LIVE BLOCKED ve legacy 14 SKIP / 0 DELETED değişmedi. U4.2/U4.3 kaynak kapsamı tekrar OPEN yapılmadı.
+
+---
+
 Durumlar: OPEN, SOURCE_INTEGRATED, AUTO_VERIFIED, DEFERRED_RC, BLOCKED. Fiziksel durumlar PASS/FAIL/NOT TESTED/BLOCKED/PARTIAL ayrıca tutulur. Yeni kullanıcı kusuru mevcut kayıtla ilişkilendirilir; ciddi teknik zorunluluk yoksa entegrasyon sırasını bozmaz.
 
 | ID / öncelik | Ekran ve cihaz | Kaynak/kanıt | Geliştirme / fiziksel durum | Sonraki eylem / sorumlu |

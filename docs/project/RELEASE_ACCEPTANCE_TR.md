@@ -1,5 +1,19 @@
 # Geliştirme, Quality ve Release Kabulü
 
+## Güncel kabul — Visible Home & TV Remote Repair
+
+Kullanıcı bu dilimde final exact-SHA Quality sonrası mevcut android-apk.yml üzerinden Universal denemesini ayrıca yetkilendirdi. Eski genel erteleme notları tarihsel politikadır; bu yetki otomatik fiziksel PASS, merge veya yeni APK tetikleme commit'i anlamına gelmez.
+
+Yerel **77/77 Quality shell kapısı PASS**; yeni Home/nav/recovery host **10/10**, U4.2 host **13/13** (çift Play, unmount callback ve modal onShow ek kontrolleri), U4.3 **31/31**, Home render **33 Native + 30 handheld/Preview**. JVM gerçek üretim Java policy/stability/reachability testleri korunur. Yerel Node24 TSX IPC sınırında aynı girişler node --import tsx ile çalışır; CI Node22 standart komutları otoritedir. Final kod+bu dokümanların remote HEAD'i için yeni Quality logunda QUALITY_EXACT_HEAD eşitliği zorunludur; başlangıç yeşili devralınmaz.
+
+Görsel kanıt: gerçek kullanıcı videosundan seçilmiş kareler yalnız önceki fiziksel bulguyu destekler. `scripts/build-home-review.mjs` başlangıç Home/nav ve güncel üretim bileşenlerini mobil portre/yatay-Preview/TV geometri simülasyonuyla karşılaştıran bağımsız web dosyası üretir. Örnek katalog, mock navigation ve playback yokluğu açıkça etiketlidir. Yerel Chromium yok; indirme geçerli ZIP sağlamadı. Browser/runtime screenshot doğrulanamadı, bu dosyanın bundle başarısı görsel kabul değildir. Gerçek Android/emulator render yok.
+
+APK istenen input: branch integration/legendstream-u1; apk_mode=universal; dual_abi=false; catalog_benchmark=false. Mevcut araçta workflow_dispatch bulunmuyorsa engel raporlanır; yeni tetikleme commit'i eklenmez. Yeni APK varmış gibi kaynak/version/hash sunulmaz. Ayarlar'daki BuildIdentity derlenen EXPO_PUBLIC_GIT_SHA ve native installed versionCode gösterir; web/Expo Go native code yoksa açıkça belirtilir.
+
+Fiziksel retest kapısı: Homatics Home Hero→ilk/alt raf→Film Info Geri/İzle/OK tek eylem→Player panel/hidden/error/exit→aynı kart; kanal panelinde gerçek görünen odak; Inspector açık/kapalı. Poco: portre/yatay/Preview, alt bar/klavye/kategori Back, Film Info, Series seçili sezon/bölüm ve viewport dönüşü. Provider/session switch sırasında eski eylem üretilememeli. Native Dialog, firmware remote, network ve yeni görsel tasarım **NOT TESTED / PHYSICAL_RETEST_REQUIRED**; kullanıcı testi gelmeden FAIL kapanmaz.
+
+---
+
 ## Geçerli politika
 
 **Quality PASS = exact HEAD üzerinde otomatik doğrulama. Physical PASS = ilgili cihazdaki gerçek kabul kanıtı.** Birbirinin yerine geçmez. Kaynak veya metadata sağlayıcısı destek bayrağı runtime kabulü sayılmaz.
