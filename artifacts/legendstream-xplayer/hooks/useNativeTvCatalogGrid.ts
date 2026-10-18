@@ -11,8 +11,10 @@ export function useNativeTvCatalogGrid<T>(ids: readonly string[]) {
   const focus = useOptionalTVPreviewFocus();
   const current = useRef({ focus, ids });
   current.current = { focus, ids };
-  const [measuredWidth, setMeasuredWidth] = useState(window.width);
-  const layout = nativeTvLayout({ ...window, width: measuredWidth, safeArea });
+  const [measured, setMeasured] = useState<{ windowWidth: number; width: number } | null>(null);
+  // A stale list measurement from the previous orientation must not determine columns.
+  const availableWidth = measured?.windowWidth === window.width ? measured.width : window.width;
+  const layout = nativeTvLayout({ ...window, width: availableWidth, safeArea });
   const list = useRef<FlatList<T>>(null);
   const pending = useRef<{ id: string; row: number; attempts: number } | null>(null);
   const lastColumns = useRef(layout.columns);
@@ -37,7 +39,7 @@ export function useNativeTvCatalogGrid<T>(ids: readonly string[]) {
     contentStyle: Platform.isTV ? { maxWidth: undefined, paddingLeft: layout.left, paddingRight: layout.right, paddingTop: layout.gutter, paddingBottom: layout.bottom } : undefined,
     listProps: Platform.isTV ? {
       ref: list,
-      onLayout: (event: LayoutChangeEvent) => setMeasuredWidth(event.nativeEvent.layout.width),
+      onLayout: (event: LayoutChangeEvent) => setMeasured({ windowWidth: window.width, width: event.nativeEvent.layout.width }),
       onContentSizeChange: restoreVisibleRow,
       onScrollToIndexFailed: (info: { averageItemLength: number; index: number }) => {
         if (!pending.current) return;
