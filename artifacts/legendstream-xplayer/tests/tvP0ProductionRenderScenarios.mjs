@@ -169,9 +169,11 @@ try {
   check("native navigation does not own horizontal ScrollView",()=>assert.equal(find(nav,n=>n.tag==="ScrollView").length,0));
   check("StageRail expands on focus and collapses on content handoff without route change",()=>{
     const railWidth=tree=>one(tree,n=>n.tag==="View"&&n.props.accessibilityLabel==="Ana gezinme").props.style.flat().find(v=>v&&typeof v.width==="number").width;
-    const capsule=railWidth(nav);
-    assert.equal(one(nav,n=>n.props?.focusId==="nav:movies").props.label,"");
-    one(nav,n=>n.props?.focusId==="nav:movies").props.onFocusChange(true);
+    one(nav,n=>n.props?.focusId==="nav:movies").props.onFocusChange(false);
+    const compact=host.render(ResponsiveContentNav,navProps);
+    const capsule=railWidth(compact);
+    assert.equal(one(compact,n=>n.props?.focusId==="nav:movies").props.label,"");
+    one(compact,n=>n.props?.focusId==="nav:movies").props.onFocusChange(true);
     const expanded=host.render(ResponsiveContentNav,navProps);
     assert(railWidth(expanded)>capsule);
     assert.equal(one(expanded,n=>n.props?.focusId==="nav:movies").props.label,"movies");
