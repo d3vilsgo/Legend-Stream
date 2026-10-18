@@ -234,6 +234,28 @@ try {
         assert(image.includes("İzle"));
         responsiveCount++;
       }
+  // Real Hero production render: a shorter measured Home viewport must
+  // never claim more vertical space than the same viewport at full height.
+  for (const preview of [false, true]) {
+    globalThis.__home = {
+      native: false, preview, width: 800, height: 1280, fontScale: 1,
+      insets: { top: 0, right: 12, bottom: 20, left: 24 },
+    };
+    const renderHeight = (viewport) => {
+      const markup = renderToStaticMarkup(React.createElement(HomeHeroCarousel, {
+        items: [{ id: "anchor", title: "Measured viewport", image: "" }],
+        eyebrow: "Öne çıkan", providerName: "Yerel",
+        onOpen() {}, onWatch() {}, onDiscover() {}, discoverLabel: "Keşfet",
+        tvViewportHeight: viewport,
+      }));
+      return Number(markup.match(/<div[^>]*data-height="([0-9.]+)"/)?.[1]);
+    };
+    const narrow = renderHeight(420);
+    const tall = renderHeight(900);
+    assert(Number.isFinite(narrow) && Number.isFinite(tall));
+    assert(narrow <= tall);
+    responsiveCount++;
+  }
   console.log(
     `U2 responsive Home component render: ${responsiveCount}/${responsiveCount} passed; HOST_ADAPTER_NOT_ANDROID_LAYOUT`,
   );
