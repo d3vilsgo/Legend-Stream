@@ -54,6 +54,7 @@ type Props = {
   pipSupported: boolean;
   onBackgroundPress: () => void;
   onExit: () => void;
+  onRetry?: () => void;
   onTogglePause: () => void;
   onSeekBy: (seconds: number) => void;
   onSeekRatio: (ratio: number) => void;
@@ -144,11 +145,15 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
       ) : null}
 
       {props.errorText ? (
-        <View style={styles.error} pointerEvents="none">
+        <PlayerRemoteFocusBoundary scope="player-error"><View style={styles.error}>
           <View style={styles.errorIcon}><Feather name="alert-triangle" size={30} color="#67e8f9" /></View>
           <Text style={styles.errorTitle}>Oynatma başarısız</Text>
           <Text style={styles.errorText}>{props.errorText}</Text>
-        </View>
+          <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 18, marginTop: 24 }}>
+            {props.onRetry ? <Pressable nativeID="player:error-retry" accessibilityLabel="Yeniden dene" hasTVPreferredFocus onPress={props.onRetry} showFocusLabel={false} style={styles.recovery}><Text style={{color:"white",fontSize:20}}>Yeniden dene</Text></Pressable> : null}
+            <Pressable nativeID="player:error-exit" accessibilityLabel="Kataloğa dön" hasTVPreferredFocus={!props.onRetry} onPress={props.onExit} showFocusLabel={false} style={styles.recovery}><Text style={{color:"white",fontSize:20}}>Kataloğa dön</Text></Pressable>
+          </View>
+        </View></PlayerRemoteFocusBoundary>
       ) : null}
 
       {props.infoVisible ? (
@@ -308,7 +313,7 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
         </>
       ) : null}
 
-      {props.panel ? (
+      {props.panel && !props.errorText ? (
         <PlayerRemoteFocusBoundary scope={`player-panel:${props.panel}`}><View style={panelStyle}>
           <LinearGradient colors={["rgba(14,165,233,.18)", "rgba(6,11,20,0)"]} style={styles.panelGlow} pointerEvents="none" />
           {Platform.isTV ? <Pressable nativeID="player:panel-close" accessibilityLabel="Paneli kapat" hasTVPreferredFocus={Platform.isTV} onPress={() => props.onTogglePanel(props.panel!)} style={{ padding: 16 }}><Text style={{ color: "white", fontSize: 18 }}>← Paneli kapat</Text></Pressable> : null}
@@ -332,7 +337,7 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
 export function PanelContent(props: Props) {
   if (props.panel === "content") {
     return (
-      <FlatList
+      <View style={{flex:1,minHeight:0}}><PanelHeader title={props.mediaKind === "live" ? "Kanal listesi" : "İçerik listesi"} hint={`${props.selectableItems.length} öğe`} /><FlatList
         data={props.selectableItems}
         keyExtractor={(item, index) => `${item.id}:${index}`}
         initialScrollIndex={Platform.isTV ? Math.max(0, props.currentIndex) : undefined}
@@ -340,8 +345,8 @@ export function PanelContent(props: Props) {
         initialNumToRender={16}
         maxToRenderPerBatch={16}
         windowSize={5}
-        removeClippedSubviews
-        ListHeaderComponent={<PanelHeader title={props.mediaKind === "live" ? "Kanal listesi" : "İçerik listesi"} hint={`${props.selectableItems.length} öğe`} />}
+        removeClippedSubviews={!Platform.isTV}
+        onScrollToIndexFailed={({ index }) => { /* fixed TV rows use exact getItemLayout; no speculative selection */ }}
         renderItem={({ item, index }) => (
           <Pressable
             nativeID={`player:content:${item.id}`}
@@ -364,7 +369,7 @@ export function PanelContent(props: Props) {
             </View>
           </Pressable>
         )}
-      />
+      /></View>
     );
   }
 
@@ -640,6 +645,7 @@ const styles = StyleSheet.create({
   toastTitle: { color: "#fff", fontWeight: "800", fontSize: 11 },
   toastText: { color: "#67e8f9", fontWeight: "900", fontSize: 12 },
 
+  recovery: { padding: 18, minHeight: 60, borderRadius: 12, backgroundColor: "#17434a" },
   error: { ...StyleSheet.absoluteFillObject, zIndex: 15, alignItems: "center", justifyContent: "center", padding: 30, backgroundColor: "#07101f" },
   errorIcon: { width: 62, height: 62, borderRadius: 20, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(34,211,238,.1)", borderWidth: 1, borderColor: "rgba(34,211,238,.22)", marginBottom: 14 },
   errorTitle: { color: "#fff", fontSize: 26, fontWeight: "900", marginBottom: 10 },

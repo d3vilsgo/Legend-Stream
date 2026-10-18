@@ -28,6 +28,6 @@ export function PlayerRemotePressable({ children, style, accessibilityLabel, sho
     style={(state) => [typeof style === "function" ? style(state) : style,
       Platform.isTV && { minWidth: 56, minHeight: 56, borderRadius: 10, borderWidth: 3, borderColor: focused ? "#fff" : "transparent", backgroundColor: focused ? "#075985" : "rgba(0,0,0,.35)" }]}>
       {children as React.ReactNode}
-      {Platform.isTV && showFocusLabel && focused && accessibilityLabel ? <Text numberOfLines={1} pointerEvents="none" style={{ maxWidth: 230, position: "absolute", bottom: -Math.ceil(20 * fontScale + 8), color: "white", fontSize: 15, fontWeight: "700", backgroundColor: "#082f49", paddingHorizontal: 8, paddingVertical: 3 }}>{accessibilityLabel}</Text> : null}
+      {Platform.isTV && showFocusLabel && focused && accessibilityLabel ? <Text numberOfLines={2} pointerEvents="none" style={{ maxWidth: 230, flexShrink: 1, color: "white", fontSize: 15, fontWeight: "700", backgroundColor: "#082f49", paddingHorizontal: 8, paddingVertical: 3 }}>{accessibilityLabel}</Text> : null}
   </Pressable>;
 }

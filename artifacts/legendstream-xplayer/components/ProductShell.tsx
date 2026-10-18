@@ -39,7 +39,7 @@ export default function ProductShell({ metadataAccess }: { metadataAccess?: Prox
     <UiPresentationProvider>
       <TVPreviewFocusProvider>
         <View style={{ flex: 1, minHeight: 0 }}>
-          <TVPreviewFocusRegion><ProductShellContent /></TVPreviewFocusRegion>
+          <View style={{ flex: 1, minHeight: 0 }}><TVPreviewFocusRegion><ProductShellContent /></TVPreviewFocusRegion></View>
           <TVPreviewControls />
           <TVRemoteInspectorCollector />
           <TVRemoteInspectorOverlay />

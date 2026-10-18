@@ -1,6 +1,6 @@
 import { inspectorAction } from "@/lib/tvRemoteInspector";
 import { useNativeTvTarget } from "@/hooks/useNativeTvTarget";
-import { requestTvTargetFocus, setNativeTvScope, subscribeNativeTvFocus } from "@/modules/legendstream-tv-remote";
+import { nativeTvModalShown, requestTvTargetFocus, setNativeTvScope, subscribeNativeTvFocus } from "@/modules/legendstream-tv-remote";
 import { findNodeHandle } from "react-native";
 import React, { createContext, type ReactNode, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { Platform, Pressable, StyleSheet, Text, View, type PressableProps } from "react-native";
@@ -10,6 +10,7 @@ import { useColors } from "@/hooks/useColors";
 import { createTVPreviewFocusController, type TVPreviewDirection, type TVPreviewFocusEntry } from "@/lib/tvPreviewFocus";
 
 type FocusContextValue = {
+  modalShown: (scope: string) => Promise<boolean> | undefined;
   enabled: boolean;
   nativeScope: string;
   nativeFocusedId: string | null;
@@ -21,7 +22,7 @@ type FocusContextValue = {
   move: (direction: TVPreviewDirection) => Promise<void>;
   getFocusedEntry: () => TVPreviewFocusEntry | null;
   restoreFocus: (id: string) => Promise<boolean>;
-  setViewport: (viewport: { x: number; y: number; width: number; height: number } | null) => void;
+  setViewport: (viewport: { x: number; y: number; width: number; height: number } | null, owner?: object) => void;
   viewport: { x: number; y: number; width: number; height: number } | null;
   activate: () => void;
   setBackAction: (action: (() => void) | null) => void;
@@ -45,7 +46,13 @@ export function TVPreviewFocusProvider({ children }: { children: ReactNode }) {
   }, []);
   const [focusedId, setFocusedId] = useState<string | null>(null);
   const [lastActivatedId, setLastActivatedId] = useState<string | null>(null);
-  const [viewport, setViewport] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const [viewport, setViewportState] = useState<{ x: number; y: number; width: number; height: number } | null>(null);
+  const viewportOwners = useRef(new Map<object, {x:number;y:number;width:number;height:number}>());
+  const defaultViewportOwner = useRef({});
+  const setViewport = useCallback((next: {x:number;y:number;width:number;height:number}|null, owner=defaultViewportOwner.current) => {
+    if(next)viewportOwners.current.set(owner,next);else viewportOwners.current.delete(owner);
+    setViewportState([...viewportOwners.current.values()].at(-1) ?? null);
+  }, []);
   const controllerRef = useRef<ReturnType<typeof createTVPreviewFocusController> | null>(null);
   if (!controllerRef.current) controllerRef.current = createTVPreviewFocusController(setFocusedId, setLastActivatedId);
   const controller = controllerRef.current;
@@ -60,7 +67,7 @@ export function TVPreviewFocusProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (tvPreview) controller.focusFirst();
-    else { controller.clear(); setViewport(null); }
+    else { controller.clear(); viewportOwners.current.clear(); setViewport(null); }
   }, [controller, tvPreview]);
 
   const pushFocusScope = useCallback((scope: string) => {
@@ -84,7 +91,7 @@ export function TVPreviewFocusProvider({ children }: { children: ReactNode }) {
     };
   }, [controller, rememberNativeFocus]);
   const value = useMemo(() => ({
-    nativeScope, nativeFocusedId, rememberNativeFocus, registerNativeTarget,
+    modalShown: nativeTvModalShown, nativeScope, nativeFocusedId, rememberNativeFocus, registerNativeTarget,
     enabled: tvPreview,
     focusedId,
     lastActivatedId,
@@ -108,17 +115,18 @@ export function TVPreviewFocusRegion({ children }: { children: ReactNode }) {
   const { setViewport } = useTVPreviewFocus();
   const ref = useRef<View>(null);
   const measureRevision = useRef(0);
+  const viewportOwner = useRef({});
   const measure = useCallback(() => {
     const revision = ++measureRevision.current;
     const node = ref.current as (View & { measureInWindow?: (callback: (x: number, y: number, width: number, height: number) => void) => void }) | null;
-    if (!node?.measureInWindow) { setViewport(null); return; }
+    if (!node?.measureInWindow) { setViewport(null, viewportOwner.current); return; }
     node.measureInWindow((x, y, width, height) => {
       if (revision !== measureRevision.current) return;
-      if (Number.isFinite(x) && Number.isFinite(y) && width > 0 && height > 0) setViewport({ x, y, width, height });
-      else setViewport(null);
+      if (Number.isFinite(x) && Number.isFinite(y) && width > 0 && height > 0) setViewport({ x, y, width, height }, viewportOwner.current);
+      else setViewport(null, viewportOwner.current);
     });
   }, [setViewport]);
-  useEffect(() => () => { measureRevision.current += 1; setViewport(null); }, [setViewport]);
+  useEffect(() => () => { measureRevision.current += 1; setViewport(null, viewportOwner.current); }, [setViewport]);
   return <View ref={ref} collapsable={false} onLayout={measure} style={{ flex: 1, minHeight: 0 }}>{children}</View>;
 }
 
@@ -238,10 +246,10 @@ export function TVPreviewControls() {
       <Text style={styles.glyph}>{glyph}</Text>
     </Pressable>
   );
-  return <View pointerEvents="box-none" style={styles.overlay}>
+  return <View pointerEvents="box-none" style={{ height: collapsed ? 48 : 190, backgroundColor: "#111c25", borderTopWidth: 1, borderColor: "#33434d" }}>
     {collapsed ? <Pressable testID="tv-preview-dpad-expand" accessibilityRole="button" accessibilityLabel="Sanal kumandayı aç" onPress={() => setCollapsed(false)} style={[styles.collapsedButton, { right: Math.max(insets.right, 10), bottom: Math.max(insets.bottom, 10) }]}>
       <Text style={styles.glyph}>⌖</Text>
-    </Pressable> : <View style={[styles.dock, { right: Math.max(insets.right, 10), bottom: Math.max(insets.bottom, 10) }]}>
+    </Pressable> : <View style={[styles.dock, { right: Math.max(insets.right, 10), bottom: 4, flexDirection: "row", alignItems: "center", gap: 8 }]}>
       <View style={styles.toolbar}>
         <Pressable testID="tv-preview-dpad-diagnostics-toggle" accessibilityRole="button" accessibilityLabel="Odak tanı bilgisini aç veya kapat" onPress={() => setShowDiagnostics((value) => !value)} style={styles.toolButton}>
           <Text style={styles.toolGlyph}>i</Text>
@@ -284,8 +292,8 @@ const styles = {
   pad: { alignItems: "center" as const, gap: 2, padding: 2, borderRadius: 14, backgroundColor: "rgba(255,255,255,0.04)" },
   middle: { flexDirection: "row" as const, alignItems: "center" as const, gap: 3 },
   bottomRow: { flexDirection: "row" as const, alignItems: "center" as const, gap: 3 },
-  keySpacer: { width: 28, height: 28 },
-  key: { width: 28, height: 28, borderRadius: 14, alignItems: "center" as const, justifyContent: "center" as const, backgroundColor: "rgba(255,255,255,0.18)", borderWidth: 1, borderColor: "rgba(255,255,255,0.25)", overflow: "hidden" as const },
+  keySpacer: { width: 44, height: 44 },
+  key: { width: 44, height: 44, borderRadius: 14, alignItems: "center" as const, justifyContent: "center" as const, backgroundColor: "rgba(255,255,255,0.18)", borderWidth: 1, borderColor: "rgba(255,255,255,0.25)", overflow: "hidden" as const },
   glyph: { color: "rgba(255,255,255,0.94)", fontWeight: "800" as const, fontSize: 13 },
   back: { backgroundColor: "rgba(5,10,20,0.58)" },
 };

@@ -18,12 +18,14 @@ type FocusModule = {
   unregisterTarget: (tag: number) => Promise<boolean>;
   requestTargetFocus: (tag: number) => Promise<boolean>;
   setScope: (scope: string) => Promise<boolean>;
+  modalShown: (scope: string) => Promise<boolean>;
   addListener: (name: "onNativeFocus", listener: (event: NativeFocusEvent) => void) => { remove: () => void };
 };
 const focusNative = native as (RemoteModule & FocusModule) | null;
 export const registerTvTarget = (tag: number, id: string, scope: string, region: string, preferred: boolean) => focusNative?.registerTarget(tag,id,scope,region,preferred).catch(() => false);
 export const unregisterTvTarget = (tag: number) => focusNative?.unregisterTarget(tag).catch(() => false);
 export const requestTvTargetFocus = (tag: number) => focusNative?.requestTargetFocus(tag).catch(() => false);
+export const nativeTvModalShown = (scope: string) => focusNative?.modalShown(scope).catch(() => false);
 export const setNativeTvScope = (scope: string) => focusNative?.setScope(scope).catch(() => false);
 export const subscribeNativeTvFocus = (listener: (event: NativeFocusEvent) => void) => focusNative?.addListener("onNativeFocus",listener);
 

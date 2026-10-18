@@ -189,8 +189,8 @@ export function PlayerChrome(props: Props) {
     return () => { subscription?.remove(); };
   }, []);
   useEffect(() => {
-    if (Platform.isTV) void configureTvRemote(true, !chrome.controlsVisible && !chrome.panel);
-  }, [chrome.controlsVisible, chrome.panel]);
+    if (Platform.isTV) void configureTvRemote(true, !chrome.errorText && !chrome.controlsVisible && !chrome.panel);
+  }, [chrome.controlsVisible, chrome.panel, chrome.errorText]);
   const controlsOpacity = useRef(new Animated.Value(chrome.controlsVisible ? 1 : 0)).current;
 
   useEffect(() => {
@@ -210,7 +210,7 @@ export function PlayerChrome(props: Props) {
   const bottomInfo = [technicalLabel, safeMeta].filter((part): part is string => Boolean(part)).join("   ·   ") || undefined;
   const progress = chrome.duration > 0 ? clamp(chrome.position / chrome.duration, 0, 1) : 0;
   const hasBlockingStatus = typeof chrome.errorText === "string" && chrome.errorText.trim().length > 0;
-  const showChrome = chrome.controlsVisible && !chrome.panel;
+  const showChrome = chrome.controlsVisible && !chrome.panel && !hasBlockingStatus;
   const showCenter = showChrome && !hasBlockingStatus;
 
   const liveNavigationActions: Action[] = chrome.mediaKind === "live" && chrome.selectableItems.length
@@ -356,7 +356,7 @@ export function PlayerChrome(props: Props) {
         />
       ) : null}
 
-      {chrome.controlsVisible && chrome.canExit ? (
+      {!hasBlockingStatus && chrome.controlsVisible && chrome.canExit ? (
         <Pressable
           accessibilityRole="button"
           nativeID="player:exit"

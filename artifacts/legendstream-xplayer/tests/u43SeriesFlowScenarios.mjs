@@ -58,7 +58,7 @@ const mocks = {
   "react-native-safe-area-context": `export const useSafeAreaInsets=()=>({left:0,right:0,top:0,bottom:0});`,
   "@/context/I18nContext": `export const useI18n=()=>({t:k=>k});`,
   "@/context/MediaLibraryContext": `export const useMediaLibrary=()=>({entries:globalThis.__series.entries});`,
-  "@/components/tvPreview/TVPreviewFocus": `export const useTVPreviewFocus=()=>globalThis.__series.focus;export const TVPreviewPressable='Button';`,
+  "@/components/tvPreview/TVPreviewFocus": `export const useTVPreviewFocus=()=>globalThis.__series.focus;export const TVPreviewFocusRegion='Viewport',TVPreviewControls='Dock';export const TVPreviewPressable='Button';`,
   "@/components/tvPreview/TVRemoteInspector": `export const TVRemoteInspectorOverlay='Inspector';`,
   "@/components/catalog/PagedCatalogViews": `export const GoldenSeriesCatalog='GoldenSeriesCatalog';`,
   "@/lib/stalkerProductSession": `export const readCurrentStalkerProductSession=()=>({session:globalThis.__series.session,providerScopeId:'runtime:'+globalThis.__series.scope});export const isCurrentStalkerProductSession=(_p,s)=>s===globalThis.__series.session;`,

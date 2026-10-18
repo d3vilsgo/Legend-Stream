@@ -200,7 +200,12 @@ export function CompatibilityVideoPlayer({
   const [textTrack, setTextTrack] = useState<number | undefined>(undefined);
   const [downloadState, setDownloadState] = useState<PlayerDownloadState>("idle");
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const [retryRevision, setRetryRevision] = useState(0);
+  const retryLock = useRef(false);
+  const errorRef = useRef<string | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
+  errorRef.current = errorText;
+  useEffect(() => { if (errorText) retryLock.current = false; }, [errorText]);
   const [startupPending, setStartupPending] = useState(true);
   const [pipSupported, setPipSupported] = useState(false);
   const [pipActive, setPipActive] = useState(false);
@@ -302,6 +307,7 @@ export function CompatibilityVideoPlayer({
     };
   }, [
     currentSource,
+    retryRevision,
     provider?.id,
     provider?.type,
     provider?.url,
@@ -611,6 +617,7 @@ export function CompatibilityVideoPlayer({
   },[]);
   useEffect(() => {
     const handleBack = () => {
+      if (errorRef.current) { void exitPlayer(); return true; }
       const target = advancePlayerBack(backSnapshot.current,Platform.isTV);
       if(Platform.isTV) inspectorAction(target === "panel" ? "back-panel" : target === "controls" ? "back-controls" : "back-exit");
       if (target === "controls") {
@@ -826,6 +833,7 @@ export function CompatibilityVideoPlayer({
   return (
     <View style={styles.root}>
       {effectiveUri ? <VlcPlaybackSurface
+        key={retryRevision}
         ref={vlcRef}
         uri={effectiveUri}
         paused={paused}
@@ -875,6 +883,12 @@ export function CompatibilityVideoPlayer({
           pipSupported={pipSupported}
           onBackgroundPress={onBackgroundPress}
           onExit={() => void exitPlayer()}
+          onRetry={() => {
+            if (!errorRef.current || retryLock.current) return;
+            retryLock.current = true;
+            setErrorText(null); setResolvedSource(null); setPanel(null); setPaused(false); setStartupPending(true);
+            setRetryRevision(value => value + 1); revealControls(true);
+          }}
           onTogglePause={() => {
             setPaused((value) => !value);
             revealControls();

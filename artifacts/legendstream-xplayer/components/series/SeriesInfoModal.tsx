@@ -12,6 +12,8 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
   TVPreviewPressable,
+  TVPreviewFocusRegion,
+  TVPreviewControls,
   useTVPreviewFocus,
 } from "@/components/tvPreview/TVPreviewFocus";
 import { TVRemoteInspectorOverlay } from "@/components/tvPreview/TVRemoteInspector";
@@ -52,6 +54,14 @@ export function SeriesInfoModal({
   const { t } = useI18n();
   const insets = useSafeAreaInsets(),
     focus = useTVPreviewFocus();
+  const [dialogShown, setDialogShown] = useState(false);
+  useEffect(() => {
+    if (!visible) setDialogShown(false);
+  }, [visible]);
+  useEffect(() => {
+    if (Platform.isTV && dialogShown && focus.nativeScope === "series-info")
+      void focus.modalShown?.("series-info");
+  }, [dialogShown, focus.nativeScope, focus.modalShown]);
   const { entries } = useMediaLibrary();
   const orderedSeasons = useMemo(
     () => orderGoldenSeriesSeasons(detail?.seasons ?? []),
@@ -65,6 +75,21 @@ export function SeriesInfoModal({
     orderedSeasons,
     selectedSeasonId,
   );
+  const seasonStrip = useRef<FlatList<(typeof orderedSeasons)[number]>>(null);
+  const revealSeason = () => {
+    const index = orderedSeasons.findIndex(
+      (season) => season.id === selectedSeasonId,
+    );
+    if (index >= 0)
+      seasonStrip.current?.scrollToIndex({
+        index,
+        viewPosition: 0.5,
+        animated: false,
+      });
+  };
+  useEffect(() => {
+    if (visible) revealSeason();
+  }, [visible, selectedSeasonId, orderedSeasons.length]);
   const list = useRef<FlatList<GoldenSeriesEpisodeModel>>(null),
     offset = useRef(0);
   const visibleRef = useRef(visible);
@@ -165,7 +190,14 @@ export function SeriesInfoModal({
         />
       ) : null}
       <FlatList
+        ref={seasonStrip}
         horizontal
+        onContentSizeChange={revealSeason}
+        getItemLayout={(_, index) => ({
+          length: 180,
+          offset: 180 * index,
+          index,
+        })}
         data={orderedSeasons}
         keyExtractor={(season) => season.id}
         extraData={selectedSeasonId}
@@ -189,6 +221,7 @@ export function SeriesInfoModal({
             style={[
               control,
               {
+                width: 170,
                 marginRight: 10,
                 backgroundColor:
                   season.id === selectedSeasonId
@@ -223,93 +256,106 @@ export function SeriesInfoModal({
     <Modal
       visible={visible}
       animationType="none"
+      onShow={() => {
+        setDialogShown(true);
+        if (Platform.isTV) void focus.modalShown?.("series-info");
+        revealSeason();
+      }}
       onRequestClose={onClose}
       accessibilityViewIsModal
     >
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: tokens.color.canvas,
-          paddingTop: Math.max(insets.top, 24),
-          paddingHorizontal: Math.max(insets.left, insets.right, 24),
-          paddingBottom: Math.max(insets.bottom, 24),
-        }}
-      >
-        <FlatList
-          ref={list}
-          data={selectedSeason?.episodes ?? []}
-          keyExtractor={(episode) => episode.id}
-          ListHeaderComponent={header}
-          ListEmptyComponent={
-            !loading && selectedSeason ? (
-              <Text style={text}>{t("seasonHasNoEpisodes")}</Text>
-            ) : null
-          }
-          onScroll={(event) => {
-            offset.current = event.nativeEvent.contentOffset.y;
-          }}
-          scrollEventThrottle={32}
-          onContentSizeChange={restore}
-          renderItem={({ item: episode }) => {
-            const progress = episode.progressRef
-              ? entries.find(
-                  (entry) =>
-                    entry.providerId === providerId &&
-                    samePlaybackRef(entry.playbackRef, episode.progressRef!),
-                )
-              : undefined;
-            return (
-              <TVPreviewPressable
-                eliteVisual
-                focusScope="series-info"
-                focusId={`series-info:${detail.id}:episode:${selectedSeason!.id}:${episode.id}`}
-                hasTVPreferredFocus={selectedEpisodeId === episode.id}
-                accessibilityRole="button"
-                accessibilityState={{
-                  selected: selectedEpisodeId === episode.id,
-                  disabled: busy,
-                }}
-                onPress={() => {
-                  if (busy) return;
-                  setSelectedEpisodeId(episode.id);
-                  onEpisode(selectedSeason!.id, episode.id);
-                }}
-                style={[
-                  control,
-                  {
-                    marginBottom: 10,
-                    backgroundColor:
-                      selectedEpisodeId === episode.id
-                        ? tokens.color.selected
-                        : tokens.color.surface,
-                  },
-                ]}
-              >
-                <Text style={text}>{episode.title}</Text>
-                {episode.description ? (
-                  <Text style={text}>{episode.description}</Text>
-                ) : null}
-                {episode.duration ? (
-                  <Text style={text}>{episode.duration}</Text>
-                ) : null}
-                {progress ? (
-                  <Text style={text}>
-                    İzlenen: {Math.floor(progress.position / 60)} dk
-                    {progress.duration > 0
-                      ? ` / ${Math.floor(progress.duration / 60)} dk`
-                      : ""}
-                  </Text>
-                ) : null}
-              </TVPreviewPressable>
-            );
-          }}
-          initialNumToRender={8}
-          maxToRenderPerBatch={10}
-          windowSize={7}
-          removeClippedSubviews={!Platform.isTV && Platform.OS !== "web"}
-          keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator
-        />
+      <View style={{ flex: 1 }}>
+        <TVPreviewFocusRegion>
+          <View
+            style={{
+              flex: 1,
+              backgroundColor: tokens.color.canvas,
+              paddingTop: Math.max(insets.top, 24),
+              paddingHorizontal: Math.max(insets.left, insets.right, 24),
+              paddingBottom: Math.max(insets.bottom, 24),
+            }}
+          >
+            <FlatList
+              ref={list}
+              data={selectedSeason?.episodes ?? []}
+              keyExtractor={(episode) => episode.id}
+              ListHeaderComponent={header}
+              ListEmptyComponent={
+                !loading && selectedSeason ? (
+                  <Text style={text}>{t("seasonHasNoEpisodes")}</Text>
+                ) : null
+              }
+              onScroll={(event) => {
+                offset.current = event.nativeEvent.contentOffset.y;
+              }}
+              scrollEventThrottle={32}
+              onContentSizeChange={restore}
+              renderItem={({ item: episode }) => {
+                const progress = episode.progressRef
+                  ? entries.find(
+                      (entry) =>
+                        entry.providerId === providerId &&
+                        samePlaybackRef(
+                          entry.playbackRef,
+                          episode.progressRef!,
+                        ),
+                    )
+                  : undefined;
+                return (
+                  <TVPreviewPressable
+                    eliteVisual
+                    focusScope="series-info"
+                    focusId={`series-info:${detail.id}:episode:${selectedSeason!.id}:${episode.id}`}
+                    hasTVPreferredFocus={selectedEpisodeId === episode.id}
+                    accessibilityRole="button"
+                    accessibilityState={{
+                      selected: selectedEpisodeId === episode.id,
+                      disabled: busy,
+                    }}
+                    onPress={() => {
+                      if (busy) return;
+                      setSelectedEpisodeId(episode.id);
+                      onEpisode(selectedSeason!.id, episode.id);
+                    }}
+                    style={[
+                      control,
+                      {
+                        marginBottom: 10,
+                        backgroundColor:
+                          selectedEpisodeId === episode.id
+                            ? tokens.color.selected
+                            : tokens.color.surface,
+                      },
+                    ]}
+                  >
+                    <Text style={text}>{episode.title}</Text>
+                    {episode.description ? (
+                      <Text style={text}>{episode.description}</Text>
+                    ) : null}
+                    {episode.duration ? (
+                      <Text style={text}>{episode.duration}</Text>
+                    ) : null}
+                    {progress ? (
+                      <Text style={text}>
+                        İzlenen: {Math.floor(progress.position / 60)} dk
+                        {progress.duration > 0
+                          ? ` / ${Math.floor(progress.duration / 60)} dk`
+                          : ""}
+                      </Text>
+                    ) : null}
+                  </TVPreviewPressable>
+                );
+              }}
+              initialNumToRender={8}
+              maxToRenderPerBatch={10}
+              windowSize={7}
+              removeClippedSubviews={!Platform.isTV && Platform.OS !== "web"}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator
+            />
+          </View>
+        </TVPreviewFocusRegion>
+        <TVPreviewControls />
         <TVRemoteInspectorOverlay />
       </View>
     </Modal>

@@ -82,7 +82,9 @@ class LegendStreamTvRemoteModule : Module() {
   private fun now()=android.os.SystemClock.elapsedRealtime()
   private fun structural(reason:String){if(reason=="layout"&&lastStructure!="layout"&&now()-lastStructureAt<=100)return;lastStructure=reason;lastStructureAt=now()}
   private fun cancelRestore(){stability.invalidate();pendingRestore?.let {attachedWindow?.decorView?.removeCallbacks(it)};pendingRestore=null}
-  private fun actualFocus():View? = outlined?.takeIf {it.hasFocus() && it.isAttachedToWindow} ?: attachedWindow?.currentFocus
+  private fun actualFocus():View? = inspectedWindows.keys.asSequence().mapNotNull {it.currentFocus}
+    .firstOrNull {v -> targets[v.id]?.scope==activeScope && v.isAttachedToWindow}
+    ?: outlined?.takeIf {it.hasFocus() && it.isAttachedToWindow} ?: attachedWindow?.currentFocus
   private fun hasActiveFocus():Boolean {
     val current=actualFocus() ?: return false
     val entry=targets[current.id] ?: legacyTargets[current.id]
@@ -167,7 +169,7 @@ class LegendStreamTvRemoteModule : Module() {
       val same=targets[entry.tag]?.let {it.id==entry.id&&it.scope==activeScope}==true
       if(stability.canRestore(ticket,hasActiveFocus(),same&&valid(entry)))focus(entry,reason)
     }
-    pendingRestore=task;attachedWindow?.decorView?.postDelayed(task,32)
+    pendingRestore=task;view(entry.tag)?.post(task)
   }
   private fun move(direction: String): Boolean {
     expectedFocus="none";moveOutcome="missing-focus";expectedVisible=true
@@ -281,7 +283,7 @@ class LegendStreamTvRemoteModule : Module() {
           if(direction!=null && window.currentFocus is EditText && (direction=="left"||direction=="right")) return previous.dispatchKeyEvent(event)
           if(direction!=null && move(direction)) {dispatchOwner="native-focus";consumed.add(event.keyCode);return true}
           if(select) {
-            val current=window.currentFocus
+            val current=window.currentFocus ?: actualFocus()?.takeIf {it.rootView===window.decorView.rootView}
             val entry=current?.let {targets[it.id] ?: legacyTargets[it.id]}
             if(entry!=null) {
               dispatchOwner="native-selection"
@@ -357,6 +359,20 @@ class LegendStreamTvRemoteModule : Module() {
       if(removed!=null){structural("virtualization");cancelRestore()}
       true }.runOnQueue(Queues.MAIN)
     AsyncFunction("requestTargetFocus") { tag: Int -> targets[tag]?.let {cancelRestore();focus(it,"explicit-restore")} ?: false }.runOnQueue(Queues.MAIN)
+    // Called by RN Modal.onShow, after the Dialog window is attached. Registration
+    // may precede attachment; onShow is the lifecycle gate, never a timer retry.
+    AsyncFunction("modalShown") { scope: String ->
+      if(!attach() || activeScope!=scope) return@AsyncFunction false
+      for(window in inspectedWindows.keys.toList()) if(!window.decorView.isAttachedToWindow) {
+        inspectedWindows.remove(window)?.let {pair -> if(window.callback===pair.second)window.callback=pair.first}
+      }
+      for(observer in modalObservers.keys.toList()) if(!observer.isAlive)modalObservers.remove(observer)
+      inspectDialogs(attachedWindow?.decorView)
+      entries().filter {it.scope==scope}.forEach {entry -> view(entry.tag)?.let {watchModal(it)}}
+      restore("modal-shown")
+      diagnostic("modal-ready")
+      true
+    }.runOnQueue(Queues.MAIN)
     AsyncFunction("setScope") { scope: String ->
       if(!attach()) return@AsyncFunction false
       if(activeScope!=scope) {cancelRestore();structural(if(scope=="content"||scope=="player")"scope-transition" else "modal-transition");activeScope=scope;if(scope.startsWith("player-panel:"))remembered.remove(scope);restore("scope-restore")}
