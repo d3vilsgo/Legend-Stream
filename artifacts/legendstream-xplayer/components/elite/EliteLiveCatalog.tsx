@@ -197,9 +197,8 @@ export function EliteLiveCatalog({
               <FlatList
                 ref={list}
                 data={channels}
-                onLayout={(event) => setViewport({ height: event.nativeEvent.layout.height, width: event.nativeEvent.layout.width })}
+                onLayout={(event) => { const { height, width } = event.nativeEvent.layout; setViewport((previous) => previous.height === height && previous.width === width ? previous : { height, width }); }}
                 accessibilityLabel="Canlı kanal listesi"
-                initialScrollIndex={0}
                 keyExtractor={(item) => item.id}
                 style={{ flex: 1, minHeight: 0 }}
                 contentContainerStyle={{ padding: 8 }}
