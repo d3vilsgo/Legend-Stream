@@ -257,6 +257,7 @@ function CatalogHeader({
 }) {
   const colors = useColors();
   const { t } = useI18n();
+  const [searchOpen, setSearchOpen] = useState(false);
   return <View style={s.catalogHeaderRoot}>
     <View style={s.catalogHead}>
       <View style={{ flex: 1, minWidth: 0 }}>
@@ -272,7 +273,18 @@ function CatalogHeader({
       />
     </View>
     <View style={Platform.isTV ? { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12 } : undefined}>
-    <View style={[s.search, Platform.isTV && { flexGrow: 1, flexBasis: 240, minWidth: 180, marginBottom: 0 }, { borderColor: colors.border, backgroundColor: colors.card }]}>
+    <TVPreviewPressable
+      focusId="catalog:search-toggle"
+      accessibilityRole="button"
+      accessibilityLabel={searchOpen ? "Aramayı kapat" : `${title} ara`}
+      accessibilityState={{ expanded: searchOpen }}
+      onPress={() => setSearchOpen((value) => !value)}
+      style={[s.sortDropdownButton, { borderColor: colors.border, backgroundColor: colors.card }]}
+    >
+      <Feather name={searchOpen ? "x" : "search"} size={18} color={colors.foreground} />
+      <Text style={{ color: colors.foreground, fontWeight: "700" }}>{searchOpen ? "Aramayı kapat" : "Ara"}</Text>
+    </TVPreviewPressable>
+    {searchOpen ? <View style={[s.search, Platform.isTV && { flexGrow: 1, flexBasis: 240, minWidth: 180, marginBottom: 0 }, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Feather name="search" size={18} color={colors.mutedForeground} />
       <TextInput
         value={search}
@@ -282,7 +294,7 @@ function CatalogHeader({
         placeholderTextColor={colors.mutedForeground}
         style={{ flex: 1, color: colors.foreground, minHeight: 44, opacity: searchEnabled ? 1 : 0.55 }}
       />
-    </View>
+    </View> : null}
     {activeCategoryLabel ? <View style={[s.activeCategoryChip, Platform.isTV && { maxWidth: 240 }, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Feather name="tag" size={14} color={colors.primary} />
       <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700", flex: 1 }}>{activeCategoryLabel}</Text>
