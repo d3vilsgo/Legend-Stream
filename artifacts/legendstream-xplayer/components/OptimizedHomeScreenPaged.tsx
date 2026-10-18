@@ -477,9 +477,11 @@ export default function OptimizedHomeScreenPaged() {
   const renderCatalog = (view: ContentView) => (
     <>
     <NativeTVFocusScope>
+    {Platform.isTV ? <ResponsiveContentNav items={nav} activeKey={view} onSelect={navigate} /> : null}
+    <View style={{ flex: 1, minHeight: 0, paddingLeft: Platform.isTV ? tvLayout.left + Math.max(64, Math.min(84, tvLayout.target + 12)) + 12 : 0 }}>
     <View style={[s.header, { borderColor: colors.border }, view === "home" ? s.homeHeaderPremium : null]}>
       <View style={s.headerTop}><Text style={[s.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text><ProviderSubscriptionChip provider={provider} /></View>
-      <ResponsiveContentNav items={nav} activeKey={view} onSelect={navigate} />
+      {!Platform.isTV ? <ResponsiveContentNav items={nav} activeKey={view} onSelect={navigate} /> : null}
     </View>
     {error || catalogError || visibleScopedError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}><Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError || visibleScopedError)}</Text><Pressable onPress={() => { clearError(); clearScopedError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable></View> : null}
 
@@ -532,6 +534,7 @@ export default function OptimizedHomeScreenPaged() {
       onClose={homeMovieInfo.close}
       onPlay={homeMovieInfo.play}
     /> : null}
+    </View>
     </NativeTVFocusScope>
     {!seriesDetailSuspended ? <ResponsiveContentNav placement="bottom" items={nav} activeKey={presentedView} onSelect={navigate} /> : null}
     </>
