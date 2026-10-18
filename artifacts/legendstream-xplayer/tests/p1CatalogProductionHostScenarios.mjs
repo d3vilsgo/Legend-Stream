@@ -125,6 +125,7 @@ try {
       loader: "tsx",
     },
     bundle: true,
+    packages: "external",
     platform: "node",
     format: "cjs",
     outfile: join(directory, "catalog.cjs"),
