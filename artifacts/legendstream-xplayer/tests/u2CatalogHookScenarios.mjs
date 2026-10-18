@@ -151,8 +151,16 @@ try {
   grid = render();
   assert(!("onViewableItemsChanged" in grid.listProps)); // Native TV remains on its existing restore owner.
   assert(grid.columns >= 1);
+  // Production TV hook: list measurement from an old orientation must not
+  // survive a window resize before the next onLayout event arrives.
+  grid.listProps.onLayout({ nativeEvent: { layout: { width: 310 } } });
+  grid = render();
+  const narrowColumns = grid.columns;
+  state.window = { ...state.window, width: 1920, height: 1080 };
+  grid = render();
+  assert(grid.columns > narrowColumns);
   console.log(
-    "U2 production catalog hook: 9/9 passed; HOST_HOOK_NOT_ANDROID_LAYOUT",
+    "U2 production catalog hook: 10/10 passed; HOST_HOOK_NOT_ANDROID_LAYOUT",
   );
 } finally {
   delete globalThis.__grid;
