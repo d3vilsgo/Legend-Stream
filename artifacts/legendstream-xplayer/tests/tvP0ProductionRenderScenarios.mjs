@@ -11,15 +11,15 @@ const { build } = createRequire(req.resolve("tsx/package.json"))("esbuild");
 const dir = mkdtempSync(join(tmpdir(), "tv-p0-production-"));
 let cursor = 0, slots = [], effects = [], calls = 0;
 const host = globalThis.__tvP0 = {
-  width: 960, height: 540, fontScale: 1, isTV: true,
+  width: 960, height: 540, fontScale: 1, isTV: true, effects: [],
   state(initial) {
     const i = cursor++;
     if (!(i in slots)) slots[i] = typeof initial === "function" ? initial() : initial;
     return [slots[i], (next) => { slots[i] = typeof next === "function" ? next(slots[i]) : next; }];
   },
   ref(initial) { const i = cursor++; return slots[i] ?? (slots[i] = { current: initial }); },
-  reset() { slots = []; cursor = 0; effects = []; },
-  render(component, props) { cursor = 0; effects = []; const result = component(props); for (const effect of effects) effect(); return result; },
+  reset() { slots = []; cursor = 0; this.effects = []; },
+  render(component, props) { cursor = 0; this.effects = []; const result = component(props); for (const effect of this.effects) effect(); return result; },
 };
 const mocks = {
   react: `const h=globalThis.__tvP0;
