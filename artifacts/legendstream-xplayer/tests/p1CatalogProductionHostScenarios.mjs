@@ -200,6 +200,7 @@ try {
     const poster = exactly(renderedCard, (node) => [node.props?.style].flat(Infinity).some((style) => style?.aspectRatio === 2 / 3));
     assert(poster, name);
     const headerComponent = list.props.ListHeaderComponent;
+    host.reset();
     const header = host.render(headerComponent.tag, headerComponent.props);
     const toggle = exactly(header, (node) => node.props?.focusId === "catalog:search-toggle");
     toggle.props.onPress();
