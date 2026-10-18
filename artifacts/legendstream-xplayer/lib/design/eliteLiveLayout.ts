@@ -15,7 +15,7 @@ export function eliteLiveLayout(input: TvWindow) {
   // The channel list is the primary task; a secondary details pane may use
   // only the space left after reserving category and channel navigation.
   const detailWidth = stacked
-    ? 0
+    ? width
     : Math.max(0, Math.min(300, width - categoryWidth - channelWidth - 36));
   return {
     ...base,
