@@ -43,7 +43,7 @@ export function ResponsiveContentNav<Key extends string>({
   const { width, height, fontScale } = useWindowDimensions();
   const tv = nativeTvLayout({ width, height, fontScale, safeArea: insets }, items.length);
   const presentation = useUiPresentation();
-  const [open, setOpen] = useState(Platform.isTV || presentation.tvPreview);
+  const [open, setOpen] = useState(presentation.tvPreview);
   const [preferInitialFocus, setPreferInitialFocus] = useState(Platform.isTV);
   const navigationFocusedIds = useRef(new Set<string>());
   const profile = useMemo(() => resolvePremiumCatalogProfile({
