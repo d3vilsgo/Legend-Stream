@@ -271,6 +271,8 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/u2ResponsiveScenarios.ts
       - name: U2 production responsive catalog hook
         run: node artifacts/legendstream-xplayer/tests/u2CatalogHookScenarios.mjs
+      - name: P1 production Movies and Series catalog host acceptance
+        run: node artifacts/legendstream-xplayer/tests/p1CatalogProductionHostScenarios.mjs
       - name: Premium Home hero scenarios
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/premiumHomeHeroScenarios.ts
       - name: Premium tablet design foundation scenarios (11/11 required)
