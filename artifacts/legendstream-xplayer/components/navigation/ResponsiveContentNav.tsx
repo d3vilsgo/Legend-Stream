@@ -90,12 +90,12 @@ export function ResponsiveContentNav<Key extends string>({
 
   if (placement === "bottom" && (model.nativeTv || presentation.tvPreview)) return null;
   if (model.nativeTv) {
+    const availableWidth = Math.max(0, width - insets.left - insets.right - tv.left - tv.right);
+    const gap = 8;
+    const targetWidth = Math.max(56, Math.min(tv.navWidth, Math.floor((availableWidth - gap * (items.length - 1)) / Math.max(items.length, 1))));
     return (
-      <ScrollView
-        horizontal
-        style={{ flexGrow: 0, flexShrink: 0 }}
-        showsHorizontalScrollIndicator
-        contentContainerStyle={[styles.tvNav, { paddingLeft: tv.left, paddingRight: tv.right, paddingTop: tv.top, paddingBottom: tv.gutter }]}
+      <View
+        style={[styles.tvNav, { flexDirection: "row", flexWrap: "wrap", flexGrow: 0, flexShrink: 0, paddingLeft: tv.left, paddingRight: tv.right, paddingTop: tv.top, paddingBottom: tv.gutter }]}
         accessibilityLabel="Ana gezinme"
       >
         {items.map((item) => (
@@ -113,10 +113,10 @@ export function ResponsiveContentNav<Key extends string>({
             onPress={() => select(item.key)}
             labelLines={1}
             labelStyle={{ fontSize: tv.labelFont, flexShrink: 1 }}
-            style={[styles.tvTarget, { width: tv.navWidth, minHeight: tv.target, paddingHorizontal: 10 }]}
+            style={[styles.tvTarget, { width: targetWidth, minHeight: tv.target, paddingHorizontal: 10 }]}
           />
         ))}
-      </ScrollView>
+      </View>
     );
   }
 
