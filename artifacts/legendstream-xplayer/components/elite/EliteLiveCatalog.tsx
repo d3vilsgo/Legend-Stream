@@ -64,6 +64,9 @@ export function EliteLiveCatalog({
 }) {
   const [bounds, setBounds] = useState({ width: 960, height: 540 });
   const [searchOpen, setSearchOpen] = useState(false);
+  const [viewport, setViewport] = useState({ height: 0, width: 0 });
+  const searchInput = useRef<TextInput>(null);
+  const lastChannelOffset = useRef(0);
   const [{ panelOpen, selectedId }, dispatch] = useReducer(
     eliteLiveReduce,
     eliteLiveInitial,
@@ -77,8 +80,13 @@ export function EliteLiveCatalog({
   useEffect(() => {
     dispatch({ type: "reset" });
     scrolled.current = false;
+    lastChannelOffset.current = 0;
     list.current?.scrollToOffset({ offset: 0, animated: false });
-  }, [category, search]);
+  }, [category]);
+  useEffect(() => {
+    if (searchOpen) searchInput.current?.focus();
+    else { searchInput.current?.blur(); list.current?.scrollToOffset({ offset: lastChannelOffset.current, animated: false }); }
+  }, [searchOpen]);
   const programs = selected
     ? selectProgramsAt(epgByChannel.get(selected.id), clock)
     : {};
@@ -130,13 +138,13 @@ export function EliteLiveCatalog({
         {button("search-toggle", searchOpen ? "Aramayı kapat" : "Kanal ara", () => setSearchOpen(value => !value))}
         {button("refresh", "Yenile", onRefresh, loading)}
       </View>
-      <View style={[s.body, geometry.stacked && { flexDirection: "column" }]}>
+      <View style={[s.body, geometry.stacked && { flexDirection: "column" }]} accessibilityHint={viewport.height > 0 ? `Kanal listesi ${Math.round(viewport.height)} birim yüksekliğinde` : "Kanal listesi ölçülüyor"}>
         {panelOpen ? (
           <View
             style={[
               s.panel,
               geometry.stacked
-                ? { flex: 1 }
+                ? { flex: 1, minHeight: 0, flexDirection: "row" }
                 : {
                     width: geometry.categoryWidth + geometry.channelWidth + 12,
                   },
@@ -172,6 +180,7 @@ export function EliteLiveCatalog({
             </ScrollView>
             <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
               {searchOpen ? <TextInput
+                ref={searchInput}
                 accessibilityLabel="Kanal ara"
                 placeholder="Kanal ara…"
                 placeholderTextColor={tokens.color.muted}
@@ -188,6 +197,9 @@ export function EliteLiveCatalog({
               <FlatList
                 ref={list}
                 data={channels}
+                onLayout={(event) => setViewport({ height: event.nativeEvent.layout.height, width: event.nativeEvent.layout.width })}
+                accessibilityLabel="Canlı kanal listesi"
+                initialScrollIndex={0}
                 keyExtractor={(item) => item.id}
                 style={{ flex: 1, minHeight: 0 }}
                 contentContainerStyle={{ padding: 8 }}
@@ -196,6 +208,7 @@ export function EliteLiveCatalog({
                 maxToRenderPerBatch={12}
                 windowSize={9}
                 onScroll={(e) => {
+                  lastChannelOffset.current = Math.max(0, e.nativeEvent.contentOffset.y);
                   if (e.nativeEvent.contentOffset.y > 0)
                     scrolled.current = true;
                 }}
@@ -284,7 +297,7 @@ export function EliteLiveCatalog({
             </View>
           </View>
         ) : null}
-        <ScrollView
+        {!panelOpen || !geometry.stacked ? <ScrollView
           style={[
             s.details,
             panelOpen && !geometry.stacked && { flex: 0, width: Math.min(260, Math.max(160, bounds.width * 0.22)) },
@@ -336,7 +349,7 @@ export function EliteLiveCatalog({
               gösterilir.
             </Text>
           )}
-        </ScrollView>
+        </ScrollView> : null}
       </View>
     </View>
   );
