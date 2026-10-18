@@ -95,6 +95,7 @@ export function FocusButton({
           },
           tvFocused ? { shadowColor: colors.primary } : null,
           style,
+          tvFocused ? { borderColor: "#fff" } : null,
         ]}
         accessibilityRole={accessibilityRole}
         accessibilityState={accessibilityState}
