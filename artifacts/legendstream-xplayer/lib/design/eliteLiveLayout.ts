@@ -5,16 +5,21 @@ export function eliteLiveLayout(input: TvWindow) {
   const width = Math.max(1, base.usableWidth);
   const scale = Math.max(1, Math.min(3, input.fontScale ?? 1));
   const stacked = width < 1050 * Math.sqrt(scale);
-  const categoryWidth = Math.min(260, Math.max(180, width * 0.19));
-  const channelWidth = Math.min(480, Math.max(300, width * 0.31));
+  // In stacked mode the channel viewport must retain usable width even on small TVs.
+  const categoryWidth = stacked
+    ? Math.max(96, Math.min(220, width * 0.28))
+    : Math.min(260, Math.max(180, width * 0.19));
+  const channelWidth = stacked
+    ? Math.max(96, width - categoryWidth - 24)
+    : Math.min(480, Math.max(300, width * 0.31));
   return {
     ...base,
     stacked,
     categoryWidth,
     channelWidth,
     rowHeight: Math.ceil(Math.max(76, 54 * scale + 24)),
-    bodyFont: 20,
-    metaFont: 17,
+    bodyFont: Math.round(Math.max(16, Math.min(24, 18 * Math.sqrt(scale)))),
+    metaFont: Math.round(Math.max(13, Math.min(20, 15 * Math.sqrt(scale)))),
     detailWidth: stacked
       ? width
       : Math.max(1, width - categoryWidth - channelWidth - 24),
