@@ -309,6 +309,8 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvExitScenarios.ts
       - name: TV remote inspector behavioral privacy and event separation
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tvRemoteInspectorScenarios.ts
+      - name: U4.1 production StageRail and Live adaptive host acceptance
+        run: node artifacts/legendstream-xplayer/tests/u41StageRailLiveHostScenarios.mjs
       - name: Native TV remote ownership and action semantics
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvRemoteScenarios.ts
       - name: Native TV responsive dp matrix
