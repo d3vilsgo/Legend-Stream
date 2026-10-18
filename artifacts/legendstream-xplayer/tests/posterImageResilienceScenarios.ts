@@ -31,7 +31,7 @@ expect(
 expect(
   "valid https artwork is preserved and Home shelves share the resilient image lifecycle",
   normalizeImageUrl("https://cdn.example.com/p.jpg") === "https://cdn.example.com/p.jpg" &&
-  homeSource.includes('<ResilientCatalogImage uri={item.image} resizeMode="cover" style={StyleSheet.absoluteFill} fallbackIcon={compact ? "radio" : "play-circle"} />') &&
+  /<ResilientCatalogImage\s+uri=\{item.image\}\s+resizeMode="cover"\s+style=\{StyleSheet.absoluteFill\}\s+fallbackIcon=\{compact \? "radio" : "play-circle"\}\s*\/>/.test(homeSource) &&
   !homeSource.includes('{item.image ? <Image source={{ uri: item.image }}'),
 );
 expect(

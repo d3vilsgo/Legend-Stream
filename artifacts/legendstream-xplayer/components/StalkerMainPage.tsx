@@ -1,3 +1,4 @@
+import { BuildIdentity } from "@/components/BuildIdentity";
 import type { StalkerSeriesProductItem } from "@/lib/stalkerSeriesProduct";
 import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
 import { useStalkerHomeMovieInfo } from "@/hooks/useStalkerHomeMovieInfo";
@@ -468,7 +469,7 @@ export default function StalkerMainPage() {
         {
           backgroundColor: colors.background,
           paddingTop: top,
-          paddingBottom: Math.max(insets.bottom, 10),
+          paddingBottom: Platform.isTV ? Math.max(insets.bottom, 10) : 0,
         },
       ]}
     >
@@ -605,6 +606,7 @@ export default function StalkerMainPage() {
         closeOnPlay={false} playback={homeMovieInfo.state}
       /> : null}
       </NativeTVFocusScope>
+    {view !== "player" ? <ResponsiveContentNav placement="bottom" items={nav} activeKey={presentedView} onSelect={navigate} /> : null}
       {view === "player" && playable ? (
         <View style={s.fullPlayer}>
           <NativeVideoPlayer
@@ -708,6 +710,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onSwitch, on
   return (
     <View>
       <Text style={[s.title, { color: colors.foreground }]}>{t("settings")}</Text>
+      <BuildIdentity />
       <TVPreviewSetting />
       <TVRemoteInspectorSetting />
       <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}>
@@ -787,7 +790,7 @@ const s = StyleSheet.create({
   content: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
   header: { borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingBottom: 8 },
   homeHeaderPremium: { paddingHorizontal: 18, paddingTop: 6, paddingBottom: 10 },
-  headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 48 },
+  headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 48, gap: 8 },
   brand: { fontSize: 18, fontWeight: "900", letterSpacing: 1 },
   error: { margin: 12, borderWidth: 1, borderRadius: 12, padding: 10, flexDirection: "row", gap: 8, alignItems: "center" },
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },

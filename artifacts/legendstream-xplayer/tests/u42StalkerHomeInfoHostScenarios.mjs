@@ -63,7 +63,7 @@ const mocks = {
   "@/lib/stalkerProductSession": `export const readCurrentStalkerProductSession=()=>{if(globalThis.__stalkerHome.failRead)throw Error('invalid');return {session:globalThis.__stalkerHome.session,providerScopeId:'scope:'+globalThis.__stalkerHome.scope}};`,
   "@/lib/stalkerPortalRuntime": `export const isRegisteredStalkerPortalSession=(id,s)=>globalThis.__stalkerHome.session===s;export const subscribeStalkerPortalRuntime=f=>{globalThis.__stalkerHome.listeners.add(f);return()=>globalThis.__stalkerHome.listeners.delete(f);};`,
   "@/lib/stalkerPlaybackTrace": `export const beginStalkerPlaybackTrace=()=>{};`,
-  "@/components/tvPreview/TVPreviewFocus": `export const useTVPreviewFocus=()=>globalThis.__stalkerHome.focus;export const TVPreviewPressable='FocusButton';`,
+  "@/components/tvPreview/TVPreviewFocus": `export const useTVPreviewFocus=()=>globalThis.__stalkerHome.focus;export const TVPreviewFocusRegion='Viewport',TVPreviewControls='Dock';export const TVPreviewPressable='FocusButton';`,
   "@/components/tvPreview/TVRemoteInspector": `export const TVRemoteInspectorOverlay='Inspector';`,
   "./MovieInfoServiceProvider": `export const useMovieInfoService=()=>globalThis.__stalkerHome.service;`,
 };
@@ -244,6 +244,8 @@ try {
     focused = id;
   });
   h.focus = focus;
+  const modalReady = [];
+  focus.modalShown = (scope) => modalReady.push(scope);
   focus.register({
     id: "home-shelf:Films:movie-b",
     scope: "content",
@@ -308,6 +310,10 @@ try {
       .find((b) => b.props.focusId === "movie-info:play")
       .props.onPress();
     assert.equal(playTaps, 1);
+    buttons()
+      .find((b) => b.props.focusId === "movie-info:play")
+      .props.onPress();
+    assert.equal(playTaps, 1, "double OK before busy render must not replay");
     assert.equal(closed, 1);
     props.playback = {
       busy: false,
@@ -332,11 +338,17 @@ try {
         tree = render(() => MovieInfoModal(props));
         assert.equal(tree.tag, "Modal");
         assert.equal(tree.props.onRequestClose, props.onClose);
+        tree.props.onShow();
+        if (native) assert.equal(modalReady.at(-1), "movie-info");
         assert.match(JSON.stringify(tree), /Local movie/);
       }
   });
   await test("modal cleanup restores selected Home focus and base Back ownership", () => {
+    const oldPlay = buttons().find((b) => b.props.focusId === "movie-info:play")
+      .props.onPress;
     clean();
+    oldPlay();
+    assert.equal(playTaps, 1, "unmounted callback must not play");
     assert.equal(focused, "home-shelf:Films:movie-b");
     focus.back();
     assert.equal(baseBack, 1);
@@ -356,7 +368,7 @@ try {
     assert.match(main, /kind: "movie",\s*returnTo,/);
     assert.match(main, /onPlayable=\{openMovie\}/);
     assert.match(main, /newMovies=\{\[\]\}/);
-    assert.match(home, /item.movie \? onOpenMovie\(item.movie\)/);
+    assert.match(home, /item.movie\s*\? onOpenMovie\(item.movie\)/);
     assert.match(home, /onPress: \(\) => onOpenMovie\(item\)/);
   });
   await test("Home stays mounted behind player; scroll and Hero timer pause", () => {
@@ -373,7 +385,8 @@ try {
       /interactionBlocked=\{Boolean\(homeMovieInfo.state\) \|\| Boolean\(homeSeriesInfo\) \|\| view === "player"\}/,
     );
     assert.match(home, /paused=\{interactionBlocked\}/);
-    assert.match(home, /if \(paused\) return;/);
+    assert.doesNotMatch(home, /setInterval\(/);
+    assert.match(home, /disabled=\{paused/);
   });
   console.log(
     `U4.2 Stalker Home Info host: ${count}/${count} passed; HOST_HOOK_MODAL_AND_PREVIEW_NOT_ANDROID`,

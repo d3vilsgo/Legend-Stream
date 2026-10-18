@@ -297,6 +297,8 @@ jobs:
         run: node artifacts/legendstream-xplayer/tests/nativeTvFocusJvmScenarios.mjs
       - name: Native TV Home compact geometry
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvHomeLayoutScenarios.ts
+      - name: Visible Home navigation and Player recovery host regressions
+        run: node artifacts/legendstream-xplayer/tests/visibleHomeRemoteScenarios.mjs
       - name: Native TV Home production component render contract
         run: node artifacts/legendstream-xplayer/tests/nativeTvHomeRenderScenarios.mjs
       - name: Native TV Home helper and test formatting

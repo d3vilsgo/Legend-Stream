@@ -1,3 +1,4 @@
+import { BuildIdentity } from "@/components/BuildIdentity";
 import { usePagedSeriesInfo } from "@/hooks/usePagedSeriesInfo";
 import { SeriesInfoModal } from "@/components/series/SeriesInfoModal";
 import type { MediaPlaybackRef } from "@/lib/mediaProgress";
@@ -474,6 +475,7 @@ export default function OptimizedHomeScreenPaged() {
 
   const seriesDetailSuspended = view === "player";
   const renderCatalog = (view: ContentView) => (
+    <>
     <NativeTVFocusScope>
     <View style={[s.header, { borderColor: colors.border }, view === "home" ? s.homeHeaderPremium : null]}>
       <View style={s.headerTop}><Text style={[s.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text><ProviderSubscriptionChip provider={provider} /></View>
@@ -530,9 +532,11 @@ export default function OptimizedHomeScreenPaged() {
       onPlay={homeMovieInfo.play}
     /> : null}
     </NativeTVFocusScope>
+    {!seriesDetailSuspended ? <ResponsiveContentNav placement="bottom" items={nav} activeKey={presentedView} onSelect={navigate} /> : null}
+    </>
   );
 
-  return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
+  return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Platform.isTV ? Math.max(insets.bottom, 10) : 0 }]}>
     {renderCatalog(presentedView)}
     {(Platform.isTV || pagedSeries.state) && view === "player" && playable ? <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "black", zIndex: 100, elevation: 100 }]}>
       <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} progressRef={playable.progressRef} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => { setView(playable.returnTo); setPlayable(null); }} />
@@ -657,6 +661,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAd
   const { t, language, languages, setLanguage } = useI18n();
   return <View>
     <Text style={[s.title, { color: colors.foreground }]}>{t("settings")}</Text>
+      <BuildIdentity />
       <TVPreviewSetting />
       <TVRemoteInspectorSetting />
     <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}>
@@ -698,7 +703,7 @@ const s = StyleSheet.create({
   content: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
   header: { borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingBottom: 8 },
   homeHeaderPremium: { paddingHorizontal: 18, paddingTop: 6, paddingBottom: 10 },
-  headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 48 },
+  headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 48, gap: 8 },
   brand: { fontSize: 18, fontWeight: "900", letterSpacing: 1 },
   brandLarge: { fontSize: 28, fontWeight: "900", letterSpacing: 1 },
   error: { margin: 12, borderWidth: 1, borderRadius: 12, padding: 10, flexDirection: "row", gap: 8, alignItems: "center" },

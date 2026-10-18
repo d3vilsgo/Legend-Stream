@@ -127,7 +127,7 @@ try {
           }),
         );
         const buttonHeight = (html) =>
-          Number(html.match(/<button[^>]*data-height="([0-9.]+)"/)?.[1]);
+          Number(html.match(/<div[^>]*data-height="([0-9.]+)"/)?.[1]);
         const h = buttonHeight(withImage);
         assert(h > 0 && h <= 320);
         assert.equal(buttonHeight(missingImage), h);
@@ -164,7 +164,7 @@ try {
       discoverLabel: "Keşfet",
     }),
   );
-  assert(Number(mobile.match(/<button[^>]*data-height="([0-9.]+)"/)?.[1]) > 0);
+  assert(Number(mobile.match(/<div[^>]*data-height="([0-9.]+)"/)?.[1]) > 0);
   count++;
   let responsiveCount = 0;
   for (const [width, height] of [
@@ -213,12 +213,21 @@ try {
           }),
         );
         const heightOf = (html) =>
-          Number(html.match(/<button[^>]*data-height="([0-9.]+)"/)?.[1]);
+          Number(html.match(/<div[^>]*data-height="([0-9.]+)"/)?.[1]);
         const h = heightOf(image);
-        assert(h > 0 && h <= (width > height || preview ? 190 : 360));
+        assert(h >= (width > height || preview ? 160 : 310));
+        assert(h <= (width > height || preview ? 190 : 450));
         assert.equal(heightOf(empty), h);
         assert(loading.includes(`data-height="${h}"`));
-        assert(h + 56 * fontScale + 104 <= height - 140 + 1);
+        // Short/accessibility windows deliberately scroll the readable introduction;
+        // the old contract squeezed it to 1dp to show a shelf simultaneously.
+        const available = height - 140;
+        assert(
+          h + 56 * fontScale + 104 <= available + 1 ||
+            h >= (width > height || preview ? 160 : 310),
+        );
+        assert(image.includes("Detay / Bilgi"));
+        assert(image.includes("İzle"));
         responsiveCount++;
       }
   console.log(

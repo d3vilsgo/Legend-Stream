@@ -26,6 +26,7 @@ type HomeHeroEntry = {
   title: string;
   subtitle: string;
   image: string;
+  description?: string;
   movie?: XtreamVodItem;
   series?: XtreamSeriesItem;
 };
@@ -158,22 +159,23 @@ export function HomeDiscovery({
     const movieRows: HomeHeroEntry[] = [];
     for (const item of homeMovies) {
       const image = normalizeImageUrl(item.stream_icon);
-      if (image) movieRows.push({
+      movieRows.push({
         id: `movie-${item.stream_id}`,
         title: item.name,
-        subtitle: item.genre || t("movies"),
-        image,
+        subtitle: [item.genre, item.releaseDate || item.release_date].filter(Boolean).join(" · ") || t("movies"),
+        description: item.plot,
+        image: image ?? "",
         movie: item,
       });
     }
     const seriesRows: HomeHeroEntry[] = [];
     for (const item of homeSeries) {
       const image = normalizeImageUrl(item.cover);
-      if (image) seriesRows.push({
+      seriesRows.push({
         id: `series-${item.series_id}`,
         title: item.name,
         subtitle: t("series"),
-        image,
+        image: image ?? "",
         series: item,
       });
     }
@@ -274,7 +276,7 @@ export function HomeDiscovery({
       discoverLabel={copy.discover}
       loading={effectiveLoading}
     />
-    {!shelvesFirst ? sectionCards : null}
+
     {continueShelf.length || !mediaLibraryLoaded ? <HomeShelf title={copy.continue} seeAll={copy.seeAll} items={continueShelf} onSeeAll={() => onNavigate("history")} loading={!mediaLibraryLoaded} /> : null}
     {recentShelf.length ? <HomeShelf title={copy.recent} seeAll={copy.seeAll} items={recentShelf} onSeeAll={() => onNavigate("history")} compact /> : null}
     <HomeShelf title={t("liveTv")} seeAll={copy.seeAll} items={liveShelf} onSeeAll={() => onNavigate("live")} compact emptyLabel={live === 0 ? copy.noLive : copy.discover} loading={live === null} />
@@ -283,7 +285,7 @@ export function HomeDiscovery({
     {newMovieShelf.length ? <HomeShelf title={copy.newMovies} seeAll={copy.seeAll} items={newMovieShelf} onSeeAll={() => onNavigate("movies")} /> : null}
     {newSeriesShelf.length ? <HomeShelf title={copy.newSeries} seeAll={copy.seeAll} items={newSeriesShelf} onSeeAll={() => onNavigate("series")} /> : null}
     {newChannelShelf.length ? <HomeShelf title={copy.newChannels} seeAll={copy.seeAll} items={newChannelShelf} onSeeAll={() => onNavigate("live")} compact /> : null}
-    {shelvesFirst ? sectionCards : null}
+    {sectionCards}
   </View>;
 }
 
@@ -301,6 +303,7 @@ function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = fal
   const colors = useColors();
   const [focused, setFocused] = useState(false);
   return <TVPreviewPressable
+    eliteVisual
     focusId={focusId}
     accessibilityLabel={accessibilityLabel}
     focusable
@@ -316,7 +319,7 @@ function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = fal
     style={[
       style,
       Platform.isTV ? s.homeTvFocusBase : null,
-      Platform.isTV && focused ? [s.homeTvFocusActive, { borderColor: colors.primary, shadowColor: colors.primary }] : null,
+      Platform.isTV && focused ? [s.homeTvFocusActive, { borderColor: "#fff", shadowOpacity: 0, shadowRadius: 0, elevation: 0 }] : null,
     ]}
   >{children}</TVPreviewPressable>;
 }
@@ -340,7 +343,19 @@ function ResilientCatalogImage({ uri, style, resizeMode = "cover", fallbackIcon 
   return <Image source={{ uri: normalized }} resizeMode={resizeMode} style={style} onError={() => setFailed(true)} />;
 }
 
-export function HomeHeroCarousel({ items, tvViewportHeight, eyebrow, providerName, onOpen, onDiscover, discoverLabel, loading = false, paused = false }: {
+/** Production Home presentation: both actions preserve the selected provider object.
+ * Series starts at Info/episode selection; Home never manufactures an episode URL. */
+export function HomeHeroCarousel({
+  items,
+  tvViewportHeight,
+  eyebrow,
+  providerName,
+  onOpen,
+  onDiscover,
+  discoverLabel,
+  loading = false,
+  paused = false,
+}: {
   items: HomeHeroEntry[];
   tvViewportHeight?: number;
   eyebrow: string;
@@ -351,102 +366,185 @@ export function HomeHeroCarousel({ items, tvViewportHeight, eyebrow, providerNam
   loading?: boolean;
   paused?: boolean;
 }) {
-  const colors = useColors();
   const { width, height, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  const tvHero = nativeTvHomeLayout({ width, height, fontScale, safeArea: insets, viewportHeight: tvViewportHeight });
   const { tvPreview } = useUiPresentation();
-  const [measured, setMeasured] = useState<{ width: number; windowWidth: number } | null>(null);
-  const measuredWidth = measured?.windowWidth === width ? measured.width : undefined;
-  const measureHero = (event: LayoutChangeEvent) => { const nextWidth = event.nativeEvent.layout.width; setMeasured(current => current?.width === nextWidth && current.windowWidth === width ? current : { width: nextWidth, windowWidth: width }); };
-  const responsive = responsiveHomeHeroLayout({ width, height, fontScale, safeArea: insets, tvPreview, viewportHeight: tvViewportHeight, containerWidth: measuredWidth });
-  const heroHeight = Platform.isTV ? tvHero.heroHeight : responsive.height;
-  const nativeGeometry = { height: heroHeight, minHeight: heroHeight, maxHeight: heroHeight, aspectRatio: undefined };
-  const nativeTitle = Platform.isTV ? { fontSize: tvHero.titleFont, lineHeight: tvHero.titleLineHeight } : { fontSize: responsive.titleFont, lineHeight: responsive.titleLineHeight };
-  const nativeMeta = Platform.isTV ? { fontSize: tvHero.metaFont, lineHeight: tvHero.metaLineHeight, marginTop: 6 } : { fontSize: 12, lineHeight: 16, marginTop: 6 };
-  const titleLines = Platform.isTV ? tvHero.titleLines : responsive.titleLines;
-  const showMeta = Platform.isTV ? tvHero.showMeta : responsive.showMeta;
-  const padding = Platform.isTV ? tvHero.padding : responsive.captionPadding;
-  const cardWidth = Platform.isTV ? Math.max(1, measuredWidth ?? width - 112) : responsive.width;
-  const listRef = useRef<FlatList<HomeHeroEntry>>(null);
   const [index, setIndex] = useState(0);
   const selectedId = useRef<string | null>(null);
-  const itemIds = items.map(item => item.id).join("\u0000");
+  const itemIds = items.map((item) => item.id).join("\u0000");
   useEffect(() => {
-    if (Platform.isTV) return;
-    const selectedIndex = items.findIndex(item => item.id === selectedId.current);
-    const next = selectedIndex < 0 ? 0 : selectedIndex;
-    setIndex(next);
-    selectedId.current = items[next]?.id ?? null;
-    if (items.length) listRef.current?.scrollToOffset({ offset: cardWidth * next, animated: false });
-  }, [cardWidth, itemIds]);
-
-  useEffect(() => {
-    if (paused) return;
-    if (Platform.isTV || tvPreview || items.length < 2) return;
-    const timer = setInterval(() => {
-      setIndex((current) => {
-        const next = (current + 1) % items.length;
-        selectedId.current = items[next]?.id ?? null;
-        listRef.current?.scrollToIndex({ index: next, animated: true });
-        return next;
-      });
-    }, 5600);
-    return () => clearInterval(timer);
-  }, [items, tvPreview, paused]);
-
-  if (!items.length) {
-    if (loading) {
-      return <View onLayout={measureHero} style={[s.homeHeroEmpty, nativeGeometry, { padding }, { borderColor: colors.border, backgroundColor: colors.card }]}>
-        <LinearGradient colors={["rgba(0,212,255,0.10)", "rgba(5,9,20,0.02)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
-        <View style={{ flex: 1, justifyContent: "flex-end", gap: 10 }}>
-          <View style={[s.homeSkeletonLine, { width: "28%", backgroundColor: colors.muted }]} />
-          <View style={[s.homeSkeletonLine, { width: "68%", height: 24, backgroundColor: colors.muted }]} />
-          <View style={[s.homeSkeletonLine, { width: "42%", backgroundColor: colors.muted }]} />
-        </View>
-      </View>;
-    }
-    return <TvFocusPressable onLayout={measureHero} focusId="home-hero:empty" accessibilityLabel={discoverLabel} preferredFocus onPress={onDiscover} style={[s.homeHeroEmpty, nativeGeometry, { padding }, { borderColor: colors.border, backgroundColor: colors.card }]}>
-      <LinearGradient colors={["rgba(0,212,255,0.12)", "rgba(5,9,20,0.02)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
-      <View style={{ flex: 1, justifyContent: "flex-end" }}>
-        {!Platform.isTV && responsive.showEyebrow ? <Text style={[s.homeHeroEyebrow, { color: colors.primary }]}>{providerName}</Text> : null}
-        <Text numberOfLines={titleLines} style={[s.homeHeroTitle, nativeTitle, { color: colors.foreground }]}>{discoverLabel}</Text>
-        {showMeta ? <Text numberOfLines={1} style={[s.homeHeroMeta, nativeMeta, { color: colors.mutedForeground }]}>{eyebrow}</Text> : null}
-      </View>
-    </TvFocusPressable>;
-  }
-
-  return <View onLayout={measureHero}>
-    <FlatList
-      ref={listRef}
-      data={items}
-      horizontal
-      pagingEnabled
-      removeClippedSubviews={Platform.isTV ? false : undefined}
-      showsHorizontalScrollIndicator={false}
-      keyExtractor={(item) => item.id}
-      getItemLayout={(_data, itemIndex) => ({ length: cardWidth, offset: cardWidth * itemIndex, index: itemIndex })}
-      onMomentumScrollEnd={(event) => { const next = Math.max(0, Math.min(items.length - 1, Math.round(event.nativeEvent.contentOffset.x / cardWidth))); setIndex(next); selectedId.current = items[next]?.id ?? null; }}
-      onScrollToIndexFailed={({ index: target }) => listRef.current?.scrollToOffset({ offset: target * cardWidth, animated: false })}
-      renderItem={({ item, index: itemIndex }) => <TvFocusPressable
-        focusId={`home-hero:${item.id}`}
-        accessibilityLabel={item.title}
-        preferredFocus={itemIndex === 0}
-        onPress={() => onOpen(item)}
-        onFocus={() => listRef.current?.scrollToIndex({ index: itemIndex, animated: true })}
-        style={[s.homeHeroCard, nativeGeometry, { width: cardWidth, borderColor: "transparent" }]}
+    const found = items.findIndex((item) => item.id === selectedId.current);
+    setIndex(found < 0 ? 0 : found);
+  }, [itemIds]);
+  const item = items[index] ?? items[0];
+  if (item) selectedId.current = item.id;
+  const responsive = responsiveHomeHeroLayout({
+    width,
+    height,
+    fontScale,
+    tvPreview,
+    safeArea: insets,
+    viewportHeight: tvViewportHeight,
+  });
+  const native = nativeTvHomeLayout({
+    width,
+    height,
+    fontScale,
+    safeArea: insets,
+    viewportHeight: tvViewportHeight,
+  });
+  // Very short windows get an explicit compact introduction with actions, never a 1dp strip.
+  const compact = width > height || tvPreview || Platform.isTV;
+  const heroHeight = Platform.isTV
+    ? native.heroHeight
+    : Math.max(
+        compact ? 160 : Math.ceil(240 + 70 * fontScale),
+        responsive.height,
+      );
+  const titleStyle = Platform.isTV
+    ? { fontSize: native.titleFont, lineHeight: native.titleLineHeight }
+    : { fontSize: compact ? 24 : 34, lineHeight: compact ? 28 : 39 };
+  const action = (label: string, id: string, primary = false) => (
+    <TVPreviewPressable
+      eliteVisual
+      focusId={`home-hero:${item?.id ?? "empty"}:${id}`}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hasTVPreferredFocus={id === "watch"}
+      disabled={paused || loading}
+      onPress={() => (item ? onOpen(item) : onDiscover())}
+      style={{
+        minHeight: Platform.isTV ? 56 : 48,
+        paddingHorizontal: 18,
+        paddingVertical: 10,
+        borderRadius: 12,
+        borderWidth: 2,
+        borderColor: primary ? "#56ddd0" : "#728088",
+        backgroundColor: primary ? "#56ddd0" : "#1c252dcc",
+        justifyContent: "center",
+      }}
+    >
+      <Text
+        style={{
+          fontSize: Platform.isTV ? 18 : 15,
+          fontWeight: "800",
+          color: primary ? "#071c20" : "white",
+        }}
       >
-        <ResilientCatalogImage uri={item.image} showFallbackIcon={!Platform.isTV} resizeMode="cover" style={StyleSheet.absoluteFill} />
-        <LinearGradient colors={["rgba(2,6,16,0.02)", "rgba(2,6,16,0.18)", "rgba(2,6,16,0.92)"]} locations={[0, 0.5, 1]} style={StyleSheet.absoluteFill} pointerEvents="none" />
-        <View style={[s.homeHeroCaption, { paddingTop: padding, paddingBottom: padding }, !Platform.isTV && { maxWidth: responsive.captionMaxWidth + padding * 2 }]}>
-          {!Platform.isTV && responsive.showEyebrow ? <Text style={[s.homeHeroEyebrow, { color: colors.primary }]}>{eyebrow}</Text> : null}
-          <Text numberOfLines={titleLines} style={[s.homeHeroImageTitle, nativeTitle]}>{item.title}</Text>
-          {showMeta ? <Text numberOfLines={1} style={[s.homeHeroImageMeta, nativeMeta]}>{item.subtitle}</Text> : null}
+        {label}
+      </Text>
+    </TVPreviewPressable>
+  );
+  return (
+    <View
+      style={{
+        height: heroHeight,
+        minHeight: heroHeight,
+        borderRadius: 24,
+        overflow: "hidden",
+        backgroundColor: "#17252d",
+        borderWidth: 1,
+        borderColor: "#33454b",
+      }}
+      accessibilityLabel="Öne çıkan içerik"
+    >
+      {item?.image ? (
+        <ResilientCatalogImage
+          uri={item.image}
+          showFallbackIcon={false}
+          style={StyleSheet.absoluteFill}
+        />
+      ) : null}
+      <LinearGradient
+        colors={["#101b24ee", "#101b2488", "#101b24ee"]}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 1, y: 1 }}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
+      <View
+        style={{
+          flex: 1,
+          padding: compact ? 16 : 24,
+          justifyContent: "flex-end",
+          flexDirection: compact ? "row" : "column",
+          alignItems: compact ? "center" : "stretch",
+          gap: 16,
+        }}
+      >
+        <View
+          style={{ flex: 1, minWidth: 0, justifyContent: "flex-end", gap: 6 }}
+        >
+          <Text
+            numberOfLines={1}
+            style={{
+              color: "#67e8d1",
+              fontSize: 11,
+              fontWeight: "800",
+              letterSpacing: 2,
+            }}
+          >
+            LEGEND ELITE ·{" "}
+            {loading ? "YÜKLENİYOR" : eyebrow.toLocaleUpperCase("tr")}
+          </Text>
+          <Text
+            numberOfLines={Platform.isTV ? native.titleLines : compact ? 1 : 2}
+            style={[{ color: "white", fontWeight: "900" }, titleStyle]}
+          >
+            {loading
+              ? "Kataloğunuz hazırlanıyor…"
+              : (item?.title ?? "İzleyecek yeni bir şey keşfedin")}
+          </Text>
+          {!loading && (!Platform.isTV || native.showMeta) ? (
+            <Text numberOfLines={1} style={{ color: "#c4d0d5", fontSize: 14 }}>
+              {item?.subtitle ?? providerName}
+            </Text>
+          ) : null}
+          {!compact && item?.description ? (
+            <Text numberOfLines={2} style={{ color: "#c4d0d5", fontSize: 14 }}>
+              {item.description}
+            </Text>
+          ) : null}
         </View>
-      </TvFocusPressable>}
-    />
-    {!Platform.isTV && items.length > 1 ? <View style={s.homeHeroDots}>{items.map((item, dotIndex) => <View key={item.id} style={[s.homeHeroDot, { backgroundColor: dotIndex === index ? colors.primary : "rgba(255,255,255,0.30)" }]} />)}</View> : null}
-  </View>;
+        {!loading ? (
+          <View
+            style={{
+              flexDirection: compact && !Platform.isTV ? "column" : "row",
+              gap: 8,
+              flexShrink: 0,
+            }}
+          >
+            {action(item?.series ? "Sezon ve bölümler" : "İzle", "watch", true)}
+            {action(item ? "Detay / Bilgi" : discoverLabel, "info")}
+          </View>
+        ) : (
+          <Text accessibilityRole="progressbar" style={{ color: "#c4d0d5" }}>
+            İçerikler yükleniyor
+          </Text>
+        )}
+      </View>
+      {items.length > 1 && !loading ? (
+        <View style={{ position: "absolute", right: 12, top: 8 }}>
+          <TVPreviewPressable
+            eliteVisual
+            focusId="home-hero:next"
+            accessibilityLabel="Sonraki öne çıkan içerik"
+            disabled={paused}
+            onPress={() => setIndex((current) => (current + 1) % items.length)}
+            style={{
+              padding: 8,
+              borderRadius: 10,
+              backgroundColor: "#101b24cc",
+            }}
+          >
+            <Text style={{ color: "white" }}>
+              {index + 1} / {items.length} →
+            </Text>
+          </TVPreviewPressable>
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
 function HomeCountCard({ focusId, icon, label, value, accent, onPress, preferredFocus = false }: {

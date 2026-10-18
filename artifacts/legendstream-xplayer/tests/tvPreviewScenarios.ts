@@ -166,7 +166,7 @@ async function main() {
     focus.setBackAction(() => { route = "home"; }); focus.back(); assert.equal(route, "home");
   });
   await scenario("Home, Live, VOD and Series use the same interactive preview wrapper", () => {
-    assert.match(source("components/home/HomeDiscovery.tsx"), /return <TVPreviewPressable/);
+    assert.match(source("components/home/HomeDiscovery.tsx"), /return\s*\(?\s*<TVPreviewPressable/);
     assert.match(source("components/catalog/PagedCatalogViews.tsx"), /function GridCard[\s\S]*?TVPreviewPressable/);
     assert.match(source("components/catalog/StalkerLiveCatalog.tsx"), /TVPreviewPressable focusId=\{`stalker-live:\$\{channel\.id\}`\} accessibilityRole="button"/);
     assert.match(source("components/stalker/StalkerVodSurface.tsx"), /TVPreviewPressable focusId=\{`stalker-vod:\$\{item\.portalId\}`\} accessibilityRole="button"/);
@@ -184,16 +184,17 @@ async function main() {
     assert.match(controls, /tv-preview-dpad-collapse/); assert.match(controls, /tv-preview-dpad-expand/);
     assert.match(controls, /tv-preview-dpad-diagnostics-toggle/); assert.match(controls, /tv-preview-diagnostics-panel/);
     assert.match(controls, /position: "absolute" as const/); assert.match(controls, /StyleSheet\.absoluteFillObject/);
-    assert.match(controls, /pointerEvents="box-none"/); assert.match(controls, /width: 28, height: 28/);
+    assert.match(controls, /pointerEvents="box-none"/); assert.match(controls, /width: 44, height: 44/);
     assert.match(controls, /TVPreviewFocusRegion/); assert.match(source("components/ProductShell.tsx"), /<TVPreviewControls \/>/);
     assert.match(source("components/catalog/PagedCatalogViews.tsx"), /focusScope="category-drawer"/);
-    assert.match(source("components/ProductShell.tsx"), /TVPreviewFocusRegion><ProductShellContent \/><\/TVPreviewFocusRegion>\s*<TVPreviewControls \/>/);
+    assert.match(source("components/ProductShell.tsx"), /TVPreviewFocusRegion><ProductShellContent \/><\/TVPreviewFocusRegion><\/View>\s*<TVPreviewControls \/>/);
   });
-  await scenario("catalog viewport stays independent from the floating controller height", () => {
+  await scenario("catalog viewport reserves a separate controller area", () => {
     const focus = source("components/tvPreview/TVPreviewFocus.tsx");
     const shell = source("components/ProductShell.tsx");
     assert.match(focus, /style=\{\{ flex: 1, minHeight: 0 \}\}/);
-    assert.match(focus, /overlay: \{ \.\.\.StyleSheet\.absoluteFillObject/);
+    assert.match(focus, /height: collapsed \? 48 : 190/);
+    assert.match(focus, /backgroundColor: "#111c25"/);
     assert.match(shell, /<View style=\{\{ flex: 1, minHeight: 0 \}\}>/);
     assert.match(source("components/OptimizedHomeScreenPaged.tsx"), /screen: \{ flex: 1, minHeight: 0 \}/);
     assert.match(source("components/StalkerMainPage.tsx"), /screen: \{ flex: 1, minHeight: 0 \}/);

@@ -2,7 +2,7 @@ import { nativeTvLayout } from "@/lib/nativeTvResponsive";
 import { hasPlayerBackOwner } from "@/lib/playerRemoteOwnership";
 import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { BackHandler, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
+import { BackHandler, Keyboard, Modal, Platform, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { FocusButton } from "@/components/FocusButton";
 import { CompactLandscapeNavButton } from "@/components/navigation/CompactLandscapeNavButton";
@@ -24,6 +24,7 @@ type Props<Key extends string> = {
   onSelect: (key: Key) => void;
   productLabel?: string;
   backEnabled?: boolean;
+  placement?: "header" | "bottom";
 };
 
 export function ResponsiveContentNav<Key extends string>({
@@ -32,7 +33,11 @@ export function ResponsiveContentNav<Key extends string>({
   onSelect,
   productLabel = "BÖLÜMLER",
   backEnabled = true,
+  placement = "header",
 }: Props<Key>) {
+  const [libraryOpen,setLibraryOpen]=useState(false);
+  const [keyboardOpen,setKeyboardOpen]=useState(false);
+  useEffect(()=>{const a=Keyboard.addListener("keyboardDidShow",()=>setKeyboardOpen(true));const b=Keyboard.addListener("keyboardDidHide",()=>setKeyboardOpen(false));return()=>{a.remove();b.remove();};},[]);
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { width, height, fontScale } = useWindowDimensions();
@@ -83,6 +88,7 @@ export function ResponsiveContentNav<Key extends string>({
     if (!model.nativeTv) setOpen(false);
   };
 
+  if (placement === "bottom" && (model.nativeTv || presentation.tvPreview)) return null;
   if (model.nativeTv) {
     return (
       <ScrollView
@@ -128,63 +134,32 @@ export function ResponsiveContentNav<Key extends string>({
     </ScrollView>;
   }
 
-  return (
-    <View style={styles.shell}>
-      <View style={[styles.summary, model.compact && styles.summaryCompact, { paddingHorizontal: Math.max(0, profile.horizontalPadding - 14) }]}>
-        <View style={styles.identity}>
-          <Text numberOfLines={1} style={[styles.product, { color: colors.mutedForeground }]}>{productLabel}</Text>
-          {active ? (
-            <View style={styles.activeLine}>
-              <Feather name={active.icon} size={15} color={colors.primary} />
-              <Text numberOfLines={1} style={[styles.activeLabel, { color: colors.foreground }]}>
-                {active.shortLabel ?? active.label}
-              </Text>
-            </View>
-          ) : null}
-        </View>
-        <Pressable
-          testID="adaptive-nav-toggle"
-          accessibilityRole="button"
-          accessibilityLabel={open ? "İçerik menüsünü kapat" : "İçerik menüsünü aç"}
-          accessibilityState={{ expanded: open }}
-          onPress={() => setOpen((value) => !value)}
-          style={({ pressed }) => [
-            styles.toggle,
-            { borderColor: open ? colors.primary : colors.border, backgroundColor: open ? colors.secondary : colors.card },
-            pressed && styles.pressed,
-          ]}
-        >
-          <Feather name={open ? "chevron-up" : "menu"} size={18} color={open ? colors.primary : colors.foreground} />
-          <Text style={[styles.toggleText, { color: colors.foreground }]}>{open ? "Kapat" : "Menü"}</Text>
-        </Pressable>
-      </View>
-
-      {open ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          contentContainerStyle={[
-            styles.navRow,
-            model.compact && styles.navRowCompact,
-            { paddingHorizontal: Math.max(0, profile.horizontalPadding - 14) },
-          ]}
-          accessibilityLabel="İçerik bölümleri"
-        >
-          {items.map((item) => (
-            <CompactLandscapeNavButton
-              key={item.key}
-              label={item.label}
-              shortLabel={item.shortLabel}
-              icon={item.icon}
-              active={activeKey === item.key}
-              minTarget={model.touchTarget}
-              onPress={() => select(item.key)}
-            />
-          ))}
-        </ScrollView>
-      ) : null}
+  const itemFor=(key:string)=>items.find(item=>item.key===key);
+  const go=(key:string)=>{const item=itemFor(key);if(item)onSelect(item.key);setLibraryOpen(false);};
+  if (placement === "header") return <View style={{flexDirection:"row",alignItems:"center",justifyContent:"space-between",paddingBottom:8}}>
+    <Text numberOfLines={1} style={{color:colors.foreground,fontSize:18,fontWeight:"800"}}>{["history","downloads"].includes(activeKey)?"Kitaplık":active?.label}</Text>
+    <View style={{flexDirection:"row",gap:8}}>
+      <Pressable accessibilityRole="button" accessibilityLabel="Canlı yayınlarda ara" onPress={()=>go("live")} style={{padding:12}}><Feather name="search" size={21} color={colors.foreground}/></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="Kaynak ve ayarlar" onPress={()=>go("settings")} style={{padding:12}}><Feather name="settings" size={21} color={colors.foreground}/></Pressable>
     </View>
-  );
+  </View>;
+  if(keyboardOpen) return null;
+  const tabs=[{key:"home",label:"Ana Sayfa",icon:"home"},{key:"live",label:"Canlı",icon:"radio"},{key:"movies",label:"Filmler",icon:"film"},{key:"series",label:"Diziler",icon:"tv"},{key:"library",label:"Kitaplık",icon:"bookmark"}] as const;
+  return <View style={{backgroundColor:"#141d25",borderTopWidth:1,borderColor:"#33414a",paddingBottom:Math.max(insets.bottom,8),paddingTop:8}}>
+    <View style={{flexDirection:"row",justifyContent:"space-around"}} accessibilityLabel="Ana gezinme">
+      {tabs.map(tab=>{const selected=tab.key===activeKey || tab.key==="library"&&["history","downloads"].includes(activeKey);return <Pressable key={tab.key} accessibilityRole="tab" accessibilityState={{selected}} accessibilityLabel={tab.label} onPress={()=>tab.key==="library"?setLibraryOpen(true):go(tab.key)} style={{flex:1,minHeight:48,alignItems:"center",justifyContent:"center",gap:4,borderTopWidth:2,borderColor:selected?"#67e8d1":"transparent"}}><Feather name={tab.icon} size={20} color={selected?"#67e8d1":"#9eacb7"}/><Text numberOfLines={1} style={{fontSize:width>height?10:11,fontWeight:"700",color:selected?"#67e8d1":"#9eacb7"}}>{tab.label}</Text></Pressable>;})}
+    </View>
+    <Modal visible={libraryOpen} transparent animationType="slide" onRequestClose={()=>setLibraryOpen(false)}>
+      <View style={{flex:1,justifyContent:"flex-end",backgroundColor:"#0009"}}>
+        <Pressable accessibilityLabel="Kitaplığı kapat" style={{flex:1}} onPress={()=>setLibraryOpen(false)}/>
+        <View style={{padding:24,paddingBottom:Math.max(insets.bottom,24),backgroundColor:"#18232d",borderTopLeftRadius:24,borderTopRightRadius:24,gap:12}}>
+          <Text style={{color:"white",fontSize:24,fontWeight:"800"}}>Kitaplık</Text>
+          <Pressable onPress={()=>go("history")} style={{padding:18,backgroundColor:"#24343e",borderRadius:12}}><Text style={{color:"white",fontSize:17}}>Favoriler · Geçmiş · Devam Et</Text></Pressable>
+          <Pressable onPress={()=>go("downloads")} style={{padding:18,backgroundColor:"#24343e",borderRadius:12}}><Text style={{color:"white",fontSize:17}}>İndirmeler</Text></Pressable>
+        </View>
+      </View>
+    </Modal>
+  </View>;
 }
 
 const styles = StyleSheet.create({

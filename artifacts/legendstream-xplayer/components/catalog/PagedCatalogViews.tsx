@@ -1,3 +1,4 @@
+import { filterCategoryOptions } from "@/lib/categoryPresentation";
 import { SeriesInfoModal } from "@/components/series/SeriesInfoModal";
 import { pagedSeriesDetail } from "@/lib/seriesInfo";
 import { beginPerformanceMeasurement, finishPerformanceMeasurement } from "@/lib/performanceDiagnostics";
@@ -378,7 +379,10 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const drawerWidth = Math.min(width * 0.78, 560);
+  const [categoryQuery,setCategoryQuery]=useState("");
+  const filteredItems=useMemo(()=>filterCategoryOptions(items,categoryQuery),[items,categoryQuery]);
+  const mobileSheet=!Platform.isTV;
+  const drawerWidth = mobileSheet ? width : Math.min(width * 0.78, 560);
   const translateX = useRef(new Animated.Value(-drawerWidth)).current;
   const closingRef = useRef(false);
   const focus = useTVPreviewFocus();
@@ -386,6 +390,7 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
   useEffect(() => {
     if (!visible) return;
     closingRef.current = false;
+    setCategoryQuery("");
     translateX.setValue(-drawerWidth);
     Animated.timing(translateX, { toValue: 0, duration: 190, useNativeDriver: true }).start();
   }, [drawerWidth, translateX, visible]);
@@ -419,7 +424,7 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
   );
 
   return <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={closeAnimated}>
-    <View style={s.drawerBackdrop}>
+    <View style={[s.drawerBackdrop, mobileSheet && {justifyContent:"flex-end",flexDirection:"column"} ]}>
       <Animated.View
         style={[
           s.drawerPanel,
@@ -429,7 +434,8 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
             paddingBottom: Math.max(insets.bottom, 16),
             backgroundColor: colors.background,
             borderColor: colors.border,
-            transform: [{ translateX }],
+            transform: mobileSheet ? [] : [{ translateX }],
+            ...(mobileSheet ? {borderTopLeftRadius:24,borderTopRightRadius:24,maxHeight:"78%" as const,width:"100%" as const} : {}),
           },
         ]}
       >
@@ -439,10 +445,12 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
             <Feather name="x" size={22} color={colors.mutedForeground} />
           </TVPreviewPressable>
         </View>
+        <TextInput accessibilityLabel="Kategori ara" placeholder="Kategori ara…" placeholderTextColor={colors.mutedForeground} value={categoryQuery} onChangeText={setCategoryQuery} style={{marginHorizontal:18,marginBottom:12,minHeight:48,padding:14,borderRadius:14,borderWidth:1,borderColor:colors.border,color:colors.foreground}} />
         <FlatList
+          ListEmptyComponent={<Text style={{color:colors.mutedForeground,padding:20}}>Kategori bulunamadı</Text>}
           style={s.drawerScroll}
           contentContainerStyle={s.drawerList}
-          data={items}
+          data={filteredItems}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => {
             const active = selected === item.id;
@@ -474,7 +482,7 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
           windowSize={7}
         />
       </Animated.View>
-      <Pressable focusable={!Platform.isTV} style={s.drawerDismiss} onPress={closeAnimated} />
+      <Pressable focusable={!Platform.isTV} style={[s.drawerDismiss, mobileSheet && {position:"absolute",top:0,left:0,right:0,height:"22%"}]} onPress={closeAnimated} />
     </View>
     <TVRemoteInspectorOverlay />
   </Modal>;

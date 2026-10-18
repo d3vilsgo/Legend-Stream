@@ -263,7 +263,8 @@ function InfoRow({ label, value, strong = false, valueColor }: {
 
 const styles = StyleSheet.create({
   chip: {
-    maxWidth: 235,
+    maxWidth: Platform.isTV ? 235 : 170,
+    flexShrink: 1,
     minHeight: 40,
     borderWidth: 1,
     borderRadius: 999,
