@@ -167,5 +167,19 @@ try {
     assert.deepEqual(navigated,tabs);
   });
   check("native navigation does not own horizontal ScrollView",()=>assert.equal(find(nav,n=>n.tag==="ScrollView").length,0));
+  check("StageRail expands on focus and collapses on content handoff without route change",()=>{
+    const railWidth=tree=>one(tree,n=>n.tag==="View"&&n.props.accessibilityLabel==="Ana gezinme").props.style.flat().find(v=>v&&typeof v.width==="number").width;
+    const capsule=railWidth(nav);
+    assert.equal(one(nav,n=>n.props?.focusId==="nav:movies").props.label,"");
+    one(nav,n=>n.props?.focusId==="nav:movies").props.onFocusChange(true);
+    const expanded=host.render(ResponsiveContentNav,navProps);
+    assert(railWidth(expanded)>capsule);
+    assert.equal(one(expanded,n=>n.props?.focusId==="nav:movies").props.label,"movies");
+    assert.equal(one(expanded,n=>n.props?.focusId==="nav:live").props.accessibilityState.selected,true);
+    one(expanded,n=>n.props?.focusId==="nav:movies").props.onFocusChange(false);
+    const collapsed=host.render(ResponsiveContentNav,navProps);
+    assert.equal(railWidth(collapsed),capsule);
+    assert.equal(one(collapsed,n=>n.props?.focusId==="nav:movies").props.label,"");
+  });
   console.log(`P0 production component host: ${pass}/${pass} assertions passed; ANDROID_FOCUSFINDER_PHYSICAL_PENDING_RC`);
 } finally {rmSync(dir,{recursive:true,force:true});}
