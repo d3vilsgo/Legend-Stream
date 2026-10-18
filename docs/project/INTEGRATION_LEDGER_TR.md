@@ -188,3 +188,21 @@ Sınıflandırma: Xtream/M3U Home film eylemi **INTEGRATED (source)**; mevcut Fi
 Yeni test: 15 host-hook/kaynak sözleşmesi senaryosu. Yerel ve remote final Quality sonuçları PR Checks / exact-SHA run metadata üzerinden izlenir; aşağıdaki yeni run doğrulanmadan önceki PASS devralınmaz. Fiziksel kabul yoktur; Native TV tarihsel FAIL, TMDB LIVE BLOCKED ve 14 SKIP legacy kaydı korunur.
 
 U4.1 yerel doğrulama: mevcut Quality tanımındaki **71 shell kapısı / 71 PASS**, test kaldırılmadı veya atlanmadı. TSX girişleri yerelde `node --import tsx` ile aynı senaryolara çalıştırıldı; GitHub standart Quality komutlarını kullanır. Yeni U4 testi **15/15 PASS**. Mobil/API/tam workspace typecheck geçti. Bu sonuç henüz remote final SHA Quality veya fiziksel PASS değildir.
+
+## U4.2 — Stalker Home Film Info; 18 Ekim 2026
+
+Remote başlangıç PR/branch HEAD `8c1d0e86cc8a24085d0a35105c2540a5bb62992f`; main `810adc2f7e82da52d8dd6768fcd5cf1d3040e106`; base `feature/r19-tmdb-secure-proxy` @ `98423240d1f966388e74aa4249632b1c921b3c4b`; PR Draft. Başlangıç Quality push #1261 ve PR #1262 SUCCESS. U3 ve U4.1 yeniden uygulanmadı.
+
+Seçim noktaları: `HomeDiscovery` Hero movie, film rafı, ortak Yeni Filmler rafı → aynı onOpenMovie. `StalkerMainPage` bugün Yeni Filmler kaynağını boş verir; bu dilim yeni raf/veri kaynağı üretmez. `useStalkerHomeSummary` artık eski Xtream biçimli sunum projeksiyonu yanında orijinal provider-scoped güvenli preview'ları sunar.
+
+`useStalkerHomeMovieInfo` + `stalkerHomeMovie` controller seçimi provider/runtime-session/portal ID'ye bağlar. Info yerel preview'la hemen açılır; metadata için mevcut servis kullanılır. Play: bir locator sayfası exact ID doğrulaması → mevcut `resolveStalkerVodLink` → mevcut shell Player. Locator yoksa yalnız eski özetin kaynak sözleşmesi olan All/ilk kategori ilk sayfası; sayfa dolaşımı/title match yok. V1 schema korunur; opsiyonel locator yalnız kategori/page, cmd/token/play URL yok. Runtime registry'ye eklenen read-only ownership ve değişim bildirimi session yerine yenisini yaratmadan iptali sağlar; auth/transport/create_link protokolü değişmez.
+
+Ortak `MovieInfoModal` varsayılan davranışı korunarak yalnız async Stalker Home için closeOnPlay=false, busy/error ve retry sunar. Modal Back ilk odak ve movie-info scope kullanır. Home Player arkasında bağlıdır; dış scroll/Hero autoplay modal veya Player sırasında durur. Origin Home ve Movies ayrı kalır. Native physical restore owner yeniden yazılmaz; gerçek konum/focus kabulü RC'dir.
+
+Yeni servis testi 14 senaryo; hook/shared-modal/Preview host testi 13 senaryo. Bunlar fiziksel Android testi değildir. Mevcut Home preview kaynak testinin locator çağrı assertion'ı güçlendirildi. Exact final SHA/run sonuçları PR Checks ve logdaki QUALITY_EXACT_HEAD üzerinden izlenir; kendi commit'ine sahte SHA yazılmaz.
+
+Series incelemesi: GoldenSeriesDetailModel/StalkerSeriesProductSurface mevcut katalog başlık-sezon-bölüm yapısıdır; Home exact-series, ortak Elite metadata/detail ve origin restorasyonu eksikleri U4.3'e ayrıldı. U4.2 film dilimi bununla genişletilmedi. Tam Elite Home/Live/Player/overlay, orientation ve U3 borçları açık. Tarihsel Native TV Physical FAIL, yeni kaynak NOT TESTED/DEFERRED_RC, TMDB LIVE BLOCKED ve 14 SKIP/0 DELETED aynen korunur.
+
+U4.2 regresyon uyarlaması: üç eski kaynak assertion'ı yeni sözleşmeyi doğrular: Home preview locator çağrısı; Movies varsayılan dönüşü + Home override + aynı player handoff; history/progressRef ile origin-aware Movies dönüşü. Senaryolar kaldırılmadı, provider/secret kontrolleri gevşetilmedi. İlk yerel turda bunlardan biri eski sabit Movies imzasını beklediği için başarısız oldu; sözleşme güçlendirilip ilgili suite yeniden çalıştırılır. Geçici pnpm10 önbelleği eksikliği restore edildi; redaksiyon kapısı da yeniden çalıştırılır.
+
+U4.2 son yerel tur: **74/74 shell Quality kapısı PASS**, U4.2 servis **14/14**, hook/modal/Preview host **13/13**. Mobil, API ve tam workspace typecheck geçti. TSX yerelde IPC sınırı nedeniyle aynı girişlere `node --import tsx` ile çalıştırılır; CI standart komutları kullanır. Remote kabul yalnız final HEAD'in yeni Quality koşularıdır.

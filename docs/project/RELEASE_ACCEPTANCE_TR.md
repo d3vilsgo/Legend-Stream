@@ -67,3 +67,15 @@ Tanılama yalnız güvenli alanları tutar; olaylar diske yazılmaz. Fiziksel pe
 Bu dilimin CI kabulü yalnız yeni final HEAD'deki exact-SHA Quality ile yapılır; U3 `3eb8b55230b77e26e7f634be88aafbaefa3d6a1e` yeşili yeni değişikliğe devredilmez. Mevcut responsive, Hero/Native Focus, Player/Back, provider, TMDB ve U3 cache/performance kapıları tutulur. Yeni U4 host test ve biçim kontrolü mevcut Quality'ye eklenir; APK tetikleyicileri değiştirilmez.
 
 RC'de daha sonra kullanıcı onayıyla: Home Hero/raf seçimi → Info → Geri aynı konum/odak; Info → İzle → Player panelleri/kontrolleri → çıkış Home; orientation; provider değişimi; refresh sırasında kaldırılan film; TV Preview scope ve Native D-pad. Stalker ve Series Info eksikleri çözülmeden bütün action parity kabulü verilemez.
+
+## U4.2 kabul sözleşmesi
+
+Otomatik kapsam: production controller + gerçek VOD normalizer/resolver ile mock provider; production hook + ortak MovieInfoModal host render + gerçek JS Preview focus controller. Aynı başlık/farklı portal ID, Info'da sıfır provider/create_link isteği, güncel command, tek Play, provider/runtime session değişimi, iptal edilmiş geç yanıt, kaldırılmış içerik, retry, secret içermeyen hata, eski v1 summary/locator, metadata failure/local fallback, modal Back/ilk hedef/Preview restorasyonu ve kökene göre Home/Movies dönüş bağlantıları kapsanır. Önceki testlerden yalnız Home preview writer kaynak assertion'ı yeni locator argümanını da doğrulayacak şekilde güçlendirildi; test kaldırılmadı.
+
+Mevcut U2/U3/Native JVM/Preview/Player-Back-orientation/provider/TMDB/Elite kapıları korunur. Final kod+docs HEAD'inin push ve PR Quality loglarında exact checkout SHA'sı karşılaştırılır. Host testi Native Android firmware/layout veya fiziksel PASS değildir. APK tetikleyicileri ve Quality izinleri değiştirilmez.
+
+RC borcu: her profil için Hero/raf → Info → Back aynı kart/konum; Info→İzle→Player Back sırası→Home; Movies→Info→Player→Movies; modal üst katman sahipliği; runtime session/provider değişimi; aynı başlıklı film; offline/bulunamayan film ve tekrar deneme; orientation. Bu görevde APK/fiziksel test yapılmaz.
+
+U4.3 çıkış ölçütü: Home ve katalogda exact provider+series ID ile ortak yerel Info; seçili season ID + episode ID'nin korunması; mevcut Stalker targeted hierarchy / Xtream / M3U yollarına ayrı ve güncel playback handoff; Home/Series dönüş kökeni ve seçimin korunması; stale provider/session ve çift eylem testleri; metadata yokken çalışabilme; final exact-SHA Quality. Tam U4/ürün kabulü bundan ayrı kalır.
+
+U4.2 regresyon uyarlaması: üç eski kaynak assertion'ı yeni sözleşmeyi doğrular: Home preview locator çağrısı; Movies varsayılan dönüşü + Home override + aynı player handoff; history/progressRef ile origin-aware Movies dönüşü. Senaryolar kaldırılmadı, provider/secret kontrolleri gevşetilmedi. İlk yerel turda bunlardan biri eski sabit Movies imzasını beklediği için başarısız oldu; sözleşme güçlendirilip ilgili suite yeniden çalıştırılır. Geçici pnpm10 önbelleği eksikliği restore edildi; redaksiyon kapısı da yeniden çalıştırılır.
