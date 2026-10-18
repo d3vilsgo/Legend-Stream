@@ -138,7 +138,7 @@ try {
     assert.equal(one(retained,n=>n.props?.focusId==="accept:channel:a").props.accessibilityState.selected,true);
     assert(tracked.includes(44));
   });
-  for(const [width,height] of [[720,480],[1920,1080]]){
+  for(const [width,height] of [[720,480],[1280,720],[1920,1080]]){
     check(width+"x"+height+" keeps channel list mounted alongside categorical target",()=>{
       host.width=width;host.height=height;host.reset();
       let root=host.render(EliteLiveCatalog,liveProps);
