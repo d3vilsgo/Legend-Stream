@@ -7,7 +7,8 @@ import { fileURLToPath } from "node:url";
 
 const app = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const requireApp = createRequire(join(app, "package.json"));
-const { build } = requireApp("esbuild");
+const requireServer = createRequire(resolve(app, "../api-server/package.json"));
+const { build } = requireServer("esbuild");
 const directory = mkdtempSync(join(tmpdir(), "p1-catalog-host-"));
 const originalLoad = Module._load;
 const host = {
@@ -196,7 +197,7 @@ try {
     const actionable = exactly(renderedCard, (node) => node.props?.focusId === "series:series:alpha");
     actionable.props.onPress();
     assert.deepEqual(opened, ["series:alpha"], name);
-    const poster = exactly(renderedCard, (node) => node.props?.style?.aspectRatio === 2 / 3);
+    const poster = exactly(renderedCard, (node) => [node.props?.style].flat(Infinity).some((style) => style?.aspectRatio === 2 / 3));
     assert(poster, name);
     const headerComponent = list.props.ListHeaderComponent;
     const header = host.render(headerComponent.tag, headerComponent.props);
