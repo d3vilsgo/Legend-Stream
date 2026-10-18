@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { nativeTvHomeLayout } from "../lib/design/nativeTvHomeLayout";
 import { nativeTvLayout } from "../lib/nativeTvResponsive";
+import { eliteLiveLayout, eliteLiveReduce, eliteLiveInitial, eliteLiveSelection } from "../lib/design/eliteLiveLayout";
 let passed = 0;
 const measurements: unknown[] = [];
 for (const [width, height] of [
@@ -99,3 +100,21 @@ console.log(JSON.stringify(measurements));
 console.log(
   `Native TV Home geometry: ${passed}/${passed} passed; ANDROID_RENDERER_NOT_TESTED`,
 );
+
+// Native Live: mounted channel column is allocated real width across compact/large TV windows.
+for (const [width, height] of [[480, 320], [720, 480], [960, 540], [1920, 1080]]) {
+  for (const fontScale of [1, 1.5, 2]) {
+    const geometry = eliteLiveLayout({ width, height, fontScale, safeArea: { left: 16, right: 16, top: 8, bottom: 8 } });
+    assert(geometry.categoryWidth >= 96);
+    assert(geometry.channelWidth >= 96);
+    if (geometry.stacked) assert(geometry.categoryWidth + geometry.channelWidth + 24 <= geometry.usableWidth + 1);
+    assert(geometry.rowHeight >= 76);
+  }
+}
+// Focus is not selection: a focus event never starts playback or rewrites selected channel.
+const focused = eliteLiveReduce(eliteLiveInitial, { type: "focus", id: "first" });
+assert.deepEqual(focused, eliteLiveInitial);
+const selected = eliteLiveReduce(focused, { type: "select", id: "first" });
+assert.equal(eliteLiveSelection([{ id: "first" }, { id: "second" }], selected.selectedId)?.id, "first");
+assert.equal(eliteLiveSelection([], selected.selectedId), null);
+console.log("Native TV Live measured geometry and focus-selection: 15/15 passed");
