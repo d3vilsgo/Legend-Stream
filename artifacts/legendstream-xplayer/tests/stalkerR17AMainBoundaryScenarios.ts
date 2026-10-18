@@ -70,7 +70,9 @@ async function main() {
     assert.match(stalkerMainSource, /useState<Playable \| null>/);
     assert.match(stalkerMoviesControllerSource, /resolveStalkerVodLink\(session, item/);
     assert.match(stalkerMoviesControllerSource, /onPlayable\(\{/);
-    assert.match(stalkerMainSource, /const openMovie = \(movie: StalkerMoviePlayable\)[\s\S]*?openResolvedPlayable\(\{[\s\S]*?returnTo: "movies"/);
+    assert.match(stalkerMainSource, /const openMovie = \(movie: StalkerMoviePlayable, returnTo: StalkerContentView = "movies"\)[\s\S]*?openResolvedPlayable\(\{[\s\S]*?returnTo,[\s\S]*?itemId: movie\.itemId/);
+    assert.match(stalkerMainSource, /onPlayable: movie => openMovie\(movie, "home"\)/);
+    assert.match(stalkerMainSource, /onPlayable=\{openMovie\}/);
     assert.match(stalkerMainSource, /view === "player" && playable/);
     assert.match(stalkerMainSource, /<NativeVideoPlayer/);
     assert.match(stalkerMainSource, /onFullscreenExit=\{\(\) => \{[\s\S]*?setView\(playable\.returnTo\)/);

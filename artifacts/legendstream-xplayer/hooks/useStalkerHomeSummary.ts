@@ -31,6 +31,7 @@ export function useStalkerHomeSummary(providerId?: string) {
       ? summary
       : emptyStalkerHomeSummary(providerId ?? "");
     return {
+      moviePreviews: current.movies,
       movies: current.movies.map<XtreamVodItem>((item) => ({
         stream_id: item.id,
         name: item.title,

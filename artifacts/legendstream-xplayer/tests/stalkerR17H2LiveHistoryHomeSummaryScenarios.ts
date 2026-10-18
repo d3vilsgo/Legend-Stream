@@ -189,7 +189,7 @@ async function mainTest() {
   });
 
   await scenario("successful canonical page results feed the Stalker Home preview cache", () => {
-    assert.match(movieController, /writeStalkerMovieHomePreview\(provider\.id, result\.items\)/);
+    assert.match(movieController, /writeStalkerMovieHomePreview\(provider\.id, result\.items, undefined, \{ categoryId: category\.id, page: result\.currentPage \}\)/);
     assert.match(seriesSurface, /writeStalkerSeriesHomePreview\(provider\.id, result\.items\)/);
     assert.match(movieController, /page === 1 && \(isStalkerVodGlobalCategory\(category\) \|\| previewCategory\.id === category\.id\)/);
     assert.match(seriesSurface, /page === 1 && \(globalCategory\?\.id === category\.id \|\| previewCategory\?\.id === category\.id\)/);

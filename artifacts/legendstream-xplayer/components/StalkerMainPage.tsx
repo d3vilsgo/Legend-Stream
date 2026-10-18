@@ -1,3 +1,5 @@
+import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
+import { useStalkerHomeMovieInfo } from "@/hooks/useStalkerHomeMovieInfo";
 import { beginPlaybackAttempt } from "@/lib/performanceDiagnostics";
 import { CatalogRefreshSettings } from "@/components/CatalogRefreshSettings";
 import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
@@ -195,6 +197,13 @@ export default function StalkerMainPage() {
   const liveCatalog = useStalkerLiveCatalogSync(provider);
   const productCounts = useStalkerProductCounts(provider?.type === "stalker" ? provider.id : undefined);
   const homeSummary = useStalkerHomeSummary(provider?.type === "stalker" ? provider.id : undefined);
+  const homeMovieInfo = useStalkerHomeMovieInfo({
+    provider: provider && isStalkerProductProvider(provider) ? provider : null,
+    previews: homeSummary.moviePreviews,
+    enabled: view === "home" && !switchingProviderId,
+    onPlayable: movie => openMovie(movie, "home"),
+    onError: setCatalogError,
+  });
 
   const playerLiveChannels = useMemo(
     () => provider
@@ -271,13 +280,13 @@ export default function StalkerMainPage() {
     });
   };
 
-  const openMovie = (movie: StalkerMoviePlayable) => {
+  const openMovie = (movie: StalkerMoviePlayable, returnTo: StalkerContentView = "movies") => {
     openResolvedPlayable({
       title: movie.title,
       subtitle: movie.subtitle,
       url: movie.url,
       kind: "movie",
-      returnTo: "movies",
+      returnTo,
       vodIdentity: { providerId: provider.id, itemId: movie.itemId },
       progressRef: {
         type: "stalker-vod",
@@ -538,10 +547,11 @@ export default function StalkerMainPage() {
           contentContainerStyle={[s.content, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
-          scrollEnabled={!catalogDrawerOpen}
+          scrollEnabled={!catalogDrawerOpen && !homeMovieInfo.state && view !== "player"}
         >
           {presentedView === "home" ? (
             <HomeDiscovery
+              interactionBlocked={Boolean(homeMovieInfo.state) || view === "player"}
               tvViewportHeight={homeViewportHeight}
               provider={provider}
               live={liveCatalog.countKnown ? liveCatalog.totalCount : null}
@@ -559,7 +569,7 @@ export default function StalkerMainPage() {
               newSeries={[]}
               onNavigate={navigate}
               onOpenLive={openLive}
-              onOpenMovie={() => navigate("movies")}
+              onOpenMovie={item => homeMovieInfo.select(String(item.stream_id))}
               onOpenSeries={() => navigate("series")}
               onOpenMedia={openProgress}
               onRemoveLive={(id) => void removeWatched(id)}
@@ -580,6 +590,12 @@ export default function StalkerMainPage() {
         </ScrollView>
       ) : null}
 
+      {homeMovieInfo.state && homeMovieInfo.input && homeMovieInfo.local ? <MovieInfoModal
+        key={`${provider.id}:${homeMovieInfo.state.preview.id}`}
+        input={homeMovieInfo.input} local={homeMovieInfo.local}
+        onClose={homeMovieInfo.close} onPlay={homeMovieInfo.play}
+        closeOnPlay={false} playback={homeMovieInfo.state}
+      /> : null}
       </NativeTVFocusScope>
       {view === "player" && playable ? (
         <View style={s.fullPlayer}>

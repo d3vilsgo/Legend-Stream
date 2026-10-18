@@ -38,12 +38,16 @@ export function MovieInfoModal({
   onClose,
   onPlay,
   service: injectedService,
+  closeOnPlay = true,
+  playback,
 }: {
   input: EnrichmentInput;
   local: LocalMovieInfo;
   onClose: () => void;
   onPlay: () => void;
   service?: MovieInfoService;
+  closeOnPlay?: boolean;
+  playback?: { busy: boolean; error: string | null };
 }) {
   const contextualService = useMovieInfoService();
   const service = injectedService ?? contextualService;
@@ -190,15 +194,31 @@ export function MovieInfoModal({
                 focusScope="movie-info"
                 focusId="movie-info:play"
                 accessibilityRole="button"
-                accessibilityLabel="IPTV kaynağından filmi izle"
+                accessibilityLabel={
+                  playback?.error
+                    ? "Filmi tekrar başlatmayı dene"
+                    : "IPTV kaynağından filmi izle"
+                }
+                disabled={playback?.busy}
                 onPress={() => {
-                  onClose();
+                  if (closeOnPlay) onClose();
                   onPlay();
                 }}
                 style={s.control}
               >
-                <Text style={text}>▶ İzle</Text>
+                <Text style={text}>
+                  {playback?.busy
+                    ? "Film hazırlanıyor…"
+                    : playback?.error
+                      ? "Tekrar dene"
+                      : "▶ İzle"}
+                </Text>
               </TVPreviewPressable>
+              {playback?.error ? (
+                <Text accessibilityRole="alert" style={text}>
+                  {playback.error}
+                </Text>
+              ) : null}
               <Text style={muted}>
                 {state === null
                   ? "Film bilgileri yükleniyor…"

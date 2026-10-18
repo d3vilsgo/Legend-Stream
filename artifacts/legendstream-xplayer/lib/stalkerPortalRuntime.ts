@@ -34,6 +34,20 @@ type RuntimeEntry = {
 const sessions = new Map<string, RuntimeEntry>();
 let sessionGenerationSequence = 0;
 
+const sessionListeners = new Set<(providerId: string) => void>();
+/** Read-only ownership check: never recreates a disposed or replaced session. */
+export function isRegisteredStalkerPortalSession(providerId: string, session: StalkerPortalSession) {
+  return sessions.get(providerId.trim())?.session === session;
+}
+export function subscribeStalkerPortalRuntime(listener: (providerId: string) => void) {
+  sessionListeners.add(listener);
+  return () => { sessionListeners.delete(listener); };
+}
+function publishSessionChange(providerId: string) {
+  sessionListeners.forEach(listener => listener(providerId));
+}
+
+
 export function getOrCreateStalkerPortalSession(
   identity: StalkerPortalRuntimeIdentity,
 ) {
@@ -74,6 +88,7 @@ export function getOrCreateStalkerPortalSession(
     diagnostics: identity.diagnostics ?? { providerId },
   });
   sessions.set(providerId, { endpointUrl: target.endpointUrl, mac, session, sessionGeneration });
+  publishSessionChange(providerId);
   safeLog.info("LS_STALKER_SESSION_ACQUIRE", {
     syncRunId: identity.diagnostics?.syncRunId,
     providerId,
@@ -90,6 +105,7 @@ export function releaseStalkerPortalSession(providerId: string) {
   const current = sessions.get(key);
   if (!current) return false;
   sessions.delete(key);
+  publishSessionChange(key);
   clearStalkerLiveRuntimeLocatorSession(current.session);
   current.session.dispose();
   return true;

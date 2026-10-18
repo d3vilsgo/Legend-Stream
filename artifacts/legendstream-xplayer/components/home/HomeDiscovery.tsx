@@ -62,6 +62,7 @@ export function HomeDiscovery({
   onNavigate,
   onOpenLive,
   onOpenMovie,
+  interactionBlocked = false,
   onOpenSeries,
   onOpenMedia,
   onRemoveLive,
@@ -84,6 +85,7 @@ export function HomeDiscovery({
   onNavigate: (view: HomeContentView) => void;
   onOpenLive: (channel: Channel) => void;
   onOpenMovie: (item: XtreamVodItem) => void;
+  interactionBlocked?: boolean;
   onOpenSeries: (item: XtreamSeriesItem) => void;
   onOpenMedia: (item: MediaProgress) => void;
   onRemoveLive: (id: string) => void;
@@ -266,6 +268,7 @@ export function HomeDiscovery({
       tvViewportHeight={tvViewportHeight}
       eyebrow={copy.featured}
       providerName={provider.name}
+      paused={interactionBlocked}
       onOpen={(item) => item.movie ? onOpenMovie(item.movie) : item.series ? onOpenSeries(item.series) : undefined}
       onDiscover={() => onNavigate("movies")}
       discoverLabel={copy.discover}
@@ -337,7 +340,7 @@ function ResilientCatalogImage({ uri, style, resizeMode = "cover", fallbackIcon 
   return <Image source={{ uri: normalized }} resizeMode={resizeMode} style={style} onError={() => setFailed(true)} />;
 }
 
-export function HomeHeroCarousel({ items, tvViewportHeight, eyebrow, providerName, onOpen, onDiscover, discoverLabel, loading = false }: {
+export function HomeHeroCarousel({ items, tvViewportHeight, eyebrow, providerName, onOpen, onDiscover, discoverLabel, loading = false, paused = false }: {
   items: HomeHeroEntry[];
   tvViewportHeight?: number;
   eyebrow: string;
@@ -346,6 +349,7 @@ export function HomeHeroCarousel({ items, tvViewportHeight, eyebrow, providerNam
   onDiscover: () => void;
   discoverLabel: string;
   loading?: boolean;
+  paused?: boolean;
 }) {
   const colors = useColors();
   const { width, height, fontScale } = useWindowDimensions();
@@ -378,6 +382,7 @@ export function HomeHeroCarousel({ items, tvViewportHeight, eyebrow, providerNam
   }, [cardWidth, itemIds]);
 
   useEffect(() => {
+    if (paused) return;
     if (Platform.isTV || tvPreview || items.length < 2) return;
     const timer = setInterval(() => {
       setIndex((current) => {
@@ -388,7 +393,7 @@ export function HomeHeroCarousel({ items, tvViewportHeight, eyebrow, providerNam
       });
     }, 5600);
     return () => clearInterval(timer);
-  }, [items, tvPreview]);
+  }, [items, tvPreview, paused]);
 
   if (!items.length) {
     if (loading) {
