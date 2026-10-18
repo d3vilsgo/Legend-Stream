@@ -11,20 +11,21 @@ const { build } = createRequire(req.resolve("tsx/package.json"))("esbuild");
 const dir = mkdtempSync(join(tmpdir(), "tv-p0-production-"));
 let cursor = 0, slots = [], effects = [], calls = 0;
 const host = globalThis.__tvP0 = {
-  width: 960, height: 540, fontScale: 1, isTV: true, effects: [],
+  width: 960, height: 540, fontScale: 1, isTV: true, effects: [], effectIndex: 0, savedEffects: [],
   state(initial) {
     const i = cursor++;
     if (!(i in slots)) slots[i] = typeof initial === "function" ? initial() : initial;
     return [slots[i], (next) => { slots[i] = typeof next === "function" ? next(slots[i]) : next; }];
   },
   ref(initial) { const i = cursor++; return slots[i] ?? (slots[i] = { current: initial }); },
-  reset() { slots = []; cursor = 0; this.effects = []; },
-  render(component, props) { cursor = 0; this.effects = []; const result = component(props); for (const effect of this.effects) effect(); return result; },
+  effect(fn,deps) { const i=this.effectIndex++; const before=this.savedEffects[i]; if (!before || !deps || deps.some((v,j)=>!Object.is(v,before[j]))) { this.savedEffects[i]=deps; this.effects.push(fn); } },
+  reset() { slots = []; cursor = 0; this.effects = []; this.effectIndex = 0; this.savedEffects = []; },
+  render(component, props) { cursor = 0; this.effectIndex = 0; this.effects = []; const result = component(props); for (const effect of this.effects) effect(); return result; },
 };
 const mocks = {
   react: `const h=globalThis.__tvP0;
     export const useState=v=>h.state(v),useReducer=(fn,v)=>{const [value,set]=h.state(v);return [value,event=>set(old=>fn(old,event))]},
-    useRef=v=>h.ref(v),useMemo=f=>f(),useEffect=(f)=>h.effects.push(f),useId=()=> "id";
+    useRef=v=>h.ref(v),useMemo=f=>f(),useEffect=(f,d)=>h.effect(f,d),useId=()=> "id";
     export default {createElement:(tag,props,...children)=>({tag,props:{...props,children}})};`,
   "react-native": `const h=globalThis.__tvP0;
     export const View="View",Text="Text",TextInput="TextInput",ScrollView="ScrollView",FlatList="FlatList",
@@ -123,10 +124,26 @@ try {
     assert.equal(one(live,n=>n.tag==="TextInput").props.value,"");
     assert.deepEqual(searchCalls,[]);
   });
+  check("search close retains selected channel identity and prior scroll",()=>{
+    const focused = one(live,n=>n.tag==="TextInput");
+    assert(focused.props.ref && "current" in focused.props.ref);
+    const tracked = [];
+    list().props.ref.current = {scrollToOffset:input=>tracked.push(input.offset)};
+    const row = list().props.renderItem({item:channels[0],index:0});
+    one(row,n=>n.props?.focusId==="accept:channel:a").props.onPress();
+    list().props.onScroll({nativeEvent:{contentOffset:{y:44}}});
+    one(live,n=>n.props?.focusId==="accept:search-toggle").props.onPress();
+    live=host.render(EliteLiveCatalog,liveProps);
+    const retained=list().props.renderItem({item:channels[0],index:0});
+    assert.equal(one(retained,n=>n.props?.focusId==="accept:channel:a").props.accessibilityState.selected,true);
+    assert(tracked.includes(44));
+  });
   for(const [width,height] of [[720,480],[1920,1080]]){
     check(width+"x"+height+" keeps channel list mounted alongside categorical target",()=>{
       host.width=width;host.height=height;host.reset();
-      const root=host.render(EliteLiveCatalog,liveProps);
+      let root=host.render(EliteLiveCatalog,liveProps);
+      one(root,n=>n.tag==="View" && n.props.onLayout).props.onLayout({nativeEvent:{layout:{width,height}}});
+      root=host.render(EliteLiveCatalog,liveProps);
       assert.equal(one(root,n=>n.tag==="FlatList").props.data[0].id,"a");
       assert.equal(find(root,n=>n.props?.focusId==="accept:channel:a").length,0);
       assert.equal(find(root,n=>n.props?.focusId==="accept:category:cat").length,1);
