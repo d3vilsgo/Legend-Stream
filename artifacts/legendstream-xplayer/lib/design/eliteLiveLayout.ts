@@ -11,7 +11,12 @@ export function eliteLiveLayout(input: TvWindow) {
     : Math.min(260, Math.max(180, width * 0.19));
   const channelWidth = stacked
     ? Math.max(96, width - categoryWidth - 24)
-    : Math.min(480, Math.max(300, width * 0.31));
+    : Math.max(300, Math.min(480, width * 0.31));
+  // The channel list is the primary task; a secondary details pane may use
+  // only the space left after reserving category and channel navigation.
+  const detailWidth = stacked
+    ? 0
+    : Math.max(0, Math.min(300, width - categoryWidth - channelWidth - 36));
   return {
     ...base,
     stacked,
@@ -20,9 +25,7 @@ export function eliteLiveLayout(input: TvWindow) {
     rowHeight: Math.ceil(Math.max(76, 54 * scale + 24)),
     bodyFont: Math.round(Math.max(16, Math.min(24, 18 * Math.sqrt(scale)))),
     metaFont: Math.round(Math.max(13, Math.min(20, 15 * Math.sqrt(scale)))),
-    detailWidth: stacked
-      ? width
-      : Math.max(1, width - categoryWidth - channelWidth - 24),
+    detailWidth,
   };
 }
 export const eliteLiveSurfaces = {
