@@ -437,7 +437,7 @@ export default function OptimizedHomeScreenPaged() {
   const openMovie = (item: XtreamVodItem, returnTo: ContentView = "movies") => {
     beginPlaybackAttempt(provider.type as ProviderKind);
     const requestProviderId = provider.id;
-    void resolveCatalogPlaybackSource({ kind: "movie", item }, provider)
+    return resolveCatalogPlaybackSource({ kind: "movie", item }, provider)
       .then(({ url }) => {
         if (activeProviderIdRef.current !== requestProviderId) return;
         setPlayable({ title: item.name, subtitle: item.genre || t("movies"), url, kind: "movie", returnTo, vodIdentity: { providerId: provider.id, itemId: String(item.stream_id) } });
@@ -496,7 +496,7 @@ export default function OptimizedHomeScreenPaged() {
 
     {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? <ScrollView onLayout={event => setHomeViewportHeight(event.nativeEvent.layout.height)} style={{ flex: 1, minHeight: 0 }} contentContainerStyle={[s.content, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEnabled={!catalogDrawerOpen && !homeMovieInfo.movie && !pagedSeries.state}>
       {view === "home" ? <HomeDiscovery
-        interactionBlocked={Boolean(pagedSeries.state)}
+        interactionBlocked={Boolean(pagedSeries.state) || Boolean(homeMovieInfo.movie) || seriesDetailSuspended}
         tvViewportHeight={homeViewportHeight}
         provider={provider}
         live={provider.type === "stalker" ? homeLiveSource.totalCount : countKnown ? snapshot.counts.live : null}
@@ -515,6 +515,7 @@ export default function OptimizedHomeScreenPaged() {
         onNavigate={navigate}
         onOpenLive={openLive}
         onOpenMovie={homeMovieInfo.select}
+        onWatchMovie={homeMovieInfo.watch}
         onOpenSeries={item => pagedSeries.open(item, "home")}
         onOpenMedia={openProgress}
         onRemoveLive={(id) => void removeWatched(id)}

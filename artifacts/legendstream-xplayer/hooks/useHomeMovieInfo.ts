@@ -13,7 +13,7 @@ type Options = {
   revision: string;
   items: readonly XtreamVodItem[];
   enabled: boolean;
-  onPlay: (item: XtreamVodItem) => void;
+  onPlay: (item: XtreamVodItem) => void | Promise<void>;
 };
 
 /** Home stores a scoped identity, never a playable URL or TMDB identity. */
@@ -59,7 +59,39 @@ export function useHomeMovieInfo(options: Options) {
     close();
     now.options.onPlay(now.movie);
   };
+  const directPlay = useRef(false);
+  useEffect(() => {
+    if (enabled) directPlay.current = false;
+  }, [enabled, providerId, revision]);
+  const watch = (item: XtreamVodItem) => {
+    const now = latest.current;
+    if (
+      directPlay.current ||
+      !enabled ||
+      !supported ||
+      !providerId ||
+      now.options.providerId !== providerId ||
+      now.options.revision !== revision ||
+      !now.options.enabled
+    )
+      return;
+    const current = currentMovie(
+      now.options.items,
+      String(item.stream_id),
+      (row) => String(row.stream_id),
+    );
+    if (!current) return;
+    directPlay.current = true;
+    close();
+    const result = now.options.onPlay(current);
+    if (result && typeof result.then === "function")
+      void result.finally(() => {
+        if (latest.current.options.providerId === providerId)
+          directPlay.current = false;
+      });
+  };
   return {
+    watch,
     movie,
     input:
       movie && providerId && supported

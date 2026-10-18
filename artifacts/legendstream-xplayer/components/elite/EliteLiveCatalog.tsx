@@ -35,6 +35,7 @@ export function EliteLiveCatalog({
   favorites,
   loading,
   loadingMore,
+  error,
   search,
   onSearch,
   onRefresh,
@@ -52,6 +53,7 @@ export function EliteLiveCatalog({
   favorites: string[];
   loading: boolean;
   loadingMore: boolean;
+  error?: string | null;
   search: string;
   onSearch: (value: string) => void;
   onRefresh: () => void;
@@ -74,6 +76,7 @@ export function EliteLiveCatalog({
   useEffect(() => {
     dispatch({ type: "reset" });
     scrolled.current = false;
+    list.current?.scrollToOffset({ offset: 0, animated: false });
   }, [category, search]);
   const programs = selected
     ? selectProgramsAt(epgByChannel.get(selected.id), clock)
@@ -165,7 +168,7 @@ export function EliteLiveCatalog({
                 </TVPreviewPressable>
               ))}
             </ScrollView>
-            <View style={{ flex: 1, minWidth: 0 }}>
+            <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
               <TextInput
                 accessibilityLabel="Kanal ara"
                 placeholder="Kanal ara…"
@@ -175,11 +178,16 @@ export function EliteLiveCatalog({
                 onChangeText={onSearch}
                 style={[s.search, text]}
               />
+              {error ? (
+                <Text accessibilityRole="alert" style={[meta, { padding: 8 }]}>
+                  {error}
+                </Text>
+              ) : null}
               <FlatList
                 ref={list}
                 data={channels}
                 keyExtractor={(item) => item.id}
-                style={{ flex: 1 }}
+                style={{ flex: 1, minHeight: 0 }}
                 contentContainerStyle={{ padding: 8 }}
                 removeClippedSubviews={false}
                 initialNumToRender={12}
@@ -196,11 +204,13 @@ export function EliteLiveCatalog({
                 onEndReachedThreshold={0.45}
                 ListEmptyComponent={
                   <Text style={[meta, { padding: 12 }]}>
-                    {loading
-                      ? "Kanallar yükleniyor…"
-                      : category === null
-                        ? "Bir kategori seçin"
-                        : "Kanal bulunamadı"}
+                    {error
+                      ? "Kanallar alınamadı; Yenile ile tekrar deneyin."
+                      : loading
+                        ? "Kanallar yükleniyor…"
+                        : category === null
+                          ? "Bir kategori seçin"
+                          : "Kanal bulunamadı"}
                   </Text>
                 }
                 ListFooterComponent={
@@ -219,7 +229,7 @@ export function EliteLiveCatalog({
                       eliteVisual
                       focusId={`${idPrefix}:channel:${item.id}`}
                       accessibilityRole="button"
-                      accessibilityLabel={`${item.name}, kanal bilgilerini seç`}
+                      accessibilityLabel={`${item.name}, izle`}
                       accessibilityState={{ selected: selectedId === item.id }}
                       onFocus={() =>
                         list.current?.scrollToIndex({
@@ -228,7 +238,10 @@ export function EliteLiveCatalog({
                           viewPosition: 0.5,
                         })
                       }
-                      onPress={() => dispatch({ type: "select", id: item.id })}
+                      onPress={() => {
+                        dispatch({ type: "select", id: item.id });
+                        onOpen(item);
+                      }}
                       style={[
                         s.channel,
                         { minHeight: geometry.rowHeight },
@@ -238,7 +251,7 @@ export function EliteLiveCatalog({
                       ]}
                     >
                       <ChannelLogo channel={item} />
-                      <View style={{ flex: 1, minWidth: 0 }}>
+                      <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
                         <Text
                           numberOfLines={2}
                           style={[text, { fontWeight: "700" }]}
@@ -272,7 +285,11 @@ export function EliteLiveCatalog({
         <ScrollView
           style={[
             s.details,
-            geometry.stacked && panelOpen && { flex: 0, maxHeight: 180 },
+            geometry.stacked &&
+              panelOpen && {
+                flex: 0,
+                maxHeight: Math.min(180, bounds.height * 0.25),
+              },
           ]}
           contentContainerStyle={{ padding: 20, gap: 16 }}
         >
@@ -312,7 +329,8 @@ export function EliteLiveCatalog({
             </>
           ) : (
             <Text style={text}>
-              Kanalı OK ile seçin; ardından “Tam ekran izle” ile yayını açın.
+              Kanalı OK ile açın. Seçili kanalın program bilgisi burada
+              gösterilir.
             </Text>
           )}
         </ScrollView>

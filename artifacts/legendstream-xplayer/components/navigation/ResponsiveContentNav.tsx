@@ -93,6 +93,7 @@ export function ResponsiveContentNav<Key extends string>({
     return (
       <ScrollView
         horizontal
+        style={{ flexGrow: 0, flexShrink: 0 }}
         showsHorizontalScrollIndicator
         contentContainerStyle={[styles.tvNav, { paddingLeft: tv.left, paddingRight: tv.right, paddingTop: tv.top, paddingBottom: tv.gutter }]}
         accessibilityLabel="Ana gezinme"
@@ -120,7 +121,7 @@ export function ResponsiveContentNav<Key extends string>({
   }
 
   if (presentation.tvPreview) {
-    return <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.tvNav, { paddingHorizontal: Math.max(profile.horizontalPadding, insets.left, insets.right) }]} accessibilityLabel="TV önizleme gezinmesi">
+    return <ScrollView horizontal style={{flexGrow:0,flexShrink:0}} showsHorizontalScrollIndicator={false} contentContainerStyle={[styles.tvNav, { paddingHorizontal: Math.max(profile.horizontalPadding, insets.left, insets.right) }]} accessibilityLabel="TV önizleme gezinmesi">
       {items.map((item) => <CompactLandscapeNavButton
         key={item.key}
         label={item.label}
@@ -139,7 +140,7 @@ export function ResponsiveContentNav<Key extends string>({
   if (placement === "header") return <View style={{flexDirection:"row",alignItems:"center",justifyContent:"space-between",paddingBottom:8}}>
     <Text numberOfLines={1} style={{color:colors.foreground,fontSize:18,fontWeight:"800"}}>{["history","downloads"].includes(activeKey)?"Kitaplık":active?.label}</Text>
     <View style={{flexDirection:"row",gap:8}}>
-      <Pressable accessibilityRole="button" accessibilityLabel="Canlı yayınlarda ara" onPress={()=>go("live")} style={{padding:12}}><Feather name="search" size={21} color={colors.foreground}/></Pressable>
+      <Pressable accessibilityRole="button" accessibilityLabel="Canlı yayınlarda ara" onPress={()=>go("live")} style={{padding:12}}><Feather name="search" size={21} color={colors.foreground}/><Text style={{color:colors.mutedForeground,fontSize:11}}>Canlı ara</Text></Pressable>
       <Pressable accessibilityRole="button" accessibilityLabel="Kaynak ve ayarlar" onPress={()=>go("settings")} style={{padding:12}}><Feather name="settings" size={21} color={colors.foreground}/></Pressable>
     </View>
   </View>;

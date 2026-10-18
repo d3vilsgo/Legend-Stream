@@ -651,12 +651,12 @@ export function PagedLiveCatalog({
   }, [epgSeedKey, provider.id]);
   const initialEmpty = shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search);
   if (stalkerLive && !categoriesReady) return <CatalogLoadingSkeleton text={t("loading")} />;
-  if (initialEmpty) return <CatalogLoadingSkeleton text={t("loading")} />;
+  if (initialEmpty && !Platform.isTV) return <CatalogLoadingSkeleton text={t("loading")} />;
 
   if (Platform.isTV) return <EliteLiveCatalog
     key={provider.id} idPrefix="live" categories={drawerItems} category={category} onCategory={setCategory}
     channels={page.items} epgByChannel={epgByChannel} clock={epgClock} favorites={favorites}
-    loading={refreshing || page.loadingInitial} loadingMore={page.loadingMore}
+    loading={refreshing || page.loadingInitial} loadingMore={page.loadingMore} error={page.error}
     search={search} onSearch={setSearch} onLoadMore={page.loadMore}
     onRefresh={() => { void Promise.resolve(onRefresh()).finally(() => { reloadCategories(); page.reload(); }); }}
     onOpen={channel => { if(provider.type === "m3u") recordM3ULivePress(); onOpen(channel); }} onFavorite={onFavorite}

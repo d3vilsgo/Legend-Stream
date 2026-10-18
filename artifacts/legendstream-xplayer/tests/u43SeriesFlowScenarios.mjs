@@ -84,6 +84,10 @@ const clean = () => {
   cursor = 0;
   effects = [];
 };
+globalThis.requestAnimationFrame = (f) => {
+  f();
+  return 0;
+};
 const tick = () => new Promise((r) => setImmediate(r));
 const nodes = (t) =>
   !t || typeof t !== "object"
@@ -693,6 +697,29 @@ try {
       episodeList().props.renderItem({ item: episodeList().props.data[0] })
         .props.accessibilityState.selected,
       true,
+    );
+  });
+  await test("selected season remains pinned and restores independently of episode scroll", () => {
+    let seasonScroll, episodeScroll;
+    seasonList().props.ref.current = {
+      scrollToIndex: (value) => (seasonScroll = value),
+    };
+    episodeList().props.ref.current = {
+      scrollToOffset: (value) => (episodeScroll = value),
+    };
+    episodeList().props.onScroll({
+      nativeEvent: { contentOffset: { y: 420 } },
+    });
+    tree = modal({ visible: false });
+    tree = modal({ visible: true });
+    seasonList().props.onLayout();
+    episodeList().props.onContentSizeChange();
+    assert.equal(seasonScroll.index, 1);
+    assert.equal(seasonScroll.viewPosition, 0.5);
+    assert.equal(episodeScroll.offset, 420);
+    assert.equal(seasonList().props.style.flexShrink, 0);
+    assert(
+      !nodes(episodeList().props.ListHeaderComponent).includes(seasonList()),
     );
   });
   await test("progress shown only for matching provider and episode identity", () => {

@@ -202,6 +202,11 @@ export function CompatibilityVideoPlayer({
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [retryRevision, setRetryRevision] = useState(0);
   const retryLock = useRef(false);
+  const playbackOwner = useRef<object>({});
+  const surfaceSequence = useRef(0);
+  const surfaceOwner = useMemo(() => ({ id: ++surfaceSequence.current }), [currentSource, retryRevision, codecMode, provider?.id]);
+  playbackOwner.current = surfaceOwner;
+  useEffect(() => () => { if (playbackOwner.current === surfaceOwner) playbackOwner.current = {}; }, [surfaceOwner]);
   const errorRef = useRef<string | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
   errorRef.current = errorText;
@@ -280,6 +285,7 @@ export function CompatibilityVideoPlayer({
   useEffect(() => {
     let cancelled = false;
     if (!isCatalogRuntimeSource(currentSource)) {
+      setErrorText(null);
       setResolvedSource(currentSource);
       return () => { cancelled = true; };
     }
@@ -775,11 +781,7 @@ export function CompatibilityVideoPlayer({
   const handleError = useCallback(() => {
     setStartupPending(false);
     setErrorText(
-      codecMode === "auto"
-        ? "Oynatma başarısız. AUTO modu hem donanım hem yazılım çözümlemeyi denedi."
-        : codecMode === "hardware"
-          ? "Donanımsal çözümleme başarısız. AUTO veya SW codec modunu deneyin."
-          : "Yazılımsal çözümleme ile bu medya oynatılamadı.",
+      "Yayın oynatılamadı. Ağ, kaynak veya medya çözümleme aşaması başarısız olabilir. Yeniden deneyin veya kataloğa dönün.",
     );
     revealControls(true);
     revealMediaInfo();
@@ -833,7 +835,7 @@ export function CompatibilityVideoPlayer({
   return (
     <View style={styles.root}>
       {effectiveUri ? <VlcPlaybackSurface
-        key={retryRevision}
+        key={surfaceOwner.id}
         ref={vlcRef}
         uri={effectiveUri}
         paused={paused}
@@ -841,12 +843,12 @@ export function CompatibilityVideoPlayer({
         codecMode={codecMode}
         audioTrack={audioTrack}
         textTrack={textTrack}
-        onLoad={handleLoad}
-        onProgress={handleProgress}
-        onPlaying={handlePlaying}
-        onPaused={handlePaused}
-        onEnd={handleEnd}
-        onError={handleError}
+        onLoad={(...args) => { if (!exitStarted.current && playbackOwner.current === surfaceOwner) handleLoad(...args); }}
+        onProgress={(...args) => { if (!exitStarted.current && playbackOwner.current === surfaceOwner) handleProgress(...args); }}
+        onPlaying={(...args) => { if (!exitStarted.current && playbackOwner.current === surfaceOwner) handlePlaying(...args); }}
+        onPaused={(...args) => { if (!exitStarted.current && playbackOwner.current === surfaceOwner) handlePaused(...args); }}
+        onEnd={(...args) => { if (!exitStarted.current && playbackOwner.current === surfaceOwner) handleEnd(...args); }}
+        onError={(...args) => { if (!exitStarted.current && playbackOwner.current === surfaceOwner) handleError(...args); }}
         diagnosticM3ULive={m3uLiveDiagnostic}
         diagnosticM3UUriMetadata={m3uUriMetadata}
       /> : null}
@@ -886,6 +888,8 @@ export function CompatibilityVideoPlayer({
           onRetry={() => {
             if (!errorRef.current || retryLock.current) return;
             retryLock.current = true;
+            playbackOwner.current = {};
+            errorRef.current = null;
             setErrorText(null); setResolvedSource(null); setPanel(null); setPaused(false); setStartupPending(true);
             setRetryRevision(value => value + 1); revealControls(true);
           }}

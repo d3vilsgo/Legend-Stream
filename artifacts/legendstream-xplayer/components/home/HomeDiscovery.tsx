@@ -63,6 +63,7 @@ export function HomeDiscovery({
   onNavigate,
   onOpenLive,
   onOpenMovie,
+  onWatchMovie,
   interactionBlocked = false,
   onOpenSeries,
   onOpenMedia,
@@ -86,6 +87,7 @@ export function HomeDiscovery({
   onNavigate: (view: HomeContentView) => void;
   onOpenLive: (channel: Channel) => void;
   onOpenMovie: (item: XtreamVodItem) => void;
+  onWatchMovie?: (item: XtreamVodItem) => void;
   interactionBlocked?: boolean;
   onOpenSeries: (item: XtreamSeriesItem) => void;
   onOpenMedia: (item: MediaProgress) => void;
@@ -272,6 +274,7 @@ export function HomeDiscovery({
       providerName={provider.name}
       paused={interactionBlocked}
       onOpen={(item) => item.movie ? onOpenMovie(item.movie) : item.series ? onOpenSeries(item.series) : undefined}
+      onWatch={onWatchMovie ? item => { if (item.movie) onWatchMovie(item.movie); } : undefined}
       onDiscover={() => onNavigate("movies")}
       discoverLabel={copy.discover}
       loading={effectiveLoading}
@@ -351,6 +354,7 @@ export function HomeHeroCarousel({
   eyebrow,
   providerName,
   onOpen,
+  onWatch,
   onDiscover,
   discoverLabel,
   loading = false,
@@ -361,6 +365,7 @@ export function HomeHeroCarousel({
   eyebrow: string;
   providerName: string;
   onOpen: (item: HomeHeroEntry) => void;
+  onWatch?: (item: HomeHeroEntry) => void;
   onDiscover: () => void;
   discoverLabel: string;
   loading?: boolean;
@@ -412,7 +417,7 @@ export function HomeHeroCarousel({
       accessibilityLabel={label}
       hasTVPreferredFocus={id === "watch"}
       disabled={paused || loading}
-      onPress={() => (item ? onOpen(item) : onDiscover())}
+      onPress={() => item ? id === "watch" && item.movie && onWatch ? onWatch(item) : onOpen(item) : onDiscover()}
       style={{
         minHeight: Platform.isTV ? 56 : 48,
         paddingHorizontal: 18,
@@ -438,7 +443,6 @@ export function HomeHeroCarousel({
   return (
     <View
       style={{
-        height: heroHeight,
         minHeight: heroHeight,
         borderRadius: 24,
         overflow: "hidden",
@@ -500,7 +504,7 @@ export function HomeHeroCarousel({
               {item?.subtitle ?? providerName}
             </Text>
           ) : null}
-          {!compact && item?.description ? (
+          {item?.description && (!compact || (Platform.isTV && native.showMeta)) ? (
             <Text numberOfLines={2} style={{ color: "#c4d0d5", fontSize: 14 }}>
               {item.description}
             </Text>
@@ -514,8 +518,8 @@ export function HomeHeroCarousel({
               flexShrink: 0,
             }}
           >
-            {action(item?.series ? "Sezon ve bölümler" : "İzle", "watch", true)}
-            {action(item ? "Detay / Bilgi" : discoverLabel, "info")}
+            {item ? action(item.series ? "Bölümleri Gör" : onWatch ? "İzle" : "Film Bilgisi", "watch", true) : action(discoverLabel, "discover", true)}
+            {item?.movie && onWatch ? action("Detay / Bilgi", "info") : null}
             {Platform.isTV && items.length > 1 ? <TVPreviewPressable eliteVisual focusId="home-hero:next" accessibilityLabel="Sonraki öne çıkan içerik" disabled={paused} onPress={()=>setIndex(current=>(current+1)%items.length)} style={{minWidth:56,minHeight:56,padding:12,borderRadius:12,backgroundColor:"#1c252d",justifyContent:"center",alignItems:"center"}}><Text style={{color:"white",fontSize:22}}>→</Text></TVPreviewPressable> : null}
           </View>
         ) : (

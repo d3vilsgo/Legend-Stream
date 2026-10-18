@@ -11,7 +11,7 @@ const { build } = requireServer("esbuild");
 const out = mkdtempSync(join(tmpdir(), "tv-home-render-"));
 const rn = `import React from 'react';
 const flat=s=>Object.assign({},...([s].flat(Infinity).filter(v=>v&&typeof v==='object')));
-const node=tag=>({children,style,numberOfLines,accessibilityLabel,...p})=>React.createElement(tag,{'data-height':flat(style).height,'data-ratio':flat(style).aspectRatio,'data-lines':numberOfLines,'data-line-height':flat(style).lineHeight,'aria-label':accessibilityLabel},typeof children==='function'?null:children);
+const node=tag=>({children,style,numberOfLines,accessibilityLabel,...p})=>React.createElement(tag,{'data-height':flat(style).minHeight ?? flat(style).height,'data-ratio':flat(style).aspectRatio,'data-lines':numberOfLines,'data-line-height':flat(style).lineHeight,'aria-label':accessibilityLabel},typeof children==='function'?null:children);
 export const View=node('div'),Text=node('span'),Pressable=node('button'),Image=({source})=>React.createElement('img',{'data-artwork':source?.uri});
 export const Platform={get isTV(){return globalThis.__home.native},OS:'android'};
 export const StyleSheet={create:s=>s,absoluteFill:{position:'absolute'}};
@@ -97,6 +97,7 @@ try {
           eyebrow: "Öne çıkan",
           providerName: "Yerel sağlayıcı",
           onOpen() {},
+          onWatch() {},
           onDiscover() {},
           discoverLabel: title,
           tvViewportHeight: height - 170,
@@ -160,6 +161,7 @@ try {
       eyebrow: "Öne çıkan",
       providerName: "Yerel",
       onOpen() {},
+      onWatch() {},
       onDiscover() {},
       discoverLabel: "Keşfet",
     }),
@@ -188,6 +190,7 @@ try {
           eyebrow: "Öne çıkan",
           providerName: "Yerel",
           onOpen() {},
+          onWatch() {},
           onDiscover() {},
           discoverLabel: "Çok uzun erişilebilir içerik başlığı",
           tvViewportHeight: height - 140,
@@ -201,6 +204,7 @@ try {
             id: "fixture",
             title: "Çok uzun başlık",
             subtitle: "Film",
+            movie: { stream_id: 7 },
             image: "https://images.example.org/poster.jpg",
           },
         ]);

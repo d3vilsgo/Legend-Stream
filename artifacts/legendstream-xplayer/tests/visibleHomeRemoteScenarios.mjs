@@ -50,16 +50,48 @@ const h = (globalThis.__visible = {
   },
 });
 const mocks = {
-  react: `const h=globalThis.__visible;export const useState=v=>h.state(v),useRef=v=>h.ref(v),useMemo=(f,d)=>h.memo(f,d),useEffect=(f,d)=>h.effect(f,d);export const memo=f=>f,createContext=v=>({value:v,Provider:'Provider'}),useContext=c=>c.value;export default {createElement:(tag,props,...children)=>({tag,props:{...props,children}})};`,
-  "react-native": `export const View='View',Text='Text',Pressable='Button',Image='Image',FlatList='FlatList',ScrollView='ScrollView',Modal='Modal';export const Platform={get isTV(){return globalThis.__visible.native},OS:'android'};export const StyleSheet={create:s=>s,absoluteFill:{},absoluteFillObject:{}};export const useWindowDimensions=()=>globalThis.__visible;export const Keyboard={addListener:(name,f)=>{globalThis.__visible.listeners[name]=f;return {remove(){delete globalThis.__visible.listeners[name]}}}};export const BackHandler={addEventListener:()=>({remove(){}})};`,
+  "@/components/player/PlayerChrome":
+    "export const PlayerChrome='PlayerChrome';",
+  "@/components/player/VlcPlaybackSurface":
+    "export const VlcPlaybackSurface='VLC';",
+  "@react-native-async-storage/async-storage":
+    "export default {getItem:async()=>null,setItem:async()=>{}};",
+  "@/lib/tvRemoteInspector": "export const inspectorAction=()=>{};",
+  "@/modules/legendstream-tv-remote":
+    "export const configureTvRemote=()=>{},subscribeTvRemote=()=>({remove(){}});",
+  "@/hooks/usePlayerOrientation":
+    "export const usePlayerOrientation=()=>({ready:true,exiting:false,beginExit(){},restore:async()=>{},releaseWhenLayoutReady(){},rotate(){}});",
+  "@/modules/legendstream-pip":
+    "export const getMediaVolume=()=>1,isPipSupported=()=>false,isInPipMode=()=>false,enterPictureInPicture=async()=>false,setMediaVolume=()=>{};",
+  "@/lib/downloads": "export const downloadMedia=async()=>{};",
+  "@/lib/playerPreferences":
+    "export const DEFAULT_PLAYER_CHROME_TIMEOUT_SECONDS=5,getPlayerChromeTimeoutSeconds=async()=>5;",
+  "@/lib/xtreamCatalog":
+    "export const buildVodStreamUrl=()=>'',getEpisodePlaybackQueue=()=>[],getVodPlaybackQueue=()=>[];",
+  "@/lib/catalogPersistence": "export const isCatalogRuntimeSource=()=>false;",
+  "@/lib/catalogRuntime":
+    "export const resolveCatalogRuntimeSource=async()=>'';",
+  "@/lib/catalogPageRepository":
+    "export const getCachedLivePlaybackWindow=async()=>[],getCachedVodPlaybackWindow=async()=>[];",
+  "@/lib/epgRuntime": "export const registerEpgChannels=()=>{};",
+  "@/lib/m3uInAppDiagnostics":
+    "export const describeM3UPlaybackUri=()=>({}),recordM3UCompatPlayerMount=()=>{},recordM3ULiveQueueBegin=()=>{},recordM3ULiveQueueEnd=()=>{};",
+  "@/lib/stalkerPlaybackTrace":
+    "export const classifyPlaybackSource=()=>'',classifyStalkerTraceError=()=>'',describePlaybackSourceSafely=()=>({}),fingerprintPlaybackSource=()=>'',getActiveStalkerTraceId=()=>null,traceStalker=()=>{};",
+  "@/lib/performanceDiagnostics":
+    "export const beginPlaybackAttempt=()=>{},getActivePlaybackAttemptId=()=>null,markPlaybackEvent=()=>{},markStartupEvent=()=>{};",
+
+  react: `const h=globalThis.__visible;export const useState=v=>h.state(v),useRef=v=>h.ref(v),useMemo=(f,d)=>h.memo(f,d),useCallback=(f,d)=>h.memo(()=>f,d),useReducer=(reduce,v)=>{const [state,set]=h.state(v);return [state,event=>set(now=>reduce(now,event))]},useEffect=(f,d)=>h.effect(f,d);export const memo=f=>f,createContext=v=>({value:v,Provider:'Provider'}),useContext=c=>c.value;export default {createElement:(tag,props,...children)=>({tag,props:{...props,children}})};`,
+  "react-native": `export const View='View',Text='Text',Pressable='Button',Image='Image',FlatList='FlatList',ScrollView='ScrollView',Modal='Modal',KeyboardAvoidingView='KeyboardAvoidingView',TextInput='TextInput',ActivityIndicator='ActivityIndicator';export const Platform={get isTV(){return globalThis.__visible.native},OS:'android'};export const StyleSheet={create:s=>s,absoluteFill:{},absoluteFillObject:{}};export const useWindowDimensions=()=>globalThis.__visible;export const Keyboard={addListener:(name,f)=>{globalThis.__visible.listeners[name]=f;return {remove(){delete globalThis.__visible.listeners[name]}}}};export const AppState={addEventListener:()=>({remove(){}})};export const BackHandler={addEventListener:(name,f)=>{globalThis.__visible.hardwareBack=f;return {remove(){}}}};`,
   "react-native-safe-area-context": `export const useSafeAreaInsets=()=>({top:0,bottom:20,left:0,right:0});`,
   "@expo/vector-icons": `export const Feather='Icon';`,
   "expo-linear-gradient": `export const LinearGradient='Gradient';`,
   "@/context/UiPresentationContext": `export const useUiPresentation=()=>({tvPreview:globalThis.__visible.preview});`,
   "@/hooks/useColors": `export const useColors=()=>({primary:'#67e8d1',foreground:'white',mutedForeground:'#aaa',border:'#333',card:'#111'});`,
+  "@/context/PlayerContext": `export const selectProgramsAt=()=>({}),selectChannelEpg=()=>({});export const usePlayer=()=>({provider:null,channels:[],epg:[],isEpgLoading:false,recordWatched(){}});`,
   "@/context/I18nContext": `export const useI18n=()=>({language:'tr',t:k=>k});`,
-  "@/context/MediaLibraryContext": `export const useMediaLibrary=()=>({entries:[],loaded:true,removeProgress(){}});`,
-  "@/components/tvPreview/TVPreviewFocus": `export const TVPreviewPressable='Button';export const useTVPreviewFocus=()=>({pushFocusScope:()=>()=>{},registerBackAction:()=>()=>{}});`,
+  "@/context/MediaLibraryContext": `export const useMediaLibrary=()=>({entries:[],loaded:true,removeProgress(){},getProgress(){},saveProgress:async()=>{}});`,
+  "@/components/tvPreview/TVPreviewFocus": `export const TVPreviewPressable='Button',TVPreviewFocusRegion='Region',TVPreviewControls='Controls';export const useOptionalTVPreviewFocus=()=>null;export const useTVPreviewFocus=()=>({nativeScope:'category-picker',pushFocusScope:()=>{globalThis.__visible.scope=true;return ()=>{globalThis.__visible.scope=false}},registerBackAction:f=>{globalThis.__visible.back=f;return ()=>{globalThis.__visible.back=null}},modalShown:()=>{globalThis.__visible.shown=true}});`,
   "@/components/FocusButton": `export const FocusButton='Button';`,
   "@/components/player/PlayerRemotePressable": `export const PlayerRemotePressable='Button',PlayerRemoteFocusBoundary='Boundary';`,
   "./PlayerRemotePressable": `export const PlayerRemotePressable='Button',PlayerRemoteFocusBoundary='Boundary';`,
@@ -74,6 +106,8 @@ const render = (f) => {
 };
 const clean = () => {
   for (const s of slots) s?.cleanup?.();
+  h.opened = null;
+  h.watched = null;
   slots = [];
   cursor = 0;
   effects = [];
@@ -88,6 +122,12 @@ const text = (t) =>
     : !t || typeof t !== "object"
       ? ""
       : (t.props?.children ?? []).flat(Infinity).map(text).join(" ");
+const testAsync = async (name, f) => {
+  clean();
+  await f();
+  count++;
+  console.log("ok visible Home " + count + " - " + name);
+};
 const test = (name, f) => {
   clean();
   f();
@@ -97,7 +137,7 @@ const test = (name, f) => {
 try {
   await build({
     stdin: {
-      contents: `export {HomeHeroCarousel} from './components/home/HomeDiscovery';export {ResponsiveContentNav} from './components/navigation/ResponsiveContentNav';export {PlayerChrome,PanelContent} from './components/player/PlayerChromeV2';`,
+      contents: `export {CompatibilityVideoPlayer} from './components/CompatibilityVideoPlayerV2';export {EliteLiveCatalog} from './components/elite/EliteLiveCatalog';export {CategoryPicker} from './components/navigation/CategoryPicker';export {useHomeMovieInfo} from './hooks/useHomeMovieInfo';export {HomeHeroCarousel} from './components/home/HomeDiscovery';export {ResponsiveContentNav} from './components/navigation/ResponsiveContentNav';export {PlayerChrome,PanelContent} from './components/player/PlayerChromeV2';`,
       resolveDir: app,
       loader: "tsx",
     },
@@ -133,13 +173,22 @@ try {
       },
     ],
   });
-  const { HomeHeroCarousel, ResponsiveContentNav, PlayerChrome, PanelContent } =
-    req(join(out, "tests.cjs"));
+  const {
+    HomeHeroCarousel,
+    ResponsiveContentNav,
+    PlayerChrome,
+    PanelContent,
+    CompatibilityVideoPlayer,
+    EliteLiveCatalog,
+    CategoryPicker,
+    useHomeMovieInfo,
+  } = req(join(out, "tests.cjs"));
   const movie = {
       id: "provider-a:movie:7",
       title: "Aynı başlık",
       subtitle: "Drama",
       image: "",
+      movie: { stream_id: 7 },
     },
     series = {
       id: "provider-a:series:8",
@@ -154,6 +203,9 @@ try {
     providerName: "Yerel",
     discoverLabel: "Keşfet",
     onDiscover() {},
+    onWatch(item) {
+      h.watched = item;
+    },
     onOpen(item) {
       h.opened = item;
     },
@@ -168,7 +220,7 @@ try {
       Object.assign(h, { width, height, preview, native });
       const tree = render(() => HomeHeroCarousel(heroProps));
       assert(
-        tree.props.style.height >=
+        tree.props.style.minHeight >=
           (native ? 1 : width > height || preview ? 160 : 310),
       );
       assert.match(text(tree), /Aynı başlık/);
@@ -178,7 +230,8 @@ try {
         n.props?.focusId?.endsWith(":watch"),
       );
       watch.props.onPress();
-      assert.equal(h.opened, movie);
+      assert.equal(h.watched, movie);
+      assert.notEqual(h.opened, movie);
       const info = nodes(tree).find((n) => n.props?.focusId?.endsWith(":info"));
       info.props.onPress();
       assert.equal(h.opened, movie);
@@ -186,7 +239,7 @@ try {
         .find((n) => n.props?.focusId === "home-hero:next")
         .props.onPress();
       const next = render(() => HomeHeroCarousel(heroProps));
-      assert.match(text(next), /Sezon ve bölümler/);
+      assert.match(text(next), /Bölümleri Gör/);
       nodes(next)
         .find((n) => n.props?.focusId?.endsWith(":watch"))
         .props.onPress();
@@ -327,6 +380,169 @@ try {
     assert.equal(row.props.nativeID, "player:content:17");
     assert.equal(row.props.hasTVPreferredFocus, true);
   });
+  test("Home watch validates current identity, rejects repeated and stale provider callbacks", () => {
+    let plays = [];
+    const a = {
+      providerId: "a",
+      providerType: "xtream",
+      revision: "1",
+      enabled: true,
+      items: [{ stream_id: 7, name: "Current" }],
+      onPlay: (item) => plays.push(item),
+    };
+    const hook = render(() => useHomeMovieInfo(a));
+    hook.watch({ stream_id: 999 });
+    assert.equal(plays.length, 0);
+    hook.watch({ stream_id: 7, name: "Stale DTO" });
+    hook.watch({ stream_id: 7 });
+    assert.equal(plays.length, 1);
+    assert.equal(plays[0], a.items[0]);
+    render(() => useHomeMovieInfo({ ...a, providerId: "b" }));
+    hook.watch({ stream_id: 7 });
+    assert.equal(plays.length, 1);
+  });
+  test("main Live OK opens the actual channel; focus only scrolls and preserves selection", () => {
+    h.native = true;
+    let opened = [];
+    const channels = [
+      { id: "one", name: "Bir" },
+      { id: "two", name: "İki" },
+    ];
+    const props = {
+      categories: [],
+      category: "all",
+      channels,
+      epgByChannel: new Map(),
+      clock: 0,
+      favorites: [],
+      onOpen: (c) => opened.push(c),
+    };
+    let tree = render(() => EliteLiveCatalog(props));
+    let list = nodes(tree).find((n) => n.tag === "FlatList");
+    let scroll;
+    list.props.ref.current = {
+      scrollToIndex: (v) => (scroll = v),
+      scrollToOffset() {},
+    };
+    let row = list.props.renderItem({ item: channels[1], index: 1 });
+    row.props.onFocus();
+    assert.equal(scroll.index, 1);
+    assert.equal(opened.length, 0);
+    row.props.onPress();
+    assert.equal(opened[0], channels[1]);
+    tree = render(() => EliteLiveCatalog(props));
+    list = nodes(tree).find((n) => n.tag === "FlatList");
+    row = list.props.renderItem({ item: channels[1], index: 1 });
+    assert.equal(row.props.accessibilityState.selected, true);
+    list.props.renderItem({ item: channels[0], index: 0 }).props.onFocus();
+    tree = render(() => EliteLiveCatalog(props));
+    list = nodes(tree).find((n) => n.tag === "FlatList");
+    assert.equal(
+      list.props.renderItem({ item: channels[1], index: 1 }).props
+        .accessibilityState.selected,
+      true,
+    );
+    assert.equal(list.props.removeClippedSubviews, false);
+  });
+  test("Live loading, empty and safe failure copy are distinct", () => {
+    const props = {
+      categories: [],
+      category: "all",
+      channels: [],
+      epgByChannel: new Map(),
+      clock: 0,
+      favorites: [],
+    };
+    for (const [loading, error, expected] of [
+      [true, null, "yükleniyor"],
+      [false, null, "bulunamadı"],
+      [false, "Katalog yüklenemedi", "yüklenemedi"],
+    ]) {
+      const tree = render(() => EliteLiveCatalog({ ...props, loading, error }));
+      const list = nodes(tree).find((n) => n.tag === "FlatList");
+      assert.match(
+        text(tree) + text(list.props.ListEmptyComponent),
+        new RegExp(expected),
+      );
+    }
+  });
+  test("category search preserves ID, closes on selection and releases input scope", () => {
+    let selected;
+    const props = {
+      items: [
+        { id: "real:1", title: "Çocuk kanalları" },
+        { id: "real:2", title: "Haber" },
+      ],
+      selected: "real:2",
+      onSelect: (id) => (selected = id),
+    };
+    let tree = render(() => CategoryPicker(props));
+    nodes(tree)
+      .find((n) => n.props?.accessibilityLabel === "Kategori seç")
+      .props.onPress();
+    tree = render(() => CategoryPicker(props));
+    assert.equal(h.scope, true);
+    nodes(tree)
+      .find((n) => n.tag === "TextInput")
+      .props.onChangeText("çocuk");
+    tree = render(() => CategoryPicker(props));
+    let list = nodes(tree).find((n) => n.tag === "FlatList");
+    assert.equal(list.props.data.length, 1);
+    list.props.renderItem({ item: list.props.data[0] }).props.onPress();
+    tree = render(() => CategoryPicker(props));
+    assert.equal(selected, "real:1");
+    assert.equal(h.scope, false);
+    assert.equal(
+      nodes(tree).find((n) => n.tag === "Modal").props.visible,
+      false,
+    );
+  });
+  await testAsync(
+    "production Player retry drops old VLC events and repeated activation; error Back exits",
+    async () => {
+      h.native = true;
+      let exits = 0;
+      const props = {
+        source: "https://example.invalid/live.ts",
+        title: "Live",
+        mediaKind: "live",
+        onFullscreenExit: () => exits++,
+      };
+      let tree = render(() => CompatibilityVideoPlayer(props));
+      tree = render(() => CompatibilityVideoPlayer(props));
+      const old = nodes(tree).find((n) => n.tag === "VLC");
+      assert(old);
+      old.props.onError();
+      tree = render(() => CompatibilityVideoPlayer(props));
+      let chrome = nodes(tree).find((n) => n.tag === "PlayerChrome");
+      assert(chrome.props.errorText);
+      chrome.props.onRetry();
+      chrome.props.onRetry();
+      // Events retained by the old native surface are rejected before React commits the retry.
+      old.props.onProgress({ currentTime: 900, duration: 1000 });
+      old.props.onError();
+      old.props.onPlaying();
+      tree = render(() => CompatibilityVideoPlayer(props));
+      tree = render(() => CompatibilityVideoPlayer(props));
+      const fresh = nodes(tree).find((n) => n.tag === "VLC");
+      assert.equal(fresh.props.key, 2);
+      old.props.onError();
+      old.props.onProgress({ currentTime: 900, duration: 1000 });
+      tree = render(() => CompatibilityVideoPlayer(props));
+      chrome = nodes(tree).find((n) => n.tag === "PlayerChrome");
+      assert.equal(chrome.props.errorText, null);
+      assert.equal(chrome.props.position, 0);
+      fresh.props.onError();
+      tree = render(() => CompatibilityVideoPlayer(props));
+      assert(nodes(tree).find((n) => n.tag === "PlayerChrome").props.errorText);
+      assert.equal(h.hardwareBack(), true);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(exits, 1);
+      assert.equal(h.hardwareBack(), true);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(exits, 1);
+    },
+  );
   console.log(
     `Visible Home and remote host: ${count}/${count} passed; HOST_NOT_ANDROID_WINDOW_OR_PHYSICAL`,
   );

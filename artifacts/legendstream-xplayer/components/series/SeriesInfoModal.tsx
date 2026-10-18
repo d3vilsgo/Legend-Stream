@@ -189,60 +189,6 @@ export function SeriesInfoModal({
           color={tokens.color.accent}
         />
       ) : null}
-      <FlatList
-        ref={seasonStrip}
-        horizontal
-        onContentSizeChange={revealSeason}
-        getItemLayout={(_, index) => ({
-          length: 180,
-          offset: 180 * index,
-          index,
-        })}
-        data={orderedSeasons}
-        keyExtractor={(season) => season.id}
-        extraData={selectedSeasonId}
-        initialNumToRender={8}
-        maxToRenderPerBatch={8}
-        windowSize={5}
-        showsHorizontalScrollIndicator={false}
-        renderItem={({ item: season }) => (
-          <TVPreviewPressable
-            eliteVisual
-            focusScope="series-info"
-            focusId={`series-info:${detail.id}:season:${season.id}`}
-            accessibilityRole="button"
-            accessibilityState={{ selected: season.id === selectedSeasonId }}
-            onPress={() => {
-              if (busy) return;
-              offset.current = 0;
-              setSelectedSeasonId(season.id);
-              setSelectedEpisodeId(null);
-            }}
-            style={[
-              control,
-              {
-                width: 170,
-                marginRight: 10,
-                backgroundColor:
-                  season.id === selectedSeasonId
-                    ? tokens.color.accent
-                    : tokens.color.surface,
-              },
-            ]}
-          >
-            <Text
-              style={[
-                text,
-                season.id === selectedSeasonId && {
-                  color: tokens.color.canvas,
-                },
-              ]}
-            >
-              {season.label}
-            </Text>
-          </TVPreviewPressable>
-        )}
-      />
       {!loading && !orderedSeasons.length ? (
         <Text style={text}>{t("noEpisodes")}</Text>
       ) : null}
@@ -260,6 +206,7 @@ export function SeriesInfoModal({
         setDialogShown(true);
         if (Platform.isTV) void focus.modalShown?.("series-info");
         revealSeason();
+        restore();
       }}
       onRequestClose={onClose}
       accessibilityViewIsModal
@@ -275,6 +222,64 @@ export function SeriesInfoModal({
               paddingBottom: Math.max(insets.bottom, 24),
             }}
           >
+            <FlatList
+              ref={seasonStrip}
+              horizontal
+              style={{ flexGrow: 0, flexShrink: 0 }}
+              onLayout={revealSeason}
+              onContentSizeChange={revealSeason}
+              getItemLayout={(_, index) => ({
+                length: 180,
+                offset: 180 * index,
+                index,
+              })}
+              data={orderedSeasons}
+              keyExtractor={(season) => season.id}
+              extraData={selectedSeasonId}
+              initialNumToRender={8}
+              maxToRenderPerBatch={8}
+              windowSize={5}
+              showsHorizontalScrollIndicator={false}
+              renderItem={({ item: season }) => (
+                <TVPreviewPressable
+                  eliteVisual
+                  focusScope="series-info"
+                  focusId={`series-info:${detail.id}:season:${season.id}`}
+                  accessibilityRole="button"
+                  accessibilityState={{
+                    selected: season.id === selectedSeasonId,
+                  }}
+                  onPress={() => {
+                    if (busy) return;
+                    offset.current = 0;
+                    setSelectedSeasonId(season.id);
+                    setSelectedEpisodeId(null);
+                  }}
+                  style={[
+                    control,
+                    {
+                      width: 170,
+                      marginRight: 10,
+                      backgroundColor:
+                        season.id === selectedSeasonId
+                          ? tokens.color.accent
+                          : tokens.color.surface,
+                    },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      text,
+                      season.id === selectedSeasonId && {
+                        color: tokens.color.canvas,
+                      },
+                    ]}
+                  >
+                    {season.label}
+                  </Text>
+                </TVPreviewPressable>
+              )}
+            />
             <FlatList
               ref={list}
               data={selectedSeason?.episodes ?? []}

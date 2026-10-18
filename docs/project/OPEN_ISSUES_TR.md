@@ -96,3 +96,36 @@ ELITE-001, INFO-001 ve UI-001 açık kalır. Native TV tarihsel **Physical FAIL*
 - **U43-META-001 / DEFERRED**: TV TMDB detay servisi/endpoint entegrasyonu yok. Provider yerel görsel, özet/tür ve mevcut episode alanları kullanılır. Eksik süre/açıklama uydurulmaz. Stalker normalize edilmiş episode DTO'su bu ek alanları sunmuyorsa boş kalır.
 - **U43-RC-001 / NOT TESTED / DEFERRED_RC**: Gerçek telefon/tablet/native/Preview'da modal ilk odak, scrolling, aynı kart ve raf restorasyonu, orientation ve Player Back sırası fiziksel kanıt bekler. Player içindeki Next ile detay ekranının en son çalınan bölüme senkronizasyonu yeni kapsam değildir; son detay seçimi korunur, mevcut Player queue/progress davranışı değiştirilmez.
 - Native TV tarihsel Physical FAIL, TMDB LIVE BLOCKED ve legacy 14 SKIP / 0 DELETED aynı kalır. U4 bütünü PARTIAL.
+
+
+## Home & TV UX kapanışı — 18 Ekim 2026
+
+Başlangıç kaynak: `f24461c79a0e88fa24911db5952fc26d06dba2d2`, PR #143 Draft,
+`integration/legendstream-u1` → `feature/r19-tmdb-secure-proxy`.
+
+| Alan | Bu dilimde kaynak durumu | Kabul sınırı |
+|---|---|---|
+| TV ana Live | Native yenilemede liste mount'u korunur; yatay nav dikey alanı büyütemez; dar viewport'ta bilgi paneli %25 ile sınırlanır; kanal OK mevcut onOpen'u çağırır | Homatics görünmez kanal bulgusunun fiziksel kök nedeni/çözümü henüz ölçülmedi; açık |
+| Live durumları | Güvenli paging hata mesajı, yükleniyor ve boş durum ayrıldı; focus scroll ile seçimi değiştirmez | Ana liste host testi Player çekmecesinden ayrıdır; Android piksel/katman ölçümü değildir |
+| Home Hero | Xtream/M3U İzle mevcut scoped controller üzerinden mevcut movie resolver'a gider; Bilgi ayrı callback; dizi Bölümleri Gör; Stalker güvenli doğrudan yol verilmediğinde Film Bilgisi | Yeni resolver yok; büyük yazıda minHeight ile büyüme; TV raf görünürlüğü gerçek cihazda açık |
+| Film/Dizi modal | Mevcut modalShown/scope/back ownership korundu; kategoriye görünür Kapat, geç scope hazır bildirimi, Preview viewport/dock ve keyboard avoidance eklendi | Native Dialog/Back fiziksel doğrulaması açık |
+| Player hata | Retry eski VLC callback sahibini eşzamanlı iptal eder; tekrar basış kilidi; Back çıkışı; kanıtsız codec teşhisi kaldırıldı | Yayın hatasının ağ/resolver/VLC kök nedeni çözülmüş sayılmaz; gecikme ölçülmedi |
+| Mobil gezinme | Beş mevcut sekme ve tek mevcut state korunur; Canlı ara metni görünür; klavyede bar gizlenir | 393/873 ve 1280/800 host matrisi; yatay telefon alt barı 48dp hedeflerle kalır; yan düzen eklenmedi |
+| Dizi dönüş | Sezon şeridi dikey bölüm listesinden ayrıldı; seçili sezon merkezi ve bölüm offset'i bağımsız restore edilir | Host modal handler testi; Android kaydırma kabulü değildir |
+
+Otomatik kanıt: genişletilmiş Visible Home/remote production host 15/15; U4.3 32/32;
+Native Home render 33/33 + responsive render 30/30. Bunlar host/model kanıtıdır.
+Son committen sonra exact-SHA Quality ve Universal APK çalıştırılması teslim kapısıdır;
+koşu linkleri ve sonuçları PR açıklamasında ve Türkçe teslim raporunda kaydedilir.
+Native Kotlin bu dilimde değiştirilmedi. Yerel Android SDK/adb/emülatör yok;
+Android derleme kanıtı yalnız final SHA Universal workflow sonucu ile verilebilir.
+
+Genel durum **PARTIAL / PHYSICAL NOT TESTED**. Tarihsel Native TV **Physical FAIL**,
+**TMDB LIVE BLOCKED**, legacy **14 SKIP / 0 DELETED** korunur. Bu kayıt yeni fiziksel
+kabul oluşturmaz; fiziksel test başlatılmaz. Release Candidate onayı sonrası kart:
+Poco: Hero İzle/Bilgi, kategori arama/klavye/yatay/büyük yazı, sezon dönüşü.
+Homatics: ilk Live/kategori değişimi/Player dönüşü, 30 UP/DOWN hedef görünürlüğü,
+OK doğru kanal, Film Info D-pad/Back, hata Retry/Back ve çift basış.
+
+Sonraki tek sınırlı görev: bütünleşik RC üzerinde TV ana Live viewport ve modal/Back
+akışının gerçek Android ölçümünü alıp açık Homatics bulgusunu kanıtla kapatmak.

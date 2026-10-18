@@ -36,6 +36,7 @@ export type CatalogPageState<T> = {
   hasMore: boolean;
   nextCursor: string | null;
   queryKey: string | null;
+  error?: string | null;
 };
 
 type SnapshotCount = {
@@ -185,6 +186,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
 
     setState((current) => ({
       ...current,
+      error: null,
       loadingInitial: mode === "initial" ? current.items.length === 0 : current.loadingInitial,
       loadingMore: mode !== "initial" ? true : current.loadingMore,
     }));
@@ -253,6 +255,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
         loadingInitial: false,
         loadingMore: false,
         hasMore: mode === "refresh" ? current.hasMore : false,
+        error: "Katalog yüklenemedi. Yenile ile tekrar deneyin.",
       }));
     } finally {
       if (generationRef.current !== generation || stalkerController?.signal.aborted) finishPerformanceMeasurement(measurement, "CANCELLED");
