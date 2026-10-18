@@ -43,24 +43,28 @@ export function movieInfoPresentation(
 ) {
   const m = metadata?.kind === "movie" ? metadata : undefined;
   return {
-    title: m?.title?.trim() || local.title,
+    title: local.title.trim() || m?.title?.trim() || "",
     originalTitle: m?.originalTitle,
-    poster: tmdbImageUrl(m?.posterPath, "w342") ?? local.poster,
+    poster: local.poster?.trim() || tmdbImageUrl(m?.posterPath, "w342"),
     backdrop: tmdbImageUrl(m?.backdropPath, "w1280"),
-    overview: m?.overview?.trim() || local.overview,
-    genre: m?.genres.length
-      ? m.genres.map((g) => g.name).join(" · ")
-      : local.genre,
-    cast: m?.cast.length
-      ? m.cast
-          .slice(0, 12)
-          .map((p) => p.name)
-          .join(", ")
-      : local.cast,
-    director: m?.directors.length
-      ? m.directors.map((p) => p.name).join(", ")
-      : local.director,
-    year: m?.year ?? input.year ?? local.year,
+    overview: local.overview?.trim() || m?.overview?.trim(),
+    genre:
+      local.genre?.trim() ||
+      (m?.genres.length ? m.genres.map((g) => g.name).join(" · ") : undefined),
+    cast:
+      local.cast?.trim() ||
+      (m?.cast.length
+        ? m.cast
+            .slice(0, 12)
+            .map((p) => p.name)
+            .join(", ")
+        : undefined),
+    director:
+      local.director?.trim() ||
+      (m?.directors.length
+        ? m.directors.map((p) => p.name).join(", ")
+        : undefined),
+    year: local.year ?? input.year ?? m?.year,
     runtime: m?.runtimeMinutes,
     rating: m?.voteAverage,
     ratingSource: m?.voteAverage !== undefined ? "TMDB" : undefined,

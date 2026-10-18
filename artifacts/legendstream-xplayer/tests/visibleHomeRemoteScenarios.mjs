@@ -374,6 +374,77 @@ try {
       ),
     );
   });
+  test("production Player seek capability and remote/touch parity", () => {
+    for (const native of [false, true]) {
+      h.native = native;
+      const seeks = [],
+        ratios = [];
+      const props = {
+        controlsVisible: true,
+        mediaKind: "movie",
+        duration: 120,
+        position: 20,
+        selectableItems: [],
+        audioTracks: [],
+        textTracks: [],
+        onSeekBy: (n) => seeks.push(n),
+        onSeekRatio: (n) => ratios.push(n),
+      };
+      let tree = render(() => PlayerChrome(props));
+      const actions = nodes(tree).filter(
+        (n) => typeof n.tag === "function" && n.tag.name === "RoundAction",
+      );
+      assert.equal(actions.length, 2);
+      for (const a of actions) {
+        const button = a.tag(a.props);
+        assert.equal(button.props.disabled, false);
+        assert.match(button.props.accessibilityLabel, /saniye/);
+        button.props.onPress();
+      }
+      assert.deepEqual(seeks, [-10, 15]);
+      let timeline = nodes(tree).find(
+        (n) => n.props?.accessibilityLabel === "Oynatma konumu",
+      );
+      assert.equal(timeline.props.focusable, false);
+      assert.equal(timeline.props.disabled, native);
+      timeline.props.onLayout({ nativeEvent: { layout: { width: 200 } } });
+      tree = render(() => PlayerChrome(props));
+      timeline = nodes(tree).find(
+        (n) => n.props?.accessibilityLabel === "Oynatma konumu",
+      );
+      timeline.props.onPress({ nativeEvent: { locationX: 50 } });
+      timeline.props.onPress({ nativeEvent: {} });
+      assert.deepEqual(ratios, native ? [] : [0.25]);
+      assert(
+        nodes(tree).some((n) => n.props?.accessibilityLabel === "Duraklat"),
+      );
+      for (const duration of [0, NaN, Infinity]) {
+        tree = render(() => PlayerChrome({ ...props, duration }));
+        for (const a of nodes(tree).filter(
+          (n) => typeof n.tag === "function" && n.tag.name === "RoundAction",
+        )) {
+          assert.equal(a.props.disabled, true);
+          a.props.onPress();
+        }
+        assert.deepEqual(seeks, [-10, 15]);
+        assert.equal(
+          nodes(tree).find((n) => n.tag === "Gesture").props.seekEnabled,
+          false,
+        );
+      }
+      tree = render(() => PlayerChrome({ ...props, mediaKind: "live" }));
+      assert(
+        !nodes(tree).some(
+          (n) => n.props?.accessibilityLabel === "Oynatma konumu",
+        ),
+      );
+      assert(
+        !nodes(tree).some(
+          (n) => typeof n.tag === "function" && n.tag.name === "RoundAction",
+        ),
+      );
+    }
+  });
   test("TV channel row offsets exclude variable panel header", () => {
     h.native = true;
     const tree = render(() =>
