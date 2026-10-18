@@ -90,12 +90,33 @@ export function ResponsiveContentNav<Key extends string>({
 
   if (placement === "bottom" && (model.nativeTv || presentation.tvPreview)) return null;
   if (model.nativeTv) {
-    const availableWidth = Math.max(0, width - insets.left - insets.right - tv.left - tv.right);
-    const gap = 8;
-    const targetWidth = Math.max(56, Math.min(tv.navWidth, Math.floor((availableWidth - gap * (items.length - 1)) / Math.max(items.length, 1))));
+    // The rail overlays the content rather than consuming hero/shelf height.
+    // Keep focus IDs and the existing Native Focus owner unchanged.
+    const railWidth = open
+      ? Math.min(220, Math.max(160, tv.usableWidth * 0.24))
+      : Math.max(64, Math.min(84, tv.target + 12));
     return (
       <View
-        style={[styles.tvNav, { flexDirection: "row", flexWrap: "wrap", flexGrow: 0, flexShrink: 0, paddingLeft: tv.left, paddingRight: tv.right, paddingTop: tv.top, paddingBottom: tv.gutter }]}
+        style={[
+          styles.tvNav,
+          {
+            position: "absolute",
+            top: tv.top,
+            left: tv.left,
+            zIndex: 20,
+            elevation: 20,
+            width: railWidth,
+            flexDirection: "column",
+            flexGrow: 0,
+            flexShrink: 0,
+            alignItems: "stretch",
+            padding: 6,
+            borderRadius: 16,
+            backgroundColor: open ? "#162731F2" : "#162731E8",
+            borderWidth: 1,
+            borderColor: "#36515E",
+          },
+        ]}
         accessibilityLabel="Ana gezinme"
       >
         {items.map((item) => (
@@ -103,17 +124,27 @@ export function ResponsiveContentNav<Key extends string>({
             key={item.key}
             focusId={`nav:${item.key}`}
             testID={`adaptive-nav-${item.key}`}
-            label={item.label}
+            label={open ? item.label : ""}
             icon={item.icon}
             variant={activeKey === item.key ? "secondary" : "ghost"}
             accessibilityRole="tab"
+            accessibilityLabel={item.label}
             accessibilityState={{ selected: activeKey === item.key }}
             hasTVPreferredFocus={preferInitialFocus && activeKey === item.key && activeKey === homeKey}
-            onFocusChange={(focused) => { if (focused) navigationFocusedIds.current.add(item.key); else navigationFocusedIds.current.delete(item.key); }}
+            onFocusChange={(focused) => {
+              if (focused) navigationFocusedIds.current.add(item.key);
+              else navigationFocusedIds.current.delete(item.key);
+              setOpen(navigationFocusedIds.current.size > 0);
+            }}
             onPress={() => select(item.key)}
             labelLines={1}
             labelStyle={{ fontSize: tv.labelFont, flexShrink: 1 }}
-            style={[styles.tvTarget, { width: targetWidth, minHeight: tv.target, paddingHorizontal: 10 }]}
+            style={[styles.tvTarget, {
+              width: "100%",
+              minHeight: tv.target,
+              paddingHorizontal: open ? 10 : 4,
+              borderColor: activeKey === item.key ? "#67e8d1" : "transparent",
+            }]}
           />
         ))}
       </View>
