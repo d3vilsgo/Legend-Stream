@@ -278,6 +278,18 @@ try {
     movieAction.props.onPress();
     movies = host.render(PagedMoviesCatalog, movieProps);
     const info = exactly(movies, (node) => node.tag === "MovieInfoModal");
+    // An identical stream ID at a different provider or catalog revision
+    // cannot inherit the old modal's Play callback.
+    const changedProvider = host.render(PagedMoviesCatalog, {
+      ...movieProps,
+      provider: { id: "provider-b", type: "xtream" },
+    });
+    assert.equal(traverse(changedProvider, (node) => node.tag === "MovieInfoModal").length, 0, name);
+    const changedSession = host.render(PagedMoviesCatalog, {
+      ...movieProps,
+      catalogRevision: 2,
+    });
+    assert.equal(traverse(changedSession, (node) => node.tag === "MovieInfoModal").length, 0, name);
     info.props.onPlay();
     assert.deepEqual(openedMovies, [12], name);
     info.props.onClose();
