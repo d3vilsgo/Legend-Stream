@@ -153,14 +153,35 @@ try {
   let passed = 0;
   for (const [width,height] of profiles) {
     host.reset(); Object.assign(host,{width,height,isTV:true,preview:false});
-    const base = { ...props, tvViewportHeight: Math.max(320, height-150) };
+    const opened = [];
+    const watched = [];
+    const base = {
+      ...props,
+      tvViewportHeight: Math.max(320, height-150),
+      onOpenMovie: movie => opened.push(movie.stream_id),
+      onWatchMovie: movie => watched.push(movie.stream_id),
+    };
     let root = host.render(HomeDiscovery, base);
     let hero = unique(root, n => n.tag === HomeHeroCarousel);
     const shelves = find(root,n=>typeof n.tag==="function" && n.tag.name==="HomeShelf");
     assert(shelves.length >= 3);
     assert.equal(hero.props.collapsed,false);
     const identity = hero.props.items[0].id;
-    const shelfIdentity = shelves[0].props.items.map(x=>x.id);
+    // Both Hero Info and Play are wired to the real Home production actions.
+    const heroActions = renderChild(HomeHeroCarousel, hero.props);
+    unique(heroActions, node => node.props?.focusId === "home-hero:" + identity + ":info").props.onPress();
+    unique(heroActions, node => node.props?.focusId === "home-hero:" + identity + ":watch").props.onPress();
+    assert.deepEqual(opened, [7]);
+    assert.deepEqual(watched, [7]);
+    const movieShelf = shelves.find(node => node.props.title === "movies");
+    assert(movieShelf);
+    const movieTree = renderChild(movieShelf.tag, movieShelf.props);
+    const movieList = unique(movieTree, node => node.tag === "FlatList");
+    const movieCard = movieList.props.renderItem({ item: movieList.props.data[0], index: 0 });
+    const moviePressable = renderChild(movieCard.tag, movieCard.props);
+    unique(moviePressable, node => node.props?.focusId?.includes(":movie-7")).props.onPress();
+    assert.deepEqual(opened, [7, 7]);
+    const shelfIdentity = shelves[0].props.items.map(x => x.id);
     // The callback is supplied to every mounted shelf, not a separate
     // geometry helper. It is invoked by each real shelf's item focus handler.
     const liveShelf = renderChild(shelves[0].tag, shelves[0].props);
