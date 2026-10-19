@@ -135,7 +135,7 @@ scenario("TV nav bounded focus targets coexist with persistent mobile tabs", () 
   assert.ok(nav.includes("if (presentation.tvPreview)"));
   for (const label of ["Ana Sayfa", "Canlı", "Filmler", "Diziler", "Kitaplık"]) assert.ok(nav.includes(label));
   assert.ok(nav.includes('placement === "bottom"'));
-  assert.ok(nav.includes("if(keyboardOpen) return null"));
+  assert.match(nav, /if \(keyboardOpen\) return null;/);
   assert.ok(nav.includes("BackHandler"));
   assert.ok(nav.includes("hardwareBackPress"));
   // Track focus ownership per tab: a blur from one tab must not erase another focused tab.
