@@ -205,6 +205,19 @@ try {
     assert(compactHeight < expandedHeight);
     assert(expandedHeight <= 320);
     assert(compactHeight >= 96);
+    // Repeated D-pad crossings must settle without remounting the content
+    // identity or changing a selected Hero item.
+    for (let i = 0; i < 24; i++) {
+      const shelf = find(root, n => typeof n.tag === "function" && n.tag.name === "HomeShelf")[0];
+      shelf.props.onContentFocus();
+      root = host.render(HomeDiscovery, base);
+      const foldedHero = unique(root, n => n.tag === HomeHeroCarousel);
+      assert.equal(foldedHero.props.collapsed, true);
+      assert.equal(foldedHero.props.items[0].id, identity);
+      foldedHero.props.onHeroFocus();
+      root = host.render(HomeDiscovery, base);
+      assert.equal(unique(root, n => n.tag === HomeHeroCarousel).props.collapsed, false);
+    }
     passed++;
   }
   // A provider boundary invalidates the old shelf context even if Home
