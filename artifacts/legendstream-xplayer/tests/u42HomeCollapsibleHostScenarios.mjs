@@ -12,6 +12,9 @@ const { build } = requireServer("esbuild");
 const out = mkdtempSync(join(tmpdir(), "u42-home-host-"));
 let slots = [];
 let cursor = 0;
+let previousEffects = [];
+let effectCursor = 0;
+let pendingEffects = [];
 const host = globalThis.__u42 = {
   width: 960, height: 540, fontScale: 1, isTV: true, preview: false,
   state(value) {
@@ -25,13 +28,28 @@ const host = globalThis.__u42 = {
     const i = cursor++;
     return slots[i] ?? (slots[i] = { current: value });
   },
-  reset() { slots = []; cursor = 0; },
-  render(component, props) { cursor = 0; return component(props); },
+  effect(fn, deps) {
+    const i = effectCursor++;
+    const prior = previousEffects[i];
+    if (!prior || !deps || deps.some((value, index) => !Object.is(value, prior[index]))) {
+      previousEffects[i] = deps;
+      pendingEffects.push(fn);
+    }
+  },
+  reset() { slots = []; cursor = 0; previousEffects = []; effectCursor = 0; pendingEffects = []; },
+  render(component, props) {
+    cursor = 0;
+    effectCursor = 0;
+    pendingEffects = [];
+    const value = component(props);
+    for (const run of pendingEffects) run();
+    return value;
+  },
 };
 const mocks = {
   react: `const h=globalThis.__u42;
     export const useState=v=>h.state(v),useRef=v=>h.ref(v),useMemo=f=>f(),
-      useEffect=()=>{},useCallback=f=>f;
+      useEffect=(fn,deps)=>h.effect(fn,deps),useCallback=f=>f;
     export default {createElement:(tag,props,...children)=>({tag,props:{...props,children}})};`,
   "react-native": `const h=globalThis.__u42;
     export const View="View",Text="Text",TextInput="TextInput",ScrollView="ScrollView",
@@ -62,13 +80,24 @@ const find = (root, predicate, found = []) => {
 const renderChild = (component, props) => {
   const oldSlots = slots;
   const oldCursor = cursor;
+  const oldEffects = previousEffects;
+  const oldEffectCursor = effectCursor;
+  const oldPendingEffects = pendingEffects;
   slots = [];
   cursor = 0;
+  previousEffects = [];
+  effectCursor = 0;
+  pendingEffects = [];
   try {
-    return component(props);
+    const value = component(props);
+    for (const run of pendingEffects) run();
+    return value;
   } finally {
     slots = oldSlots;
     cursor = oldCursor;
+    previousEffects = oldEffects;
+    effectCursor = oldEffectCursor;
+    pendingEffects = oldPendingEffects;
   }
 };
 const unique = (root, predicate) => {
@@ -178,6 +207,16 @@ try {
     assert(compactHeight >= 96);
     passed++;
   }
+  // A provider boundary invalidates the old shelf context even if Home
+  // remains mounted; the effect is exercised by the same production component.
+  host.reset(); Object.assign(host, {width:960,height:540,isTV:true,preview:false});
+  const initial = host.render(HomeDiscovery,props);
+  find(initial,n=>typeof n.tag==="function"&&n.tag.name==="HomeShelf")[0].props.onContentFocus();
+  assert.equal(unique(host.render(HomeDiscovery,props),n=>n.tag===HomeHeroCarousel).props.collapsed,true);
+  const nextProvider = {...props,provider:{...props.provider,id:"p2"}};
+  host.render(HomeDiscovery,nextProvider);
+  assert.equal(unique(host.render(HomeDiscovery,nextProvider),n=>n.tag===HomeHeroCarousel).props.collapsed,false);
+  passed++;
   // Touch and Preview do not opt into native collapse.
   for(const [width,height,preview] of [[393,873,false],[873,393,false],[800,1280,false],[1280,800,false],[873,393,true]]) {
     host.reset();Object.assign(host,{width,height,isTV:false,preview});
