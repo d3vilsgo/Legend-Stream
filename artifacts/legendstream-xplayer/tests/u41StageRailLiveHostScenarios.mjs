@@ -128,11 +128,11 @@ try {
   for(const [width,height] of [[720,480],[1920,1080]]) {
     host.reset();Object.assign(host,{tv:true,preview:false,width,height});
     const channels=[{id:"channel-7",name:"News"},{id:"channel-11",name:"Movies"}];
-    const opened=[],categories=[];
+    const opened=[],categories=[],queries=[];
     const liveProps={
       categories:[{id:"general",name:"General"}],category:"general",onCategory:id=>categories.push(id),
       channels,epgByChannel:new Map(),clock:0,favorites:[],loading:false,
-      loadingMore:false,search:"",onSearch(){},onRefresh(){},onLoadMore(){},
+      loadingMore:false,search:"",onSearch:value=>queries.push(value),onRefresh(){},onLoadMore(){},
       onOpen:channel=>opened.push(channel.id),onFavorite(){},idPrefix:"u41",
     };
     let live=host.render(EliteLiveCatalog,liveProps);
@@ -146,6 +146,15 @@ try {
     assert.equal(category.props.accessibilityState.selected,true);
     category.props.onPress();
     assert.deepEqual(categories,["general"]);
+    // Real Live toolbar owns search input state, not the selected channel.
+    only(live,node=>node.props?.focusId==="u41:search-toggle").props.onPress();
+    let searching=host.render(EliteLiveCatalog,liveProps);
+    const searchInput=only(searching,node=>node.tag==="TextInput");
+    searchInput.props.onChangeText("Movies");
+    assert.deepEqual(queries,["Movies"]);
+    only(searching,node=>node.props?.focusId==="u41:search-toggle").props.onPress();
+    live=host.render(EliteLiveCatalog,liveProps);
+    assert.equal(all(live,node=>node.tag==="TextInput").length,0);
     const scrollviews=all(live,node=>node.tag==="ScrollView");
     assert.equal(scrollviews.length,width<1050?1:2);
     const categoryWidth=scrollviews[0].props.style.width;
