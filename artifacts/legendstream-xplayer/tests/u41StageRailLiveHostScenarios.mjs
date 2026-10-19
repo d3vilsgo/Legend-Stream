@@ -179,6 +179,16 @@ try {
     const refreshedRow=refreshedList.props.renderItem({item:updatedChannels[1],index:1});
     only(refreshedRow,node=>node.props?.focusId==="u41:channel:channel-11").props.onPress();
     assert.deepEqual(opened,["channel-11","channel-11"]);
+    const deleted = host.render(EliteLiveCatalog, {
+      ...liveProps,channels:[updatedChannels[0]],catalogRevision:100,
+    });
+    const fallbackList=only(deleted,node=>node.tag==="FlatList");
+    const fallbackRow=fallbackList.props.renderItem({
+      item:updatedChannels[0],index:0,
+    });
+    const fallback=only(fallbackRow,node=>node.props?.focusId==="u41:channel:channel-22");
+    assert.equal(fallback.props.hasTVPreferredFocus,true);
+    assert.deepEqual(opened,["channel-11","channel-11"]); // Focus fallback never auto-plays.
     passed++;
   }
   console.log(`U4.1 production StageRail/Live host: ${passed}/${passed} PASS; ANDROID_FOCUSFINDER_PENDING_RC`);
