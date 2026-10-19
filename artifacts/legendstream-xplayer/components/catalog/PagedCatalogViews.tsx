@@ -676,7 +676,7 @@ export function PagedLiveCatalog({
   if (initialEmpty && !Platform.isTV) return <CatalogLoadingSkeleton text={t("loading")} />;
 
   if (Platform.isTV) return <EliteLiveCatalog
-    key={provider.id} idPrefix="live" categories={drawerItems} category={category} onCategory={setCategory}
+    key={provider.id} idPrefix="live" catalogRevision={catalogRevision} categories={drawerItems} category={category} onCategory={setCategory}
     channels={page.items} epgByChannel={epgByChannel} clock={epgClock} favorites={favorites}
     loading={refreshing || page.loadingInitial} loadingMore={page.loadingMore} error={page.error}
     search={search} onSearch={setSearch} onLoadMore={page.loadMore}
