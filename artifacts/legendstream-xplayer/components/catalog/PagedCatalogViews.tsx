@@ -811,7 +811,15 @@ export function PagedMoviesCatalog({
   const { t } = useI18n();
   const { width } = useWindowDimensions();
   const { tvPreview } = useUiPresentation();
-  const [infoMovie, setInfoMovie] = useState<XtreamVodItem | null>(null);
+  const [infoSelection, setInfoSelection] = useState<{
+    scope: string;
+    item: XtreamVodItem;
+  } | null>(null);
+  // An identical stream_id under another provider/session is not the same film.
+  const infoScope = JSON.stringify([provider.id, catalogRevision ?? null]);
+  const infoMovie = infoSelection?.scope === infoScope ? infoSelection.item : null;
+  const setInfoMovie = (item: XtreamVodItem | null) =>
+    setInfoSelection(item ? { scope: infoScope, item } : null);
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "vod", provider.type === "m3u");
@@ -831,10 +839,10 @@ export function PagedMoviesCatalog({
   });
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const grid = useResponsiveCatalogGrid<(typeof page.items)[number]>(page.items.map(item => `vod:${item.stream_id}`), JSON.stringify([provider.id, category, search, effectiveSort]));
+  const grid = useResponsiveCatalogGrid<(typeof page.items)[number]>(page.items.map(item => `vod:${item.stream_id}`), JSON.stringify([provider.id, catalogRevision ?? null, category, search, effectiveSort]));
   const columns = grid.columns;
 
-  useEffect(() => { if(infoMovie && !currentMovie(page.items,String(infoMovie.stream_id),item=>String(item.stream_id))) setInfoMovie(null); },[page.items,infoMovie]);
+  useEffect(() => { if (infoMovie && !currentMovie(page.items, String(infoMovie.stream_id), item => String(item.stream_id))) setInfoSelection(null); }, [page.items, infoMovie]);
   useEffect(() => onDrawerVisibilityChange(drawerOpen || infoMovie !== null), [drawerOpen, infoMovie, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
   if (shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search)) return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
