@@ -265,9 +265,9 @@ export function HomeDiscovery({
 
   const sectionCards = (
     <View style={s.homeCompactStats}>
-      <HomeCountCard focusId="home:live" icon="radio" label={t("liveTv")} value={liveValue} accent={colors.primary} preferredFocus={false} onPress={() => onNavigate("live")} />
-      <HomeCountCard focusId="home:movies" icon="film" label={t("movies")} value={movieValue} accent="#49B9FF" onPress={() => onNavigate("movies")} />
-      <HomeCountCard focusId="home:series" icon="tv" label={t("series")} value={seriesValue} accent="#8C8CFF" onPress={() => onNavigate("series")} />
+      <HomeCountCard onContentFocus={foldHero} focusId="home:live" icon="radio" label={t("liveTv")} value={liveValue} accent={colors.primary} preferredFocus={false} onPress={() => onNavigate("live")} />
+      <HomeCountCard onContentFocus={foldHero} focusId="home:movies" icon="film" label={t("movies")} value={movieValue} accent="#49B9FF" onPress={() => onNavigate("movies")} />
+      <HomeCountCard onContentFocus={foldHero} focusId="home:series" icon="tv" label={t("series")} value={seriesValue} accent="#8C8CFF" onPress={() => onNavigate("series")} />
     </View>
   );
 
@@ -549,7 +549,7 @@ export function HomeHeroCarousel({
               flexShrink: 1,
             }}
           >
-            {collapsed && Platform.isTV ? action("↑", "watch", true) : item ? action(item.series ? "Bölümleri Gör" : onWatch ? "İzle" : "Film Bilgisi", "watch", true) : action(discoverLabel, "discover", true)}
+            {collapsed && Platform.isTV ? action("↑", item ? "watch" : "discover", true) : item ? action(item.series ? "Bölümleri Gör" : onWatch ? "İzle" : "Film Bilgisi", "watch", true) : action(discoverLabel, "discover", true)}
             {!collapsed && item?.movie && onWatch ? action("Detay / Bilgi", "info") : null}
             {!collapsed && Platform.isTV && items.length > 1 ? <TVPreviewPressable eliteVisual focusId="home-hero:next" accessibilityLabel="Sonraki öne çıkan içerik" disabled={paused} onPress={()=>setIndex(current=>(current+1)%items.length)} style={{minWidth:56,minHeight:56,padding:12,borderRadius:12,backgroundColor:"#1c252d",justifyContent:"center",alignItems:"center"}}><Text style={{color:"white",fontSize:22}}>→</Text></TVPreviewPressable> : null}
           </View>
@@ -583,8 +583,9 @@ export function HomeHeroCarousel({
   );
 }
 
-function HomeCountCard({ focusId, icon, label, value, accent, onPress, preferredFocus = false }: {
+function HomeCountCard({ focusId, icon, label, value, accent, onPress, onContentFocus, preferredFocus = false }: {
   focusId: string;
+  onContentFocus?: () => void;
   icon: keyof typeof Feather.glyphMap;
   label: string;
   value: string | null;
@@ -593,7 +594,7 @@ function HomeCountCard({ focusId, icon, label, value, accent, onPress, preferred
   preferredFocus?: boolean;
 }) {
   const colors = useColors();
-  return <TvFocusPressable focusId={focusId} preferredFocus={preferredFocus} onPress={onPress} style={[s.homeCompactStatCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+  return <TvFocusPressable focusId={focusId} onFocus={onContentFocus} preferredFocus={preferredFocus} onPress={onPress} style={[s.homeCompactStatCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
     <LinearGradient colors={[`${accent}18`, "rgba(255,255,255,0.015)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
     <View style={[s.homeCompactStatIcon, { backgroundColor: `${accent}18` }]}><Feather name={icon} size={18} color={accent} /></View>
     <View style={{ flex: 1, minWidth: 0 }}>
