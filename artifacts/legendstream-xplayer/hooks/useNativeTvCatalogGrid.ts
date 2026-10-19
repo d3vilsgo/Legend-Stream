@@ -5,7 +5,7 @@ import { useOptionalTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus
 import { nativeTvLayout, tvGridAnchorRow } from "@/lib/nativeTvResponsive";
 
 /** Measure the list itself: a side panel must not leave a window-sized grid behind. */
-export function useNativeTvCatalogGrid<T>(ids: readonly string[]) {
+export function useNativeTvCatalogGrid<T>(ids: readonly string[], scopeKey = "content") {
   const window = useWindowDimensions();
   const safeArea = useSafeAreaInsets();
   const focus = useOptionalTVPreviewFocus();
@@ -18,6 +18,12 @@ export function useNativeTvCatalogGrid<T>(ids: readonly string[]) {
   const list = useRef<FlatList<T>>(null);
   const pending = useRef<{ id: string; row: number; attempts: number } | null>(null);
   const lastColumns = useRef(layout.columns);
+  const lastScope = useRef(scopeKey);
+  if (lastScope.current !== scopeKey) {
+    pending.current = null;
+    lastColumns.current = layout.columns;
+    lastScope.current = scopeKey;
+  }
   if (Platform.isTV && lastColumns.current !== layout.columns) {
     const id = focus?.nativeFocusedId ?? null;
     const row = tvGridAnchorRow(id, ids, layout.columns);
@@ -45,7 +51,8 @@ export function useNativeTvCatalogGrid<T>(ids: readonly string[]) {
       onScrollToIndexFailed: (info: { averageItemLength: number; index: number }) => {
         if (!pending.current) return;
         list.current?.scrollToOffset({ offset: info.averageItemLength * info.index, animated: false });
-        requestAnimationFrame(restoreVisibleRow);
+        const ticket = pending.current;
+        requestAnimationFrame(() => { if (pending.current === ticket) restoreVisibleRow(); });
       },
     } : {},
   };

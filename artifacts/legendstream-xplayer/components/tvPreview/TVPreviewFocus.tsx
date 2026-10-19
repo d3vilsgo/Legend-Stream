@@ -56,6 +56,7 @@ export function TVPreviewFocusProvider({ children }: { children: ReactNode }) {
   const controllerRef = useRef<ReturnType<typeof createTVPreviewFocusController> | null>(null);
   if (!controllerRef.current) controllerRef.current = createTVPreviewFocusController(setFocusedId, setLastActivatedId);
   const controller = controllerRef.current;
+  useEffect(() => () => controller.dispose(), [controller]);
   useEffect(() => {
     if(!Platform.isTV) return;
     const subscription=subscribeNativeTvFocus((event) => {
@@ -82,7 +83,10 @@ export function TVPreviewFocusProvider({ children }: { children: ReactNode }) {
       const index = nativeScopes.current.indexOf(frame);
       if (index < 0) return;
       nativeScopes.current.splice(index, 1);
-      if (index !== nativeScopes.current.length) return;
+      if (index !== nativeScopes.current.length) {
+        nativeScopes.current[index].previous = frame.previous;
+        return;
+      }
       setNativeScope(nativeScopes.current.at(-1)?.scope ?? "content");
       if (frame.previous) {
         rememberNativeFocus(frame.previous);

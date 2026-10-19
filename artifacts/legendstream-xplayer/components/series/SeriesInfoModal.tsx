@@ -92,8 +92,25 @@ export function SeriesInfoModal({
   }, [visible, selectedSeasonId, orderedSeasons.length]);
   const list = useRef<FlatList<GoldenSeriesEpisodeModel>>(null),
     offset = useRef(0);
-  const visibleRef = useRef(visible);
-  visibleRef.current = visible;
+  const restoreContext = JSON.stringify([
+    providerId,
+    detail.id,
+    selectedSeasonId,
+    selectedEpisodeId,
+    visible,
+  ]);
+  const currentRestoreContext = useRef(restoreContext);
+  currentRestoreContext.current = restoreContext;
+  const restorePending = useRef(true);
+  const restoreRevision = useRef(0);
+  useEffect(() => {
+    restorePending.current = visible;
+    restoreRevision.current += 1;
+    return () => {
+      restorePending.current = false;
+      restoreRevision.current += 1;
+    };
+  }, [visible, providerId, detail.id, selectedSeasonId]);
   const [imageFailed, setImageFailed] = useState(false);
   useEffect(() => setImageFailed(false), [detail.image]);
   useEffect(() => {
@@ -101,7 +118,7 @@ export function SeriesInfoModal({
     setSelectedEpisodeId(null);
     offset.current = 0;
     setImageFailed(false);
-  }, [detail.id]);
+  }, [providerId, detail.id]);
   useEffect(() => {
     if (selectedSeasonId === null && orderedSeasons.length === 1)
       setSelectedSeasonId(orderedSeasons[0]!.id);
@@ -115,10 +132,31 @@ export function SeriesInfoModal({
     return focus.registerBackAction(onClose);
   }, [visible, focus.registerBackAction, onClose]);
   const restore = () => {
-    list.current?.scrollToOffset({ offset: offset.current, animated: false });
-    if (visible && focus.enabled && selectedEpisodeId)
+    if (
+      !visible ||
+      !restorePending.current ||
+      !list.current ||
+      currentRestoreContext.current !== restoreContext
+    )
+      return;
+    restorePending.current = false;
+    const episodeExists = selectedSeason?.episodes.some(
+      (episode) => episode.id === selectedEpisodeId,
+    );
+    // Scroll first, then let the existing Preview owner validate the mounted target.
+    list.current.scrollToOffset({
+      offset: !selectedEpisodeId || episodeExists ? offset.current : 0,
+      animated: false,
+    });
+    const ticket = ++restoreRevision.current;
+    const focusAtReturn = focus.getFocusedEntry?.()?.id;
+    if (focus.enabled && selectedEpisodeId && episodeExists)
       requestAnimationFrame(() => {
-        if (visibleRef.current)
+        if (
+          ticket === restoreRevision.current &&
+          currentRestoreContext.current === restoreContext &&
+          focus.getFocusedEntry?.()?.id === focusAtReturn
+        )
           void focus.restoreFocus(
             `series-info:${detail.id}:episode:${selectedSeasonId}:${selectedEpisodeId}`,
           );
@@ -251,6 +289,8 @@ export function SeriesInfoModal({
                   }}
                   onPress={() => {
                     if (busy) return;
+                    restoreRevision.current += 1;
+                    restorePending.current = true;
                     offset.current = 0;
                     setSelectedSeasonId(season.id);
                     setSelectedEpisodeId(null);
@@ -292,6 +332,10 @@ export function SeriesInfoModal({
               }
               onScroll={(event) => {
                 offset.current = event.nativeEvent.contentOffset.y;
+              }}
+              onScrollBeginDrag={() => {
+                restorePending.current = false;
+                restoreRevision.current += 1;
               }}
               scrollEventThrottle={32}
               onContentSizeChange={restore}

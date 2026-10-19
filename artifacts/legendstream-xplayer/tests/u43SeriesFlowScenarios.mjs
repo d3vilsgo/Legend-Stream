@@ -53,13 +53,18 @@ const h = (globalThis.__series = {
   resolve: async () => ({ url: "https://play.invalid/episode" }),
 });
 const mocks = {
+  "./tmdb/MovieInfoServiceProvider": `export const MovieInfoServiceProvider='Metadata';`,
+  "@/components/OptimizedHomeScreenV6": `export default 'PagedHome';`,
+  "@/components/StalkerMainPage": `export default 'StalkerHome';`,
+  "@/context/PlayerContext": `export const usePlayer=()=>({provider:globalThis.__series.shellProvider});`,
+  "@/context/UiPresentationContext": `export const UiPresentationProvider='Presentation';`,
   react: `export const useState=v=>globalThis.__series.state(v),useRef=v=>globalThis.__series.ref(v),useEffect=(f,d)=>globalThis.__series.effect(f,d),useMemo=(f,d)=>globalThis.__series.memo(f,d),useCallback=(f,d)=>globalThis.__series.memo(()=>f,d);export default {createElement:(tag,props,...children)=>({tag,props:{...props,children}})};`,
   "react-native": `export const ActivityIndicator='Spinner',FlatList='FlatList',Image='Image',Modal='Modal',Text='Text',View='View';export const Platform={get isTV(){return globalThis.__series.native},OS:'android'};export const StyleSheet={create:s=>s};`,
   "react-native-safe-area-context": `export const useSafeAreaInsets=()=>({left:0,right:0,top:0,bottom:0});`,
   "@/context/I18nContext": `export const useI18n=()=>({t:k=>k});`,
   "@/context/MediaLibraryContext": `export const useMediaLibrary=()=>({entries:globalThis.__series.entries});`,
-  "@/components/tvPreview/TVPreviewFocus": `export const useTVPreviewFocus=()=>globalThis.__series.focus;export const TVPreviewFocusRegion='Viewport',TVPreviewControls='Dock';export const TVPreviewPressable='Button';`,
-  "@/components/tvPreview/TVRemoteInspector": `export const TVRemoteInspectorOverlay='Inspector';`,
+  "@/components/tvPreview/TVPreviewFocus": `export const useTVPreviewFocus=()=>globalThis.__series.focus;export const TVPreviewFocusProvider='FocusProvider',TVPreviewFocusRegion='Viewport',TVPreviewControls='Dock';export const TVPreviewPressable='Button';`,
+  "@/components/tvPreview/TVRemoteInspector": `export const TVRemoteInspectorOverlay='Inspector',TVRemoteInspectorCollector='Collector';`,
   "@/components/catalog/PagedCatalogViews": `export const GoldenSeriesCatalog='GoldenSeriesCatalog';`,
   "@/lib/stalkerProductSession": `export const readCurrentStalkerProductSession=()=>({session:globalThis.__series.session,providerScopeId:'runtime:'+globalThis.__series.scope});export const isCurrentStalkerProductSession=(_p,s)=>s===globalThis.__series.session;`,
   "@/lib/stalkerPortalRuntime": `export const isRegisteredStalkerPortalSession=(_id,s)=>s===globalThis.__series.session;export const subscribeStalkerPortalRuntime=f=>{globalThis.__series.listeners.add(f);return()=>globalThis.__series.listeners.delete(f);};`,
@@ -120,7 +125,7 @@ const hierarchy = () => ({
 try {
   await build({
     stdin: {
-      contents: `export {createPagedSeriesFlow} from './lib/pagedSeriesFlow';export {pagedSeriesDetail,stalkerSeriesDetail} from './lib/seriesInfo';export {usePagedSeriesInfo} from './hooks/usePagedSeriesInfo';export {StalkerSeriesProductSurface} from './components/stalker/StalkerSeriesProductSurface';export {SeriesInfoModal} from './components/series/SeriesInfoModal';export {createTVPreviewFocusController} from './lib/tvPreviewFocus';export {playbackRefKey,samePlaybackRef} from './lib/mediaProgress';export {orderGoldenSeriesSeasons} from './lib/goldenSeriesDetail';`,
+      contents: `export {default as ProductShell} from './components/ProductShell';export {createPagedSeriesFlow} from './lib/pagedSeriesFlow';export {pagedSeriesDetail,stalkerSeriesDetail} from './lib/seriesInfo';export {usePagedSeriesInfo} from './hooks/usePagedSeriesInfo';export {StalkerSeriesProductSurface} from './components/stalker/StalkerSeriesProductSurface';export {SeriesInfoModal} from './components/series/SeriesInfoModal';export {createTVPreviewFocusController} from './lib/tvPreviewFocus';export {playbackRefKey,samePlaybackRef} from './lib/mediaProgress';export {orderGoldenSeriesSeasons} from './lib/goldenSeriesDetail';`,
       resolveDir: app,
       loader: "tsx",
     },
@@ -748,6 +753,100 @@ try {
       /İzlenen/,
     );
   });
+  await test("content resize after restoration cannot repeatedly rewind the episode list", () => {
+    let scrolls = 0;
+    episodeList().props.ref.current = { scrollToOffset: () => scrolls++ };
+    tree = modal({ visible: false });
+    tree = modal({ visible: true });
+    episodeList().props.onContentSizeChange();
+    episodeList().props.onContentSizeChange();
+    assert.equal(scrolls, 1);
+  });
+  await test("dragging cancels a pending episode scroll restoration", () => {
+    let scrolls = 0;
+    episodeList().props.ref.current = { scrollToOffset: () => scrolls++ };
+    tree = modal({ visible: false });
+    tree = modal({ visible: true });
+    episodeList().props.onScrollBeginDrag();
+    episodeList().props.onContentSizeChange();
+    assert.equal(scrolls, 0);
+  });
+  await test("provider switch rejects old production list restore callback", () => {
+    const oldRestore = episodeList().props.onContentSizeChange;
+    let scrolls = 0;
+    episodeList().props.ref.current = { scrollToOffset: () => scrolls++ };
+    tree = modal({ providerId: "b" });
+    tree = modal();
+    oldRestore();
+    assert.equal(scrolls, 0);
+    assert.equal(episodeList().props.data.length, 0);
+    tree = modal({ providerId: "a" });
+    tree = modal();
+    seasonList()
+      .props.renderItem({ item: seasonList().props.data[1] })
+      .props.onPress();
+    tree = modal();
+    episodeList()
+      .props.renderItem({ item: episodeList().props.data[0] })
+      .props.onPress();
+    tree = modal();
+  });
+  await test("closing modal invalidates a scheduled production Focus request", () => {
+    const frames = [],
+      restored = [];
+    globalThis.requestAnimationFrame = (fn) => {
+      frames.push(fn);
+      return frames.length;
+    };
+    const previous = h.focus.restoreFocus;
+    h.focus.restoreFocus = async (id) => {
+      restored.push(id);
+      return true;
+    };
+    tree = modal({ visible: false });
+    tree = modal({ visible: true });
+    episodeList().props.onContentSizeChange();
+    assert.equal(frames.length, 1);
+    tree = modal({ visible: false });
+    frames.forEach((fn) => fn());
+    assert.deepEqual(restored, []);
+    h.focus.restoreFocus = previous;
+    globalThis.requestAnimationFrame = (fn) => {
+      fn();
+      return 0;
+    };
+    tree = modal({ visible: true });
+  });
+  await test("removed episode restores safe scroll origin without requesting deleted target", () => {
+    let restoredOffset = -1;
+    const previous = h.focus.restoreFocus,
+      restored = [];
+    h.focus.restoreFocus = async (id) => {
+      restored.push(id);
+      return true;
+    };
+    episodeList().props.ref.current = {
+      scrollToOffset: (value) => {
+        restoredOffset = value.offset;
+      },
+    };
+    tree = modal({ visible: false });
+    tree = modal({
+      visible: true,
+      detail: {
+        ...model,
+        seasons: model.seasons.map((season) => ({
+          ...season,
+          episodes: season.episodes.filter((e) => e.id !== "ep-10"),
+        })),
+      },
+    });
+    episodeList().props.onContentSizeChange();
+    assert.equal(restoredOffset, 0);
+    assert.deepEqual(restored, []);
+    h.focus.restoreFocus = previous;
+    tree = modal({ detail: model });
+  });
   await test("detail Back closes to source directly, does not change provider hierarchy", () => {
     focus.back();
     assert.equal(closed, 1);
@@ -757,6 +856,53 @@ try {
     assert.equal(focused, "home:series:card");
     focus.back();
     assert.equal(baseBack, 1);
+  });
+  await test("out-of-order Film Info teardown returns Player directly to original card", () => {
+    const controller = api.createTVPreviewFocusController();
+    const register = (id, scope) =>
+      controller.register({
+        id,
+        scope,
+        bounds: { x: 0, y: 0, width: 80, height: 60 },
+        press() {},
+        setFocused() {},
+      });
+    register("vod:42", "content");
+    register("movie:play", "movie-info");
+    register("player:exit", "player");
+    const closeInfo = controller.pushFocusScope("movie-info");
+    const closePlayer = controller.pushFocusScope("player");
+    closeInfo();
+    assert.equal(controller.getFocusedId(), "player:exit");
+    closePlayer();
+    assert.equal(controller.getFocusedId(), "vod:42");
+  });
+  await test("disposed provider rejects outstanding asynchronous Focus measurement", async () => {
+    const controller = api.createTVPreviewFocusController();
+    let finish;
+    controller.register({
+      id: "vod:42",
+      bounds: { x: 0, y: 0, width: 80, height: 60 },
+      measure: () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+      press() {},
+      setFocused() {},
+    });
+    const pending = controller.restoreFocus("vod:42");
+    controller.dispose();
+    finish({ x: 0, y: 0, width: 80, height: 60 });
+    assert.equal(await pending, false);
+    assert.equal(controller.getFocusedId(), null);
+  });
+  await test("real ProductShell keys Focus lifecycle by current provider including disconnect", () => {
+    for (const id of ["provider-a", "provider-b", null]) {
+      h.shellProvider = id ? { id, type: "xtream" } : null;
+      const shell = render(() => api.ProductShell());
+      const owner = nodes(shell).find((node) => node.tag === "FocusProvider");
+      assert.equal(owner.props.key, id ?? "disconnected");
+    }
   });
   const source = readFileSync(
       join(app, "components/OptimizedHomeScreenPaged.tsx"),

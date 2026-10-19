@@ -20,7 +20,7 @@ export function useResponsiveCatalogGrid<T>(
   ids: readonly string[],
   scopeKey: string,
 ) {
-  const native = useNativeTvCatalogGrid<T>(ids);
+  const native = useNativeTvCatalogGrid<T>(ids, scopeKey);
   const window = useWindowDimensions();
   const safeArea = useSafeAreaInsets();
   const { tvPreview } = useUiPresentation();
@@ -136,7 +136,10 @@ export function useResponsiveCatalogGrid<T>(
           offset: info.averageItemLength * info.index,
           animated: false,
         });
-        requestAnimationFrame(restore);
+        const ticket = pending.current;
+        requestAnimationFrame(() => {
+          if (pending.current === ticket) restore();
+        });
       },
     },
   };

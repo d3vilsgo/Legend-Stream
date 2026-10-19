@@ -170,7 +170,14 @@ export function createTVPreviewFocusController(
       if (index < 0) return;
       const [removed] = focusScopes.splice(index, 1);
       moveRevision += 1;
-      if (index !== focusScopes.length) return;
+      if (index !== focusScopes.length) {
+        // A lower modal can unmount while Player is still on top. Its return
+        // destination must be spliced out too, otherwise Back resurrects it.
+        const above = focusScopes[index];
+        above.previousScope = removed.previousScope;
+        above.previousFocus = removed.previousFocus;
+        return;
+      }
       activeScope = focusScopes[focusScopes.length - 1]?.scope ?? removed.previousScope;
       const previousEntry = removed.previousFocus ? entries.get(removed.previousFocus) : undefined;
       focus(previousEntry && (previousEntry.scope ?? "content") === activeScope
@@ -195,6 +202,14 @@ export function createTVPreviewFocusController(
     pushFocusScope,
     back,
     clear,
+    dispose: () => {
+      clear();
+      entries.clear();
+      focusScopes.length = 0;
+      scopedBackActions.clear();
+      backAction = null;
+      activeScope = "content";
+    },
     getFocusedId: () => focusedId,
     getFocusedEntry: () => focusedId ? entries.get(focusedId) ?? null : null,
   };

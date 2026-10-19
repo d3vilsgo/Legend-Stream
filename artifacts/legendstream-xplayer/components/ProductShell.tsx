@@ -34,10 +34,11 @@ function ProductShellContent() {
 
 
 export default function ProductShell({ metadataAccess }: { metadataAccess?: ProxyAccess } = {}) {
+  const { provider } = usePlayer();
   return (
     <MovieInfoServiceProvider access={metadataAccess}>
     <UiPresentationProvider>
-      <TVPreviewFocusProvider>
+      <TVPreviewFocusProvider key={provider?.id ?? "disconnected"}>
         <View style={{ flex: 1, minHeight: 0 }}>
           <View style={{ flex: 1, minHeight: 0 }}><TVPreviewFocusRegion><ProductShellContent /></TVPreviewFocusRegion></View>
           <TVPreviewControls />
