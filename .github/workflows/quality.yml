@@ -313,6 +313,10 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tvRemoteInspectorScenarios.ts
       - name: U4.1 production StageRail and Live adaptive host acceptance
         run: node artifacts/legendstream-xplayer/tests/u41StageRailLiveHostScenarios.mjs
+      - name: Cross-device repair formatting
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/components/FocusButton.tsx artifacts/legendstream-xplayer/components/navigation/ResponsiveContentNav.tsx artifacts/legendstream-xplayer/hooks/useNativeTvTarget.ts artifacts/legendstream-xplayer/lib/catalogGridLayout.ts artifacts/legendstream-xplayer/tests/nativeTvFocusOwnershipHost.mjs artifacts/legendstream-xplayer/tests/u41StageRailLiveHostScenarios.mjs artifacts/legendstream-xplayer/tests/p1CatalogProductionHostScenarios.mjs
+      - name: Native Focus event ownership production host
+        run: node artifacts/legendstream-xplayer/tests/nativeTvFocusOwnershipHost.mjs
       - name: Native TV remote ownership and action semantics
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvRemoteScenarios.ts
       - name: Native TV responsive dp matrix

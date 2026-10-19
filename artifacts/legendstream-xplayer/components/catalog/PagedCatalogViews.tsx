@@ -256,6 +256,9 @@ function CatalogHeader({
   onCategories?: () => void;
 }) {
   const colors = useColors();
+  const viewport = useWindowDimensions();
+  const compact =
+    !Platform.isTV && Math.min(viewport.width, viewport.height) < 600;
   const { t } = useI18n();
   const [searchOpen, setSearchOpen] = useState(false);
   const searchInputRef = useRef<TextInput>(null);
@@ -263,54 +266,161 @@ function CatalogHeader({
     if (searchOpen && searchEnabled) searchInputRef.current?.focus();
     else searchInputRef.current?.blur();
   }, [searchOpen, searchEnabled]);
-  return <View style={s.catalogHeaderRoot}>
-    <View style={s.catalogHead}>
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={Platform.isTV ? 1 : undefined} style={[s.title, { color: colors.foreground }]}>{title}</Text>
-        <Text style={{ color: colors.mutedForeground }}>{detail}</Text>
+  return (
+    <View style={s.catalogHeaderRoot}>
+      <View style={[s.catalogHead, compact && { marginBottom: 4 }]}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text
+            numberOfLines={1}
+            style={[
+              s.title,
+              compact && { fontSize: 18, marginBottom: 0 },
+              { color: colors.foreground },
+            ]}
+          >
+            {title}
+          </Text>
+          <Text style={{ color: colors.mutedForeground }}>{detail}</Text>
+        </View>
+        <FocusButton
+          label={compact ? "" : loading ? t("loading") : t("refresh")}
+          accessibilityLabel={loading ? t("loading") : t("refresh")}
+          style={
+            compact
+              ? { minWidth: 48, minHeight: 48, paddingHorizontal: 10 }
+              : undefined
+          }
+          icon="refresh-cw"
+          variant="ghost"
+          onPress={onRefresh}
+          disabled={loading}
+        />
       </View>
-      <FocusButton
-        label={loading ? t("loading") : t("refresh")}
-        icon="refresh-cw"
-        variant="ghost"
-        onPress={onRefresh}
-        disabled={loading}
-      />
+      <View
+        style={
+          Platform.isTV
+            ? {
+                flexDirection: "row",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: 12,
+              }
+            : compact
+              ? {
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: 6,
+                }
+              : undefined
+        }
+      >
+        <TVPreviewPressable
+          focusId="catalog:search-toggle"
+          accessibilityRole="button"
+          accessibilityLabel={searchOpen ? "Aramayı kapat" : `${title} ara`}
+          accessibilityState={{ expanded: searchOpen }}
+          onPress={() => setSearchOpen((value) => !value)}
+          style={[
+            s.sortDropdownButton,
+            compact && { minHeight: 48, minWidth: 48 },
+            { borderColor: colors.border, backgroundColor: colors.card },
+          ]}
+        >
+          <Feather
+            name={searchOpen ? "x" : "search"}
+            size={18}
+            color={colors.foreground}
+          />
+          {!compact && (
+            <Text style={{ color: colors.foreground, fontWeight: "700" }}>
+              {searchOpen ? "Aramayı kapat" : "Ara"}
+            </Text>
+          )}
+        </TVPreviewPressable>
+        {searchOpen ? (
+          <View
+            style={[
+              s.search,
+              compact && { flexBasis: "100%" },
+              Platform.isTV && {
+                flexGrow: 1,
+                flexBasis: 240,
+                minWidth: 180,
+                marginBottom: 0,
+              },
+              { borderColor: colors.border, backgroundColor: colors.card },
+            ]}
+          >
+            <Feather name="search" size={18} color={colors.mutedForeground} />
+            <TextInput
+              ref={searchInputRef}
+              accessibilityLabel={`${title} arama sorgusu`}
+              returnKeyType="search"
+              value={search}
+              onChangeText={onSearch}
+              editable={searchEnabled}
+              placeholder={`${t("search")} ${title.toLowerCase()}`}
+              placeholderTextColor={colors.mutedForeground}
+              style={{
+                flex: 1,
+                color: colors.foreground,
+                minHeight: 44,
+                opacity: searchEnabled ? 1 : 0.55,
+              }}
+            />
+          </View>
+        ) : null}
+        {activeCategoryLabel ? (
+          <View
+            style={[
+              s.activeCategoryChip,
+              compact && { flexShrink: 1, maxWidth: "45%" },
+              Platform.isTV && { maxWidth: 240 },
+              { borderColor: colors.border, backgroundColor: colors.card },
+            ]}
+          >
+            <Feather name="tag" size={14} color={colors.primary} />
+            <Text
+              numberOfLines={1}
+              style={{ color: colors.foreground, fontWeight: "700", flex: 1 }}
+            >
+              {activeCategoryLabel}
+            </Text>
+          </View>
+        ) : null}
+        {Platform.isTV && onCategories ? (
+          <TVPreviewPressable
+            focusId="catalog:categories"
+            accessibilityRole="button"
+            accessibilityLabel="Kategoriler"
+            onPress={onCategories}
+            style={[
+              s.sortDropdownButton,
+              compact && { minHeight: 48, minWidth: 48 },
+              { borderColor: colors.border, backgroundColor: colors.card },
+            ]}
+          >
+            <Feather name="grid" size={22} color={colors.foreground} />
+            <Text style={{ color: colors.foreground, fontSize: 18 }}>
+              Kategoriler
+            </Text>
+          </TVPreviewPressable>
+        ) : null}
+        <View
+          style={
+            Platform.isTV
+              ? { flexBasis: 200, flexGrow: 0, minWidth: 0, maxWidth: "100%" }
+              : compact
+                ? { flex: 1, minWidth: 120 }
+                : undefined
+          }
+        >
+          {children}
+        </View>
+      </View>
     </View>
-    <View style={Platform.isTV ? { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12 } : undefined}>
-    <TVPreviewPressable
-      focusId="catalog:search-toggle"
-      accessibilityRole="button"
-      accessibilityLabel={searchOpen ? "Aramayı kapat" : `${title} ara`}
-      accessibilityState={{ expanded: searchOpen }}
-      onPress={() => setSearchOpen((value) => !value)}
-      style={[s.sortDropdownButton, { borderColor: colors.border, backgroundColor: colors.card }]}
-    >
-      <Feather name={searchOpen ? "x" : "search"} size={18} color={colors.foreground} />
-      <Text style={{ color: colors.foreground, fontWeight: "700" }}>{searchOpen ? "Aramayı kapat" : "Ara"}</Text>
-    </TVPreviewPressable>
-    {searchOpen ? <View style={[s.search, Platform.isTV && { flexGrow: 1, flexBasis: 240, minWidth: 180, marginBottom: 0 }, { borderColor: colors.border, backgroundColor: colors.card }]}>
-      <Feather name="search" size={18} color={colors.mutedForeground} />
-      <TextInput
-        ref={searchInputRef}
-        accessibilityLabel={`${title} arama sorgusu`}
-        returnKeyType="search"
-        value={search}
-        onChangeText={onSearch}
-        editable={searchEnabled}
-        placeholder={`${t("search")} ${title.toLowerCase()}`}
-        placeholderTextColor={colors.mutedForeground}
-        style={{ flex: 1, color: colors.foreground, minHeight: 44, opacity: searchEnabled ? 1 : 0.55 }}
-      />
-    </View> : null}
-    {activeCategoryLabel ? <View style={[s.activeCategoryChip, Platform.isTV && { maxWidth: 240 }, { borderColor: colors.border, backgroundColor: colors.card }]}>
-      <Feather name="tag" size={14} color={colors.primary} />
-      <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700", flex: 1 }}>{activeCategoryLabel}</Text>
-    </View> : null}
-    {Platform.isTV && onCategories ? <TVPreviewPressable focusId="catalog:categories" accessibilityRole="button" accessibilityLabel="Kategoriler" onPress={onCategories} style={[s.sortDropdownButton, { borderColor: colors.border, backgroundColor: colors.card }]}><Feather name="grid" size={22} color={colors.foreground} /><Text style={{ color: colors.foreground, fontSize: 18 }}>Kategoriler</Text></TVPreviewPressable> : null}
-    <View style={Platform.isTV ? { flexBasis: 200, flexGrow: 0, minWidth: 0, maxWidth: "100%" } : undefined}>{children}</View>
-    </View>
-  </View>;
+  );
 }
 
 function SortControl({
@@ -539,21 +649,80 @@ function Poster({ uri, title }: { uri?: string; title: string }) {
       </View>;
 }
 
-function GridCard({ focusId, title, image, cardWidth, onPress }: { focusId: string; title: string; image?: string; cardWidth: number; onPress: () => void }) {
+function GridCard({
+  focusId,
+  title,
+  image,
+  cardWidth,
+  onPress,
+}: {
+  focusId: string;
+  title: string;
+  image?: string;
+  cardWidth: number;
+  onPress: () => void;
+}) {
   const colors = useColors();
-  const { fontScale } = useWindowDimensions();
-  const titleFont = Math.max(12, Math.min(17, Math.round(cardWidth / 12)));
+  const { fontScale, width, height } = useWindowDimensions();
+  const compact = !Platform.isTV && Math.min(width, height) < 600;
+  const titleFont = Math.max(
+    12,
+    Math.min(compact ? 14 : 17, Math.round(cardWidth / 12)),
+  );
   const titleLine = Math.ceil(titleFont * 1.3);
-  return <TVPreviewPressable eliteVisual focusId={focusId} accessibilityRole="button" accessibilityLabel={title} onPress={onPress} style={s.card}>
-    <View style={[s.media, { borderColor: colors.border, backgroundColor: colors.card }]}> 
-      {image
-        ? <Image source={{ uri: image }} style={s.posterBig} resizeMode={Platform.isTV ? "contain" : "cover"} />
-        : <View style={[s.posterBig, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}>
+  return (
+    <TVPreviewPressable
+      eliteVisual
+      focusId={focusId}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      onPress={onPress}
+      style={s.card}
+    >
+      <View
+        style={[
+          s.media,
+          { borderColor: colors.border, backgroundColor: colors.card },
+        ]}
+      >
+        {image ? (
+          <Image
+            source={{ uri: image }}
+            style={s.posterBig}
+            resizeMode={Platform.isTV ? "contain" : "cover"}
+          />
+        ) : (
+          <View
+            style={[
+              s.posterBig,
+              {
+                backgroundColor: colors.muted,
+                alignItems: "center",
+                justifyContent: "center",
+              },
+            ]}
+          >
             <Feather name="play-circle" size={30} color={colors.primary} />
-          </View>}
-      <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", fontSize: titleFont, lineHeight: titleLine, minHeight: Math.ceil(titleLine * 2 * fontScale + 18), padding: cardWidth < 130 ? 6 : 9 }}>{title}</Text>
-    </View>
-  </TVPreviewPressable>;
+          </View>
+        )}
+        <Text
+          numberOfLines={2}
+          style={{
+            color: colors.foreground,
+            fontWeight: "700",
+            fontSize: titleFont,
+            lineHeight: titleLine,
+            minHeight: Math.ceil(
+              titleLine * 2 * fontScale + (compact ? 8 : 18),
+            ),
+            padding: compact ? 4 : cardWidth < 130 ? 6 : 9,
+          }}
+        >
+          {title}
+        </Text>
+      </View>
+    </TVPreviewPressable>
+  );
 }
 
 export function PagedLiveCatalog({
@@ -1147,10 +1316,10 @@ const s = StyleSheet.create({
   section: { fontSize: 20, fontWeight: "800" },
   search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
   activeCategoryChip: { alignSelf: "flex-start", maxWidth: "100%", borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, flexDirection: "row", alignItems: "center", gap: 7 },
-  sortDropdownWrap: { paddingTop: 10, paddingBottom: 10, alignSelf: "stretch" },
-  sortDropdownButton: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
+  sortDropdownWrap: { paddingTop: Platform.isTV ? 10 : 0, paddingBottom: Platform.isTV ? 10 : 0, alignSelf: "stretch" },
+  sortDropdownButton: { minHeight: Platform.isTV ? 42 : 48, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
   sortDropdownMenu: { marginTop: 6, borderWidth: 1, borderRadius: 12, padding: 6, gap: 3 },
-  sortDropdownItem: { minHeight: 42, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 9 },
+  sortDropdownItem: { minHeight: Platform.isTV ? 42 : 48, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 9 },
   liveListContent: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center", gap: 8 },
   gridListContent: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
   liveRow: { borderWidth: 1, borderRadius: 14, padding: 8, flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },

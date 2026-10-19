@@ -77,10 +77,21 @@ export function computePosterGridLayout(
   // Cards include a 6dp gutter on each side; larger text must not squeeze the title.
   const minCell =
     premiumDesignTokens.poster.minWidth[layoutProfile.mode] * scale;
-  const columns = Math.max(
-    1,
-    Math.min(metrics.columns, Math.floor(contentWidth / minCell) || 1),
+  const compactPhone =
+    profile.deviceClass === "phone" &&
+    !nativeTv &&
+    !options.tvPreview &&
+    width <= height;
+  const phoneColumns = Math.min(
+    3,
+    Math.max(1, Math.floor(contentWidth / (108 * scale))),
   );
+  const columns = compactPhone
+    ? phoneColumns
+    : Math.max(
+        1,
+        Math.min(metrics.columns, Math.floor(contentWidth / minCell) || 1),
+      );
   return {
     columns,
     columnWidth: Math.max(1, contentWidth / columns - 12),

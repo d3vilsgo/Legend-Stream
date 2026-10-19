@@ -25,6 +25,8 @@ class LegendStreamTvRemoteModule : Module() {
   private val legacyTargets = linkedMapOf<Int, Entry>()
   private fun entries(): List<Entry> = targets.values.toList()+legacyTargets.values.filter { !targets.containsKey(it.tag) }
   private val remembered = mutableMapOf<String, String>()
+  private var lastContent: Entry? = null
+  private var dispatchDurationMs = 0.0
   private var activeScope = "content"
   private var catalogRootTag: Int? = null
   private var inspectorEnabled = false
@@ -50,7 +52,7 @@ class LegendStreamTvRemoteModule : Module() {
     if(!inspectorEnabled) return
     val current=actualFocus()
     val entry=current?.let {targets[it.id] ?: legacyTargets[it.id]}
-    sendEvent("onInspector",mapOf("timeMs" to now(),"inputAgeMs" to (if(lastInputAt<0) -1L else now()-lastInputAt),"beforeFocus" to focusBefore,"cause" to focusCause,"withoutInput" to withoutInput,"delivery" to delivery,"dispatchOwner" to dispatchOwner,"expectedFocus" to expectedFocus,"moveOutcome" to moveOutcome,"expectedVisible" to expectedVisible,"focusTop" to (current?.let {val xy=IntArray(2);it.getLocationInWindow(xy);xy[1]/it.resources.displayMetrics.density} ?: -1f),"kind" to kind,"sequence" to inspectorSequence,"key" to key,"phase" to phase,"handled" to handled,"focus" to (entry?.let {safeId(it.tag,it.id)} ?: if(current!=null) safeId(current.id,"") else "none"),"scope" to (if(activeScope in setOf("content","player","player-panel:content","player-panel:audio","player-panel:subtitles","player-panel:codec")) activeScope else "modal"),"context" to (if(playerActive) if(hidden) "player-hidden" else "player-controls" else "catalog")))
+    sendEvent("onInspector",mapOf("timeMs" to now(),"dispatchDurationMs" to dispatchDurationMs,"inputAgeMs" to (if(lastInputAt<0) -1L else now()-lastInputAt),"beforeFocus" to focusBefore,"cause" to focusCause,"withoutInput" to withoutInput,"delivery" to delivery,"dispatchOwner" to dispatchOwner,"expectedFocus" to expectedFocus,"moveOutcome" to moveOutcome,"expectedVisible" to expectedVisible,"focusTop" to (current?.let {val xy=IntArray(2);it.getLocationInWindow(xy);xy[1]/it.resources.displayMetrics.density} ?: -1f),"kind" to kind,"sequence" to inspectorSequence,"key" to key,"phase" to phase,"handled" to handled,"focus" to (entry?.let {safeId(it.tag,it.id)} ?: if(current!=null) safeId(current.id,"") else "none"),"scope" to (if(activeScope in setOf("content","player","player-panel:content","player-panel:audio","player-panel:subtitles","player-panel:codec")) activeScope else "modal"),"context" to (if(playerActive) if(hidden) "player-hidden" else "player-controls" else "catalog")))
   }
   private var playerActive = false
   private var hidden = false
@@ -138,7 +140,10 @@ class LegendStreamTvRemoteModule : Module() {
       next.foreground = LayerDrawable(arrayOf(dark,light))
     }
     val entry = next?.let { targets[it.id] ?: legacyTargets[it.id] }
-    if(entry!=null) remembered[entry.scope]=entry.id
+    if(entry!=null) {
+      remembered[entry.scope]=entry.id
+      if(entry.scope=="content" && entry.region!="navigation") lastContent=entry
+    }
     observedFocusId=anonymousFocus(next)
     diagnostic("focus")
     sendEvent("onNativeFocus", mapOf("tag" to (next?.id ?: -1), "id" to (entry?.id ?: "")))
@@ -194,7 +199,9 @@ class LegendStreamTvRemoteModule : Module() {
     }
     val currentRect=measured(current) ?: return true
     val candidates=entries().filter { it.scope==activeScope }.mapNotNull { measured(it) }
-    val next=TvFocusPolicy.move(currentRect,direction,candidates,activeScope)
+    val rememberedContent=lastContent?.takeIf { targets[it.tag]==it && it.scope==activeScope && measured(it)!=null }
+    val returning=current.region=="navigation" && direction=="right" && TvFocusPolicy.verticalRail(candidates)
+    val next=if(returning && rememberedContent!=null) measured(rememberedContent) else TvFocusPolicy.move(currentRect,direction,candidates,activeScope)
     moveOutcome="boundary"
     if(next!=null) (targets[next.tag] ?: legacyTargets[next.tag])?.let {
       expectedFocus=safeId(it.tag,it.id)
@@ -258,7 +265,9 @@ class LegendStreamTvRemoteModule : Module() {
         if(event.action==KeyEvent.ACTION_DOWN) inspectorSequence++
         diagnostic("input",key,phase)
         try {
+          val started=System.nanoTime()
           val handled=dispatch()
+          dispatchDurationMs=(System.nanoTime()-started)/1_000_000.0
           diagnostic("dispatch",key,phase,handled)
           return handled
         } finally {dispatchingInput=wasDispatching}
@@ -277,8 +286,12 @@ class LegendStreamTvRemoteModule : Module() {
   private fun dispatchObserved(event: KeyEvent, window: Window, previous: Window.Callback): Boolean {
         dispatchOwner="window-delegate"
         if(event.action==KeyEvent.ACTION_UP && consumed.remove(event.keyCode)) return true
+        if(event.action==KeyEvent.ACTION_DOWN && event.keyCode==KeyEvent.KEYCODE_BACK && event.repeatCount>0 && consumed.contains(event.keyCode)) return true
         val direction=when(event.keyCode) {KeyEvent.KEYCODE_DPAD_LEFT->"left";KeyEvent.KEYCODE_DPAD_RIGHT->"right";KeyEvent.KEYCODE_DPAD_UP->"up";KeyEvent.KEYCODE_DPAD_DOWN->"down";else->null}
         val select=event.keyCode==KeyEvent.KEYCODE_DPAD_CENTER || event.keyCode==KeyEvent.KEYCODE_ENTER
+        if(event.action==KeyEvent.ACTION_DOWN && event.keyCode==KeyEvent.KEYCODE_BACK && activeScope=="content" && !playerActive && actualFocus()?.let {targets[it.id]?.region}=="navigation") {
+          dispatchOwner="native-focus";consumed.add(event.keyCode);move("right");return true
+        }
         if(event.action==KeyEvent.ACTION_DOWN && !(playerActive && hidden)) {
           if(direction!=null && window.currentFocus is EditText && (direction=="left"||direction=="right")) return previous.dispatchKeyEvent(event)
           if(direction!=null && move(direction)) {dispatchOwner="native-focus";consumed.add(event.keyCode);return true}
@@ -356,6 +369,7 @@ class LegendStreamTvRemoteModule : Module() {
     }.runOnQueue(Queues.MAIN)
     AsyncFunction("unregisterTarget") { tag: Int ->
       val removed=targets.remove(tag)
+      if(removed==lastContent)lastContent=null
       if(removed!=null){structural("virtualization");cancelRestore()}
       true }.runOnQueue(Queues.MAIN)
     AsyncFunction("requestTargetFocus") { tag: Int -> targets[tag]?.let {cancelRestore();focus(it,"explicit-restore")} ?: false }.runOnQueue(Queues.MAIN)
@@ -380,7 +394,7 @@ class LegendStreamTvRemoteModule : Module() {
     }.runOnQueue(Queues.MAIN)
     AsyncFunction("setFocusBlocked") { tag: Int,blocked: Boolean ->
       val group=view(tag) as? ViewGroup ?: return@AsyncFunction false
-      if(catalogRootTag!=tag) {catalogRootTag=tag;remembered.remove("content");legacyTargets.clear()}
+      if(catalogRootTag!=tag) {catalogRootTag=tag;lastContent=null;remembered.remove("content");legacyTargets.clear()}
       group.descendantFocusability=if(blocked) ViewGroup.FOCUS_BLOCK_DESCENDANTS else ViewGroup.FOCUS_AFTER_DESCENDANTS
       if(blocked) {cancelRestore();group.clearFocus()} else restore("scope-unblock")
       true

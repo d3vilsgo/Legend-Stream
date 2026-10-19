@@ -2,6 +2,7 @@ import { EliteLiveCatalog } from "@/components/elite/EliteLiveCatalog";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Platform,
+  useWindowDimensions,
   ActivityIndicator,
   FlatList,
   Image,
@@ -50,6 +51,8 @@ export function StalkerLiveCatalog({
   onFavorite: (id: string) => void;
 }) {
   const colors = useColors();
+  const {width,height}=useWindowDimensions();
+  const compact=!Platform.isTV && Math.min(width,height)<600;
   const { provider, refreshEpg } = usePlayer();
   const sync = useStalkerLiveCatalogSync(
     provider?.id === providerId && provider.type === "stalker" ? provider : null,
@@ -170,10 +173,10 @@ export function StalkerLiveCatalog({
       contentContainerStyle={styles.content}
       data={page.items}
       keyExtractor={(channel) => channel.id}
-      ListHeaderComponent={<View style={styles.header}>
+      ListHeaderComponent={<View style={[styles.header,compact && {gap:6,marginBottom:4}]}>
         <View style={styles.headerRow}>
           <View style={{ flex: 1 }}>
-            <Text style={[styles.title, { color: colors.foreground }]}>Canlı TV</Text>
+            <Text numberOfLines={1} style={[styles.title,compact && {fontSize:18}, { color: colors.foreground }]}>Canlı TV</Text>
             <Text style={{ color: colors.mutedForeground }}>
               {selectedCategory ? `${selectedCategory.title} · ${countLabel} kanal${epgLoading ? " · EPG…" : ""}` : "Kategori seçilmedi"}
             </Text>
@@ -188,10 +191,10 @@ export function StalkerLiveCatalog({
                 page.reload();
               });
             }}
-            style={[styles.refreshButton, { borderColor: colors.border, backgroundColor: colors.card }]}
+            style={[styles.refreshButton,compact && {minWidth:48,minHeight:48}, { borderColor: colors.border, backgroundColor: colors.card }]}
           >
             <Text style={{ color: colors.foreground, fontWeight: "800" }}>
-              {refreshing || sync.syncing ? "Yükleniyor" : "Yenile"}
+              {compact ? "↻" : refreshing || sync.syncing ? "Yükleniyor" : "Yenile"}
             </Text>
           </Pressable>
         </View>

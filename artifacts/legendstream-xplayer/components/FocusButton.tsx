@@ -1,9 +1,21 @@
 import { inspectorAction } from "@/lib/tvRemoteInspector";
 import { useNativeTvTarget } from "@/hooks/useNativeTvTarget";
-import { Feather } from '@expo/vector-icons';
-import React, { ReactNode, useId, useEffect, useRef, useState } from 'react';
-import { type AccessibilityRole, type AccessibilityState, Animated, Platform, Pressable, StyleProp, StyleSheet, Text, TextStyle, View, ViewStyle } from 'react-native';
-import { useColors } from '@/hooks/useColors';
+import { Feather } from "@expo/vector-icons";
+import React, { ReactNode, useId, useEffect, useRef, useState } from "react";
+import {
+  type AccessibilityRole,
+  type AccessibilityState,
+  Animated,
+  Platform,
+  Pressable,
+  StyleProp,
+  StyleSheet,
+  Text,
+  TextStyle,
+  View,
+  ViewStyle,
+} from "react-native";
+import { useColors } from "@/hooks/useColors";
 
 interface FocusButtonProps {
   label: string;
@@ -11,7 +23,7 @@ interface FocusButtonProps {
   labelStyle?: StyleProp<TextStyle>;
   icon?: keyof typeof Feather.glyphMap;
   onPress: () => void;
-  variant?: 'primary' | 'secondary' | 'ghost';
+  variant?: "primary" | "secondary" | "ghost";
   disabled?: boolean;
   style?: StyleProp<ViewStyle>;
   children?: ReactNode;
@@ -21,7 +33,7 @@ interface FocusButtonProps {
   accessibilityRole?: AccessibilityRole;
   accessibilityLabel?: string;
   accessibilityState?: AccessibilityState;
-  onFocusChange?: (focused: boolean) => void;
+  onFocusChange?: (focused: boolean, nativeId?: string) => void;
 }
 
 export function FocusButton({
@@ -30,13 +42,13 @@ export function FocusButton({
   labelStyle,
   icon,
   onPress,
-  variant = 'secondary',
+  variant = "secondary",
   disabled = false,
   style,
   children,
   testID,
   hasTVPreferredFocus = false,
-  accessibilityRole = 'button',
+  accessibilityRole = "button",
   accessibilityLabel,
   accessibilityState,
   onFocusChange,
@@ -45,23 +57,35 @@ export function FocusButton({
   const nativeRef = useRef<View>(null);
   const generatedId = useId();
   const id = focusId ?? testID ?? `button:${label}:${generatedId}`;
-  const nativeFocus = useNativeTvTarget(nativeRef,id,"content",id.startsWith("nav:") ? "navigation" : "content",disabled,hasTVPreferredFocus);
-  useEffect(() => { if(Platform.isTV) onFocusChange?.(nativeFocus.focused); },[nativeFocus.focused,onFocusChange]);
+  const nativeFocus = useNativeTvTarget(
+    nativeRef,
+    id,
+    "content",
+    id.startsWith("nav:") ? "navigation" : "content",
+    disabled,
+    hasTVPreferredFocus,
+  );
+  useEffect(() => {
+    if (Platform.isTV)
+      onFocusChange?.(nativeFocus.focused, nativeFocus.focusedId);
+  }, [nativeFocus.focused, nativeFocus.focusedId, onFocusChange]);
   const colors = useColors();
   const [focused, setFocused] = useState(false);
   const scale = useRef(new Animated.Value(1)).current;
   const backgroundColor =
-    variant === 'primary'
+    variant === "primary"
       ? colors.primary
-      : variant === 'secondary'
+      : variant === "secondary"
         ? colors.secondary
-        : 'transparent';
-  const foregroundColor = variant === 'primary' ? colors.primaryForeground : colors.foreground;
+        : "transparent";
+  const foregroundColor =
+    variant === "primary" ? colors.primaryForeground : colors.foreground;
   const tvFocused = Platform.isTV && nativeFocus.focused;
 
   const animateFocus = (next: boolean) => {
+    if (Platform.isTV) return;
     setFocused(next);
-    onFocusChange?.(next);
+    if (!Platform.isTV) onFocusChange?.(next);
     if (!Platform.isTV) return;
     Animated.spring(scale, {
       toValue: 1,
@@ -73,7 +97,9 @@ export function FocusButton({
   };
 
   return (
-    <Animated.View style={[tvFocused ? styles.tvGlowWrap : null, { transform: [{ scale }] }]}>
+    <Animated.View
+      style={[tvFocused ? styles.tvGlowWrap : null, { transform: [{ scale }] }]}
+    >
       <Pressable
         ref={nativeRef}
         nativeID={id}
@@ -82,7 +108,10 @@ export function FocusButton({
         focusable={!disabled}
         hasTVPreferredFocus={false}
         disabled={disabled}
-        onPress={() => { onPress(); if(Platform.isTV) inspectorAction("onPress"); }}
+        onPress={() => {
+          onPress();
+          if (Platform.isTV) inspectorAction("onPress");
+        }}
         onFocus={() => animateFocus(true)}
         onBlur={() => animateFocus(false)}
         style={[
@@ -101,8 +130,17 @@ export function FocusButton({
         accessibilityState={accessibilityState}
         accessibilityLabel={accessibilityLabel ?? label}
       >
-        {icon ? <Feather name={icon} size={18} color={foregroundColor} /> : null}
-        {children ?? <Text numberOfLines={labelLines} style={[styles.label, { color: foregroundColor }, labelStyle]}>{label}</Text>}
+        {icon ? (
+          <Feather name={icon} size={18} color={foregroundColor} />
+        ) : null}
+        {children ?? (
+          <Text
+            numberOfLines={labelLines}
+            style={[styles.label, { color: foregroundColor }, labelStyle]}
+          >
+            {label}
+          </Text>
+        )}
       </Pressable>
     </Animated.View>
   );
@@ -114,9 +152,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 18,
     borderRadius: 12,
     borderWidth: 1,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: 9,
   },
   tvGlowWrap: {
@@ -127,7 +165,7 @@ const styles = StyleSheet.create({
     borderRadius: 14,
   },
   label: {
-    fontFamily: 'Inter_600SemiBold',
+    fontFamily: "Inter_600SemiBold",
     fontSize: 15,
     letterSpacing: 0.1,
   },

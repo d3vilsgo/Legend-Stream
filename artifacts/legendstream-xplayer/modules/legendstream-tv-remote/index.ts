@@ -29,7 +29,7 @@ export const nativeTvModalShown = (scope: string) => focusNative?.modalShown(sco
 export const setNativeTvScope = (scope: string) => focusNative?.setScope(scope).catch(() => false);
 export const subscribeNativeTvFocus = (listener: (event: NativeFocusEvent) => void) => focusNative?.addListener("onNativeFocus",listener);
 
-export type InspectorNativeEvent = {dispatchOwner?:string;expectedFocus?:string;moveOutcome?:string;expectedVisible?:boolean;focusTop?:number;delivery?:string;timeMs?:number;inputAgeMs?:number;beforeFocus?:string;cause?:string;withoutInput?:boolean;kind: string; sequence: number; key: string; phase: string; handled: boolean; focus: string; scope: string; context: string};
+export type InspectorNativeEvent = {dispatchDurationMs?:number;dispatchOwner?:string;expectedFocus?:string;moveOutcome?:string;expectedVisible?:boolean;focusTop?:number;delivery?:string;timeMs?:number;inputAgeMs?:number;beforeFocus?:string;cause?:string;withoutInput?:boolean;kind: string; sequence: number; key: string; phase: string; handled: boolean; focus: string; scope: string; context: string};
 const inspectorNative = native as unknown as {setInspector:(enabled:boolean)=>Promise<boolean>;addListener:(name:"onInspector",listener:(event:InspectorNativeEvent)=>void)=>{remove:()=>void}} | null;
 export const setNativeInspector = (enabled:boolean) => inspectorNative?.setInspector(enabled).catch(()=>false);
 export const subscribeNativeInspector = (listener:(event:InspectorNativeEvent)=>void) => inspectorNative?.addListener("onInspector",listener);

@@ -14,7 +14,7 @@ export function inspectorFocusLabel(raw:string):string {
 /** Bottom placement avoids the top navigation; top placement is used only for a bottom focused target. */
 export function inspectorCorner(focusTop:number,height:number):"top"|"bottom" {return focusTop>height*0.66?"top":"bottom";}
 /** Ephemeral allowlisted diagnostics. Never accepts titles, URLs or provider identifiers. */
-type FocusMeta={owner?:string;expected?:string;outcome?:string;expectedVisible?:boolean;focusTop?:number;timeMs:number;inputAgeMs:number;source:string;withoutInput:boolean;delivery?:string;before?:string};
+type FocusMeta={dispatchDurationMs?:number;owner?:string;expected?:string;outcome?:string;expectedVisible?:boolean;focusTop?:number;timeMs:number;inputAgeMs:number;source:string;withoutInput:boolean;delivery?:string;before?:string};
 export type InspectorRecord = FocusMeta & { n:number; type:string; key:string; phase:string; before:string; after:string; screen:string; scope:string; context:string; result:string };
 export class InspectorHistory {
   enabled=false; collapsed=true; history=false; page=0; screen="unknown"; focus="none"; scope="content"; context="catalog"; records:InspectorRecord[]=[]; private serial=0; private keyFocus=new Map<number,string>();
@@ -30,7 +30,7 @@ export class InspectorHistory {
     const screen=["home","live","movies","series","settings","history","downloads","player"].includes(raw)?raw:"other";
     if(screen!==this.screen){this.screen=screen;this.add("screen","Ekran state değişti");}
   }
-  native(e:{kind:string;sequence:number;key:string;phase:string;handled:boolean;focus:string;scope:string;context:string;timeMs?:number;inputAgeMs?:number;beforeFocus?:string;cause?:string;withoutInput?:boolean;delivery?:string;dispatchOwner?:string;expectedFocus?:string;moveOutcome?:string;expectedVisible?:boolean;focusTop?:number}){
+  native(e:{dispatchDurationMs?:number;kind:string;sequence:number;key:string;phase:string;handled:boolean;focus:string;scope:string;context:string;timeMs?:number;inputAgeMs?:number;beforeFocus?:string;cause?:string;withoutInput?:boolean;delivery?:string;dispatchOwner?:string;expectedFocus?:string;moveOutcome?:string;expectedVisible?:boolean;focusTop?:number}){
     if(!this.enabled)return;
     const safeFocus=safeInspectorFocus(e.focus);
     this.scope=["content","player","modal","player-panel:content","player-panel:audio","player-panel:subtitles","player-panel:codec"].includes(e.scope)?e.scope:"other";
@@ -40,6 +40,7 @@ export class InspectorHistory {
     const bounded=(v:number|undefined,fallback:number)=>typeof v==="number"&&Number.isFinite(v)&&v>=0&&v<Number.MAX_SAFE_INTEGER?v:fallback;
     const sources=["native-input","mount-restore","scope-restore","scope-unblock","explicit-restore","layout-correlated","virtualization-correlated","modal-transition-correlated","scope-transition-correlated","target-registration-correlated","unknown","snapshot"];
     const meta:FocusMeta={timeMs:bounded(e.timeMs,0),inputAgeMs:bounded(e.inputAgeMs,-1),source:sources.includes(e.cause??"")?e.cause!:"unknown",withoutInput:e.withoutInput===true,delivery:["fresh","repeat","duplicate","late-repeat"].includes(e.delivery??"")?e.delivery:"fresh"};
+    meta.dispatchDurationMs=bounded(e.dispatchDurationMs,0);
     meta.owner=["window-delegate","native-focus","native-selection","player-semantic"].includes(e.dispatchOwner??"")?e.dispatchOwner:"unknown";
     meta.expected=safeInspectorFocus(e.expectedFocus??"none");
     meta.outcome=["not-directional","boundary","missing-focus","moved","request-failed"].includes(e.moveOutcome??"")?e.moveOutcome:"unknown";
