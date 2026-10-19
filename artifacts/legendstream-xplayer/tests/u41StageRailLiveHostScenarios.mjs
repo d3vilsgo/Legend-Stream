@@ -18,7 +18,15 @@ const host = (globalThis.__u41 = {
   fontScale: 1,
   tv: true,
   preview: false,
+  listeners: new Set(),
+  transitions: [],
+  effects: [],
+  cleanups: [],
   reset() {
+    this.cleanups.forEach((f) => f?.());
+    this.cleanups = [];
+    this.effects = [];
+    this.transitions = [];
     slots = [];
     cursor = 0;
   },
@@ -33,20 +41,35 @@ const host = (globalThis.__u41 = {
       },
     ];
   },
+  focus(id) {
+    this.listeners.forEach((f) => f({ id }));
+  },
+  effect(fn, deps) {
+    const i = cursor++;
+    const old = slots[i];
+    if (!old || deps.some((d, j) => d !== old[j])) {
+      slots[i] = deps;
+      this.effects.push(fn);
+    }
+  },
   ref(initial) {
     const index = cursor++;
     return slots[index] ?? (slots[index] = { current: initial });
   },
   render(fn, props) {
     cursor = 0;
-    return fn(props);
+    const result = fn(props);
+    this.effects.splice(0).forEach((f) => this.cleanups.push(f()));
+    return result;
   },
 });
 const mocks = {
+  "@/modules/legendstream-tv-remote": `const h=globalThis.__u41; export const subscribeNativeTvFocus=f=>{h.listeners.add(f);return {remove(){h.listeners.delete(f)}}};`,
+  "@/lib/tvRemoteInspector": `export const inspectorRail=v=>globalThis.__u41.transitions.push(v);`,
   react: `const h=globalThis.__u41;
     export const useState=x=>h.state(x),useRef=x=>h.ref(x),
       useReducer=(fn,v)=>{const [value,set]=h.state(v);return [value,event=>set(old=>fn(old,event))]},
-      useMemo=f=>f(),useEffect=()=>{},useCallback=f=>f;
+      useMemo=f=>f(),useEffect=(f,d)=>h.effect(f,d),useCallback=f=>f;
     export default {createElement:(tag,props,...children)=>({tag,props:{...props,children}})};`,
   "react-native": `const h=globalThis.__u41;
     export const View="View",Text="Text",TextInput="TextInput",
@@ -177,14 +200,18 @@ try {
       assert.equal(button.props.label, "");
       assert.equal(button.props.accessibilityLabel, item.label);
     }
-    only(
-      tree,
-      (node) => node.props?.focusId === "nav:movies",
-    ).props.onFocusChange(true);
+    assert.equal(host.listeners.size, 1);
+    host.focus("nav:movies");
     tree = host.render(ResponsiveContentNav, props);
     assert.equal(
-      only(tree, (node) => node.props?.focusId === "nav:movies").props.label,
-      "movies",
+      all(tree, (n) => n.tag === "Text" && n.props.children.includes("movies"))
+        .length,
+      1,
+    );
+    assert.equal(
+      only(tree, (n) => n.props.accessibilityLabel === "Ana gezinme").props
+        .style[1].width,
+      root.props.style[1].width,
     );
     for (const item of items)
       only(
@@ -195,10 +222,7 @@ try {
       chosen.splice(0),
       items.map((x) => x.key),
     );
-    only(
-      tree,
-      (node) => node.props?.focusId === "nav:movies",
-    ).props.onFocusChange(false);
+    host.focus("home-hero:watch");
     tree = host.render(ResponsiveContentNav, props);
     assert.equal(
       only(tree, (node) => node.props?.focusId === "nav:movies").props.label,
@@ -225,6 +249,11 @@ try {
         ["-cp", out, "TvVerticalRailHost", id, direction, ...targets],
         { encoding: "utf8" },
       );
+    targets.push("home-shelf:Films:movie-8,home,400,230,120,180");
+    assert.equal(
+      step("home-shelf:Films:movie-8", "left"),
+      "home-shelf:Films:movie-7",
+    );
     console.log(
       `${width}dp ${step("nav:home", "benchmark")} (not Android dispatch latency)`,
     );
@@ -237,23 +266,55 @@ try {
     assert.equal(step("nav:home", "right"), "home-hero:watch");
     assert(step("home-hero:watch", "left").startsWith("nav:"));
     assert.equal(step("home-hero:watch", "down"), "home-shelf:Films:movie-7");
-    // All subscribers observe one authoritative destination, even when the
-    // former item's blur is delivered after the next item's focus.
-    buttons[1].props.onFocusChange(true, "nav:live");
-    buttons[0].props.onFocusChange(false, "nav:live");
+    host.transitions = [];
+    host.focus("nav:live");
+    for (const id of ["nav:home", "nav:movies", "nav:series", "nav:series", ""])
+      host.focus(id);
     tree = host.render(ResponsiveContentNav, props);
+    const before = all(tree, (n) => n.tag === "FocusButton").map(
+      (n) => n.props.style,
+    );
+    tree = host.render(ResponsiveContentNav, { ...props, activeKey: "movies" });
+    assert.deepEqual(
+      all(tree, (n) => n.tag === "FocusButton").map(
+        (n) => n.props.style[1].width,
+      ),
+      before.map((x) => x[1].width),
+    );
+    assert.deepEqual(
+      chosen,
+      [],
+      "direction and screen notifications cannot select a route",
+    );
+    assert.deepEqual(
+      host.transitions,
+      [true],
+      "one boundary entry; no conflicting item transitions",
+    );
     assert.equal(
-      only(tree, (node) => node.props?.focusId === "nav:home").props.label,
-      "home",
+      all(tree, (n) => n.tag === "Text" && n.props.children.includes("home"))
+        .length,
+      1,
     );
     for (let i = 0; i < 8; i++) {
-      buttons[0].props.onFocusChange(true, "nav:home");
-      buttons[0].props.onFocusChange(false, "home-hero:watch");
+      host.focus("home-hero:watch");
+      host.focus("nav:home");
     }
+    host.focus("modal:close");
     tree = host.render(ResponsiveContentNav, props);
+    assert.equal(host.transitions.length, 18);
     assert.equal(
-      only(tree, (node) => node.props?.focusId === "nav:home").props.label,
-      "",
+      all(tree, (n) => n.tag === "Text" && n.props.children.includes("home"))
+        .length,
+      0,
+    );
+    const stale = [...host.listeners][0];
+    host.reset();
+    stale({ id: "nav:home" });
+    assert.deepEqual(
+      host.transitions,
+      [],
+      "unmounted provider owner rejects queued callback",
     );
     passed++;
   }

@@ -42,7 +42,7 @@ public final class TvFocusPolicy {
     boolean navigation=current.region.equals("navigation");
     boolean rail=verticalRail(targets);
     if(navigation && (rail ? direction.equals("left") : direction.equals("up")))return null;
-    Target best=null; double score=Double.POSITIVE_INFINITY;
+    Target best=null, railFallback=null; double score=Double.POSITIVE_INFINITY, railScore=Double.POSITIVE_INFINITY;
     for(Target t:targets) {
       if(t.tag==current.tag || !t.scope.equals(scope) || t.width<=0 || t.height<=0)continue;
       boolean targetNavigation=t.region.equals("navigation");
@@ -86,8 +86,13 @@ public final class TvFocusPolicy {
       // Unlike a weighted Euclidean score, a remote diagonal cannot outrank the next row.
       double candidate=rail && horizontal && navigation!=targetNavigation ? cross*10000d+primary : primary*10000d+cross;
       if(!horizontal && overlapX>0)candidate-=0.25;
+      // LEFT enters navigation only after exhausting valid content neighbors.
+      if(rail && !navigation && targetNavigation) {
+        if(candidate<railScore){railFallback=t;railScore=candidate;}
+        continue;
+      }
       if(candidate<score || candidate==score && best!=null && t.id.compareTo(best.id)<0){best=t;score=candidate;}
     }
-    return best;
+    return best!=null ? best : railFallback;
   }
 }

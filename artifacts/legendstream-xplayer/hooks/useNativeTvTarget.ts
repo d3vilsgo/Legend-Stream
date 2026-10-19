@@ -22,10 +22,7 @@ export function useNativeTvTarget(
   preferred = false,
 ) {
   const [focused, setFocused] = useState(false);
-  const [focusedId, setFocusedId] = useState<string | undefined>(undefined);
   const current = useRef<{ tag: number; identity: string } | null>(null);
-  const navigationRef = useRef(id.startsWith("nav:"));
-  navigationRef.current = id.startsWith("nav:");
   const disabledRef = useRef(disabled);
   disabledRef.current = disabled;
   const register = useCallback(() => {
@@ -56,9 +53,6 @@ export function useNativeTvTarget(
   useLayoutEffect(() => {
     if (!Platform.isTV) return;
     const sub = subscribeNativeTvFocus((e) => {
-      // Only the small rail needs destination identity. Catalog cards retain
-      // boolean focus updates, avoiding a full-list render on every D-pad key.
-      if (navigationRef.current) setFocusedId(e.id);
       setFocused(e.tag === current.current?.tag && !disabledRef.current);
     });
     return () => {
@@ -67,5 +61,5 @@ export function useNativeTvTarget(
       current.current = null;
     };
   }, []);
-  return { focused, focusedId, register };
+  return { focused, register };
 }

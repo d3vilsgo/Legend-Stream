@@ -1,9 +1,9 @@
 import { nativeTvLayout } from "@/lib/nativeTvResponsive";
-import { hasPlayerBackOwner } from "@/lib/playerRemoteOwnership";
+import { subscribeNativeTvFocus } from "@/modules/legendstream-tv-remote";
+import { inspectorRail } from "@/lib/tvRemoteInspector";
 import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
-  BackHandler,
   Keyboard,
   Modal,
   Platform,
@@ -70,7 +70,26 @@ export function ResponsiveContentNav<Key extends string>({
   const presentation = useUiPresentation();
   const [open, setOpen] = useState(presentation.tvPreview);
   const [preferInitialFocus, setPreferInitialFocus] = useState(Platform.isTV);
-  const navigationFocusedIds = useRef(new Set<string>());
+  const railRegion = useRef(false);
+  const navigationIds = useRef(new Set<string>());
+  navigationIds.current = new Set(items.map((item) => `nav:${item.key}`));
+  useEffect(() => {
+    if (!Platform.isTV || placement !== "header") return;
+    let mounted = true;
+    const subscription = subscribeNativeTvFocus(({ id }) => {
+      // A transient missing target is not evidence of a region crossing.
+      if (!mounted || !id) return;
+      const next = navigationIds.current.has(id);
+      if (next === railRegion.current) return;
+      railRegion.current = next;
+      setOpen(next);
+      inspectorRail(next);
+    });
+    return () => {
+      mounted = false;
+      subscription?.remove();
+    };
+  }, [placement]);
   const profile = useMemo(
     () =>
       resolvePremiumCatalogProfile({
@@ -114,24 +133,7 @@ export function ResponsiveContentNav<Key extends string>({
     if (presentation.tvPreview) setOpen(true);
   }, [presentation.tvPreview]);
 
-  useEffect(() => {
-    if (!model.nativeTv || !backEnabled || !model.backTarget) return;
-    const backTarget = model.backTarget;
-    const back = BackHandler.addEventListener("hardwareBackPress", () => {
-      if (hasPlayerBackOwner()) return false;
-      if (navigationFocusedIds.current.size === 0) return false;
-      onSelect(backTarget);
-      return true;
-    });
-    return () => back.remove();
-  }, [
-    activeKey,
-    backEnabled,
-    homeKey,
-    model.backTarget,
-    model.nativeTv,
-    onSelect,
-  ]);
+  // Native Window dispatch owns rail BACK; no competing JS route selection.
 
   const select = (key: Key) => {
     onSelect(key);
@@ -143,9 +145,10 @@ export function ResponsiveContentNav<Key extends string>({
   if (model.nativeTv) {
     // The rail overlays the content rather than consuming hero/shelf height.
     // Keep focus IDs and the existing Native Focus owner unchanged.
-    const railWidth = open
+    const railWidth = Math.max(64, Math.min(84, tv.target + 12));
+    const visualWidth = open
       ? Math.min(220, Math.max(160, tv.usableWidth * 0.24))
-      : Math.max(64, Math.min(84, tv.target + 12));
+      : railWidth;
     return (
       <View
         style={[
@@ -163,51 +166,81 @@ export function ResponsiveContentNav<Key extends string>({
             alignItems: "stretch",
             padding: 6,
             borderRadius: 16,
-            backgroundColor: open ? "#162731F2" : "#162731E8",
-            borderWidth: 1,
-            borderColor: "#36515E",
+            overflow: "visible",
           },
         ]}
         accessibilityLabel="Ana gezinme"
       >
+        <View
+          pointerEvents="none"
+          accessible={false}
+          style={{
+            position: "absolute",
+            top: 0,
+            bottom: 0,
+            left: 0,
+            width: visualWidth,
+            borderRadius: 16,
+            backgroundColor: open ? "#162731F2" : "#162731E8",
+            borderWidth: 1,
+            borderColor: "#36515E",
+          }}
+        />
         {items.map((item) => (
-          <FocusButton
+          <View
             key={item.key}
-            focusId={`nav:${item.key}`}
-            testID={`adaptive-nav-${item.key}`}
-            label={open ? item.label : ""}
-            icon={item.icon}
-            variant={activeKey === item.key ? "secondary" : "ghost"}
-            accessibilityRole="tab"
-            accessibilityLabel={item.label}
-            accessibilityState={{ selected: activeKey === item.key }}
-            hasTVPreferredFocus={
-              preferInitialFocus &&
-              activeKey === item.key &&
-              activeKey === homeKey
-            }
-            onFocusChange={(focused, nativeId) => {
-              if (focused) navigationFocusedIds.current.add(item.key);
-              else navigationFocusedIds.current.delete(item.key);
-              setOpen(
-                nativeId !== undefined
-                  ? nativeId.startsWith("nav:")
-                  : navigationFocusedIds.current.size > 0,
-              );
+            style={{
+              width: railWidth - 12,
+              height: tv.target,
+              justifyContent: "center",
             }}
-            onPress={() => select(item.key)}
-            labelLines={1}
-            labelStyle={{ fontSize: tv.labelFont, flexShrink: 1 }}
-            style={[
-              styles.tvTarget,
-              {
-                width: "100%",
-                minHeight: tv.target,
-                paddingHorizontal: open ? 10 : 4,
-                borderColor: activeKey === item.key ? "#67e8d1" : "transparent",
-              },
-            ]}
-          />
+          >
+            <FocusButton
+              key={item.key}
+              focusId={`nav:${item.key}`}
+              testID={`adaptive-nav-${item.key}`}
+              label=""
+              icon={item.icon}
+              variant={activeKey === item.key ? "secondary" : "ghost"}
+              accessibilityRole="tab"
+              accessibilityLabel={item.label}
+              accessibilityState={{ selected: activeKey === item.key }}
+              hasTVPreferredFocus={
+                preferInitialFocus &&
+                activeKey === item.key &&
+                activeKey === homeKey
+              }
+              onPress={() => select(item.key)}
+              labelLines={1}
+              labelStyle={{ fontSize: tv.labelFont, flexShrink: 1 }}
+              style={[
+                styles.tvTarget,
+                {
+                  width: railWidth - 12,
+                  minHeight: tv.target,
+                  paddingHorizontal: 4,
+                  borderColor:
+                    activeKey === item.key ? "#67e8d1" : "transparent",
+                },
+              ]}
+            />
+            {open && (
+              <Text
+                pointerEvents="none"
+                accessible={false}
+                numberOfLines={1}
+                style={{
+                  position: "absolute",
+                  left: railWidth,
+                  width: Math.max(1, visualWidth - railWidth - 18),
+                  color: activeKey === item.key ? "#67e8d1" : "#fff",
+                  fontSize: tv.labelFont,
+                }}
+              >
+                {item.label}
+              </Text>
+            )}
+          </View>
         ))}
       </View>
     );

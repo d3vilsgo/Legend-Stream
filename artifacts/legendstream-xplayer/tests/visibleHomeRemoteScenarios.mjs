@@ -56,9 +56,9 @@ const mocks = {
     "export const VlcPlaybackSurface='VLC';",
   "@react-native-async-storage/async-storage":
     "export default {getItem:async()=>null,setItem:async()=>{}};",
-  "@/lib/tvRemoteInspector": "export const inspectorAction=()=>{};",
+  "@/lib/tvRemoteInspector": "export const inspectorAction=()=>{},inspectorRail=()=>{};",
   "@/modules/legendstream-tv-remote":
-    "export const configureTvRemote=()=>{},subscribeTvRemote=()=>({remove(){}});",
+    "export const configureTvRemote=()=>{},subscribeTvRemote=()=>({remove(){}}),subscribeNativeTvFocus=()=>({remove(){}});",
   "@/hooks/usePlayerOrientation":
     "export const usePlayerOrientation=()=>({ready:true,exiting:false,beginExit(){},restore:async()=>{},releaseWhenLayoutReady(){},rotate(){}});",
   "@/modules/legendstream-pip":

@@ -23,6 +23,8 @@ const host = globalThis.__tvP0 = {
   render(component, props) { cursor = 0; this.effectIndex = 0; this.effects = []; const result = component(props); for (const effect of this.effects) effect(); return result; },
 };
 const mocks = {
+  "@/modules/legendstream-tv-remote": `export const subscribeNativeTvFocus=f=>{globalThis.__tvP0.focus=id=>f({id});return {remove(){}}};`,
+  "@/lib/tvRemoteInspector": `export const inspectorRail=()=>{};`,
   react: `const h=globalThis.__tvP0;
     export const useState=v=>h.state(v),useReducer=(fn,v)=>{const [value,set]=h.state(v);return [value,event=>set(old=>fn(old,event))]},
     useRef=v=>h.ref(v),useMemo=f=>f(),useEffect=(f,d)=>h.effect(f,d),useId=()=> "id";
@@ -160,7 +162,7 @@ try {
   check("physical focus is distinct from active route",()=>{
     assert.equal(one(nav,n=>n.props?.focusId==="nav:live").props.accessibilityState.selected,true);
     assert.equal(one(nav,n=>n.props?.focusId==="nav:movies").props.accessibilityState.selected,false);
-    assert.equal(typeof one(nav,n=>n.props?.focusId==="nav:movies").props.onFocusChange,"function");
+    assert.equal(one(nav,n=>n.props?.focusId==="nav:movies").props.onFocusChange,undefined);
   });
   check("all nav tabs route through production onSelect",()=>{
     for(const key of tabs)one(nav,n=>n.props?.focusId==="nav:"+key).props.onPress();
@@ -169,16 +171,17 @@ try {
   check("native navigation does not own horizontal ScrollView",()=>assert.equal(find(nav,n=>n.tag==="ScrollView").length,0));
   check("StageRail expands on focus and collapses on content handoff without route change",()=>{
     const railWidth=tree=>one(tree,n=>n.tag==="View"&&n.props.accessibilityLabel==="Ana gezinme").props.style.flat().find(v=>v&&typeof v.width==="number").width;
-    one(nav,n=>n.props?.focusId==="nav:movies").props.onFocusChange(false);
+    host.focus("vod:7");
     const compact=host.render(ResponsiveContentNav,navProps);
     const capsule=railWidth(compact);
     assert.equal(one(compact,n=>n.props?.focusId==="nav:movies").props.label,"");
-    one(compact,n=>n.props?.focusId==="nav:movies").props.onFocusChange(true);
+    host.focus("nav:movies");
     const expanded=host.render(ResponsiveContentNav,navProps);
-    assert(railWidth(expanded)>capsule);
-    assert.equal(one(expanded,n=>n.props?.focusId==="nav:movies").props.label,"movies");
+    assert.equal(railWidth(expanded),capsule);
+    assert(find(expanded,n=>n.props?.pointerEvents==="none"&&n.props.style?.width>capsule).length>0);
+    assert.equal(find(expanded,n=>n.tag==="Text"&&n.props.children.includes("movies")).length,1);
     assert.equal(one(expanded,n=>n.props?.focusId==="nav:live").props.accessibilityState.selected,true);
-    one(expanded,n=>n.props?.focusId==="nav:movies").props.onFocusChange(false);
+    host.focus("vod:7");
     const collapsed=host.render(ResponsiveContentNav,navProps);
     assert.equal(railWidth(collapsed),capsule);
     assert.equal(one(collapsed,n=>n.props?.focusId==="nav:movies").props.label,"");

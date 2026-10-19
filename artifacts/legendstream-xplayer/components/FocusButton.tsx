@@ -65,10 +65,11 @@ export function FocusButton({
     disabled,
     hasTVPreferredFocus,
   );
+  const focusCallback = useRef(onFocusChange);
+  focusCallback.current = onFocusChange;
   useEffect(() => {
-    if (Platform.isTV)
-      onFocusChange?.(nativeFocus.focused, nativeFocus.focusedId);
-  }, [nativeFocus.focused, nativeFocus.focusedId, onFocusChange]);
+    if (Platform.isTV) focusCallback.current?.(nativeFocus.focused);
+  }, [nativeFocus.focused]);
   const colors = useColors();
   const [focused, setFocused] = useState(false);
   const scale = useRef(new Animated.Value(1)).current;

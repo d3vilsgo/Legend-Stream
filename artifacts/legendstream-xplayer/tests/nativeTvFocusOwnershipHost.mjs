@@ -95,16 +95,29 @@ try {
   assert.equal(button.tag, "Pressable");
   assert.equal(h.registered[0][1], "nav:home");
   assert.equal(h.registered[0][3], "navigation");
+  assert.equal(
+    h.registered.length,
+    1,
+    "rerenders retain one native registration",
+  );
   changes.length = 0;
   button.props.onFocus();
   button.props.onBlur();
   assert.deepEqual(changes, []);
   h.listeners.forEach((f) => f({ tag: 17, id: "nav:home" }));
   button = render();
-  assert.deepEqual(changes.at(-1), [true, "nav:home"]);
+  assert.deepEqual(changes.at(-1), [true]);
   h.listeners.forEach((f) => f({ tag: 22, id: "nav:movies" }));
   button = render();
-  assert.deepEqual(changes.at(-1), [false, "nav:movies"]);
+  assert.deepEqual(changes.at(-1), [false]);
+  changes.length = 0;
+  props.onFocusChange = (...a) => changes.push(a);
+  button = render();
+  assert.deepEqual(
+    changes,
+    [],
+    "inline callback recreation cannot publish focus again",
+  );
   // A delayed React focus event cannot reopen the rail after native content focus.
   h.listeners.forEach((f) => f({ tag: 30, id: "vod:7" }));
   button = render();
@@ -119,7 +132,7 @@ try {
     );
     button = render();
   }
-  assert.deepEqual(changes.at(-1), [false, "vod:7"]);
+  assert.deepEqual(changes.at(-1), [false]);
   h.slots.forEach((x) => x?.cleanup?.());
   assert.equal(h.listeners.length, 0);
   h.slots = [];

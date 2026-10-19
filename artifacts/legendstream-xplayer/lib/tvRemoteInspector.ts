@@ -56,3 +56,6 @@ export class InspectorHistory {
 }
 export const tvInspector=new InspectorHistory();
 export function inspectorAction(action:"onPress"|"back-panel"|"back-controls"|"back-exit"|"controls-shown"|"controls-hidden"|"panel-open"|"panel-closed"|"player-mounted"|"player-unmounted") {tvInspector.add("action",action.startsWith("back-")?`player-root:${action}`:action);}
+
+/** One allowlisted boundary record; no provider or content identifiers. */
+export function inspectorRail(open: boolean) { tvInspector.add("rail-state", open ? "navigation" : "content"); }
