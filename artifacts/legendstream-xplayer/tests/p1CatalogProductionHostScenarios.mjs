@@ -309,6 +309,10 @@ try {
     assert.equal(traverse(movies, (node) => node.tag === "MovieInfoModal").length, 0, name);
     movieList = exactly(movies, (node) => node.tag === "FlatList");
     assert.equal(movieList.props.data[1].stream_id, 12, name);
+    movieAction.props.onPress();
+    host.movieItems = [];
+    const removed = host.render(PagedMoviesCatalog, movieProps);
+    assert.equal(traverse(removed, (node) => node.tag === "MovieInfoModal").length, 0, name);
   }
   console.log(`P1 production GoldenSeriesCatalog render acceptance: ${pass}/${profiles.length} profiles PASS; HOST_NOT_ANDROID_PHYSICAL`);
 } finally {
