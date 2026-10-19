@@ -333,3 +333,72 @@ korunur. Fiziksel RC kabulü yalnız kullanıcı onayından sonra; host PASS fiz
 - **PARTIAL / open SOURCE/HOST acceptance:** Home raf→Info→Back ve Player→Home, Movies Info→Player→Back, Live kanal→Player→Live, ardışık Back ve StageRail→içerik→StageRail dönüşlerinin tümünü *tek gerçek üretim shell/player render oturumunda* uçtan uca doğrulayan birleşik host kabulü henüz yok. Mevcut host senaryoları birbirini tamamlar, ancak fiziksel Native Android odak hareketini veya bu tam birleşik kabulü kanıtlamaz. U4.3 bütününün SOURCE/HOST kapanışı bu eksikler giderilmeden PASS değildir. U4.4 unified search/zapping DEFERRED; geçiş kapısı PARTIAL.
 - **Mevcut owner:** `modules/legendstream-tv-remote/android/.../LegendStreamTvRemoteModule.kt` yalnız bağlı/görünür hedefi Focus'a alır; geçersiz scope/oturum ve kaldırılan hedefte pending restoration iptal edilir, modal onShow/mount olayları üzerinden sınırlı iş planlanır. İkinci Focus manager eklenmedi. Android FocusFinder/P-DPad/TV Box fiziksel kabulü `PHYSICAL_PENDING_RC / DEFERRED_RC`; önceki Native TV Physical FAIL, TMDB LIVE BLOCKED ve legacy cleanup 14 SKIP aynen açık. Quality otomatik PASS fiziksel PASS sayılmaz.
 - Beş kaydın bu tek commit'te güncellenmesi son exact-SHA Quality doğrulamasını zorunlu kılar. Yeni PR/branch, merge, APK, fiziksel test, player engine veya resolver değişikliği yapılmadı.
+
+
+## U4.3 cross-device Physical FAIL repair — 2026-10-19
+
+Başlangıç: `cfbc926e4de2f3e587bfe612f41c5f587a1b408c`; PR #143 OPEN/DRAFT,
+base `feature/r19-tmdb-secure-proxy`; başlangıç exact-SHA Quality #1481 SUCCESS.
+Üretim düzeltmesi: `eeb175d52debfed680138f00b9619e4326f751dc`; bu kayıt commit'i
+native hedef kimliği bildirimini yalnız küçük menüye sınırlar (tüm kartları her tuşta
+render etmez). Önceki U4.1/U4.2/U4.3 ve eşzamanlı kaynak korunur.
+
+**SOURCE/HOST PASS (bu düzeltme kapsamı); PHYSICAL PENDING.** Homatics 4K V2 ve
+Poco X7 Pro Android 16 kullanıcı tekrar testi yapılmadı. Tarihsel **Native TV Physical FAIL**,
+**TMDB LIVE BLOCKED**, **legacy 14 SKIP / 0 DELETED** kayıtları kapanmaz.
+U4.3'ün bütün birleşik shell/Player fiziksel kabulü veya U4.4 geçişi PASS ilan edilmez.
+
+Kaynak kanıtı: `ResponsiveContentNav.tsx` dikey `flexDirection: column` üretirken
+`TvFocusPolicy.java` eski yatay menü için UP'ı sınır, DOWN'ı içerik geçişi kabul ediyor,
+yatay menü hareketinde içerik hedeflerini eliyordu. Gerçek render geometrisini Java
+üretim politikasına veren test bu uyumsuzluğu kapsar. Ayrıca `FocusButton` React
+onFocus/onBlur ile native focus subscription üzerinden aynı menü state'ini iki kez
+bildiriyordu. Native TV'de tek yetkili bildirim artık `useNativeTvTarget` native hedef
+kimliğidir; geç gelen React focus/blur menüyü açamaz. Blur ardından başka menü öğesine
+geçiş menüyü geçici kapatmaz. Native policy ölçülen dikey/yatay menüyü ayırır;
+dikey UP/DOWN menü içinde, RIGHT içerikte en yakın satıra veya geçerli son hedefe gider.
+Native BACK menüde RIGHT dönüşünü kullanır, basılı BACK repeat ikinci navigasyon yapmaz.
+Son içerik hedefi kayıtlı/bağlı/görünür/scope uyumlu olmalı; unregister ve catalog root
+(provider yaşam döngüsü) değişimi bu referansı siler. Player/modal BACK sözleşmesi korunur.
+
+Telefon yoğunluğu: `catalogGridLayout.ts` portrait telefon için kullanılabilir genişlik
+ve fontScale ile en çok 3 sütun seçer; TV/Preview/tablet ve landscape politikası korunur.
+393×873, sol/sağ safe-area 12 dp host girdisinde sütun 2→3, poster genişliği
+154.5→99 dp, 2:3 poster yüksekliği 231.75→148.5 dp. 320×740 aynı inset ile 1→2
+(248→118 dp); 393 dp fontScale=2 için 1→2 (321→154.5 dp). 873×393 landscape 5→5,
+800×1280 tablet 3→3; 1920×1080 TV 5→5. Bunlar üretim geometri fonksiyonu ölçüleridir,
+Android ekran görüntüsü/gerçek cihaz ölçümü değildir. Telefon katalog başlığı 28→18 sp,
+poster başlığı en çok 14 sp/2 satır; kart title padding 9→4 dp, fontScale yüksekliği korunur.
+Arama/sıralama/yenileme kontrolleri aynı kompakt satırı paylaşır, dokunma hedefleri 48 dp;
+üst navigasyondaki yinelenen katalog adı/Canlı ara girişi kataloglarda kaldırılır.
+Stalker Movies ve Live de telefon yoğunluk kurallarını uygular; search/resolver/cache
+kapsamı değişmez. Kaynak/ayar ve katalog içi arama erişimi korunur.
+
+Otomatik kanıt: StageRail/Elite Live 6/6 profil (gerçek render + Java policy;
+UP/DOWN/RIGHT/LEFT, Hero→raf, hızlı focus bildirimleri), gerçek FocusButton + native hook
+9/9, Movies/Series 10/10 profil, Stalker Movies 10/10, Stalker Live 4/4.
+Series 40/40, Collapsible Home 12/12, visible Home/Player 18/18, P0 18/18,
+U2 grid hook 10/10, Preview 32/32, Native remote 27/27, JVM focus 66/66,
+stability 21/21, Home reachability 93/93, responsive JVM 240/240 yerelde geçti.
+TypeScript ve yeni/değişen formatlanmış Focus/Nav/grid/test dosyalarının Prettier
+kontrolü geçti; mevcut legacy dosyaların ilgisiz biçimi/statik sözleşmeleri korunur.
+Yeni ownership host ve biçimlendirme kapıları mevcut Quality workflow'una eklendi.
+Assertion silinmedi/gevşetilmedi, skip eklenmedi.
+
+Gecikme sınırı: render hedefleriyle Java policy host ölçümü 5000 örnekte medyan
+0.00051–0.00054 ms, p95 0.00134–0.00136 ms (tek yerel koşu, cihaz gecikmesi değil).
+Mevcut isteğe bağlı, 20 kayıtla sınırlı ve kimlikleri arındıran inspector'a
+`dispatchDurationMs` eklendi; Homatics native dispatch/JS/çizim gecikmesi henüz ölçülmedi.
+Uçtan uca performans iyileşmesi iddia edilmez.
+
+Home Hero kaynağı sağlayıcı movie/series kataloğudur (`HomeDiscovery.heroItems`).
+Film Info `movieInfoModel` yerel başlık/poster/özet alanlarını önceler, TMDB eksikleri
+zenginleştirir. TMDB canlı erişimi açılmadı; Hero veri modeli değiştirilmedi.
+
+Son commit için exact-SHA Quality ve ardından aynı SHA Universal APK doğrulaması
+teslim raporunda run/artifact kimlikleriyle kaydedilecektir. Bu kayıt oluştuğu anda
+final CI/BUILD henüz doğrulanmadığından bu belge BUILD PASS iddiası içermez.
+APK/Quality sonucu fiziksel PASS değildir. Yeni branch/PR, merge, force-push,
+Player engine/resolver değişikliği ve U4.4 geliştirmesi yok.
+
+Açık risk: Android FocusFinder, native Window/Dialog geçişi, kaydırma/menü overlay çakışması ve uzun D-pad basışı gerçek cihazda tekrar görülmeli. Önceki birleşik Home/Movies/Live→Player→Back host oturumu açığı bu dilimde tam kapanmadı.

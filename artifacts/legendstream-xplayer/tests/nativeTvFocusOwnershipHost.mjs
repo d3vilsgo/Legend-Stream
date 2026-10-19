@@ -122,8 +122,22 @@ try {
   assert.deepEqual(changes.at(-1), [false, "vod:7"]);
   h.slots.forEach((x) => x?.cleanup?.());
   assert.equal(h.listeners.length, 0);
+  h.slots = [];
+  h.cursor = 0;
+  props.focusId = "vod:7";
+  changes.length = 0;
+  button = render();
+  changes.length = 0;
+  h.listeners.forEach((f) => f({ tag: 99, id: "vod:8" }));
+  button = render();
+  assert.deepEqual(
+    changes,
+    [],
+    "Unfocused cards do not publish destination identity or rerender Focus callbacks",
+  );
+  h.slots.forEach((x) => x?.cleanup?.());
   console.log(
-    "Native FocusButton + useNativeTvTarget production host: 8/8 PASS; PHYSICAL_PENDING",
+    "Native FocusButton + useNativeTvTarget production host: 9/9 PASS; PHYSICAL_PENDING",
   );
 } finally {
   rmSync(out, { recursive: true, force: true });
