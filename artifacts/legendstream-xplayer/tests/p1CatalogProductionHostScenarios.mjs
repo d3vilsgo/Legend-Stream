@@ -291,10 +291,20 @@ try {
       ...movieProps,
       catalogRevision: 2,
     });
-    assert.equal(traverse(changedSession, (node) => node.tag === "MovieInfoModal").length, 0, name);
+    // A still-present identity must be rebound to the refreshed catalog.
+    const freshInfo = exactly(changedSession, (node) => node.tag === "MovieInfoModal");
+    assert.equal(freshInfo.props.input.catalogRevision, "2", name);
     info.props.onPlay(); // Old async/modal action must not play another session.
+    info.props.onClose(); // Nor dismiss the currently mounted modal.
     assert.deepEqual(openedMovies, [12], name);
-    info.props.onClose();
+    const stillOpen = host.render(PagedMoviesCatalog, {
+      ...movieProps,
+      catalogRevision: 2,
+    });
+    assert.equal(traverse(stillOpen, (node) => node.tag === "MovieInfoModal").length, 1, name);
+    freshInfo.props.onPlay();
+    assert.deepEqual(openedMovies, [12, 12], name);
+    freshInfo.props.onClose();
     movies = host.render(PagedMoviesCatalog, movieProps);
     assert.equal(traverse(movies, (node) => node.tag === "MovieInfoModal").length, 0, name);
     movieList = exactly(movies, (node) => node.tag === "FlatList");
