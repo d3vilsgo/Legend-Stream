@@ -897,7 +897,7 @@ export function PagedMoviesCatalog({
     {infoMovie ? <MovieInfoModal
       key={`${provider.id}:${infoMovie.stream_id}`}
       input={pagedMovieInput(provider.id,provider.type === "m3u" ? "m3u" : "xtream",String(catalogRevision ?? "catalog"),infoMovie)}
-      local={localXtreamMovie(infoMovie)} onClose={() => setInfoMovie(null)} onPlay={() => { if (currentInfoScope.current !== infoScope) return; const current=currentMovie(page.items,String(infoMovie.stream_id),item=>String(item.stream_id)); if(current) onOpen(current); }}
+      local={localXtreamMovie(infoMovie)} onClose={() => { if (currentInfoScope.current === infoScope) setInfoMovie(null); }} onPlay={() => { if (currentInfoScope.current !== infoScope) return; const current=currentMovie(page.items,String(infoMovie.stream_id),item=>String(item.stream_id)); if(current) onOpen(current); }}
     /> : null}
     <CategoryDrawer visible={drawerOpen} items={drawerItems} selected={category} onClose={() => setDrawerOpen(false)} onSelect={setCategory} />
   </View>;
