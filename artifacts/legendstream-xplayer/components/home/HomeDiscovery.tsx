@@ -440,11 +440,11 @@ export function HomeHeroCarousel({
       eliteVisual
       focusId={`home-hero:${item?.id ?? "empty"}:${id}`}
       accessibilityRole="button"
-      accessibilityLabel={label}
+      accessibilityLabel={collapsed && Platform.isTV ? "Öne çıkan içeriğe dön" : label}
       hasTVPreferredFocus={id === "watch"}
       onFocus={onHeroFocus}
       disabled={paused || loading}
-      onPress={() => item ? id === "watch" && item.movie && onWatch ? onWatch(item) : onOpen(item) : onDiscover()}
+      onPress={() => { if (collapsed && Platform.isTV) { onHeroFocus?.(); return; } item ? id === "watch" && item.movie && onWatch ? onWatch(item) : onOpen(item) : onDiscover(); }}
       style={{
         maxWidth: "100%",
         flexShrink: 1,
@@ -539,9 +539,7 @@ export function HomeHeroCarousel({
             </Text>
           ) : null}
         </View>
-        {collapsed && Platform.isTV ? (
-          <TVPreviewPressable eliteVisual focusId={`home-hero:${item?.id ?? "empty"}:restore`} accessibilityLabel="Öne çıkan içeriğe dön" onFocus={onHeroFocus} onPress={onHeroFocus} disabled={paused} style={{ minWidth: 56, minHeight: 56, padding: 10, borderRadius: 12, backgroundColor: "#1c252d" }}><Text style={{ color: "white" }}>↑</Text></TVPreviewPressable>
-        ) : !loading ? (
+        {!loading ? (
           <View
             style={{
               flexDirection: compact && !Platform.isTV ? "column" : "row",
@@ -551,9 +549,9 @@ export function HomeHeroCarousel({
               flexShrink: 1,
             }}
           >
-            {item ? action(item.series ? "Bölümleri Gör" : onWatch ? "İzle" : "Film Bilgisi", "watch", true) : action(discoverLabel, "discover", true)}
-            {item?.movie && onWatch ? action("Detay / Bilgi", "info") : null}
-            {Platform.isTV && items.length > 1 ? <TVPreviewPressable eliteVisual focusId="home-hero:next" accessibilityLabel="Sonraki öne çıkan içerik" disabled={paused} onPress={()=>setIndex(current=>(current+1)%items.length)} style={{minWidth:56,minHeight:56,padding:12,borderRadius:12,backgroundColor:"#1c252d",justifyContent:"center",alignItems:"center"}}><Text style={{color:"white",fontSize:22}}>→</Text></TVPreviewPressable> : null}
+            {collapsed && Platform.isTV ? action("↑", "watch", true) : item ? action(item.series ? "Bölümleri Gör" : onWatch ? "İzle" : "Film Bilgisi", "watch", true) : action(discoverLabel, "discover", true)}
+            {!collapsed && item?.movie && onWatch ? action("Detay / Bilgi", "info") : null}
+            {!collapsed && Platform.isTV && items.length > 1 ? <TVPreviewPressable eliteVisual focusId="home-hero:next" accessibilityLabel="Sonraki öne çıkan içerik" disabled={paused} onPress={()=>setIndex(current=>(current+1)%items.length)} style={{minWidth:56,minHeight:56,padding:12,borderRadius:12,backgroundColor:"#1c252d",justifyContent:"center",alignItems:"center"}}><Text style={{color:"white",fontSize:22}}>→</Text></TVPreviewPressable> : null}
           </View>
         ) : (
           <Text accessibilityRole="progressbar" style={{ color: "#c4d0d5" }}>
