@@ -812,16 +812,14 @@ export function PagedMoviesCatalog({
   const { width } = useWindowDimensions();
   const { tvPreview } = useUiPresentation();
   const [infoSelection, setInfoSelection] = useState<{
-    scope: string;
+    providerId: string;
     item: XtreamVodItem;
   } | null>(null);
-  // An identical stream_id under another provider/session is not the same film.
   const infoScope = JSON.stringify([provider.id, catalogRevision ?? null]);
   const currentInfoScope = useRef(infoScope);
   currentInfoScope.current = infoScope;
-  const infoMovie = infoSelection?.scope === infoScope ? infoSelection.item : null;
   const setInfoMovie = (item: XtreamVodItem | null) =>
-    setInfoSelection(item ? { scope: infoScope, item } : null);
+    setInfoSelection(item ? { providerId: provider.id, item } : null);
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "vod", provider.type === "m3u");
@@ -839,9 +837,15 @@ export function PagedMoviesCatalog({
     enabled: providerType !== null,
     snapshotCount: allOnlySnapshotCount(category, search, snapshotCount),
   });
+  // Keep the same media identity after a catalog revision, but always bind
+  // the open Info action to the refreshed item's production callback.
+  // Provider identity is part of the selection contract.
+  const infoMovie = infoSelection?.providerId === provider.id
+    ? currentMovie(page.items, String(infoSelection.item.stream_id), item => String(item.stream_id))
+    : null;
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const grid = useResponsiveCatalogGrid<(typeof page.items)[number]>(page.items.map(item => `vod:${item.stream_id}`), JSON.stringify([provider.id, catalogRevision ?? null, category, search, effectiveSort]));
+  const grid = useResponsiveCatalogGrid<(typeof page.items)[number]>(page.items.map(item => `vod:${item.stream_id}`), JSON.stringify([provider.id, category, search, effectiveSort]));
   const columns = grid.columns;
 
   useEffect(() => { if (infoMovie && !currentMovie(page.items, String(infoMovie.stream_id), item => String(item.stream_id))) setInfoSelection(null); }, [page.items, infoMovie]);
