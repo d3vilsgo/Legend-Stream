@@ -291,7 +291,9 @@ try {
     onOpen() {},
     onWatch() {},
     onDiscover() {},
-    onHeroFocus() { foldCount++; },
+    onHeroFocus() {
+      foldCount++;
+    },
     discoverLabel: "Keşfet",
   };
   const unfolded = renderToStaticMarkup(
