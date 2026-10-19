@@ -78,6 +78,9 @@ export function EliteLiveCatalog({
   currentList.current = { revision: catalogRevision, channels };
   const scrolled = useRef(false);
   const selected = eliteLiveSelection(channels, selectedId);
+  // A deleted selection cannot retain physical focus. The first mounted
+  // channel is the bounded fallback; focus never implicitly starts playback.
+  const selectedRemoved = selectedId !== null && selected === null;
   const { fontScale } = useWindowDimensions();
   const safeArea = useSafeAreaInsets();
   const geometry = eliteLiveLayout({ ...bounds, fontScale, safeArea });
@@ -249,6 +252,7 @@ export function EliteLiveCatalog({
                       accessibilityRole="button"
                       accessibilityLabel={`${item.name}, izle`}
                       accessibilityState={{ selected: selectedId === item.id }}
+                      hasTVPreferredFocus={selectedRemoved && index === 0}
                       onFocus={() => {
                         if (currentList.current.revision !== catalogRevision ||
                             currentList.current.channels[index]?.id !== item.id) return;
