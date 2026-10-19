@@ -307,10 +307,24 @@ class LegendStreamTvRemoteModule : Module() {
             if(entry!=null) {
               dispatchOwner="native-selection"
               if(entry.scope==activeScope && current is EditText) return previous.dispatchKeyEvent(event)
-              consumed.add(event.keyCode)
-              if(entry.scope==activeScope && event.repeatCount==0) current?.performClick()
-              else if(entry.scope!=activeScope) restore()
-              return true
+              if(entry.scope!=activeScope) {
+                consumed.add(event.keyCode)
+                restore()
+                return true
+              }
+              if(event.repeatCount>0) {
+                consumed.add(event.keyCode)
+                return true // one OK press, never one click per repeat frame
+              }
+              // RN Pressables may handle CENTER via key dispatch without a
+              // native View.OnClickListener. Delegate both key phases if
+              // performClick has no owner, instead of swallowing their action.
+              if(current?.performClick()==true) {
+                consumed.add(event.keyCode)
+                return true
+              }
+              dispatchOwner="window-delegate"
+              return previous.dispatchKeyEvent(event)
             }
             if(playerActive) {consumed.add(event.keyCode);restore();return true}
           }
