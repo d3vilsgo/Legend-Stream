@@ -43,6 +43,7 @@ export function EliteLiveCatalog({
   onOpen,
   onFavorite,
   idPrefix,
+  catalogRevision,
 }: {
   categories: readonly { id: string; name: string }[];
   category: string | null;
@@ -61,6 +62,7 @@ export function EliteLiveCatalog({
   onOpen: (channel: Channel) => void;
   onFavorite: (id: string) => void;
   idPrefix: string;
+  catalogRevision?: number;
 }) {
   const [bounds, setBounds] = useState({ width: 960, height: 540 });
   const [searchOpen, setSearchOpen] = useState(false);
@@ -72,6 +74,8 @@ export function EliteLiveCatalog({
     eliteLiveInitial,
   );
   const list = useRef<FlatList<Channel>>(null);
+  const currentList = useRef({ revision: catalogRevision, channels });
+  currentList.current = { revision: catalogRevision, channels };
   const scrolled = useRef(false);
   const selected = eliteLiveSelection(channels, selectedId);
   const { fontScale } = useWindowDimensions();
@@ -245,14 +249,18 @@ export function EliteLiveCatalog({
                       accessibilityRole="button"
                       accessibilityLabel={`${item.name}, izle`}
                       accessibilityState={{ selected: selectedId === item.id }}
-                      onFocus={() =>
+                      onFocus={() => {
+                        if (currentList.current.revision !== catalogRevision ||
+                            currentList.current.channels[index]?.id !== item.id) return;
                         list.current?.scrollToIndex({
                           index,
                           animated: false,
                           viewPosition: 0.5,
-                        })
-                      }
+                        });
+                      }}
                       onPress={() => {
+                        if (currentList.current.revision !== catalogRevision ||
+                            currentList.current.channels[index]?.id !== item.id) return;
                         dispatch({ type: "select", id: item.id });
                         onOpen(item);
                       }}
