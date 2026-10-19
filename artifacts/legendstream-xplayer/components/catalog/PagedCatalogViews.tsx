@@ -848,7 +848,11 @@ export function PagedMoviesCatalog({
   const grid = useResponsiveCatalogGrid<(typeof page.items)[number]>(page.items.map(item => `vod:${item.stream_id}`), JSON.stringify([provider.id, category, search, effectiveSort]));
   const columns = grid.columns;
 
-  useEffect(() => { if (infoMovie && !currentMovie(page.items, String(infoMovie.stream_id), item => String(item.stream_id))) setInfoSelection(null); }, [page.items, infoMovie]);
+  useEffect(() => {
+    if (infoSelection && (infoSelection.providerId !== provider.id ||
+      (!page.loadingInitial && !currentMovie(page.items, String(infoSelection.item.stream_id), item => String(item.stream_id)))))
+      setInfoSelection(null);
+  }, [infoSelection, provider.id, page.loadingInitial, page.items]);
   useEffect(() => onDrawerVisibilityChange(drawerOpen || infoMovie !== null), [drawerOpen, infoMovie, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
   if (shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search)) return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
