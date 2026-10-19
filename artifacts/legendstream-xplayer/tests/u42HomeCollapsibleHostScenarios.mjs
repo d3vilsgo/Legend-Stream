@@ -230,6 +230,27 @@ try {
   host.render(HomeDiscovery,nextProvider);
   assert.equal(unique(host.render(HomeDiscovery,nextProvider),n=>n.tag===HomeHeroCarousel).props.collapsed,false);
   passed++;
+  // Keep the same mounted Home contract for empty and loading provider views.
+  host.reset(); Object.assign(host, {width:960,height:540,isTV:true,preview:false});
+  const noContent = {
+    ...props,
+    movies: [], seriesItems: [], channels: [],
+    history: [], live: 0, vod: 0, series: 0,
+  };
+  const emptyTree = host.render(HomeDiscovery, noContent);
+  const emptyHero = unique(emptyTree, n => n.tag === HomeHeroCarousel);
+  assert.equal(emptyHero.props.loading, false);
+  assert.equal(emptyHero.props.items.length, 0);
+  assert.equal(find(emptyTree, n => typeof n.tag === "function" && n.tag.name === "HomeShelf").length, 3);
+  passed++;
+  host.reset();
+  const loadingTree = host.render(HomeDiscovery, {
+    ...noContent, live: null, vod: null, series: null, catalogLoading: true,
+  });
+  const loadingHero = unique(loadingTree, n => n.tag === HomeHeroCarousel);
+  assert.equal(loadingHero.props.loading, true);
+  assert.equal(loadingHero.props.items.length, 0);
+  passed++;
   // Touch and Preview do not opt into native collapse.
   for(const [width,height,preview] of [[393,873,false],[873,393,false],[800,1280,false],[1280,800,false],[873,393,true]]) {
     host.reset();Object.assign(host,{width,height,isTV:false,preview});
