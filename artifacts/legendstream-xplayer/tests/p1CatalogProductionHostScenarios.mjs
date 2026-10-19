@@ -95,7 +95,8 @@ const overrides = {
   }) },
   "@/lib/tmdb/movieInfoModel": {
     currentMovie: (items, id, identity) => items.find((item) => identity(item) === id) ?? null,
-    pagedMovieInput: () => ({}), localXtreamMovie: () => ({}),
+    pagedMovieInput: (providerId, providerType, catalogRevision, item) => ({ catalogRevision, identity: { providerId, providerType, catalogId: String(item.stream_id) } }),
+    localXtreamMovie: () => ({}),
   },
   "@/components/FocusButton": { FocusButton: "FocusButton" },
   "@/components/series/SeriesInfoModal": { SeriesInfoModal: "SeriesInfoModal" },
