@@ -260,6 +260,8 @@ export function HomeDiscovery({
 
   // Only content focus changes this state; StageRail focus is not a Hero event.
   const [heroInShelves, setHeroInShelves] = useState(false);
+  // A new provider must not inherit the previous provider's shelf Focus context.
+  useEffect(() => { setHeroInShelves(false); }, [provider.id]);
   const foldHero = () => { if (Platform.isTV) setHeroInShelves(true); };
   const expandHero = () => { if (Platform.isTV) setHeroInShelves(false); };
 
