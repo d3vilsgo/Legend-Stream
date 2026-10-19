@@ -59,6 +59,18 @@ const find = (root, predicate, found = []) => {
   }
   return found;
 };
+const renderChild = (component, props) => {
+  const oldSlots = slots;
+  const oldCursor = cursor;
+  slots = [];
+  cursor = 0;
+  try {
+    return component(props);
+  } finally {
+    slots = oldSlots;
+    cursor = oldCursor;
+  }
+};
 const unique = (root, predicate) => {
   const matches = find(root, predicate);
   assert.equal(matches.length, 1);
@@ -122,13 +134,21 @@ try {
     const shelfIdentity = shelves[0].props.items.map(x=>x.id);
     // The callback is supplied to every mounted shelf, not a separate
     // geometry helper. It is invoked by each real shelf's item focus handler.
-    shelves[0].props.onContentFocus();
+    const liveShelf = renderChild(shelves[0].tag, shelves[0].props);
+    const more = unique(liveShelf, n =>
+      typeof n.tag === "function" &&
+      n.tag.name === "TvFocusPressable" &&
+      n.props.focusId?.endsWith(":more"),
+    );
+    more.props.onFocus(); // Real shelf control's focus callback.
     root = host.render(HomeDiscovery, base);
     hero = unique(root,n=>n.tag===HomeHeroCarousel);
     assert.equal(hero.props.collapsed,true);
     assert.equal(hero.props.items[0].id,identity);
     assert.deepEqual(find(root,n=>typeof n.tag==="function" && n.tag.name==="HomeShelf")[0].props.items.map(x=>x.id),shelfIdentity);
-    find(root,n=>typeof n.tag==="function" && n.tag.name==="HomeShelf").at(-1).props.onContentFocus();
+    const lastShelf = find(root, n => typeof n.tag === "function" && n.tag.name === "HomeShelf").at(-1);
+    const lastShelfTree = renderChild(lastShelf.tag, lastShelf.props);
+    unique(lastShelfTree, n => typeof n.tag === "function" && n.props.focusId?.endsWith(":more")).props.onFocus();
     assert.equal(unique(host.render(HomeDiscovery,base),n=>n.tag===HomeHeroCarousel).props.collapsed,true);
     // StageRail has no callback into this state.
     const stageRailSelectionOnly = ()=>{};
