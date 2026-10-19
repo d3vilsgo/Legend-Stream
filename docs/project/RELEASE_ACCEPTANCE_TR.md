@@ -405,3 +405,18 @@ APK/Quality sonucu fiziksel PASS değildir. Yeni branch/PR, merge, force-push,
 Player engine/resolver değişikliği ve U4.4 geliştirmesi yok.
 
 RC adımları: Home LEFT→menü, UP/DOWN dört bölüm, RIGHT/BACK son içerik; hızlı LEFT/RIGHT ve basılı BACK; Hero→raf; her katalog→Info/Player→Back; provider değişimi. Poco: portrait/landscape, büyük yazı, arama/sırala/yenile, uzun başlık/eksik poster ve dönüş anchor. Kullanıcı onayı olmadan PHYSICAL PASS yok.
+
+
+## U4.3 referans güdümlü Native Focus onarımı — 19 Ekim 2026
+
+**SOURCE VERIFIED / IMPLEMENTED / SOURCE-HOST PASS; PHYSICAL_PENDING_RC.**
+Başlangıç `48565355c809932f75a6d83411f460848650ee6d` (Quality #1491 SUCCESS); üretim onarımı `6216838f4a76d923b0419077d0ecd47f9b0dcc04`. [Sabit SHA referansları, kısa satır kanıtları, dosya eşleştirmesi ve test sınırları](U43_NATIVE_FOCUS_REFERENCE_REPAIR_TR.md).
+
+- Rail artık bir native bölge aboneliği kullanır. Öğeler arası hareket genişlik state'ini tekrar değiştirmez; odak hedeflerinin boyutları sabittir, yalnız etiket/arka plan açılır. FocusButton callback kimliği yeni Focus bildirimi üretmez.
+- Kanıtlanan LEFT komşu hatası: aynı fixture'da eski policy ikinci raf kartından menüye giderken yeni policy soldaki karta gider. Rail BACK'in React üzerinden ikinci route sahibi kaldırıldı; mevcut Native Window sahibi korunur.
+- Gerçek host: StageRail/Live 6/6, FocusButton/hook 9/9, P0 18/18, Home/Player 18/18, katlanan Hero 12/12, Series 40/40; mobil P1 Golden/Series 10, Stalker Movies 10, Live 4 profil PASS. JVM policy 66/66, stability 21/21, reachability 93/93; responsive JS ve JVM ayrı ayrı 240/240. Typecheck ve hedefli biçim kontrolü PASS.
+- Tek girişte tam bir rail-state geçişi; nav içi/tekrar/boş olayda sıfır ek geçiş; unmount sonrası eski callback reddi test edildi. Aynı provider session/revision, provider root ve Player/modal korumaları yeniden yazılmadı; mevcut regresyonlar korunur. Tam native Window–React bridge–cihaz matrisi PARTIAL.
+- Fiziksel dispatch/FocusFinder gecikmesi ölçülmedi; performans iyileşmesi iddiası yok. Mevcut gizlilik güvenli inspector'a sınırlı rail-state kaydı eklendi. Referans framework veya GPL kaynak kodu taşınmadı.
+- Bu kayıt commit'i dahil final remote SHA için Quality zorunludur; bu metin gelecekteki run sonucunu PASS varsaymaz. Exact-SHA SUCCESS ardından aynı SHA Universal APK üretimi ve artifact doğrulaması teslim raporunda gösterilecektir. APK fiziksel PASS sayılmaz.
+
+Homatics LEFT/UP/DOWN/RIGHT/OK/BACK, uzun basış, hızlı karşı yön, ekran/modal/provider/session geçişi ve Player hata/Back RC kabulü açık. Mobil üretim yoğunluk dosyaları değiştirilmedi; Poco cihaz regresyonu fiziksel bekler. Tarihsel **Native TV Physical FAIL**, **TMDB LIVE BLOCKED**, **legacy 14 SKIP / 0 DELETED** korunur. PR #143 OPEN/DRAFT, base değişmedi; merge/yeni branch/yeni PR yok. U4.4 DEFERRED; başlanmadı.
