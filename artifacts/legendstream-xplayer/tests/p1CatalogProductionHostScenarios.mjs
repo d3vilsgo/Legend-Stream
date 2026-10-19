@@ -278,6 +278,8 @@ try {
     movieAction.props.onPress();
     movies = host.render(PagedMoviesCatalog, movieProps);
     const info = exactly(movies, (node) => node.tag === "MovieInfoModal");
+    info.props.onPlay();
+    assert.deepEqual(openedMovies, [12], name);
     // An identical stream ID at a different provider or catalog revision
     // cannot inherit the old modal's Play callback.
     const changedProvider = host.render(PagedMoviesCatalog, {
@@ -290,7 +292,7 @@ try {
       catalogRevision: 2,
     });
     assert.equal(traverse(changedSession, (node) => node.tag === "MovieInfoModal").length, 0, name);
-    info.props.onPlay();
+    info.props.onPlay(); // Old async/modal action must not play another session.
     assert.deepEqual(openedMovies, [12], name);
     info.props.onClose();
     movies = host.render(PagedMoviesCatalog, movieProps);
