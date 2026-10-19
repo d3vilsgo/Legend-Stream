@@ -164,6 +164,21 @@ try {
     assert.deepEqual(opened,[]); // Browsing is never an implicit tune.
     focusable.props.onPress();
     assert.deepEqual(opened,["channel-11"]);
+    // A recycled index or changed session must invalidate old asynchronous
+    // Focus and OK events without suppressing a fresh, valid channel press.
+    const updatedChannels=[{id:"channel-22",name:"Other"},{id:"channel-11",name:"Movies"}];
+    const refreshed=host.render(EliteLiveCatalog,{
+      ...liveProps,channels:updatedChannels,catalogRevision:99,
+    });
+    const countBefore=scrollRequests.length;
+    focusable.props.onFocus();
+    focusable.props.onPress();
+    assert.equal(scrollRequests.length,countBefore);
+    assert.deepEqual(opened,["channel-11"]);
+    const refreshedList=only(refreshed,node=>node.tag==="FlatList");
+    const refreshedRow=refreshedList.props.renderItem({item:updatedChannels[1],index:1});
+    only(refreshedRow,node=>node.props?.focusId==="u41:channel:channel-11").props.onPress();
+    assert.deepEqual(opened,["channel-11","channel-11"]);
     passed++;
   }
   console.log(`U4.1 production StageRail/Live host: ${passed}/${passed} PASS; ANDROID_FOCUSFINDER_PENDING_RC`);
