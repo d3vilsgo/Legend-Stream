@@ -301,6 +301,8 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvHomeLayoutScenarios.ts
       - name: Visible Home navigation and Player recovery host regressions
         run: node artifacts/legendstream-xplayer/tests/visibleHomeRemoteScenarios.mjs
+      - name: U4.2 production Home Hero and shelf Focus state host acceptance
+        run: node artifacts/legendstream-xplayer/tests/u42HomeCollapsibleHostScenarios.mjs
       - name: Native TV Home production component render contract
         run: node artifacts/legendstream-xplayer/tests/nativeTvHomeRenderScenarios.mjs
       - name: Native TV Home helper and test formatting
