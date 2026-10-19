@@ -288,13 +288,13 @@ export function HomeDiscovery({
     />
 
     {continueShelf.length || !mediaLibraryLoaded ? <HomeShelf onContentFocus={foldHero} title={copy.continue} seeAll={copy.seeAll} items={continueShelf} onSeeAll={() => onNavigate("history")} loading={!mediaLibraryLoaded} /> : null}
-    {recentShelf.length ? <HomeShelf title={copy.recent} seeAll={copy.seeAll} items={recentShelf} onSeeAll={() => onNavigate("history")} compact /> : null}
-    <HomeShelf title={t("liveTv")} seeAll={copy.seeAll} items={liveShelf} onSeeAll={() => onNavigate("live")} compact emptyLabel={live === 0 ? copy.noLive : copy.discover} loading={live === null} />
-    <HomeShelf title={t("movies")} seeAll={copy.seeAll} items={movieShelf} onSeeAll={() => onNavigate("movies")} emptyLabel={vod === 0 ? copy.noMovies : copy.discover} loading={vod === null} />
-    <HomeShelf title={t("series")} seeAll={copy.seeAll} items={seriesShelf} onSeeAll={() => onNavigate("series")} emptyLabel={series === 0 ? copy.noSeries : copy.discover} loading={series === null} />
-    {newMovieShelf.length ? <HomeShelf title={copy.newMovies} seeAll={copy.seeAll} items={newMovieShelf} onSeeAll={() => onNavigate("movies")} /> : null}
-    {newSeriesShelf.length ? <HomeShelf title={copy.newSeries} seeAll={copy.seeAll} items={newSeriesShelf} onSeeAll={() => onNavigate("series")} /> : null}
-    {newChannelShelf.length ? <HomeShelf title={copy.newChannels} seeAll={copy.seeAll} items={newChannelShelf} onSeeAll={() => onNavigate("live")} compact /> : null}
+    {recentShelf.length ? <HomeShelf onContentFocus={foldHero} title={copy.recent} seeAll={copy.seeAll} items={recentShelf} onSeeAll={() => onNavigate("history")} compact /> : null}
+    <HomeShelf onContentFocus={foldHero} title={t("liveTv")} seeAll={copy.seeAll} items={liveShelf} onSeeAll={() => onNavigate("live")} compact emptyLabel={live === 0 ? copy.noLive : copy.discover} loading={live === null} />
+    <HomeShelf onContentFocus={foldHero} title={t("movies")} seeAll={copy.seeAll} items={movieShelf} onSeeAll={() => onNavigate("movies")} emptyLabel={vod === 0 ? copy.noMovies : copy.discover} loading={vod === null} />
+    <HomeShelf onContentFocus={foldHero} title={t("series")} seeAll={copy.seeAll} items={seriesShelf} onSeeAll={() => onNavigate("series")} emptyLabel={series === 0 ? copy.noSeries : copy.discover} loading={series === null} />
+    {newMovieShelf.length ? <HomeShelf onContentFocus={foldHero} title={copy.newMovies} seeAll={copy.seeAll} items={newMovieShelf} onSeeAll={() => onNavigate("movies")} /> : null}
+    {newSeriesShelf.length ? <HomeShelf onContentFocus={foldHero} title={copy.newSeries} seeAll={copy.seeAll} items={newSeriesShelf} onSeeAll={() => onNavigate("series")} /> : null}
+    {newChannelShelf.length ? <HomeShelf onContentFocus={foldHero} title={copy.newChannels} seeAll={copy.seeAll} items={newChannelShelf} onSeeAll={() => onNavigate("live")} compact /> : null}
     {sectionCards}
   </View>;
 }
