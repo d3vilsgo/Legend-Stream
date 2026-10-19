@@ -143,7 +143,7 @@ class LegendStreamTvRemoteModule : Module() {
     val entry = next?.let { targets[it.id] ?: legacyTargets[it.id] }
     if(entry!=null) {
       remembered[entry.scope]=entry.id
-      if(entry.scope=="content" && entry.region!="navigation" && entry.scope==activeScope && next.isAttachedToWindow && next.isShown) {
+      if(entry.scope=="content" && entry.region!="navigation" && entry.scope==activeScope && next?.isAttachedToWindow==true && next.isShown) {
         lastContent=entry
         if(entry.region in setOf("home","live","movies","series")) lastContentRegion=entry.region
       }
