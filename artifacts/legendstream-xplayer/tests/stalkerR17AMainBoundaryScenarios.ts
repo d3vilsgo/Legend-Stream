@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -141,7 +142,32 @@ async function main() {
     );
     assert.match(cardSource, /function GridCard\(\{ focusId, title, image, onPress \}/);
     assert.match(cardSource, /<TVPreviewPressable eliteVisual focusId=\{focusId\} accessibilityLabel=\{title\} onPress=\{onPress\} style=\{s\.card\}>/);
-    assert.match(cardSource, /fontWeight: "700", fontSize: 14, lineHeight: 18, minHeight: Math\.ceil\(36 \* fontScale \+ 18\), padding: 9/);
+    // Evaluate the production GridCard JSX style and compact breakpoint for
+    // both device classes; do not replace these contracts with test-only logic.
+    const compactExpression = cardSource.match(/const compact\s*=\s*([^;]+);/)?.[1];
+    const titleStyleExpression = cardSource.match(
+      /<Text numberOfLines=\{2\} style=\{\{([^}]+)\}\}>\{title\}<\/Text>/,
+    )?.[1];
+    assert.ok(compactExpression, "GridCard compact screen classification is required");
+    assert.ok(titleStyleExpression, "GridCard must retain its rendered title typography");
+    for (const fixture of [
+      { name: "compact mobile", width: 393, height: 873, isTV: false, fontScale: 1, expected: { fontSize: 12, lineHeight: 16, minHeight: 40, padding: 4 } },
+      { name: "normal screen", width: 1280, height: 800, isTV: false, fontScale: 1, expected: { fontSize: 14, lineHeight: 18, minHeight: 54, padding: 9 } },
+      { name: "Native TV", width: 720, height: 480, isTV: true, fontScale: 1, expected: { fontSize: 14, lineHeight: 18, minHeight: 54, padding: 9 } },
+    ]) {
+      const compact = runInNewContext(compactExpression, {
+        Platform: { isTV: fixture.isTV },
+        width: fixture.width, height: fixture.height, Math,
+      });
+      const rendered = runInNewContext("({" + titleStyleExpression + "})", {
+        colors: { foreground: "#ffffff" }, compact, fontScale: fixture.fontScale, Math,
+      });
+      const actual = JSON.parse(JSON.stringify(rendered));
+      assert.equal(actual.fontWeight, "700", fixture.name + " weight");
+      assert.equal(actual.color, "#ffffff", fixture.name + " foreground");
+      for (const [key, value] of Object.entries(fixture.expected))
+        assert.equal(actual[key], value, fixture.name + " " + key);
+    }
     assert.doesNotMatch(cardSource, /loading|disabled=|ActivityIndicator|cardTitleRow/);
     assert.doesNotMatch(stalkerMoviesSource, /cardTitleRow|resolvingItemId ===/);
   });
