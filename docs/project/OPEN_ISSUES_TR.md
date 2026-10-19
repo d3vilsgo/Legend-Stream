@@ -244,3 +244,83 @@ APK, fiziksel test, deployment, merge, base/PR durum değişikliği yapılmaz.
 - **IMPLEMENTED / SOURCE-HOST PASS:** `components/home/HomeDiscovery.tsx` içinde yalnız Native TV için `heroInShelves` kontrolü; gerçek `HomeShelf` ve `HomeCountCard` focus callback'leriyle katlanma; `HomeHeroCarousel` birincil Focus kimliğini koruyarak geri genişleme; kompakt durumda ikincil aksiyonları erişim dışı bırakma; provider id değişince eski katlanma durumunu temizleme. U4.1 StageRail Focus girişi bu state'i değiştirmez; mobil/tablet/Preview Hero geometri politikası korunur. Mevcut Native TV hesaplanmış Hero bütçesi genişleme için esas alınır; kompakt TV Hero 96dp altına düşmez, eski touch minimum 310dp/160dp sözleşmeleri değiştirilmedi.
 - **HOST TEST:** `tests/u42HomeCollapsibleHostScenarios.mjs` gerçek `HomeDiscovery`, `HomeHeroCarousel` ve `HomeShelf` üretim bileşenlerini esbuild ile derler: 720×480, 960×540, 1280×720, 1920×1080 Native TV; telefon/tablet portrait-landscape ve TV Preview; raf/hero Focus callback zinciri, 24 hızlı geçiş, kimlik korunması, kart scrollToIndex tetiklemesi, provider kimliği değişimi ve loading/empty/populated senaryoları. Ek `nativeTvHomeRenderScenarios.mjs`: Hero expanded/compact/restore yükseklik ve görünmeyen aksiyonların yokluğu. Quality'ye U4.2 host gate eklendi. Exact kod SHA `e48f17af5de71a6c5fff77b68ea4e3f39325d996`: Quality #1437 / run 39202319757 **SUCCESS**; U4.2 12/12 PASS, Native TV Home 33/33 PASS, U4.1 6/6 PASS, P0 18/18 PASS. Final belge SHA'sında ayrı exact-SHA Quality zorunludur.
 - **SOURCE/HOST PASS ≠ PHYSICAL PASS:** Android FocusFinder, fiziksel D-pad UP/restoration, gerçek scroll offset stabilitesi ve hızlı fiziksel navigation kabulü `DEFERRED_RC`; önceki Native TV Physical FAIL ve TMDB LIVE BLOCKED açık kalır. U4.3 genel Focus/Scroll restorasyonu ve U4.4 unified search/zapping geliştirmeleri DEFERRED. Legacy cleanup 14 SKIP korunur. APK, fiziksel test, merge yapılmadı.
+
+
+## U4.3 Focus/scroll restoration — 2026-10-19 güvenli dönüş dilimi
+
+**Durum: PARTIAL. U4.3 bütün kabul matrisi tamamlanmadı.**
+Başlangıç remote HEAD `47561b0d35a59d8d1b8f0a021ff5c41ee1656308`;
+Quality #1439 (`39202640275`) SUCCESS. Üretim commit'i
+`3102231972ba143d923a3af693e815edb85da08d`, tree
+`ebdd671f0ca6614c54fcde27cdd9e66d066088c3`; yerel doğrulanan tree ile aynı.
+PR #143 OPEN/DRAFT; branch `integration/legendstream-u1`,
+base `feature/r19-tmdb-secure-proxy` korunur.
+
+### SOURCE VERIFIED — OwnTV
+
+Repository `ahXN00/OwnTV`, SHA `cead977803d90bd62ece69b4140e373f01feddca`.
+Dosya: `app/src/main/java/tv/own/owntv/ui/components/FocusTrap.kt`.
+[Kalıcı kaynak](https://github.com/ahXN00/OwnTV/blob/cead977803d90bd62ece69b4140e373f01feddca/app/src/main/java/tv/own/owntv/ui/components/FocusTrap.kt#L66-L115).
+Kısa kanıtlar:
+- L73: `repeat(RESTORE_MAX_FRAMES)`
+- L77: `runCatching { scrollState.scrollTo(scrollOffset) }`
+- L79: `if (!landed) landed = opener != null && runCatching { opener.requestFocus() }.getOrDefault(false)`
+- L103: `runCatching { listState.scrollToItem(index, offset) }`
+- L112: `private const val RESTORE_MAX_FRAMES = 10`
+İki `restoreAfterDialogClose` overload'u scroll konumunu korurken modal penceresi
+odağı bırakana kadar sınırlı deneme yapar. Lazy list sürümü hedefin oluşturulması
+konusunu ayrıca ele alır. Compose FocusRequester, coroutine/withFrameNanos ve
+ScrollState/LazyListState bağımlılıkları taşınmadı; GPLv3 kodu üretime kopyalanmadı.
+
+### IMPLEMENTED — mevcut sahipler içinde bağımsız düzeltme
+
+- `ProductShell.tsx`: mevcut `TVPreviewFocusProvider` provider kimliğiyle yeniden
+  kurulur; ekran state'i ile Focus yaşam döngüsü aynı provider sınırındadır.
+- `TVPreviewFocus.tsx` / `tvPreviewFocus.ts`: owner kapanınca eski ölçüm istekleri,
+  kayıtlar ve Back kapsamları geçersizleşir. Alttaki modal üstte Player dururken
+  kapanırsa dönüş zinciri kaldırılan modalı atlar. Yeni bir Focus yöneticisi yok.
+- `SeriesInfoModal.tsx`: provider/detail/season/episode/visible bağlamı doğrulanır;
+  scroll önce yapılır, geçerli Preview hedefi sonra mevcut owner'a teslim edilir.
+  İçerik boyutu değişimleri aynı scroll'u sürekli tekrarlamaz. Kapatma, provider
+  değişimi, sezon değişimi ve drag bekleyen isteği iptal eder. Silinen bölüm
+  kimliğine Focus istenmez, scroll güvenli başlangıca döner. Native fiziksel
+  restore sahibi `LegendStreamTvRemoteModule` olarak kalır.
+- `useNativeTvCatalogGrid.ts` / `useResponsiveCatalogGrid.ts`: native pending
+  anchor provider/kategori/sorgu scope değişiminde temizlenir; eski başarısız
+  scroll callback'i yeni restorasyon işlemini çalıştıramaz.
+
+### SOURCE/HOST sonuçları ve açık kabul
+
+| Akış | Durum | Kanıt / açık sınır |
+| --- | --- | --- |
+| Series Info → Player → Info | SOURCE/HOST PASS (sınırlı) | Üretim modalı sezon/bölüm kimliğini ve bağımsız scroll'u korur; yeni stale callback testleri |
+| Provider değişimi / modal teardown | SOURCE/HOST PASS (sınırlı) | Gerçek ProductShell key testi, gerçek SeriesInfoModal eski callback reddi, controller dispose yarışı |
+| Silinen Series bölümü | SOURCE/HOST PASS | Silinen Focus hedefi çağrılmaz, offset 0; tüm katalog fallback'i değildir |
+| Home Hero → Film Info → Home | PARTIAL | Mevcut Home Info/Player regresyonu; gerçek raf anchor dönüş matrisi eksik |
+| Movies Info/Player/arama/kategori dönüşü | PARTIAL | Scope zinciri ve grid scope koruması; sanallaştırılmış kart dönüşü tüm yollarıyla doğrulanmadı |
+| Home rafı → Player → aynı raf/kart | PARTIAL | Montaj/kimlik yolları korunur; tam scroll + Focus birleşik host kabulü eksik |
+| Live kategori/kanal/Player/arama dönüşü | PARTIAL | Mevcut kanal OK, scroll, seçim ayrımı korunur; arama sonrası exact Focus dönüşü eksik |
+| StageRail içerik gidiş/dönüşü | PARTIAL | 6/6 mevcut host; tüm fiziksel/native restore zinciri kanıtı değildir |
+| Katlanan Hero | SOURCE/HOST PASS regresyon | 12/12 mevcut üretim host; modal/scroll birleşik kabulü PARTIAL |
+| Telefon/tablet | SOURCE/HOST PASS regresyon | Mevcut mobil tab, keyboard/Back ve 8 katalog profili; tüm restorasyon yolları değil |
+| Native TV / Google TV / Box | PHYSICAL PENDING | JVM politika/stability testi, Android FocusFinder kabulü değildir |
+| TV Preview | SOURCE/HOST PASS regresyon | 32/32 input + modal scope zinciri; tam ekranlar arası dönüş matrisi PARTIAL |
+| Player retry / hata Back | SOURCE/HOST PASS regresyon | Home/Player üretim host 18/18; motor/resolver değişmedi |
+
+Yerel: U4.3 Series integration **40/40**, U2 production hook **10/10**,
+U4.1 StageRail/Live **6/6**, U4.2 Home Hero **12/12**, P1 katalog **8/8 profil**,
+Home/Player **18/18**, TV Preview **32/32**, native stability **21/21**,
+Home reachability **93/93**. Typecheck ve değişen format-gated dosyalar Prettier PASS.
+Mevcut test/assertion silinmedi, skip eklenmedi. Final doküman commit'i için
+exact-SHA Quality ayrıca teslimde doğrulanır; #1439 yeni kodun kanıtı değildir.
+
+### Sonraki kapsam ve değişmeyen sınırlar
+
+Native silinen hedef fallback'i ve veri hazır → scroll → mount → Focus sırasının
+Home/Movies/Live üretim bileşenlerinde uçtan uca kabulü açık. Aynı provider ID ile
+session yenilenmesi mevcut resolver/session korumalarına dayanır; bu teslimde
+global session-generation Focus matrisi tamamlanmadı. U4.3 COMPLETE ilan edilmez.
+U4.4 Unified Search/zapping başlatılmadı. Merge, force-push, APK, fiziksel test,
+Player engine değişimi ve TMDB deployment yapılmadı.
+**Native TV Physical FAIL**, **TMDB LIVE BLOCKED**, **legacy 14 SKIP / 0 DELETED**
+korunur. Fiziksel RC kabulü yalnız kullanıcı onayından sonra; host PASS fiziksel PASS değildir.
