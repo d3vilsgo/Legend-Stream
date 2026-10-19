@@ -22,8 +22,9 @@ const host = {
   useState(value) {
     const index = this.cursor++;
     if (!(index in this.slots)) this.slots[index] = typeof value === "function" ? value() : value;
-    return [this.slots[index], (next) => {
-      this.slots[index] = typeof next === "function" ? next(this.slots[index]) : next;
+    const ownerSlots = this.slots;
+    return [ownerSlots[index], (next) => {
+      ownerSlots[index] = typeof next === "function" ? next(ownerSlots[index]) : next;
     }];
   },
   useRef(value) {
@@ -310,6 +311,32 @@ try {
     assert.equal(traverse(movies, (node) => node.tag === "MovieInfoModal").length, 0, name);
     movieList = exactly(movies, (node) => node.tag === "FlatList");
     assert.equal(movieList.props.data[1].stream_id, 12, name);
+    // Movies search and category actions are real production header/drawer
+    // callbacks. Isolate the header hooks while retaining the parent slots.
+    const moviesSlots = host.slots;
+    const movieHeaderComponent = movieList.props.ListHeaderComponent;
+    host.reset();
+    const movieHeader = host.render(movieHeaderComponent.tag, movieHeaderComponent.props);
+    exactly(movieHeader, node => node.props?.focusId === "catalog:search-toggle").props.onPress();
+    const openMovieHeader = host.render(movieHeaderComponent.tag, movieHeaderComponent.props);
+    const movieSearchInput = exactly(openMovieHeader, node => node.tag === "TextInput");
+    movieSearchInput.props.onChangeText("Beta");
+    host.slots = moviesSlots;
+    let filteredMovies = host.render(PagedMoviesCatalog, movieProps);
+    const movieResults = exactly(filteredMovies, node => node.tag === "FlatList");
+    assert.deepEqual(movieResults.props.data.map(item => item.stream_id), [12], name);
+    const movieDrawer = exactly(filteredMovies, node =>
+      typeof node.tag === "function" && node.tag.name === "CategoryDrawer",
+    );
+    movieDrawer.props.onSelect("genre-2");
+    filteredMovies = host.render(PagedMoviesCatalog, movieProps);
+    const chosenDrawer = exactly(filteredMovies, node =>
+      typeof node.tag === "function" && node.tag.name === "CategoryDrawer",
+    );
+    assert.equal(chosenDrawer.props.selected, "genre-2", name);
+    movieSearchInput.props.onChangeText("");
+    movies = host.render(PagedMoviesCatalog, movieProps);
+    assert.equal(exactly(movies, node => node.tag === "FlatList").props.data.length, 2, name);
     movieAction.props.onPress();
     host.movieItems = [];
     const removed = host.render(PagedMoviesCatalog, movieProps);
