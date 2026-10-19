@@ -109,6 +109,19 @@ public class TvFocusPolicyScenarios {
     check(move(seriesSeason,"down",seriesModal,"series-info")==seriesEpisode,"U4.3 season descends to episode");
     check(move(seriesEpisode,"down",seriesModal,"series-info")==null,"U4.3 episode boundary cannot enter underlying catalog");
     check(move(poster,"right",seriesModal,"series-info")==null,"U4.3 mounted catalog cannot own Series modal navigation");
+    // U4.3 physical FAIL repair: RIGHT cannot jump across an unrelated
+    // screen if the previously focused content view was virtualized.
+    Target railHome=t(410,"nav:home","content","navigation",0,100);
+    Target retainedMovie=t(411,"vod:old","content","movies",200,140);
+    Target visibleMovie=t(412,"vod:new","content","movies",200,240);
+    Target hiddenLive=t(413,"live:other","content","live",180,120);
+    List<Target> rightCandidates=List.of(railHome,retainedMovie,visibleMovie,hiddenLive);
+    check(TvFocusPolicy.railReturn(retainedMovie,"movies",rightCandidates,"content")==retainedMovie,"RIGHT returns exact registered movie identity");
+    check(TvFocusPolicy.railReturn(null,"movies",rightCandidates,"content")==retainedMovie,"RIGHT uses first visible movie after old focus unmount");
+    check(TvFocusPolicy.railReturn(retainedMovie,"live",rightCandidates,"content")==hiddenLive,"RIGHT rejects other-screen remembered focus");
+    check(TvFocusPolicy.railReturn(null,"series",rightCandidates,"content")==null,"RIGHT never guesses another screen when current is empty");
+    check(TvFocusPolicy.railReturn(retainedMovie,"movies",List.of(railHome,visibleMovie,hiddenLive),"content")==visibleMovie,"RIGHT falls back to available movie after target deletion");
+    check(TvFocusPolicy.railReturn(retainedMovie,"movies",List.of(railHome,hiddenLive),"content")==null,"RIGHT cannot reopen invisible or deleted movie");
     System.out.println("Native JVM focus scenarios: "+passed+"/"+passed+" passed");
   }
 }

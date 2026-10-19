@@ -35,6 +35,19 @@ public final class TvFocusPolicy {
         && Math.abs(a.x-b.x)<Math.min(a.width,b.width)/2) return true;
     return false;
   }
+  /** Native rail RIGHT: remembered content if valid; otherwise first visible target
+   * from the active content region. Never restore across screen boundaries. */
+  public static Target railReturn(Target remembered, String activeRegion, List<Target> targets, String scope) {
+    if (activeRegion == null || !screen(activeRegion)) return null;
+    Target first = null;
+    for (Target t : targets) {
+      if (!t.scope.equals(scope) || !t.region.equals(activeRegion)
+          || t.width <= 0 || t.height <= 0) continue;
+      if (remembered != null && remembered.tag == t.tag && remembered.id.equals(t.id)) return t;
+      if (first == null || t.y < first.y || (t.y == first.y && t.x < first.x)) first = t;
+    }
+    return first;
+  }
   public static Target move(Target current, String direction, List<Target> targets, String scope) {
     if (current == null || !current.scope.equals(scope)) return null;
     if (!(direction.equals("left") || direction.equals("right") || direction.equals("up") || direction.equals("down"))) return null;
