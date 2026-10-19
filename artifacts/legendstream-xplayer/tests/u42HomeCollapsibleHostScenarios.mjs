@@ -141,6 +141,12 @@ try {
       n.props.focusId?.endsWith(":more"),
     );
     more.props.onFocus(); // Real shelf control's focus callback.
+    const list = unique(liveShelf, n => n.tag === "FlatList");
+    const scrollRequests = [];
+    list.props.ref.current = { scrollToIndex: request => scrollRequests.push(request) };
+    const firstCard = list.props.renderItem({ item: list.props.data[0], index: 0 });
+    firstCard.props.onFocus();
+    assert.equal(scrollRequests[0].index, 0);
     root = host.render(HomeDiscovery, base);
     hero = unique(root,n=>n.tag===HomeHeroCarousel);
     assert.equal(hero.props.collapsed,true);
@@ -154,11 +160,22 @@ try {
     const stageRailSelectionOnly = ()=>{};
     stageRailSelectionOnly();
     assert.equal(unique(host.render(HomeDiscovery,base),n=>n.tag===HomeHeroCarousel).props.collapsed,true);
-    hero.props.onHeroFocus();
+    const compactHeroTree = renderChild(HomeHeroCarousel, hero.props);
+    const compactHeight = compactHeroTree.props.style.minHeight;
+    const restore = unique(compactHeroTree, n =>
+      n.props?.focusId === "home-hero:" + identity + ":watch",
+    );
+    assert.equal(restore.props.accessibilityLabel, "Öne çıkan içeriğe dön");
+    restore.props.onFocus(); // Real native Hero action remains focusable.
     root = host.render(HomeDiscovery,base);
     hero = unique(root,n=>n.tag===HomeHeroCarousel);
     assert.equal(hero.props.collapsed,false);
     assert.equal(hero.props.items[0].id,identity);
+    const expandedHeroTree = renderChild(HomeHeroCarousel, hero.props);
+    const expandedHeight = expandedHeroTree.props.style.minHeight;
+    assert(compactHeight < expandedHeight);
+    assert(expandedHeight <= 320);
+    assert(compactHeight >= 96);
     passed++;
   }
   // Touch and Preview do not opt into native collapse.
