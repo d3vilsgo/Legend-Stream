@@ -266,6 +266,53 @@ try {
     assert(narrow <= tall);
     responsiveCount++;
   }
+  // Actual production Hero: collapse must not change media identity and must
+  // remove hidden action targets; restoring re-exposes exactly the same item.
+  let foldCount = 0;
+  globalThis.__home = {
+    native: true,
+    width: 1920,
+    height: 1080,
+    fontScale: 1,
+    insets: { top: 8, right: 12, bottom: 16, left: 24 },
+  };
+  const focusedItem = {
+    id: "stable-film-7",
+    title: "Odaklanan Film",
+    subtitle: "Film",
+    image: "",
+    movie: { stream_id: 7 },
+  };
+  const foldProps = {
+    items: [focusedItem],
+    eyebrow: "Öne çıkan",
+    providerName: "Yerel",
+    tvViewportHeight: 790,
+    onOpen() {},
+    onWatch() {},
+    onDiscover() {},
+    onHeroFocus() { foldCount++; },
+    discoverLabel: "Keşfet",
+  };
+  const unfolded = renderToStaticMarkup(
+    React.createElement(HomeHeroCarousel, foldProps),
+  );
+  const folded = renderToStaticMarkup(
+    React.createElement(HomeHeroCarousel, { ...foldProps, collapsed: true }),
+  );
+  const restored = renderToStaticMarkup(
+    React.createElement(HomeHeroCarousel, { ...foldProps, collapsed: false }),
+  );
+  const extractHeight = (markup) =>
+    Number(markup.match(/<div[^>]*data-height="([0-9.]+)"/)?.[1]);
+  assert(extractHeight(folded) < extractHeight(unfolded));
+  assert.equal(extractHeight(restored), extractHeight(unfolded));
+  assert(folded.includes("Odaklanan Film"));
+  assert(folded.includes("Öne çıkan içeriğe dön"));
+  assert(!folded.includes("Detay / Bilgi"));
+  assert(unfolded.includes("Detay / Bilgi"));
+  assert(restored.includes("Detay / Bilgi"));
+  assert.equal(foldCount, 0); // A render does not request physical focus.
   console.log(
     `U2 responsive Home component render: ${responsiveCount}/${responsiveCount} passed; HOST_ADAPTER_NOT_ANDROID_LAYOUT`,
   );
