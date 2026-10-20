@@ -268,13 +268,7 @@ try {
     assert.equal(step("home-hero:watch", "down"), "home-shelf:Films:movie-7");
     host.transitions = [];
     host.focus("nav:live");
-    for (const id of [
-      "nav:home",
-      "nav:movies",
-      "nav:series",
-      "nav:series",
-      "",
-    ])
+    for (const id of ["nav:home", "nav:movies", "nav:series", "nav:series", ""])
       host.focus(id);
     tree = host.render(ResponsiveContentNav, props);
     const before = all(tree, (n) => n.tag === "FocusButton").map(
@@ -420,7 +414,7 @@ try {
       const browseWidth = measured.categoryWidth + measured.channelWidth + 12;
       const deviation = Math.abs(browseWidth / measured.usableWidth - 0.32);
       assert(deviation < 0.025, "V3 Live 32% budget");
-      assert(detailWidth / measured.usableWidth > 0.60);
+      assert(detailWidth / measured.usableWidth > 0.6);
     }
     const scrollRequests = [];
     list.props.ref.current = {
