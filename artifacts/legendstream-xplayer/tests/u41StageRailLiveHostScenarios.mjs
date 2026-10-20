@@ -102,7 +102,7 @@ const mocks = {
 try {
   await build({
     stdin: {
-      contents: `export { ResponsiveContentNav } from ${JSON.stringify(join(app, "components/navigation/ResponsiveContentNav.tsx"))};export { EliteLiveCatalog } from ${JSON.stringify(join(app, "components/elite/EliteLiveCatalog.tsx"))};`,
+      contents: `export { ResponsiveContentNav } from ${JSON.stringify(join(app, "components/navigation/ResponsiveContentNav.tsx"))};export { EliteLiveCatalog } from ${JSON.stringify(join(app, "components/elite/EliteLiveCatalog.tsx"))};export { eliteLiveLayout } from ${JSON.stringify(join(app, "lib/design/eliteLiveLayout.ts"))};`,
       resolveDir: app,
       loader: "tsx",
     },
@@ -138,7 +138,7 @@ try {
       },
     ],
   });
-  const { ResponsiveContentNav, EliteLiveCatalog } = req(
+  const { ResponsiveContentNav, EliteLiveCatalog, eliteLiveLayout } = req(
     join(out, "production.cjs"),
   );
   const all = (root, predicate, found = []) => {
@@ -403,8 +403,19 @@ try {
       const detailWidth = scrollviews[1].props.style
         .flat()
         .find((style) => typeof style?.width === "number").width;
-      assert(detailWidth > 0 && detailWidth <= 300);
-      assert(detailWidth + categoryWidth < width * 0.7);
+      const measured = eliteLiveLayout({
+        width,
+        height,
+        fontScale: 1,
+        safeArea: { top: 8, left: 12, right: 12, bottom: 8 },
+      });
+      assert.equal(detailWidth, measured.detailWidth);
+      assert.equal(categoryWidth, measured.categoryWidth);
+      assert(
+        Math.abs((measured.categoryWidth + measured.channelWidth + 12) / measured.usableWidth - 0.32) < 0.025,
+        "V3 channel/category region occupies the specified 32% budget",
+      );
+      assert(detailWidth / measured.usableWidth > 0.60);
     }
     const scrollRequests = [];
     list.props.ref.current = {
