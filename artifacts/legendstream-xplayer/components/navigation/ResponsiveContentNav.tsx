@@ -1,4 +1,5 @@
 import { nativeTvLayout } from "@/lib/nativeTvResponsive";
+import { eliteV3 } from "@/lib/design/eliteV3Tokens";
 import { subscribeNativeTvFocus } from "@/modules/legendstream-tv-remote";
 import { inspectorRail } from "@/lib/tvRemoteInspector";
 import { Feather } from "@expo/vector-icons";
@@ -181,9 +182,9 @@ export function ResponsiveContentNav<Key extends string>({
             left: 0,
             width: visualWidth,
             borderRadius: 16,
-            backgroundColor: open ? "#162731F2" : "#162731E8",
+            backgroundColor: open ? `${eliteV3.color.panel}F2` : `${eliteV3.color.panel}E8`,
             borderWidth: 1,
-            borderColor: "#36515E",
+            borderColor: eliteV3.color.border,
           }}
         />
         {items.map((item) => (
@@ -220,7 +221,7 @@ export function ResponsiveContentNav<Key extends string>({
                   minHeight: tv.target,
                   paddingHorizontal: 4,
                   borderColor:
-                    activeKey === item.key ? "#67e8d1" : "transparent",
+                    activeKey === item.key ? eliteV3.color.active : "transparent",
                 },
               ]}
             />
@@ -233,7 +234,7 @@ export function ResponsiveContentNav<Key extends string>({
                   position: "absolute",
                   left: railWidth,
                   width: Math.max(1, visualWidth - railWidth - 18),
-                  color: activeKey === item.key ? "#67e8d1" : "#fff",
+                  color: activeKey === item.key ? eliteV3.color.active : eliteV3.color.text,
                   fontSize: tv.labelFont,
                 }}
               >
