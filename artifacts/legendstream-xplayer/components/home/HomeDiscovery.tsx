@@ -22,7 +22,8 @@ import type {
   StyleProp,
   ViewStyle,
 } from "react-native";
-import { selectProgramsAt, type ProviderConfig } from "@/context/PlayerContext";
+import type { ProviderConfig } from "@/context/PlayerContext";
+import { selectProgramsAt } from "@/lib/epgRuntime";
 import type { MediaProgress } from "@/context/MediaLibraryContext";
 import { useMediaLibrary } from "@/context/MediaLibraryContext";
 import { useI18n } from "@/context/I18nContext";

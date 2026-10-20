@@ -83,7 +83,7 @@ const mocks = {
   "@/context/MediaLibraryContext":
     "export const useMediaLibrary=()=>({entries:globalThis.__u42.entries||[],loaded:true,removeProgress(){}});",
   "@/context/I18nContext": 'export const useI18n=()=>({language:"tr",t:k=>k});',
-  "@/context/PlayerContext": `export const selectProgramsAt=(programs,now=Date.now())=>{const rows=[...(programs||[])].sort((a,b)=>a.start-b.start);const i=rows.findIndex(p=>p.start<=now&&now<p.end);return i>=0?{now:rows[i],next:rows[i+1]}:{next:rows.find(p=>p.start>now)}};`,
+  "@/lib/epgRuntime": `export const selectProgramsAt=(programs,now=Date.now())=>{const rows=[...(programs||[])].sort((a,b)=>a.start-b.start);const i=rows.findIndex(p=>p.start<=now&&now<p.end);return i>=0?{now:rows[i],next:rows[i+1]}:{next:rows.find(p=>p.start>now)}};`,
   "@/hooks/useColors":
     'export const useColors=()=>({primary:"#67e8d1",foreground:"white",mutedForeground:"#999",border:"#333",card:"#222",muted:"#888"});',
   "@/components/tvPreview/TVPreviewFocus":
