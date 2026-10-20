@@ -930,6 +930,29 @@ jobs:
           python3 - <<'PY'
           import hashlib, json, os, pathlib, platform, subprocess, tarfile
           root = pathlib.Path(os.environ['RECOVERY_DIR'])
+          # pnpm 10 registerProject stores runner-specific GC registry links, not package bytes.
+          # Only unlink exact known project registrations; never follow/copy their targets.
+          registry = root / 'store/v10/projects'
+          omitted_registry_links = []
+          if registry.exists() or registry.is_symlink():
+              assert registry.is_dir() and not registry.is_symlink(), 'Invalid project registry'
+              assert registry.resolve() == root.resolve() / 'store/v10/projects', 'Redirected registry parent'
+              allowed_projects = {pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve(),
+                                  (root / 'offline').resolve()}
+              for link in sorted(registry.iterdir()):
+                  assert link.is_symlink(), 'Unexpected project registry entry: ' + link.name
+                  raw_target = os.readlink(link)
+                  assert not os.path.isabs(raw_target), 'Absolute project registry target'
+                  target = (link.parent / raw_target).resolve(strict=True)
+                  assert target in allowed_projects and target.is_dir(), 'Unknown project registry target'
+                  assert raw_target == os.path.relpath(target, link.parent), 'Noncanonical project registry target'
+                  assert link.name == hashlib.sha256(str(target).encode()).hexdigest()[:32], 'Project registry hash mismatch'
+                  omitted_registry_links.append({'path': str(link.relative_to(root)),
+                                                 'target': raw_target, 'resolved_target': str(target),
+                                                 'reason': 'regenerable-pnpm-project-registration'})
+              # Validate every entry before removing any; unlink only the directory entry.
+              for item in omitted_registry_links:
+                  (root / item['path']).unlink()
           records = []
           for directory in ('store', 'toolchain'):
               for p in sorted((root / directory).rglob('*')):
@@ -945,6 +968,7 @@ jobs:
                       'architecture': platform.machine(), 'libc': platform.libc_ver(),
                       'lockfile_sha256': hashlib.sha256(pathlib.Path('pnpm-lock.yaml').read_bytes()).hexdigest(),
                       'offline_runner_install': 'passed', 'node_modules_included': False,
+                      'omitted_registry_links': omitted_registry_links,
                       'portability': 'Linux matching architecture/libc only; Work offline verification still required',
                       'files': records}
           (root / 'dependencies/dependency-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
@@ -952,6 +976,19 @@ jobs:
               for directory in ('store', 'toolchain'):
                   archive.add(root / directory, arcname=directory)
           PY
+      - name: Verify packaged store without runner registrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROBE="$RECOVERY_DIR/transfer-probe"
+          mkdir -p "$PROBE/dependencies" "$PROBE/workspace"
+          tar -xzf "$RECOVERY_DIR/dependencies/dependencies.tar.gz" -C "$PROBE/dependencies"
+          tar -xzf "$RECOVERY_DIR/source/source.tar.gz" -C "$PROBE/workspace"
+          export PATH="$PROBE/dependencies/toolchain/bin:$PATH"
+          cd "$PROBE/workspace"
+          pnpm install --offline --frozen-lockfile --store-dir "$PROBE/dependencies/store"
+          cmp pnpm-lock.yaml "$GITHUB_WORKSPACE/pnpm-lock.yaml"
+          node artifacts/legendstream-xplayer/tests/u42HomeCollapsibleHostScenarios.mjs
       - name: Hash payloads
         shell: bash
         run: |
