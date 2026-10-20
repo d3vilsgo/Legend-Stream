@@ -80,7 +80,7 @@ async function main() {
   assert.match(controller, /categoryId: item\.categoryId \?\? selectedCategoryId/);
   assert.match(main, /progressRef: \{[\s\S]*?type: "stalker-vod"[\s\S]*?itemId: movie\.itemId[\s\S]*?categoryId: movie\.categoryId/);
   assert.match(main, /item\.playbackRef\.type === "stalker-vod"[\s\S]*?resolveStalkerVodHistoryLink\([\s\S]*?readCurrentStalkerProductSession\(provider\)\.session/);
-  assert.match(main, /returnTo: "history"[\s\S]*?progressRef: item\.playbackRef/);
+  assert.match(main, /const openProgress = async \(item: MediaProgress, returnTo: StalkerContentView = "history"\)[\s\S]*?returnTo,[\s\S]*?progressRef: item\.playbackRef/);
   assert.match(main, /const openMovie = \(movie: StalkerMoviePlayable, returnTo: StalkerContentView = "movies"\)[\s\S]*?returnTo,[\s\S]*?progressRef:/);
   assert.match(main, /onFullscreenExit=\{\(\) => \{[\s\S]*?setView\(playable\.returnTo\)[\s\S]*?setPlayable\(null\)/);
   assert.match(main, /catch \(caught\)[\s\S]*?setCatalogError\(redactSensitiveText/);

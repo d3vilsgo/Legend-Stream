@@ -138,7 +138,8 @@ async function main() {
   });
 
   await scenario("player ownership and history return contracts remain top-level", () => {
-    assert.match(mainPage, /returnTo: "history"/);
+    assert.match(mainPage, /const openProgress = async \(item: MediaProgress, returnTo: StalkerContentView = "history"\)/);
+    assert.match(mainPage, /returnTo,/);
     assert.match(mainPage, /returnTo: StalkerContentView = "series"/);
     assert.match(mainPage, /<NativeVideoPlayer/);
     assert.doesNotMatch(source("components/stalker/StalkerSeriesProductSurface.tsx"), /NativeVideoPlayer|CompatibilityVideoPlayer/);

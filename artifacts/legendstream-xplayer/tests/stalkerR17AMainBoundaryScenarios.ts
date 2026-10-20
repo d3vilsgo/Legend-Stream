@@ -82,7 +82,8 @@ async function main() {
   await scenario("Stalker History re-resolves durable movie identity and preserves origin-aware player return", () => {
     assert.match(stalkerMainSource, /item\.playbackRef\.type === "stalker-vod"/);
     assert.match(stalkerMainSource, /resolveStalkerVodHistoryLink/);
-    assert.match(stalkerMainSource, /returnTo: "history"/);
+    assert.match(stalkerMainSource, /const openProgress = async \(item: MediaProgress, returnTo: StalkerContentView = "history"\)/);
+    assert.match(stalkerMainSource, /returnTo,/);
     assert.match(stalkerMainSource, /progressRef=\{playable\.progressRef\}/);
     assert.doesNotMatch(stalkerMainSource, /url:\s*item\.source[\s\S]*?playbackRef\.type === "stalker-vod"/);
   });

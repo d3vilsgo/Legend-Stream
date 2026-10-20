@@ -179,7 +179,7 @@ async function main() {
   const historyBlock = mainSource.slice(mainSource.indexOf("const openProgress"), mainSource.indexOf("const switchProvider"));
   assert.match(mainSource, /returnTo: StalkerContentView = "series"[\s\S]*?returnTo,[\s\S]*?type: "stalker-episode"[\s\S]*?seriesId: intent\.identity\.seriesId/);
   assert.match(historyBlock, /item\.playbackRef\.type === "stalker-episode"[\s\S]*?resolveStalkerSeriesHistoryEpisode\([\s\S]*?readCurrentStalkerProductSession\(provider\)\.session/);
-  assert.match(historyBlock, /returnTo: "history"[\s\S]*?progressRef: item\.playbackRef/);
+  assert.match(historyBlock, /returnTo: StalkerContentView = "history"[\s\S]*?returnTo,[\s\S]*?progressRef: item\.playbackRef/);
   assert.match(historyBlock, /historyPlaybackAbortRef\.current\?\.abort\(\)[\s\S]*?\+\+historyPlaybackSequenceRef\.current/);
   assert.match(historyBlock, /abort\.signal\.aborted \|\| sequence !== historyPlaybackSequenceRef\.current/);
   assert.match(historyBlock, /catch \(caught\)[\s\S]*?setCatalogError\(redactSensitiveText/);
