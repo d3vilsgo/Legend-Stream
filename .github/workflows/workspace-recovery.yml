@@ -1,0 +1,194 @@
+name: Workspace Recovery V1
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Full 40-character application source commit SHA"
+        required: true
+        default: "4281ce70473fbc20db550a69b35974c30495af68"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    if: github.ref == 'refs/heads/integration/legendstream-u1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha }}
+      WORKFLOW_SHA: ${{ github.workflow_sha }}
+      RECOVERY_DIR: ${{ github.workspace }}/../workspace-recovery-${{ github.run_id }}
+    steps:
+      - name: Validate requested commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          mkdir -p "$RECOVERY_DIR/source" "$RECOVERY_DIR/dependencies"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          lfs: false
+          submodules: false
+      - name: Verify and package exact source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, subprocess, tarfile
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+          expected = os.environ['SOURCE_SHA']
+          assert git('rev-parse', 'HEAD').decode().strip() == expected, 'Wrong checkout'
+          assert not git('status', '--porcelain'), 'Checkout is dirty'
+          output = pathlib.Path(os.environ['RECOVERY_DIR']) / 'source'
+          files = []
+          sensitive = []
+          # Conservative fail-closed policy: never redact or omit a tracked blob silently.
+          secret_patterns = [
+              rb'-----BEGIN (?:[A-Z ]*PRIVATE KEY|CERTIFICATE)-----',
+              rb'(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})',
+              rb'AKIA[0-9A-Z]{16}',
+              rb'''(?i)(?:password|passwd|secret|api[_-]?key|auth[_-]?token)\s*[:=]\s*["'][^"'\r\n]{8,}["']''',
+              rb'https?://[^\s/]+:[^\s/@]+@',
+              rb'https?://[^\s]+[?&](?:password|token|access_token|api_key)=[^\s&]+',
+              rb'https?://[^\s]+/(?:live|movie|series)/[^/\s]+/[^/\s]+/',
+          ]
+          for record in git('ls-tree', '-rz', '--full-tree', 'HEAD').split(b'\0'):
+              if not record:
+                  continue
+              metadata, rawpath = record.split(b'\t', 1)
+              mode, kind, oid = metadata.decode().split()
+              name = rawpath.decode('utf-8')
+              path = pathlib.PurePosixPath(name)
+              assert not path.is_absolute() and '..' not in path.parts, 'Unsafe Git path'
+              # Reject unsupported objects rather than claim complete recovery.
+              assert mode in ('100644', '100755') and kind == 'blob', 'Unsupported symlink/submodule: ' + name
+              disk = pathlib.Path(name)
+              assert disk.is_file() and not disk.is_symlink(), 'Invalid checkout entry: ' + name
+              assert bool(disk.stat().st_mode & 0o111) == (mode == '100755'), 'Mode mismatch: ' + name
+              data = disk.read_bytes()
+              header = ('blob ' + str(len(data)) + '\0').encode()
+              assert hashlib.sha1(header + data).hexdigest() == oid, 'Git blob mismatch: ' + name
+              if data.startswith(b'version https://git-lfs.github.com/spec/v1'):
+                  raise SystemExit('LFS pointer requires verified hydration: ' + name)
+              basename = path.name.lower()
+              if (basename == '.env' or basename.startswith('.env.') or
+                  basename.endswith(('.jks', '.keystore', '.p12', '.pfx', '.pem', '.key', '.crt', '.cer')) or
+                  basename in ('.npmrc', '.yarnrc') and re.search(rb'(?i)(_auth|password|token)\s*=', data) or
+                  any(re.search(pattern, data) for pattern in secret_patterns)):
+                  sensitive.append(name)
+              files.append({'path': name, 'git_mode': mode, 'git_blob_sha': oid,
+                            'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
+          if sensitive:
+              # Names only; never print suspected values.
+              raise SystemExit('Sensitive-content review required; no upload: ' + ', '.join(sensitive))
+          manifest = {'format': 1, 'kind': 'tracked-source-snapshot-not-git-clone',
+                      'source_commit_sha': expected, 'workflow_commit_sha': os.environ['WORKFLOW_SHA'],
+                      'tree_sha': git('rev-parse', 'HEAD^{tree}').decode().strip(),
+                      'commit_object': git('cat-file', '-p', 'HEAD').decode(),
+                      'git_metadata_included': False, 'symlinks': 'none', 'submodules': 'none',
+                      'lfs_pointers': 'none', 'sensitive_scan': 'passed-conservative-pattern-gate',
+                      'files': files}
+          (output / 'source-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          with tarfile.open(output / 'source.tar.gz', 'w:gz', dereference=False) as archive:
+              for entry in files:
+                  archive.add(entry['path'], arcname=entry['path'], recursive=False)
+          PY
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install locked dependencies into isolated store
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile --store-dir "$RECOVERY_DIR/store"
+          git diff --exit-code -- pnpm-lock.yaml
+          pnpm store path --store-dir "$RECOVERY_DIR/store"
+          node --version
+          pnpm --version
+      - name: Verify offline store in a clean workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RECOVERY_DIR/offline"
+          tar -xzf "$RECOVERY_DIR/source/source.tar.gz" -C "$RECOVERY_DIR/offline"
+          cd "$RECOVERY_DIR/offline"
+          pnpm install --offline --frozen-lockfile --store-dir "$RECOVERY_DIR/store"
+          cmp pnpm-lock.yaml "$GITHUB_WORKSPACE/pnpm-lock.yaml"
+          pnpm exec prettier --check artifacts/legendstream-xplayer/components/home/HomeDiscovery.tsx artifacts/legendstream-xplayer/lib/design/eliteV3Tokens.ts artifacts/legendstream-xplayer/tests/u42HomeCollapsibleHostScenarios.mjs artifacts/legendstream-xplayer/scripts/build-home-review.mjs
+          pnpm run typecheck
+          node artifacts/legendstream-xplayer/tests/u42HomeCollapsibleHostScenarios.mjs
+      - name: Package store and matching Linux toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RECOVERY_DIR/toolchain/bin" "$RECOVERY_DIR/toolchain/pnpm"
+          cp "$(command -v node)" "$RECOVERY_DIR/toolchain/bin/node"
+          PNPM_VERSION="$(pnpm --version)"
+          npm pack "pnpm@$PNPM_VERSION" --pack-destination "$RECOVERY_DIR/toolchain/pnpm" --ignore-scripts >/dev/null
+          tar -xzf "$RECOVERY_DIR/toolchain/pnpm/pnpm-$PNPM_VERSION.tgz" -C "$RECOVERY_DIR/toolchain/pnpm"
+          rm "$RECOVERY_DIR/toolchain/pnpm/pnpm-$PNPM_VERSION.tgz"
+          printf '%s\n' '#!/bin/sh' 'exec node "$(dirname "$0")/../pnpm/package/bin/pnpm.cjs" "$@"' > "$RECOVERY_DIR/toolchain/bin/pnpm"
+          chmod +x "$RECOVERY_DIR/toolchain/bin/pnpm"
+          test "$("$RECOVERY_DIR/toolchain/bin/node" "$RECOVERY_DIR/toolchain/pnpm/package/bin/pnpm.cjs" --version)" = "$PNPM_VERSION"
+          export PNPM_VERSION
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, platform, subprocess, tarfile
+          root = pathlib.Path(os.environ['RECOVERY_DIR'])
+          records = []
+          for directory in ('store', 'toolchain'):
+              for p in sorted((root / directory).rglob('*')):
+                  assert not p.is_symlink(), 'Nonportable symlink: ' + str(p.relative_to(root))
+                  if p.is_file():
+                      records.append({'path': str(p.relative_to(root)), 'size': p.stat().st_size,
+                                      'mode': oct(p.stat().st_mode & 0o777),
+                                      'sha256': hashlib.sha256(p.read_bytes()).hexdigest()})
+          manifest = {'format': 1, 'source_commit_sha': os.environ['SOURCE_SHA'],
+                      'workflow_commit_sha': os.environ['WORKFLOW_SHA'],
+                      'node': subprocess.check_output(['node', '--version']).decode().strip(),
+                      'pnpm': os.environ['PNPM_VERSION'], 'platform': platform.platform(),
+                      'architecture': platform.machine(), 'libc': platform.libc_ver(),
+                      'lockfile_sha256': hashlib.sha256(pathlib.Path('pnpm-lock.yaml').read_bytes()).hexdigest(),
+                      'offline_runner_install': 'passed', 'node_modules_included': False,
+                      'portability': 'Linux matching architecture/libc only; Work offline verification still required',
+                      'files': records}
+          (root / 'dependencies/dependency-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          with tarfile.open(root / 'dependencies/dependencies.tar.gz', 'w:gz', dereference=False) as archive:
+              for directory in ('store', 'toolchain'):
+                  archive.add(root / directory, arcname=directory)
+          PY
+      - name: Hash payloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          for directory in source dependencies; do
+            cd "$RECOVERY_DIR/$directory"
+            sha256sum *.tar.gz *manifest.json > SHA256SUMS
+          done
+          printf 'source_commit_sha=%s\nworkflow_commit_sha=%s\n' "$SOURCE_SHA" "$WORKFLOW_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-recovery-source-${{ inputs.source_sha }}
+          path: ${{ github.workspace }}/../workspace-recovery-${{ github.run_id }}/source/
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+      - name: Upload dependency store
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-recovery-dependencies-${{ inputs.source_sha }}
+          path: ${{ github.workspace }}/../workspace-recovery-${{ github.run_id }}/dependencies/
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
