@@ -20,7 +20,7 @@ jobs:
     env:
       SOURCE_SHA: ${{ inputs.source_sha }}
       WORKFLOW_SHA: ${{ github.workflow_sha }}
-      RECOVERY_DIR: ${{ runner.temp }}/workspace-recovery
+      RECOVERY_DIR: ${{ github.workspace }}/../workspace-recovery-${{ github.run_id }}
     steps:
       - name: Validate requested commit
         shell: bash
@@ -180,7 +180,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: workspace-recovery-source-${{ inputs.source_sha }}
-          path: ${{ runner.temp }}/workspace-recovery/source/
+          path: ${{ github.workspace }}/../workspace-recovery-${{ github.run_id }}/source/
           retention-days: 1
           if-no-files-found: error
           compression-level: 0
@@ -188,7 +188,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: workspace-recovery-dependencies-${{ inputs.source_sha }}
-          path: ${{ runner.temp }}/workspace-recovery/dependencies/
+          path: ${{ github.workspace }}/../workspace-recovery-${{ github.run_id }}/dependencies/
           retention-days: 1
           if-no-files-found: error
           compression-level: 0
