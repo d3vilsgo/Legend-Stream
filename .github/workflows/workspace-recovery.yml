@@ -990,6 +990,7 @@ jobs:
           cmp pnpm-lock.yaml "$GITHUB_WORKSPACE/pnpm-lock.yaml"
           node artifacts/legendstream-xplayer/tests/u42HomeCollapsibleHostScenarios.mjs
       - name: Hash payloads
+        id: package_paths
         shell: bash
         run: |
           set -euo pipefail
@@ -997,12 +998,13 @@ jobs:
             cd "$RECOVERY_DIR/$directory"
             sha256sum *.tar.gz *manifest.json > SHA256SUMS
           done
+          printf 'source=%s\ndependencies=%s\n' "$(realpath "$RECOVERY_DIR/source")" "$(realpath "$RECOVERY_DIR/dependencies")" >> "$GITHUB_OUTPUT"
           printf 'source_commit_sha=%s\nworkflow_commit_sha=%s\n' "$SOURCE_SHA" "$WORKFLOW_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload source snapshot
         uses: actions/upload-artifact@v4
         with:
           name: workspace-recovery-source-${{ inputs.source_sha }}
-          path: ${{ github.workspace }}/../workspace-recovery-${{ github.run_id }}/source/
+          path: ${{ steps.package_paths.outputs.source }}
           retention-days: 1
           if-no-files-found: error
           compression-level: 0
@@ -1010,7 +1012,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: workspace-recovery-dependencies-${{ inputs.source_sha }}
-          path: ${{ github.workspace }}/../workspace-recovery-${{ github.run_id }}/dependencies/
+          path: ${{ steps.package_paths.outputs.dependencies }}
           retention-days: 1
           if-no-files-found: error
           compression-level: 0
