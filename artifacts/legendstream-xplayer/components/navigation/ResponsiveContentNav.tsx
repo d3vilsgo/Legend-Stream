@@ -223,7 +223,9 @@ export function ResponsiveContentNav<Key extends string>({
                   minHeight: tv.target,
                   paddingHorizontal: 4,
                   borderColor:
-                    activeKey === item.key ? eliteV3.color.active : "transparent",
+                    activeKey === item.key
+                      ? eliteV3.color.active
+                      : "transparent",
                 },
               ]}
             />
