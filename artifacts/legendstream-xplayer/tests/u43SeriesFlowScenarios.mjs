@@ -918,6 +918,14 @@ try {
       source,
       /onOpenSeries=\{item => pagedSeries.open\(item, "home"\)\}/,
     );
+    assert.match(
+      source,
+      /onOpenLive=\{\(channel\) => openLive\(channel, "home"\)\}/,
+    );
+    assert.match(
+      source,
+      /onOpenMedia=\{\(item\) => openProgress\(item, "home"\)\}/,
+    );
     assert.match(source, /onPlay: item => openMovie\(item, "home"\)/);
     assert.match(source, /progressRef=\{playable.progressRef\}/);
     assert.match(

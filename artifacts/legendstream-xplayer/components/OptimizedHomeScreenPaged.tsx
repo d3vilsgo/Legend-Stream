@@ -407,13 +407,13 @@ export default function OptimizedHomeScreenPaged() {
     }} />;
   }
 
-  const openLive = (channel: Channel) => {
+  const openLive = (channel: Channel, returnTo: ContentView = "live") => {
     beginPlaybackAttempt(provider.type as ProviderKind);
     if (m3uDiagnosticEnabled) recordM3UOpenLiveEnter();
 
     if (provider.type === "stalker") {
       if (!channel.streamUrl) { setCatalogError("Playback source could not be resolved."); return; }
-      setPlayable({ title: channel.name, subtitle: channel.category, url: channel.streamUrl, kind: "live", returnTo: "live", liveIdentity: { providerId: channel.providerId, channelId: channel.id } });
+      setPlayable({ title: channel.name, subtitle: channel.category, url: channel.streamUrl, kind: "live", returnTo, liveIdentity: { providerId: channel.providerId, channelId: channel.id } });
       void recordWatched(channel.id);
       setView("player");
       return;
@@ -423,7 +423,7 @@ export default function OptimizedHomeScreenPaged() {
     void resolveCatalogPlaybackSource({ kind: "live", item: channel }, provider)
       .then(({ url }) => {
         if (activeProviderIdRef.current !== requestProviderId) return;
-        setPlayable({ title: channel.name, subtitle: channel.category, url, kind: "live", returnTo: "live", liveIdentity: { providerId: channel.providerId, channelId: channel.id } });
+        setPlayable({ title: channel.name, subtitle: channel.category, url, kind: "live", returnTo, liveIdentity: { providerId: channel.providerId, channelId: channel.id } });
         if (m3uDiagnosticEnabled) recordM3UOpenLiveSetPlayable();
         void recordWatched(channel.id);
         setView("player");
@@ -451,7 +451,7 @@ export default function OptimizedHomeScreenPaged() {
   const openSeries = (item: XtreamSeriesItem) => pagedSeries.open(item, "series");
   const playEpisode = (episode: XtreamEpisode, seasonId: string) => pagedSeries.play(seasonId, String(episode.id));
   const openDownload = (item: DownloadedMedia) => { beginPlaybackAttempt("unknown"); setPlayable({ title: item.title, subtitle: item.subtitle, url: item.uri, kind: "download", returnTo: "downloads" }); setView("player"); };
-  const openProgress = (item: MediaProgress) => { beginPlaybackAttempt(provider.type as ProviderKind); setPlayable({ title: item.title, subtitle: item.subtitle, url: item.source, kind: item.kind, returnTo: "history" }); setView("player"); };
+  const openProgress = (item: MediaProgress, returnTo: ContentView = "history") => { beginPlaybackAttempt(provider.type as ProviderKind); setPlayable({ title: item.title, subtitle: item.subtitle, url: item.source, kind: item.kind, returnTo }); setView("player"); };
 
   const presentedView = view === "player" ? playable?.returnTo ?? "home" : view;
   if (!Platform.isTV && view === "player" && !pagedSeries.state) return <View style={s.fullPlayer}>
@@ -508,6 +508,8 @@ export default function OptimizedHomeScreenPaged() {
         seriesCategories={provider.type === "stalker" ? 0 : categoryMetadata?.providerId === provider.id ? categoryMetadata.seriesCategories : 0}
         catalogLoading={provider.type === "stalker" ? false : isSyncing}
         channels={homeIdentityChannels}
+        epgByChannel={epgByChannel}
+        epgLoading={isEpgLoading}
         history={history}
         movies={homeMovies}
         seriesItems={homeSeries}
@@ -515,11 +517,11 @@ export default function OptimizedHomeScreenPaged() {
         newMovies={provider.type === "stalker" ? [] : activeSnapshot?.newMovies ?? []}
         newSeries={provider.type === "stalker" ? [] : activeSnapshot?.newSeries ?? []}
         onNavigate={navigate}
-        onOpenLive={openLive}
+        onOpenLive={(channel) => openLive(channel, "home")}
         onOpenMovie={homeMovieInfo.select}
         onWatchMovie={homeMovieInfo.watch}
         onOpenSeries={item => pagedSeries.open(item, "home")}
-        onOpenMedia={openProgress}
+        onOpenMedia={(item) => openProgress(item, "home")}
         onRemoveLive={(id) => void removeWatched(id)}
       /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}

@@ -22,14 +22,14 @@ import type {
   StyleProp,
   ViewStyle,
 } from "react-native";
-import type { ProviderConfig } from "@/context/PlayerContext";
+import { selectProgramsAt, type ProviderConfig } from "@/context/PlayerContext";
 import type { MediaProgress } from "@/context/MediaLibraryContext";
 import { useMediaLibrary } from "@/context/MediaLibraryContext";
 import { useI18n } from "@/context/I18nContext";
 import { normalizeImageUrl } from "@/lib/imageUrl";
 import { visibleProgressRatio } from "@/lib/historyPresentation";
 import { TVPreviewPressable } from "@/components/tvPreview/TVPreviewFocus";
-import type { Channel } from "@/lib/iptv";
+import type { Channel, EpgProgram } from "@/lib/iptv";
 import type { XtreamSeriesItem, XtreamVodItem } from "@/lib/xtreamCatalog";
 import { markStartupEvent } from "@/lib/performanceDiagnostics";
 
@@ -63,6 +63,7 @@ type HomeShelfEntry = {
   image?: string;
   progress?: number;
   progressLabel?: string;
+  previewId?: string;
   onPress: () => void;
   onRemove?: () => void;
 };
@@ -72,6 +73,7 @@ type CatalogImageStyle = StyleProp<ImageStyle & ViewStyle>;
 export function HomeDiscovery({
   provider,
   tvViewportHeight,
+  tvFirstHome = true,
   live,
   vod,
   series,
@@ -79,6 +81,8 @@ export function HomeDiscovery({
   seriesCategories,
   catalogLoading,
   channels,
+  epgByChannel,
+  epgLoading = false,
   history,
   movies,
   seriesItems,
@@ -96,6 +100,7 @@ export function HomeDiscovery({
 }: {
   provider: ProviderConfig;
   tvViewportHeight?: number;
+  tvFirstHome?: boolean;
   live: number | null;
   vod: number | null;
   series: number | null;
@@ -103,6 +108,8 @@ export function HomeDiscovery({
   seriesCategories: number;
   catalogLoading: boolean;
   channels: Channel[];
+  epgByChannel?: ReadonlyMap<string, readonly EpgProgram[]>;
+  epgLoading?: boolean;
   history: string[];
   movies: XtreamVodItem[];
   seriesItems: XtreamSeriesItem[];
@@ -120,6 +127,7 @@ export function HomeDiscovery({
 }) {
   const colors = homeColors;
   const { tvPreview } = useUiPresentation();
+  const tvFirst = tvFirstHome && (Platform.isTV || tvPreview);
   const { t, language } = useI18n();
   const {
     entries,
@@ -252,6 +260,7 @@ export function HomeDiscovery({
   }));
   const liveShelf = homeChannels.slice(0, 6).map<HomeShelfEntry>((channel) => ({
     id: `live-${channel.id}`,
+    previewId: channel.id,
     title: channel.name,
     subtitle: channel.category,
     image: channel.logoUrl,
@@ -303,16 +312,103 @@ export function HomeDiscovery({
 
   // Only content focus changes this state; StageRail focus is not a Hero event.
   const [heroInShelves, setHeroInShelves] = useState(false);
+  const [tvActiveTab, setTvActiveTab] = useState<HomeTvTab>("live");
+  const [tvSelectedChannelId, setTvSelectedChannelId] = useState<string | null>(
+    homeChannels[0]?.id ?? null,
+  );
   // A new provider must not inherit the previous provider's shelf Focus context.
   useEffect(() => {
     setHeroInShelves(false);
   }, [provider.id]);
+  useEffect(() => {
+    setTvActiveTab("live");
+    setTvSelectedChannelId(homeChannels[0]?.id ?? null);
+  }, [provider.id]);
+  useEffect(() => {
+    if (
+      tvSelectedChannelId &&
+      homeChannels.some((item) => item.id === tvSelectedChannelId)
+    )
+      return;
+    setTvSelectedChannelId(homeChannels[0]?.id ?? null);
+  }, [homeChannels, tvSelectedChannelId]);
   const foldHero = () => {
     if (Platform.isTV) setHeroInShelves(true);
   };
   const expandHero = () => {
     if (Platform.isTV) setHeroInShelves(false);
   };
+
+  const hero = (
+    <HomeHeroCarousel
+      items={heroItems}
+      collapsed={Platform.isTV && heroInShelves}
+      onHeroFocus={expandHero}
+      tvViewportHeight={tvViewportHeight}
+      eyebrow={copy.featured}
+      providerName={provider.name}
+      paused={interactionBlocked}
+      onOpen={(item) =>
+        item.movie
+          ? onOpenMovie(item.movie)
+          : item.series
+            ? onOpenSeries(item.series)
+            : undefined
+      }
+      onWatch={
+        onWatchMovie
+          ? (item) => {
+              if (item.movie) onWatchMovie(item.movie);
+            }
+          : undefined
+      }
+      onDiscover={() => onNavigate("movies")}
+      discoverLabel={copy.discover}
+      loading={effectiveLoading}
+    />
+  );
+
+  if (tvFirst) {
+    const recommendations = [...movieShelf, ...seriesShelf].slice(0, 12);
+    return (
+      <HomeTvFirstShell
+        activeTab={tvActiveTab}
+        onActiveTabChange={setTvActiveTab}
+        selectedChannelId={tvSelectedChannelId}
+        onSelectedChannelChange={setTvSelectedChannelId}
+        hero={hero}
+        channels={homeChannels}
+        epgByChannel={epgByChannel}
+        epgLoading={epgLoading}
+        liveCount={live}
+        continueItems={continueShelf}
+        recommendations={recommendations}
+        catalogLoading={catalogLoading}
+        mediaLibraryLoaded={mediaLibraryLoaded}
+        loadingCopy={
+          language === "tr" ? "Katalog hazırlanıyor" : "Preparing catalog"
+        }
+        emptyLive={
+          language === "tr"
+            ? "Canlı kanal bulunamadı"
+            : "No live channels found"
+        }
+        emptyContinue={
+          language === "tr"
+            ? "İzleme geçmişi henüz boş"
+            : "No viewing history yet"
+        }
+        emptyRecommendations={
+          language === "tr"
+            ? "Gösterilecek içerik bulunamadı"
+            : "No content to show"
+        }
+        onNavigate={onNavigate}
+        onContentFocus={foldHero}
+        onOpenLive={onOpenLive}
+      />
+    );
+  }
 
   const sectionCards = (
     <View style={s.homeCompactStats}>
@@ -349,32 +445,7 @@ export function HomeDiscovery({
 
   return (
     <View style={s.homeDiscoveryShell}>
-      <HomeHeroCarousel
-        items={heroItems}
-        collapsed={Platform.isTV && heroInShelves}
-        onHeroFocus={expandHero}
-        tvViewportHeight={tvViewportHeight}
-        eyebrow={copy.featured}
-        providerName={provider.name}
-        paused={interactionBlocked}
-        onOpen={(item) =>
-          item.movie
-            ? onOpenMovie(item.movie)
-            : item.series
-              ? onOpenSeries(item.series)
-              : undefined
-        }
-        onWatch={
-          onWatchMovie
-            ? (item) => {
-                if (item.movie) onWatchMovie(item.movie);
-              }
-            : undefined
-        }
-        onDiscover={() => onNavigate("movies")}
-        discoverLabel={copy.discover}
-        loading={effectiveLoading}
-      />
+      {hero}
 
       {continueShelf.length || !mediaLibraryLoaded ? (
         <HomeShelf
@@ -468,6 +539,7 @@ function TvFocusPressable({
   onLayout,
   focusId,
   accessibilityLabel,
+  selected = false,
 }: {
   children: React.ReactNode;
   onPress: () => void;
@@ -478,6 +550,7 @@ function TvFocusPressable({
   onLayout?: (event: LayoutChangeEvent) => void;
   focusId?: string;
   accessibilityLabel?: string;
+  selected?: boolean;
 }) {
   const [focused, setFocused] = useState(false);
   return (
@@ -497,6 +570,7 @@ function TvFocusPressable({
       onLongPress={onLongPress}
       style={[
         style,
+        selected ? { backgroundColor: eliteV3.color.selected } : null,
         Platform.isTV ? s.homeTvFocusBase : null,
         Platform.isTV && focused
           ? [
@@ -513,6 +587,263 @@ function TvFocusPressable({
     >
       {children}
     </TVPreviewPressable>
+  );
+}
+
+type HomeTvTab = "live" | "continue" | "discover";
+
+function HomeTvFirstShell({
+  activeTab,
+  onActiveTabChange,
+  selectedChannelId,
+  onSelectedChannelChange,
+  hero,
+  channels,
+  epgByChannel,
+  epgLoading,
+  liveCount,
+  continueItems,
+  recommendations,
+  catalogLoading,
+  mediaLibraryLoaded,
+  loadingCopy,
+  emptyLive,
+  emptyContinue,
+  emptyRecommendations,
+  onNavigate,
+  onContentFocus,
+  onOpenLive,
+}: {
+  activeTab: HomeTvTab;
+  onActiveTabChange: (tab: HomeTvTab) => void;
+  selectedChannelId: string | null;
+  onSelectedChannelChange: (id: string | null) => void;
+  hero: React.ReactNode;
+  channels: Channel[];
+  epgByChannel?: ReadonlyMap<string, readonly EpgProgram[]>;
+  epgLoading: boolean;
+  liveCount: number | null;
+  continueItems: HomeShelfEntry[];
+  recommendations: HomeShelfEntry[];
+  catalogLoading: boolean;
+  mediaLibraryLoaded: boolean;
+  loadingCopy: string;
+  emptyLive: string;
+  emptyContinue: string;
+  emptyRecommendations: string;
+  onNavigate: (view: HomeContentView) => void;
+  onContentFocus: () => void;
+  onOpenLive: (channel: Channel) => void;
+}) {
+  const { language } = useI18n();
+  const isTurkish = language === "tr";
+  const selectedChannel =
+    channels.find((item) => item.id === selectedChannelId) ?? channels[0];
+  const programs = selectedChannel
+    ? selectProgramsAt(epgByChannel?.get(selectedChannel.id))
+    : {};
+  const current = programs.now;
+  const next = programs.next;
+  const now = Date.now();
+  const validCurrent =
+    current &&
+    Number.isFinite(current.start) &&
+    Number.isFinite(current.end) &&
+    current.end > current.start
+      ? current
+      : undefined;
+  const progress = validCurrent
+    ? Math.max(
+        0,
+        Math.min(
+          1,
+          (now - validCurrent.start) / (validCurrent.end - validCurrent.start),
+        ),
+      )
+    : null;
+  const timeLabel = (value?: number) =>
+    typeof value === "number" && Number.isFinite(value)
+      ? new Date(value).toLocaleTimeString(undefined, {
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      : null;
+
+  const labels = isTurkish
+    ? {
+        live: "Canlı Kanallar",
+        continue: "İzlemeye Devam Et",
+        discover: "Öne Çıkanlar",
+        now: "Şu an",
+        next: "Sonraki",
+        noProgram: "Program bilgisi yok",
+      }
+    : {
+        live: "Live Channels",
+        continue: "Continue Watching",
+        discover: "Featured",
+        now: "Now",
+        next: "Next",
+        noProgram: "Program information unavailable",
+      };
+  const tabs: {
+    id: HomeTvTab;
+    label: string;
+    icon: keyof typeof Feather.glyphMap;
+  }[] = [
+    { id: "live", label: labels.live, icon: "radio" },
+    { id: "continue", label: labels.continue, icon: "play-circle" },
+    { id: "discover", label: labels.discover, icon: "compass" },
+  ];
+  const liveLoading = catalogLoading || liveCount === null;
+  const activeShelf =
+    activeTab === "live"
+      ? {
+          title: labels.live,
+          items: channels.map<HomeShelfEntry>((channel) => ({
+            id: `live-${channel.id}`,
+            previewId: channel.id,
+            title: channel.name,
+            subtitle: channel.category,
+            image: channel.logoUrl,
+            onPress: () => onOpenLive(channel),
+          })),
+          loading: liveLoading,
+          empty: emptyLive,
+          onSeeAll: () => onNavigate("live"),
+        }
+      : activeTab === "continue"
+        ? {
+            title: labels.continue,
+            items: continueItems,
+            loading: !mediaLibraryLoaded,
+            empty: emptyContinue,
+            onSeeAll: () => onNavigate("history"),
+          }
+        : {
+            title: labels.discover,
+            items: recommendations,
+            loading: catalogLoading,
+            empty: emptyRecommendations,
+            onSeeAll: () => onNavigate("movies"),
+          };
+
+  return (
+    <View style={s.homeDiscoveryShell} testID="home-tv-first-shell">
+      {hero}
+      {selectedChannel ? (
+        <View
+          style={s.homeTvEpgPanel}
+          accessibilityLabel={`Canlı kanal bilgisi: ${selectedChannel.name}`}
+          testID="home-tv-epg-panel"
+        >
+          <View style={s.homeTvEpgHeading}>
+            <Feather
+              name="radio"
+              size={eliteV3.icon.compact}
+              color={eliteV3.color.primary}
+            />
+            <Text numberOfLines={1} style={s.homeTvEpgChannel}>
+              {selectedChannel.name}
+            </Text>
+            {selectedChannel.category ? (
+              <Text numberOfLines={1} style={s.homeTvEpgCategory}>
+                {selectedChannel.category}
+              </Text>
+            ) : null}
+          </View>
+          <View style={s.homeTvEpgPrograms}>
+            <Text numberOfLines={1} style={s.homeTvEpgProgram}>
+              {validCurrent?.title ??
+                (epgLoading ? loadingCopy : labels.noProgram)}
+            </Text>
+            {validCurrent ? (
+              <Text style={s.homeTvEpgTime}>
+                {[timeLabel(validCurrent.start), timeLabel(validCurrent.end)]
+                  .filter(Boolean)
+                  .join(" – ")}
+              </Text>
+            ) : null}
+            {next ? (
+              <Text numberOfLines={1} style={s.homeTvEpgNext}>
+                {labels.next}: {next.title}
+                {timeLabel(next.start) ? ` · ${timeLabel(next.start)}` : ""}
+              </Text>
+            ) : null}
+          </View>
+          {progress !== null ? (
+            <View
+              accessibilityLabel={`Program ilerlemesi ${Math.round(progress * 100)} yüzde`}
+              style={s.homeTvEpgProgressTrack}
+            >
+              <View
+                testID="home-tv-epg-progress-fill"
+                style={[
+                  s.homeTvEpgProgressFill,
+                  { width: `${progress * 100}%` },
+                ]}
+              />
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+      <View style={s.homeTvTabs} accessibilityRole="tablist">
+        {tabs.map((tab) => {
+          const active = activeTab === tab.id;
+          return (
+            <TVPreviewPressable
+              key={tab.id}
+              eliteVisual
+              focusId={`home-tv-tab:${tab.id}`}
+              accessibilityRole="tab"
+              accessibilityLabel={tab.label}
+              accessibilityState={{ selected: active }}
+              onFocus={onContentFocus}
+              onPress={() => onActiveTabChange(tab.id)}
+              style={[s.homeTvTab, active ? s.homeTvTabActive : null]}
+            >
+              <Feather
+                name={tab.icon}
+                size={eliteV3.icon.compact}
+                color={active ? eliteV3.color.primary : eliteV3.color.muted}
+              />
+              <Text
+                numberOfLines={1}
+                style={[
+                  s.homeTvTabLabel,
+                  active ? s.homeTvTabLabelActive : null,
+                ]}
+              >
+                {tab.label}
+              </Text>
+            </TVPreviewPressable>
+          );
+        })}
+      </View>
+      <HomeShelf
+        title={activeShelf.title}
+        seeAll=""
+        items={activeShelf.items}
+        onSeeAll={activeShelf.onSeeAll}
+        onContentFocus={onContentFocus}
+        onItemFocus={(item) => {
+          if (activeTab !== "live" || !item.previewId) return;
+          const channel = channels.find((entry) => entry.id === item.previewId);
+          if (!channel) return;
+          onSelectedChannelChange(channel.id);
+          onContentFocus();
+        }}
+        selectedId={
+          activeTab === "live" && selectedChannel
+            ? `live-${selectedChannel.id}`
+            : undefined
+        }
+        compact
+        showHeader={false}
+        emptyLabel={activeShelf.empty}
+        loading={activeShelf.loading}
+      />
+    </View>
   );
 }
 
@@ -597,6 +928,7 @@ export function HomeHeroCarousel({
   const { width, height, fontScale } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const { tvPreview } = useUiPresentation();
+  const tvFirst = Platform.isTV || tvPreview;
   const [index, setIndex] = useState(0);
   const selectedId = useRef<string | null>(null);
   const itemIds = items.map((item) => item.id).join("\u0000");
@@ -1007,6 +1339,9 @@ function HomeShelf({
   emptyLabel,
   loading = false,
   onContentFocus,
+  onItemFocus,
+  selectedId,
+  showHeader = true,
 }: {
   title: string;
   seeAll: string;
@@ -1016,6 +1351,9 @@ function HomeShelf({
   compact?: boolean;
   emptyLabel?: string;
   loading?: boolean;
+  onItemFocus?: (item: HomeShelfEntry) => void;
+  selectedId?: string;
+  showHeader?: boolean;
 }) {
   const colors = homeColors;
   const listRef = useRef<FlatList<HomeShelfEntry>>(null);
@@ -1027,41 +1365,45 @@ function HomeShelf({
     ? eliteV3.home.landscapeWidth[mode]
     : eliteV3.home.posterWidth[mode];
   return (
-    <View style={s.homeShelfSection}>
-      <View style={s.homeShelfHeader}>
-        <Text
-          numberOfLines={1}
-          style={[
-            s.homeShelfTitle,
-            {
-              color: colors.foreground,
-              fontSize: type.section,
-              minWidth: 0,
-              flexShrink: 1,
-            },
-          ]}
-        >
-          {title}
-        </Text>
-        <TvFocusPressable
-          focusId={`home-shelf:${title}:more`}
-          onFocus={onContentFocus}
-          onPress={onSeeAll}
-          style={[
-            s.homeSeeAllButton,
-            !Platform.isTV && { minHeight: eliteV3.target.mobile },
-          ]}
-        >
-          <Text style={[s.homeSeeAllText, { color: colors.primary }]}>
-            {seeAll}
+    <View
+      style={[s.homeShelfSection, !showHeader ? s.homeTvActiveShelf : null]}
+    >
+      {showHeader ? (
+        <View style={s.homeShelfHeader}>
+          <Text
+            numberOfLines={1}
+            style={[
+              s.homeShelfTitle,
+              {
+                color: colors.foreground,
+                fontSize: type.section,
+                minWidth: 0,
+                flexShrink: 1,
+              },
+            ]}
+          >
+            {title}
           </Text>
-          <Feather
-            name="arrow-right"
-            size={eliteV3.icon.compact}
-            color={colors.primary}
-          />
-        </TvFocusPressable>
-      </View>
+          <TvFocusPressable
+            focusId={`home-shelf:${title}:more`}
+            onFocus={onContentFocus}
+            onPress={onSeeAll}
+            style={[
+              s.homeSeeAllButton,
+              !Platform.isTV && { minHeight: eliteV3.target.mobile },
+            ]}
+          >
+            <Text style={[s.homeSeeAllText, { color: colors.primary }]}>
+              {seeAll}
+            </Text>
+            <Feather
+              name="arrow-right"
+              size={eliteV3.icon.compact}
+              color={colors.primary}
+            />
+          </TvFocusPressable>
+        </View>
+      ) : null}
       {items.length ? (
         <FlatList
           ref={listRef}
@@ -1081,6 +1423,7 @@ function HomeShelf({
               onLongPress={Platform.isTV ? item.onRemove : undefined}
               onFocus={() => {
                 onContentFocus?.();
+                onItemFocus?.(item);
                 listRef.current?.scrollToIndex({
                   index: itemIndex,
                   animated: true,
@@ -1095,6 +1438,7 @@ function HomeShelf({
                   width: cardWidth,
                 },
               ]}
+              selected={item.id === selectedId}
             >
               <View
                 style={[
@@ -1237,6 +1581,99 @@ const s = StyleSheet.create({
     paddingBottom: eliteV3.space.xl,
     gap: eliteV3.space.xxs,
   },
+  homeTvEpgPanel: {
+    minHeight: 68,
+    paddingHorizontal: eliteV3.space.md,
+    paddingVertical: eliteV3.space.xs,
+    borderRadius: eliteV3.radius.panel,
+    borderWidth: 1,
+    borderColor: eliteV3.color.border,
+    backgroundColor: eliteV3.color.panel,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: eliteV3.space.md,
+  },
+  homeTvEpgHeading: {
+    width: "27%",
+    minWidth: 120,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: eliteV3.space.xs,
+  },
+  homeTvEpgChannel: {
+    flex: 1,
+    color: eliteV3.color.text,
+    fontFamily: eliteV3.typography.strong,
+    fontSize: eliteV3.typography.tv.body,
+  },
+  homeTvEpgCategory: {
+    color: eliteV3.color.muted,
+    fontFamily: eliteV3.typography.family,
+    fontSize: eliteV3.typography.tv.meta,
+  },
+  homeTvEpgPrograms: { flex: 1, minWidth: 0, gap: 2 },
+  homeTvEpgProgram: {
+    color: eliteV3.color.text,
+    fontFamily: eliteV3.typography.strong,
+    fontSize: eliteV3.typography.tv.body,
+  },
+  homeTvEpgTime: {
+    color: eliteV3.color.muted,
+    fontFamily: eliteV3.typography.family,
+    fontSize: eliteV3.typography.tv.meta,
+  },
+  homeTvEpgNext: {
+    color: eliteV3.color.muted,
+    fontFamily: eliteV3.typography.family,
+    fontSize: eliteV3.typography.tv.meta,
+  },
+  homeTvEpgProgressTrack: {
+    position: "absolute",
+    left: eliteV3.space.md,
+    right: eliteV3.space.md,
+    bottom: 3,
+    height: 2,
+    overflow: "hidden",
+    backgroundColor: eliteV3.color.raised,
+  },
+  homeTvEpgProgressFill: {
+    height: "100%",
+    backgroundColor: eliteV3.color.primary,
+  },
+  homeTvTabs: {
+    minHeight: eliteV3.target.tv,
+    flexDirection: "row",
+    alignItems: "stretch",
+    gap: eliteV3.space.xs,
+    marginTop: eliteV3.space.xs,
+  },
+  homeTvTab: {
+    minWidth: eliteV3.target.tv,
+    minHeight: eliteV3.target.tv,
+    paddingHorizontal: eliteV3.space.md,
+    borderRadius: eliteV3.radius.control,
+    borderWidth: eliteV3.focus.width,
+    borderColor: "transparent",
+    backgroundColor: eliteV3.color.panel,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: eliteV3.space.xs,
+  },
+  homeTvTabActive: {
+    backgroundColor: eliteV3.color.selected,
+    borderBottomColor: eliteV3.color.primary,
+  },
+  homeTvTabLabel: {
+    color: eliteV3.color.muted,
+    fontFamily: eliteV3.typography.family,
+    fontSize: eliteV3.typography.tv.meta,
+  },
+  homeTvTabLabelActive: {
+    color: eliteV3.color.text,
+    fontFamily: eliteV3.typography.strong,
+  },
+  homeTvActiveShelf: { marginTop: 0 },
   homeCompactStats: {
     flexDirection: "row",
     gap: 10,

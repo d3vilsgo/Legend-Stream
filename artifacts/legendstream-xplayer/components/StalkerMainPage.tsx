@@ -256,7 +256,7 @@ export default function StalkerMainPage() {
     setView("player");
   };
 
-  const openLive = (channel: Channel) => {
+  const openLive = (channel: Channel, returnTo: StalkerContentView = "live") => {
     const traceId = beginStalkerPlaybackTrace();
     traceStalker("STALKER_LIVE_TAP", { traceId, providerShortId: shortSafeId(provider.id), channelId: channel.id, sourceKind: classifyPlaybackSource(channel.streamUrl) });
     if (!channel.streamUrl) {
@@ -268,7 +268,7 @@ export default function StalkerMainPage() {
       subtitle: channel.category,
       url: channel.streamUrl,
       kind: "live",
-      returnTo: "live",
+      returnTo,
       liveIdentity: { providerId: channel.providerId, channelId: channel.id },
     });
     void recordWatched(channel.id);
@@ -322,7 +322,7 @@ export default function StalkerMainPage() {
     });
   };
 
-  const openProgress = async (item: MediaProgress) => {
+  const openProgress = async (item: MediaProgress, returnTo: StalkerContentView = "history") => {
     beginStalkerPlaybackTrace();
     historyPlaybackAbortRef.current?.abort();
     const sequence = ++historyPlaybackSequenceRef.current;
@@ -348,7 +348,7 @@ export default function StalkerMainPage() {
           subtitle: intent.subtitle,
           url: intent.url,
           kind: intent.kind,
-          returnTo: "history",
+          returnTo,
           seriesIdentity: intent.identity,
           progressRef: item.playbackRef,
         });
@@ -379,7 +379,7 @@ export default function StalkerMainPage() {
           subtitle: item.subtitle,
           url,
           kind: "movie",
-          returnTo: "history",
+          returnTo,
           vodIdentity: { providerId: provider.id, itemId: item.playbackRef.itemId },
           progressRef: item.playbackRef,
         });
@@ -396,7 +396,7 @@ export default function StalkerMainPage() {
       subtitle: item.subtitle,
       url: item.source,
       kind: item.kind,
-      returnTo: "history",
+      returnTo,
     });
   };
 
@@ -566,6 +566,8 @@ export default function StalkerMainPage() {
               seriesCategories={0}
               catalogLoading={liveCatalog.syncing && !liveCatalog.countKnown}
               channels={liveCatalog.channels}
+              epgByChannel={epgByChannel}
+              epgLoading={isEpgLoading}
               history={history}
               movies={homeSummary.movies}
               seriesItems={homeSummary.series}
@@ -573,13 +575,13 @@ export default function StalkerMainPage() {
               newMovies={[]}
               newSeries={[]}
               onNavigate={navigate}
-              onOpenLive={openLive}
+              onOpenLive={channel => openLive(channel, "home")}
               onOpenMovie={item => homeMovieInfo.select(String(item.stream_id))}
               onOpenSeries={item => {
                 if(!homeSummary.series.some(row=>String(row.series_id)===String(item.series_id)))return;
                 setHomeSeriesInfo({providerId:provider.id,request:++homeSeriesSequence.current,item:{id:String(item.series_id),title:item.name,posterUrl:item.cover,description:item.plot,genre:item.genre}});
               }}
-              onOpenMedia={openProgress}
+              onOpenMedia={item => openProgress(item, "home")}
               onRemoveLive={(id) => void removeWatched(id)}
             />
           ) : null}

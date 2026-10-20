@@ -83,6 +83,7 @@ const mocks = {
   "@/context/MediaLibraryContext":
     "export const useMediaLibrary=()=>({entries:globalThis.__u42.entries||[],loaded:true,removeProgress(){}});",
   "@/context/I18nContext": 'export const useI18n=()=>({language:"tr",t:k=>k});',
+  "@/context/PlayerContext": `export const selectProgramsAt=(programs,now=Date.now())=>{const rows=[...(programs||[])].sort((a,b)=>a.start-b.start);const i=rows.findIndex(p=>p.start<=now&&now<p.end);return i>=0?{now:rows[i],next:rows[i+1]}:{next:rows.find(p=>p.start>now)}};`,
   "@/hooks/useColors":
     'export const useColors=()=>({primary:"#67e8d1",foreground:"white",mutedForeground:"#999",border:"#333",card:"#222",muted:"#888"});',
   "@/components/tvPreview/TVPreviewFocus":
@@ -175,6 +176,7 @@ try {
     [1920, 1080],
   ];
   const props = {
+    tvFirstHome: false,
     provider: { id: "p1", name: "Provider", type: "xtream" },
     tvViewportHeight: 420,
     live: 2,
@@ -597,6 +599,296 @@ try {
         });
       v3Passed++;
     }
+  delete host.entries;
+  // TV-first production shell: provider channels, real EPG and one active shelf.
+  host.reset();
+  Object.assign(host, { width: 1280, height: 720, isTV: true, preview: false });
+  const now = Date.now();
+  const tvChannels = [
+    {
+      id: "live-1",
+      providerId: "p1",
+      name: "Provider One",
+      category: "News",
+      streamUrl: "xtream://one",
+    },
+    {
+      id: "live-2",
+      providerId: "p1",
+      name: "Provider Two",
+      category: "Sports",
+      streamUrl: "xtream://two",
+    },
+  ];
+  const program = {
+    id: "epg-now",
+    channelId: "live-1",
+    title: "Actual Current Program",
+    start: now - 5 * 60_000,
+    end: now + 10 * 60_000,
+  };
+  const nextProgram = {
+    id: "epg-next",
+    channelId: "live-1",
+    title: "Actual Next Program",
+    start: program.end,
+    end: program.end + 30 * 60_000,
+  };
+  const resumedMedia = {
+    id: "progress-1",
+    title: "Film 7",
+    subtitle: "Sürdür",
+    position: 120,
+    duration: 600,
+    source: { providerId: "p1", itemId: "7" },
+  };
+  host.entries = [resumedMedia];
+  const liveOpened = [];
+  const mediaOpened = [];
+  const movieInfoOpened = [];
+  const seriesOpened = [];
+  const tvProps = {
+    ...props,
+    tvFirstHome: true,
+    provider: { ...props.provider, id: "p1" },
+    tvViewportHeight: 540,
+    live: 2,
+    catalogLoading: false,
+    channels: tvChannels,
+    epgByChannel: new Map([["live-1", [program, nextProgram]]]),
+    epgLoading: false,
+    movies: [{ ...props.movies[0], name: "TV Movie", stream_id: 7 }],
+    seriesItems: [
+      { series_id: 8, name: "TV Series", cover: "", genre: "Drama" },
+    ],
+    onOpenLive: (channel) => liveOpened.push(channel.id),
+    onOpenMedia: (item) => mediaOpened.push(item.id),
+    onOpenMovie: (item) => movieInfoOpened.push(item.stream_id),
+    onOpenSeries: (item) => seriesOpened.push(item.series_id),
+  };
+  const tvRender = (nextProps = tvProps) => {
+    const tree = host.render(HomeDiscovery, nextProps);
+    const shellNode = unique(
+      tree,
+      (node) =>
+        typeof node.tag === "function" && node.tag.name === "HomeTvFirstShell",
+    );
+    return {
+      tree,
+      shellNode,
+      shell: renderChild(shellNode.tag, shellNode.props),
+    };
+  };
+  let tvTree = tvRender();
+  assert.equal(tvTree.shellNode.props.activeTab, "live");
+  assert.equal(tvTree.shellNode.props.selectedChannelId, "live-1");
+  unique(
+    tvTree.shell,
+    (node) => node.props?.focusId === "home-tv-tab:live",
+  ).props.onFocus();
+  tvTree = tvRender();
+  assert.equal(
+    unique(tvTree.shell, (node) => node.tag === HomeHeroCarousel).props
+      .collapsed,
+    true,
+  );
+  const epgPanel = unique(
+    tvTree.shell,
+    (node) => node.props?.testID === "home-tv-epg-panel",
+  );
+  assert.match(JSON.stringify(epgPanel), /Provider One/);
+  assert.match(JSON.stringify(epgPanel), /Actual Current Program/);
+  assert.match(JSON.stringify(epgPanel), /Actual Next Program/);
+  assert.equal(
+    find(
+      tvTree.shell,
+      (node) => node.props?.testID === "home-tv-epg-progress-fill",
+    ).length,
+    1,
+  );
+  const liveShelfNode = unique(
+    tvTree.shell,
+    (node) => typeof node.tag === "function" && node.tag.name === "HomeShelf",
+  );
+  assert.equal(liveShelfNode.props.title, "Canlı Kanallar");
+  assert.deepEqual(
+    liveShelfNode.props.items.map((item) => item.id),
+    ["live-live-1", "live-live-2"],
+  );
+  assert.equal(liveShelfNode.props.selectedId, "live-live-1");
+  const liveShelfTree = renderChild(liveShelfNode.tag, liveShelfNode.props);
+  const liveList = unique(liveShelfTree, (node) => node.tag === "FlatList");
+  const scrolls = [];
+  liveList.props.ref.current = {
+    scrollToIndex: (request) => scrolls.push(request),
+  };
+  const secondChannelCard = liveList.props.renderItem({
+    item: liveList.props.data[1],
+    index: 1,
+  });
+  const secondChannelTree = renderChild(
+    secondChannelCard.tag,
+    secondChannelCard.props,
+  );
+  const secondChannelButton = unique(
+    secondChannelTree,
+    (node) => node.tag === "TVPreviewPressable",
+  );
+  secondChannelButton.props.onFocus();
+  assert.deepEqual(
+    liveOpened,
+    [],
+    "focus only previews a channel; it never starts playback",
+  );
+  assert.equal(scrolls[0].index, 1);
+  tvTree = tvRender();
+  assert.equal(tvTree.shellNode.props.selectedChannelId, "live-2");
+  assert.equal(
+    find(tvTree.shell, (node) => node.props?.testID === "home-tv-epg-panel")
+      .length,
+    1,
+  );
+  secondChannelButton.props.onPress();
+  assert.deepEqual(
+    liveOpened,
+    ["live-2"],
+    "OK opens the focused provider channel through its callback",
+  );
+
+  const continueTab = unique(
+    tvTree.shell,
+    (node) => node.props?.focusId === "home-tv-tab:continue",
+  );
+  continueTab.props.onPress();
+  tvTree = tvRender();
+  const continueShelf = unique(
+    tvTree.shell,
+    (node) => typeof node.tag === "function" && node.tag.name === "HomeShelf",
+  );
+  assert.equal(continueShelf.props.title, "İzlemeye Devam Et");
+  assert.equal(continueShelf.props.items[0].id, resumedMedia.id);
+  const continueTree = renderChild(continueShelf.tag, continueShelf.props);
+  const continueList = unique(continueTree, (node) => node.tag === "FlatList");
+  const continueCard = continueList.props.renderItem({
+    item: continueList.props.data[0],
+    index: 0,
+  });
+  renderChild(continueCard.tag, continueCard.props);
+  unique(
+    renderChild(continueCard.tag, continueCard.props),
+    (node) => node.tag === "TVPreviewPressable",
+  ).props.onPress();
+  assert.deepEqual(mediaOpened, [resumedMedia.id]);
+
+  const discoverTab = unique(
+    tvTree.shell,
+    (node) => node.props?.focusId === "home-tv-tab:discover",
+  );
+  discoverTab.props.onPress();
+  tvTree = tvRender();
+  const discoverShelf = unique(
+    tvTree.shell,
+    (node) => typeof node.tag === "function" && node.tag.name === "HomeShelf",
+  );
+  assert.equal(discoverShelf.props.title, "Öne Çıkanlar");
+  assert.deepEqual(
+    discoverShelf.props.items.map((item) => item.id),
+    ["movie-7", "series-8"],
+  );
+  const discoverTree = renderChild(discoverShelf.tag, discoverShelf.props);
+  const discoverList = unique(discoverTree, (node) => node.tag === "FlatList");
+  const recommendation = discoverList.props.renderItem({
+    item: discoverList.props.data[0],
+    index: 0,
+  });
+  unique(
+    renderChild(recommendation.tag, recommendation.props),
+    (node) => node.tag === "TVPreviewPressable",
+  ).props.onPress();
+  assert.deepEqual(movieInfoOpened, [7]);
+  const seriesRecommendation = discoverList.props.renderItem({
+    item: discoverList.props.data[1],
+    index: 1,
+  });
+  unique(
+    renderChild(seriesRecommendation.tag, seriesRecommendation.props),
+    (node) => node.tag === "TVPreviewPressable",
+  ).props.onPress();
+  assert.deepEqual(seriesOpened, [8]);
+
+  const emptyTv = tvRender({
+    ...tvProps,
+    channels: [],
+    epgByChannel: new Map(),
+    movies: [],
+    seriesItems: [],
+    live: 0,
+    vod: 0,
+    series: 0,
+  });
+  assert.equal(
+    find(emptyTv.shell, (node) => node.props?.testID === "home-tv-epg-panel")
+      .length,
+    0,
+  );
+  const emptyShelf = unique(
+    emptyTv.shell,
+    (node) => typeof node.tag === "function" && node.tag.name === "HomeShelf",
+  );
+  assert.equal(emptyShelf.props.loading, false);
+  assert.equal(emptyShelf.props.items.length, 0);
+
+  const nextProviderChannels = [
+    {
+      ...tvChannels[0],
+      id: "live-next-provider",
+      providerId: "p2",
+      name: "Provider Two Live",
+      streamUrl: "xtream://p2",
+    },
+  ];
+  tvRender({
+    ...tvProps,
+    provider: { ...tvProps.provider, id: "p2" },
+    channels: nextProviderChannels,
+    epgByChannel: new Map(),
+  });
+  const providerRefresh = tvRender({
+    ...tvProps,
+    provider: { ...tvProps.provider, id: "p2" },
+    channels: nextProviderChannels,
+    epgByChannel: new Map(),
+  });
+  assert.equal(providerRefresh.shellNode.props.activeTab, "live");
+  assert.equal(
+    providerRefresh.shellNode.props.selectedChannelId,
+    "live-next-provider",
+  );
+
+  host.reset();
+  Object.assign(host, { width: 873, height: 393, isTV: false, preview: true });
+  const previewHome = tvRender(tvProps);
+  assert.equal(previewHome.shellNode.props.activeTab, "live");
+  unique(
+    previewHome.shell,
+    (node) => node.props?.focusId === "home-tv-tab:live",
+  ).props.onFocus();
+  const previewRerender = tvRender(tvProps);
+  assert.equal(
+    unique(previewRerender.shell, (node) => node.tag === HomeHeroCarousel).props
+      .collapsed,
+    false,
+  );
+  assert.equal(
+    unique(
+      previewRerender.shell,
+      (node) => node.props?.focusId === "home-tv-tab:continue",
+    ).props.accessibilityState.selected,
+    false,
+  );
+  console.log(
+    "TV-first production Home acceptance: PASS (provider scope, tabs, selection/focus separation, real EPG/progress, direct channel/media/movie/series actions, empty state, TV Preview)",
+  );
   delete host.entries;
   console.log(
     "Elite V3 production Home measurements: " + JSON.stringify(measurements),

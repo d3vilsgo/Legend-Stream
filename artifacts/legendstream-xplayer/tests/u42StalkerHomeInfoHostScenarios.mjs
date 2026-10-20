@@ -361,7 +361,15 @@ try {
   await test("all Home movie entries use one handler and preserve origin-specific return", () => {
     assert.match(
       main,
-      /onOpenMovie=\{item => homeMovieInfo.select\(String\(item.stream_id\)\)\}/,
+      /onOpenMovie=\{\s*(?:\(\s*item\s*\)|item)\s*=>\s*homeMovieInfo.select\(String\(item.stream_id\)\)\s*\}/,
+    );
+    assert.match(
+      main,
+      /onOpenLive=\{\s*(?:\(\s*channel\s*\)|channel)\s*=> openLive\(channel, "home"\)\}/,
+    );
+    assert.match(
+      main,
+      /onOpenMedia=\{\s*(?:\(\s*item\s*\)|item)\s*=> openProgress\(item, "home"\)\}/,
     );
     assert.match(main, /onPlayable: movie => openMovie\(movie, "home"\)/);
     assert.match(main, /returnTo: StalkerContentView = "movies"/);
