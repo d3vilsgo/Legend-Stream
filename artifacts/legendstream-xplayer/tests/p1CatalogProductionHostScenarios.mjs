@@ -243,6 +243,7 @@ try {
               "@/lib/design/layoutMetrics",
               "@/lib/design/screenProfiles",
               "@/lib/design/tokens",
+              "@/lib/design/eliteV3Tokens",
             ]);
             if (!actual.has(args.path))
               return { path: args.path, external: true };
