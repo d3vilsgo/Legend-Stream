@@ -1,18 +1,31 @@
 import { responsiveHomeHeroLayout } from "@/lib/homeHeroLayout";
 import { useUiPresentation } from "@/context/UiPresentationContext";
 import { nativeTvHomeLayout } from "@/lib/design/nativeTvHomeLayout";
-import { eliteV3 } from "@/lib/design/eliteV3Tokens";
+import { eliteV3, eliteV3Mode } from "@/lib/design/eliteV3Tokens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { FlatList, Image, Platform, Pressable, StyleSheet, Text, View, useWindowDimensions } from "react-native";
-import type { ImageStyle, LayoutChangeEvent, StyleProp, ViewStyle } from "react-native";
+import {
+  FlatList,
+  Image,
+  Platform,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from "react-native";
+import type {
+  ImageStyle,
+  LayoutChangeEvent,
+  StyleProp,
+  ViewStyle,
+} from "react-native";
 import type { ProviderConfig } from "@/context/PlayerContext";
 import type { MediaProgress } from "@/context/MediaLibraryContext";
 import { useMediaLibrary } from "@/context/MediaLibraryContext";
 import { useI18n } from "@/context/I18nContext";
-import { useColors } from "@/hooks/useColors";
 import { normalizeImageUrl } from "@/lib/imageUrl";
 import { visibleProgressRatio } from "@/lib/historyPresentation";
 import { TVPreviewPressable } from "@/components/tvPreview/TVPreviewFocus";
@@ -20,7 +33,18 @@ import type { Channel } from "@/lib/iptv";
 import type { XtreamSeriesItem, XtreamVodItem } from "@/lib/xtreamCatalog";
 import { markStartupEvent } from "@/lib/performanceDiagnostics";
 
-export type HomeContentView = "home" | "live" | "movies" | "series" | "history" | "downloads" | "settings";
+// Home uses the shared V3 palette; provider data and Focus ownership stay unchanged.
+const homeColors = {
+  primary: eliteV3.color.primary,
+  foreground: eliteV3.color.text,
+  mutedForeground: eliteV3.color.muted,
+  border: eliteV3.color.border,
+  card: eliteV3.color.panel,
+  muted: eliteV3.color.raised,
+};
+
+export type HomeContentView =
+  "home" | "live" | "movies" | "series" | "history" | "downloads" | "settings";
 
 type HomeHeroEntry = {
   id: string;
@@ -94,62 +118,74 @@ export function HomeDiscovery({
   onOpenMedia: (item: MediaProgress) => void;
   onRemoveLive: (id: string) => void;
 }) {
-  const colors = useColors();
-  const { width: homeWidth, height: homeHeight } = useWindowDimensions();
+  const colors = homeColors;
   const { tvPreview } = useUiPresentation();
-  const shelvesFirst = Platform.isTV || tvPreview || homeWidth > homeHeight;
   const { t, language } = useI18n();
-  const { entries, loaded: mediaLibraryLoaded, removeProgress } = useMediaLibrary();
-  const copy = language === "tr"
-    ? {
-        continue: "İzlemeye Devam Et",
-        recent: "Son İzlenen Kanallar",
-        seeAll: "Hepsini Gör",
-        discover: "Keşfetmek için dokunun",
-        featured: "Öne çıkan içerikler",
-        newMovies: "Yeni Filmler",
-        newSeries: "Yeni Diziler",
-        newChannels: "Yeni Kanallar",
-        noLive: "Canlı yayın bulunamadı",
-        noMovies: "Film bulunamadı",
-        noSeries: "Dizi bulunamadı",
-      }
-    : {
-        continue: "Continue Watching",
-        recent: "Recently Watched Channels",
-        seeAll: "See All",
-        discover: "Tap to discover",
-        featured: "Featured picks",
-        newMovies: "New Movies",
-        newSeries: "New Series",
-        newChannels: "New Channels",
-        noLive: "No live channels found",
-        noMovies: "No movies found",
-        noSeries: "No series found",
-      };
+  const {
+    entries,
+    loaded: mediaLibraryLoaded,
+    removeProgress,
+  } = useMediaLibrary();
+  const copy =
+    language === "tr"
+      ? {
+          continue: "İzlemeye Devam Et",
+          recent: "Son İzlenen Kanallar",
+          seeAll: "Hepsini Gör",
+          discover: "Keşfetmek için dokunun",
+          featured: "Öne çıkan içerikler",
+          newMovies: "Yeni Filmler",
+          newSeries: "Yeni Diziler",
+          newChannels: "Yeni Kanallar",
+          noLive: "Canlı yayın bulunamadı",
+          noMovies: "Film bulunamadı",
+          noSeries: "Dizi bulunamadı",
+        }
+      : {
+          continue: "Continue Watching",
+          recent: "Recently Watched Channels",
+          seeAll: "See All",
+          discover: "Tap to discover",
+          featured: "Featured picks",
+          newMovies: "New Movies",
+          newSeries: "New Series",
+          newChannels: "New Channels",
+          noLive: "No live channels found",
+          noMovies: "No movies found",
+          noSeries: "No series found",
+        };
 
   const homeMovies = useMemo(() => movies.slice(0, 48), [movies]);
   const homeSeries = useMemo(() => seriesItems.slice(0, 48), [seriesItems]);
   const homeChannels = useMemo(() => channels.slice(0, 48), [channels]);
 
   const recentChannels = useMemo(
-    () => history
-      .map((id) => channels.find((channel) => channel.id === id))
-      .filter((item): item is Channel => Boolean(item))
-      .slice(0, 14),
+    () =>
+      history
+        .map((id) => channels.find((channel) => channel.id === id))
+        .filter((item): item is Channel => Boolean(item))
+        .slice(0, 14),
     [channels, history],
   );
   const continueEntries = useMemo(
-    () => entries
-      .filter((item) => item.position > 0 && (item.duration <= 0 || item.position < Math.max(0, item.duration - 30)))
-      .slice(0, 14),
+    () =>
+      entries
+        .filter(
+          (item) =>
+            item.position > 0 &&
+            (item.duration <= 0 ||
+              item.position < Math.max(0, item.duration - 30)),
+        )
+        .slice(0, 14),
     [entries],
   );
 
   const artworkForProgress = (entry: MediaProgress) => {
     const title = entry.title.trim().toLocaleLowerCase("tr");
     const subtitle = entry.subtitle?.trim().toLocaleLowerCase("tr");
-    const movie = homeMovies.find((item) => item.name.trim().toLocaleLowerCase("tr") === title);
+    const movie = homeMovies.find(
+      (item) => item.name.trim().toLocaleLowerCase("tr") === title,
+    );
     if (movie?.stream_icon) return movie.stream_icon;
     const show = homeSeries.find((item) => {
       const name = item.name.trim().toLocaleLowerCase("tr");
@@ -165,7 +201,10 @@ export function HomeDiscovery({
       movieRows.push({
         id: `movie-${item.stream_id}`,
         title: item.name,
-        subtitle: [item.genre, item.releaseDate || item.release_date].filter(Boolean).join(" · ") || t("movies"),
+        subtitle:
+          [item.genre, item.releaseDate || item.release_date]
+            .filter(Boolean)
+            .join(" · ") || t("movies"),
         description: item.plot,
         image: image ?? "",
         movie: item,
@@ -197,7 +236,8 @@ export function HomeDiscovery({
       subtitle: item.subtitle,
       image: artworkForProgress(item),
       progress: progress ?? undefined,
-      progressLabel: progress !== null ? `${Math.round(progress * 100)}%` : undefined,
+      progressLabel:
+        progress !== null ? `${Math.round(progress * 100)}%` : undefined,
       onPress: () => onOpenMedia(item),
       onRemove: () => void removeProgress(item.source),
     };
@@ -252,9 +292,11 @@ export function HomeDiscovery({
     image: channel.logoUrl,
     onPress: () => onOpenLive(channel),
   }));
-  const effectiveLoading = !homeMovies.length && !homeSeries.length && !homeChannels.length && (
-    catalogLoading || live === null || vod === null || series === null
-  );
+  const effectiveLoading =
+    !homeMovies.length &&
+    !homeSeries.length &&
+    !homeChannels.length &&
+    (catalogLoading || live === null || vod === null || series === null);
   useEffect(() => {
     if (!effectiveLoading) markStartupEvent("HOME_FIRST_USABLE_RENDER");
   }, [effectiveLoading]);
@@ -262,47 +304,171 @@ export function HomeDiscovery({
   // Only content focus changes this state; StageRail focus is not a Hero event.
   const [heroInShelves, setHeroInShelves] = useState(false);
   // A new provider must not inherit the previous provider's shelf Focus context.
-  useEffect(() => { setHeroInShelves(false); }, [provider.id]);
-  const foldHero = () => { if (Platform.isTV) setHeroInShelves(true); };
-  const expandHero = () => { if (Platform.isTV) setHeroInShelves(false); };
+  useEffect(() => {
+    setHeroInShelves(false);
+  }, [provider.id]);
+  const foldHero = () => {
+    if (Platform.isTV) setHeroInShelves(true);
+  };
+  const expandHero = () => {
+    if (Platform.isTV) setHeroInShelves(false);
+  };
 
   const sectionCards = (
     <View style={s.homeCompactStats}>
-      <HomeCountCard onContentFocus={foldHero} focusId="home:live" icon="radio" label={t("liveTv")} value={liveValue} accent={colors.primary} preferredFocus={false} onPress={() => onNavigate("live")} />
-      <HomeCountCard onContentFocus={foldHero} focusId="home:movies" icon="film" label={t("movies")} value={movieValue} accent="#49B9FF" onPress={() => onNavigate("movies")} />
-      <HomeCountCard onContentFocus={foldHero} focusId="home:series" icon="tv" label={t("series")} value={seriesValue} accent="#8C8CFF" onPress={() => onNavigate("series")} />
+      <HomeCountCard
+        onContentFocus={foldHero}
+        focusId="home:live"
+        icon="radio"
+        label={t("liveTv")}
+        value={liveValue}
+        accent={colors.primary}
+        preferredFocus={false}
+        onPress={() => onNavigate("live")}
+      />
+      <HomeCountCard
+        onContentFocus={foldHero}
+        focusId="home:movies"
+        icon="film"
+        label={t("movies")}
+        value={movieValue}
+        accent={eliteV3.color.primary}
+        onPress={() => onNavigate("movies")}
+      />
+      <HomeCountCard
+        onContentFocus={foldHero}
+        focusId="home:series"
+        icon="tv"
+        label={t("series")}
+        value={seriesValue}
+        accent={eliteV3.color.primary}
+        onPress={() => onNavigate("series")}
+      />
     </View>
   );
 
-  return <View style={s.homeDiscoveryShell}>
-    <HomeHeroCarousel
-      items={heroItems}
-      collapsed={Platform.isTV && heroInShelves}
-      onHeroFocus={expandHero}
-      tvViewportHeight={tvViewportHeight}
-      eyebrow={copy.featured}
-      providerName={provider.name}
-      paused={interactionBlocked}
-      onOpen={(item) => item.movie ? onOpenMovie(item.movie) : item.series ? onOpenSeries(item.series) : undefined}
-      onWatch={onWatchMovie ? item => { if (item.movie) onWatchMovie(item.movie); } : undefined}
-      onDiscover={() => onNavigate("movies")}
-      discoverLabel={copy.discover}
-      loading={effectiveLoading}
-    />
+  return (
+    <View style={s.homeDiscoveryShell}>
+      <HomeHeroCarousel
+        items={heroItems}
+        collapsed={Platform.isTV && heroInShelves}
+        onHeroFocus={expandHero}
+        tvViewportHeight={tvViewportHeight}
+        eyebrow={copy.featured}
+        providerName={provider.name}
+        paused={interactionBlocked}
+        onOpen={(item) =>
+          item.movie
+            ? onOpenMovie(item.movie)
+            : item.series
+              ? onOpenSeries(item.series)
+              : undefined
+        }
+        onWatch={
+          onWatchMovie
+            ? (item) => {
+                if (item.movie) onWatchMovie(item.movie);
+              }
+            : undefined
+        }
+        onDiscover={() => onNavigate("movies")}
+        discoverLabel={copy.discover}
+        loading={effectiveLoading}
+      />
 
-    {continueShelf.length || !mediaLibraryLoaded ? <HomeShelf onContentFocus={foldHero} title={copy.continue} seeAll={copy.seeAll} items={continueShelf} onSeeAll={() => onNavigate("history")} loading={!mediaLibraryLoaded} /> : null}
-    {recentShelf.length ? <HomeShelf onContentFocus={foldHero} title={copy.recent} seeAll={copy.seeAll} items={recentShelf} onSeeAll={() => onNavigate("history")} compact /> : null}
-    <HomeShelf onContentFocus={foldHero} title={t("liveTv")} seeAll={copy.seeAll} items={liveShelf} onSeeAll={() => onNavigate("live")} compact emptyLabel={live === 0 ? copy.noLive : copy.discover} loading={live === null} />
-    <HomeShelf onContentFocus={foldHero} title={t("movies")} seeAll={copy.seeAll} items={movieShelf} onSeeAll={() => onNavigate("movies")} emptyLabel={vod === 0 ? copy.noMovies : copy.discover} loading={vod === null} />
-    <HomeShelf onContentFocus={foldHero} title={t("series")} seeAll={copy.seeAll} items={seriesShelf} onSeeAll={() => onNavigate("series")} emptyLabel={series === 0 ? copy.noSeries : copy.discover} loading={series === null} />
-    {newMovieShelf.length ? <HomeShelf onContentFocus={foldHero} title={copy.newMovies} seeAll={copy.seeAll} items={newMovieShelf} onSeeAll={() => onNavigate("movies")} /> : null}
-    {newSeriesShelf.length ? <HomeShelf onContentFocus={foldHero} title={copy.newSeries} seeAll={copy.seeAll} items={newSeriesShelf} onSeeAll={() => onNavigate("series")} /> : null}
-    {newChannelShelf.length ? <HomeShelf onContentFocus={foldHero} title={copy.newChannels} seeAll={copy.seeAll} items={newChannelShelf} onSeeAll={() => onNavigate("live")} compact /> : null}
-    {sectionCards}
-  </View>;
+      {continueShelf.length || !mediaLibraryLoaded ? (
+        <HomeShelf
+          onContentFocus={foldHero}
+          title={copy.continue}
+          compact
+          seeAll={copy.seeAll}
+          items={continueShelf}
+          onSeeAll={() => onNavigate("history")}
+          loading={!mediaLibraryLoaded}
+        />
+      ) : null}
+      {recentShelf.length ? (
+        <HomeShelf
+          onContentFocus={foldHero}
+          title={copy.recent}
+          seeAll={copy.seeAll}
+          items={recentShelf}
+          onSeeAll={() => onNavigate("history")}
+          compact
+        />
+      ) : null}
+      <HomeShelf
+        onContentFocus={foldHero}
+        title={t("liveTv")}
+        seeAll={copy.seeAll}
+        items={liveShelf}
+        onSeeAll={() => onNavigate("live")}
+        compact
+        emptyLabel={live === 0 ? copy.noLive : copy.discover}
+        loading={live === null}
+      />
+      <HomeShelf
+        onContentFocus={foldHero}
+        title={t("movies")}
+        seeAll={copy.seeAll}
+        items={movieShelf}
+        onSeeAll={() => onNavigate("movies")}
+        emptyLabel={vod === 0 ? copy.noMovies : copy.discover}
+        loading={vod === null}
+      />
+      <HomeShelf
+        onContentFocus={foldHero}
+        title={t("series")}
+        seeAll={copy.seeAll}
+        items={seriesShelf}
+        onSeeAll={() => onNavigate("series")}
+        emptyLabel={series === 0 ? copy.noSeries : copy.discover}
+        loading={series === null}
+      />
+      {newMovieShelf.length ? (
+        <HomeShelf
+          onContentFocus={foldHero}
+          title={copy.newMovies}
+          seeAll={copy.seeAll}
+          items={newMovieShelf}
+          onSeeAll={() => onNavigate("movies")}
+        />
+      ) : null}
+      {newSeriesShelf.length ? (
+        <HomeShelf
+          onContentFocus={foldHero}
+          title={copy.newSeries}
+          seeAll={copy.seeAll}
+          items={newSeriesShelf}
+          onSeeAll={() => onNavigate("series")}
+        />
+      ) : null}
+      {newChannelShelf.length ? (
+        <HomeShelf
+          onContentFocus={foldHero}
+          title={copy.newChannels}
+          seeAll={copy.seeAll}
+          items={newChannelShelf}
+          onSeeAll={() => onNavigate("live")}
+          compact
+        />
+      ) : null}
+      {sectionCards}
+    </View>
+  );
 }
 
-function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = false, style, onFocus, onLayout, focusId, accessibilityLabel }: {
+function TvFocusPressable({
+  children,
+  onPress,
+  onLongPress,
+  preferredFocus = false,
+  style,
+  onFocus,
+  onLayout,
+  focusId,
+  accessibilityLabel,
+}: {
   children: React.ReactNode;
   onPress: () => void;
   onLongPress?: () => void;
@@ -313,47 +479,90 @@ function TvFocusPressable({ children, onPress, onLongPress, preferredFocus = fal
   focusId?: string;
   accessibilityLabel?: string;
 }) {
-  const colors = useColors();
   const [focused, setFocused] = useState(false);
-  return <TVPreviewPressable
-    eliteVisual
-    focusId={focusId}
-    accessibilityLabel={accessibilityLabel}
-    focusable
-    hasTVPreferredFocus={Platform.isTV && preferredFocus}
-    onFocus={() => {
-      if (Platform.isTV) setFocused(true);
-      onFocus?.();
-    }}
-    onBlur={() => Platform.isTV && setFocused(false)}
-    onLayout={onLayout}
-    onPress={onPress}
-    onLongPress={onLongPress}
-    style={[
-      style,
-      Platform.isTV ? s.homeTvFocusBase : null,
-      Platform.isTV && focused ? [s.homeTvFocusActive, { borderColor: "#fff", shadowOpacity: 0, shadowRadius: 0, elevation: 0 }] : null,
-    ]}
-  >{children}</TVPreviewPressable>;
+  return (
+    <TVPreviewPressable
+      eliteVisual
+      focusId={focusId}
+      accessibilityLabel={accessibilityLabel}
+      focusable
+      hasTVPreferredFocus={Platform.isTV && preferredFocus}
+      onFocus={() => {
+        if (Platform.isTV) setFocused(true);
+        onFocus?.();
+      }}
+      onBlur={() => Platform.isTV && setFocused(false)}
+      onLayout={onLayout}
+      onPress={onPress}
+      onLongPress={onLongPress}
+      style={[
+        style,
+        Platform.isTV ? s.homeTvFocusBase : null,
+        Platform.isTV && focused
+          ? [
+              s.homeTvFocusActive,
+              {
+                borderColor: eliteV3.color.focus,
+                shadowOpacity: 0,
+                shadowRadius: 0,
+                elevation: 0,
+              },
+            ]
+          : null,
+      ]}
+    >
+      {children}
+    </TVPreviewPressable>
+  );
 }
 
-function ResilientCatalogImage({ uri, style, resizeMode = "cover", fallbackIcon = "film", showFallbackIcon = true }: {
+function ResilientCatalogImage({
+  uri,
+  style,
+  resizeMode = "cover",
+  fallbackIcon = "film",
+  showFallbackIcon = true,
+}: {
   uri?: string;
   style: CatalogImageStyle;
   resizeMode?: "cover" | "contain" | "stretch" | "repeat" | "center";
   fallbackIcon?: keyof typeof Feather.glyphMap;
   showFallbackIcon?: boolean;
 }) {
-  const colors = useColors();
+  const colors = homeColors;
   const normalized = normalizeImageUrl(uri);
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [normalized]);
   if (!normalized || failed) {
-    return <View style={[style, { alignItems: "center", justifyContent: "center", backgroundColor: colors.muted }]}>
-      {showFallbackIcon ? <Feather name={fallbackIcon} size={30} color={colors.primary} /> : null}
-    </View>;
+    return (
+      <View
+        style={[
+          style,
+          {
+            alignItems: "center",
+            justifyContent: "center",
+            backgroundColor: colors.muted,
+          },
+        ]}
+      >
+        {showFallbackIcon ? (
+          <Feather
+            name={fallbackIcon}
+            size={eliteV3.icon.tv}
+            color={colors.primary}
+          />
+        ) : null}
+      </View>
+    );
   }
-  return <Image source={{ uri: normalized }} resizeMode={resizeMode} style={style} onError={() => setFailed(true)} />;
+  return (
+    <Image
+      source={{ uri: normalized }}
+      resizeMode={resizeMode}
+      style={style}
+      onError={() => setFailed(true)}
+    />
+  );
 }
 
 /** Production Home presentation: both actions preserve the selected provider object.
@@ -423,10 +632,15 @@ export function HomeHeroCarousel({
   const shelfReserve = Math.min(160, Math.max(76, availableHomeHeight * 0.24));
   // Preserve the existing Home action/readability contract in touch layouts.
   // Never trade away the portrait 310dp or compact 160dp minimum for shelf space.
-  const textAndActionFloor = compact ? 160 : Math.ceil(240 + 70 * Math.max(1, fontScale));
+  const textAndActionFloor = compact
+    ? 160
+    : Math.ceil(240 + 70 * Math.max(1, fontScale));
   const heroHeight = Platform.isTV
     ? collapsed
-      ? Math.max(96, Math.min(native.heroHeight, Math.round(native.availableHeight * 0.20)))
+      ? Math.max(
+          96,
+          Math.min(native.heroHeight, Math.round(native.availableHeight * 0.2)),
+        )
       : native.heroHeight
     : Math.max(
         textAndActionFloor,
@@ -435,26 +649,58 @@ export function HomeHeroCarousel({
           responsive.height,
         ),
       );
+  const mode = eliteV3Mode(width, height, Platform.isTV || tvPreview);
+  const type = eliteV3.typography[mode];
+  const actionHeight = Math.max(
+    eliteV3.target[mode],
+    type.body * fontScale + eliteV3.space.md,
+  );
+  // Put actions below a single-line caption only when the measured TV viewport
+  // can fit it. Large text and short windows keep the existing side-by-side mode.
+  const stackedCaptionHeight =
+    native.padding * 2 +
+    native.borderSpace +
+    native.titleLineHeight * fontScale +
+    (native.showMeta
+      ? native.metaLineHeight * fontScale + eliteV3.space.xxs
+      : 0) +
+    eliteV3.space.xs +
+    actionHeight;
+  const stacked =
+    Platform.isTV && !collapsed && heroHeight >= stackedCaptionHeight;
+  const sideBySide = compact && !stacked;
   const titleStyle = Platform.isTV
     ? { fontSize: native.titleFont, lineHeight: native.titleLineHeight }
-    : { fontSize: compact ? 24 : 34, lineHeight: compact ? 28 : 39 };
+    : { fontSize: type.title, lineHeight: type.title + eliteV3.space.xxs };
   const action = (label: string, id: string, primary = false) => (
     <TVPreviewPressable
       eliteVisual
       focusId={`home-hero:${item?.id ?? "empty"}:${id}`}
       accessibilityRole="button"
-      accessibilityLabel={collapsed && Platform.isTV ? "Öne çıkan içeriğe dön" : label}
+      accessibilityLabel={
+        collapsed && Platform.isTV ? "Öne çıkan içeriğe dön" : label
+      }
       hasTVPreferredFocus={id === "watch"}
       onFocus={onHeroFocus}
       disabled={paused || loading}
-      onPress={() => { if (collapsed && Platform.isTV) { onHeroFocus?.(); return; } item ? id === "watch" && item.movie && onWatch ? onWatch(item) : onOpen(item) : onDiscover(); }}
+      onPress={() => {
+        if (collapsed && Platform.isTV) {
+          onHeroFocus?.();
+          return;
+        }
+        item
+          ? id === "watch" && item.movie && onWatch
+            ? onWatch(item)
+            : onOpen(item)
+          : onDiscover();
+      }}
       style={{
         maxWidth: "100%",
         flexShrink: 1,
-        minHeight: Platform.isTV ? 56 : 48,
-        paddingHorizontal: 18,
-        paddingVertical: 10,
-        borderRadius: 12,
+        minHeight: actionHeight,
+        paddingHorizontal: eliteV3.space.md,
+        paddingVertical: eliteV3.space.xs,
+        borderRadius: eliteV3.radius.card,
         borderWidth: 2,
         borderColor: primary ? eliteV3.color.primary : eliteV3.color.border,
         backgroundColor: primary ? eliteV3.color.primary : eliteV3.color.panel,
@@ -463,9 +709,9 @@ export function HomeHeroCarousel({
     >
       <Text
         style={{
-          fontSize: Platform.isTV ? 18 : 15,
-          fontWeight: "800",
-          color: primary ? "#FFFFFF" : eliteV3.color.text,
+          fontSize: type.body,
+          fontFamily: eliteV3.typography.strong,
+          color: eliteV3.color.text,
         }}
       >
         {label}
@@ -476,11 +722,11 @@ export function HomeHeroCarousel({
     <View
       style={{
         minHeight: heroHeight,
-        borderRadius: 24,
+        borderRadius: eliteV3.radius.hero,
         overflow: "hidden",
-        backgroundColor: "#17252d",
+        backgroundColor: eliteV3.color.panel,
         borderWidth: 1,
-        borderColor: "#33454b",
+        borderColor: eliteV3.color.border,
       }}
       accessibilityLabel="Öne çıkan içerik"
     >
@@ -492,7 +738,7 @@ export function HomeHeroCarousel({
         />
       ) : null}
       <LinearGradient
-        colors={["#101b24ee", "#101b2488", "#101b24ee"]}
+        colors={eliteV3.home.gradient}
         start={{ x: 0, y: 0 }}
         end={{ x: 1, y: 1 }}
         style={StyleSheet.absoluteFill}
@@ -501,43 +747,83 @@ export function HomeHeroCarousel({
       <View
         style={{
           flex: 1,
-          padding: compact ? 16 : 24,
+          padding: Platform.isTV ? native.padding : eliteV3.space.md,
           justifyContent: "flex-end",
-          flexDirection: compact ? "row" : "column",
-          alignItems: compact ? "center" : "stretch",
-          gap: 16,
+          flexDirection: sideBySide ? "row" : "column",
+          alignItems: sideBySide ? "center" : "stretch",
+          gap: eliteV3.space.xs,
         }}
       >
         <View
-          style={{ flex: 1, minWidth: 0, justifyContent: "flex-end", gap: 6 }}
+          style={{
+            flex: 1,
+            minWidth: 0,
+            justifyContent: "flex-end",
+            gap: eliteV3.space.xxs,
+          }}
         >
-          {(!Platform.isTV || (!collapsed && heroHeight >= native.titleLineHeight * fontScale * native.titleLines + 60)) ? <Text
-            numberOfLines={1}
-            style={{
-              color: eliteV3.color.primary,
-              fontSize: 11,
-              fontWeight: "800",
-              letterSpacing: 2,
-            }}
-          >
-            LEGEND ELITE ·{" "}
-            {loading ? "YÜKLENİYOR" : eyebrow.toLocaleUpperCase("tr")}
-          </Text> : null}
+          {!compact && !collapsed ? (
+            <Text
+              numberOfLines={1}
+              style={{
+                color: eliteV3.color.primary,
+                fontSize: eliteV3.typography.mobile.meta,
+                fontFamily: eliteV3.typography.strong,
+                letterSpacing: 2,
+              }}
+            >
+              {loading ? "YÜKLENİYOR" : eyebrow.toLocaleUpperCase("tr")}
+            </Text>
+          ) : null}
           <Text
-            numberOfLines={Platform.isTV ? (collapsed ? 1 : native.titleLines) : compact ? 1 : 2}
-            style={[{ color: "white", fontWeight: "900" }, titleStyle]}
+            numberOfLines={
+              Platform.isTV
+                ? collapsed || stacked
+                  ? 1
+                  : native.titleLines
+                : compact
+                  ? 1
+                  : 2
+            }
+            style={[
+              {
+                color: eliteV3.color.text,
+                fontFamily: eliteV3.typography.strong,
+              },
+              titleStyle,
+            ]}
           >
             {loading
               ? "Kataloğunuz hazırlanıyor…"
               : (item?.title ?? "İzleyecek yeni bir şey keşfedin")}
           </Text>
           {!collapsed && !loading && (!Platform.isTV || native.showMeta) ? (
-            <Text numberOfLines={1} style={{ color: "#c4d0d5", fontSize: 14 }}>
+            <Text
+              numberOfLines={1}
+              style={{
+                color: eliteV3.color.muted,
+                fontFamily: eliteV3.typography.family,
+                fontSize: Platform.isTV ? native.metaFont : type.meta,
+                lineHeight: Platform.isTV
+                  ? native.metaLineHeight
+                  : type.meta + eliteV3.space.xxs,
+              }}
+            >
               {item?.subtitle ?? providerName}
             </Text>
           ) : null}
-          {!collapsed && item?.description && (!compact || (Platform.isTV && native.showMeta)) ? (
-            <Text numberOfLines={2} style={{ color: "#c4d0d5", fontSize: 14 }}>
+          {!collapsed && item?.description && !compact ? (
+            <Text
+              numberOfLines={2}
+              style={{
+                color: eliteV3.color.muted,
+                fontFamily: eliteV3.typography.family,
+                fontSize: Platform.isTV ? native.metaFont : type.meta,
+                lineHeight: Platform.isTV
+                  ? native.metaLineHeight
+                  : type.meta + eliteV3.space.xxs,
+              }}
+            >
               {item.description}
             </Text>
           ) : null}
@@ -547,23 +833,74 @@ export function HomeHeroCarousel({
             style={{
               flexDirection: compact && !Platform.isTV ? "column" : "row",
               flexWrap: "wrap",
-              maxWidth: compact ? "55%" : "100%",
-              gap: 8,
+              maxWidth: sideBySide ? "55%" : "100%",
+              gap: eliteV3.space.xs,
               flexShrink: 1,
             }}
           >
-            {collapsed && Platform.isTV ? action("↑", item ? "watch" : "discover", true) : item ? action(item.series ? "Bölümleri Gör" : onWatch ? "İzle" : "Film Bilgisi", "watch", true) : action(discoverLabel, "discover", true)}
-            {!collapsed && item?.movie && onWatch ? action("Detay / Bilgi", "info") : null}
-            {!collapsed && Platform.isTV && items.length > 1 ? <TVPreviewPressable eliteVisual focusId="home-hero:next" accessibilityLabel="Sonraki öne çıkan içerik" disabled={paused} onPress={()=>setIndex(current=>(current+1)%items.length)} style={{minWidth:56,minHeight:56,padding:12,borderRadius:12,backgroundColor:"#1c252d",justifyContent:"center",alignItems:"center"}}><Text style={{color:"white",fontSize:22}}>→</Text></TVPreviewPressable> : null}
+            {collapsed && Platform.isTV
+              ? action("↑", item ? "watch" : "discover", true)
+              : item
+                ? action(
+                    item.series
+                      ? "Bölümleri Gör"
+                      : onWatch
+                        ? "İzle"
+                        : "Film Bilgisi",
+                    "watch",
+                    true,
+                  )
+                : action(discoverLabel, "discover", true)}
+            {!collapsed && item?.movie && onWatch
+              ? action("Detay / Bilgi", "info")
+              : null}
+            {!collapsed && Platform.isTV && items.length > 1 ? (
+              <TVPreviewPressable
+                eliteVisual
+                focusId="home-hero:next"
+                accessibilityLabel="Sonraki öne çıkan içerik"
+                disabled={paused}
+                onPress={() =>
+                  setIndex((current) => (current + 1) % items.length)
+                }
+                style={{
+                  minWidth: eliteV3.target.tv,
+                  minHeight: eliteV3.target.tv,
+                  padding: eliteV3.space.sm,
+                  borderRadius: eliteV3.radius.card,
+                  backgroundColor: eliteV3.color.panel,
+                  justifyContent: "center",
+                  alignItems: "center",
+                }}
+              >
+                <Text
+                  style={{
+                    color: eliteV3.color.text,
+                    fontSize: eliteV3.typography.tv.section,
+                  }}
+                >
+                  →
+                </Text>
+              </TVPreviewPressable>
+            ) : null}
           </View>
         ) : (
-          <Text accessibilityRole="progressbar" style={{ color: "#c4d0d5" }}>
+          <Text
+            accessibilityRole="progressbar"
+            style={{ color: eliteV3.color.muted }}
+          >
             İçerikler yükleniyor
           </Text>
         )}
       </View>
       {!Platform.isTV && items.length > 1 && !loading ? (
-        <View style={{ position: "absolute", right: 12, top: 8 }}>
+        <View
+          style={{
+            position: "absolute",
+            right: eliteV3.space.sm,
+            top: eliteV3.space.xs,
+          }}
+        >
           <TVPreviewPressable
             eliteVisual
             focusId="home-hero:next"
@@ -571,12 +908,12 @@ export function HomeHeroCarousel({
             disabled={paused}
             onPress={() => setIndex((current) => (current + 1) % items.length)}
             style={{
-              padding: 8,
-              borderRadius: 10,
-              backgroundColor: "#101b24cc",
+              padding: eliteV3.space.xs,
+              borderRadius: eliteV3.radius.control,
+              backgroundColor: eliteV3.home.overlay,
             }}
           >
-            <Text style={{ color: "white" }}>
+            <Text style={{ color: eliteV3.color.text }}>
               {index + 1} / {items.length} →
             </Text>
           </TVPreviewPressable>
@@ -586,7 +923,16 @@ export function HomeHeroCarousel({
   );
 }
 
-function HomeCountCard({ focusId, icon, label, value, accent, onPress, onContentFocus, preferredFocus = false }: {
+function HomeCountCard({
+  focusId,
+  icon,
+  label,
+  value,
+  accent,
+  onPress,
+  onContentFocus,
+  preferredFocus = false,
+}: {
   focusId: string;
   onContentFocus?: () => void;
   icon: keyof typeof Feather.glyphMap;
@@ -596,20 +942,68 @@ function HomeCountCard({ focusId, icon, label, value, accent, onPress, onContent
   onPress: () => void;
   preferredFocus?: boolean;
 }) {
-  const colors = useColors();
-  return <TvFocusPressable focusId={focusId} onFocus={onContentFocus} preferredFocus={preferredFocus} onPress={onPress} style={[s.homeCompactStatCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-    <LinearGradient colors={[`${accent}18`, "rgba(255,255,255,0.015)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
-    <View style={[s.homeCompactStatIcon, { backgroundColor: `${accent}18` }]}><Feather name={icon} size={18} color={accent} /></View>
-    <View style={{ flex: 1, minWidth: 0 }}>
-      <Text style={[s.homeCompactStatLabel, { color: colors.mutedForeground }]}>{label}</Text>
-      {value === null
-        ? <View style={[s.homeSkeletonLine, { width: "58%", backgroundColor: colors.muted, marginTop: 4 }]} />
-        : <Text numberOfLines={1} adjustsFontSizeToFit minimumFontScale={0.45} style={[s.homeCompactStatValue, { color: colors.foreground }]}>{value}</Text>}
-    </View>
-  </TvFocusPressable>;
+  const colors = homeColors;
+  return (
+    <TvFocusPressable
+      focusId={focusId}
+      onFocus={onContentFocus}
+      preferredFocus={preferredFocus}
+      onPress={onPress}
+      style={[
+        s.homeCompactStatCard,
+        { backgroundColor: colors.card, borderColor: colors.border },
+      ]}
+    >
+      <LinearGradient
+        colors={[`${accent}18`, "rgba(255,255,255,0.015)"]}
+        style={StyleSheet.absoluteFill}
+        pointerEvents="none"
+      />
+      <View style={[s.homeCompactStatIcon, { backgroundColor: `${accent}18` }]}>
+        <Feather name={icon} size={eliteV3.icon.compact} color={accent} />
+      </View>
+      <View style={{ flex: 1, minWidth: 0 }}>
+        <Text
+          style={[s.homeCompactStatLabel, { color: colors.mutedForeground }]}
+        >
+          {label}
+        </Text>
+        {value === null ? (
+          <View
+            style={[
+              s.homeSkeletonLine,
+              {
+                width: "58%",
+                backgroundColor: colors.muted,
+                marginTop: eliteV3.space.xxs,
+              },
+            ]}
+          />
+        ) : (
+          <Text
+            numberOfLines={1}
+            adjustsFontSizeToFit
+            minimumFontScale={0.45}
+            style={[s.homeCompactStatValue, { color: colors.foreground }]}
+          >
+            {value}
+          </Text>
+        )}
+      </View>
+    </TvFocusPressable>
+  );
 }
 
-function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel, loading = false, onContentFocus }: {
+function HomeShelf({
+  title,
+  seeAll,
+  items,
+  onSeeAll,
+  compact = false,
+  emptyLabel,
+  loading = false,
+  onContentFocus,
+}: {
   title: string;
   seeAll: string;
   items: HomeShelfEntry[];
@@ -619,87 +1013,390 @@ function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel
   emptyLabel?: string;
   loading?: boolean;
 }) {
-  const colors = useColors();
+  const colors = homeColors;
   const listRef = useRef<FlatList<HomeShelfEntry>>(null);
-  return <View style={s.homeShelfSection}>
-    <View style={s.homeShelfHeader}>
-      <Text style={[s.homeShelfTitle, { color: colors.foreground }]}>{title}</Text>
-      <TvFocusPressable focusId={`home-shelf:${title}:more`} onFocus={onContentFocus} onPress={onSeeAll} style={s.homeSeeAllButton}>
-        <Text style={[s.homeSeeAllText, { color: colors.primary }]}>{seeAll}</Text>
-        <Feather name="arrow-right" size={15} color={colors.primary} />
-      </TvFocusPressable>
-    </View>
-    {items.length ? <FlatList
-      ref={listRef}
-      horizontal
-      removeClippedSubviews={Platform.isTV ? false : undefined}
-      data={items}
-      keyExtractor={(item) => item.id}
-      showsHorizontalScrollIndicator={false}
-      contentContainerStyle={s.homeShelfList}
-      initialNumToRender={8}
-      maxToRenderPerBatch={8}
-      windowSize={5}
-      renderItem={({ item, index: itemIndex }) => <TvFocusPressable
-        focusId={`home-shelf:${title}:${item.id}`}
-        onPress={item.onPress}
-        onLongPress={Platform.isTV ? item.onRemove : undefined}
-        onFocus={() => { onContentFocus?.(); listRef.current?.scrollToIndex({ index: itemIndex, animated: true, viewPosition: 0.45 }); }}
-        style={[compact ? s.homeShelfCardCompact : s.homeShelfCard, { backgroundColor: colors.card, borderColor: colors.border }]}
-      >
-        <View style={[compact ? s.homeShelfImageCompact : s.homeShelfImage, { backgroundColor: colors.muted }]}>
-          <ResilientCatalogImage uri={item.image} resizeMode="cover" style={StyleSheet.absoluteFill} fallbackIcon={compact ? "radio" : "play-circle"} />
-          {!Platform.isTV && item.onRemove ? <Pressable onPress={item.onRemove} hitSlop={8} style={s.homeShelfRemove}><Feather name="x" size={14} color="#fff" /></Pressable> : null}
+  const { width, height } = useWindowDimensions();
+  const { tvPreview } = useUiPresentation();
+  const mode = eliteV3Mode(width, height, Platform.isTV || tvPreview);
+  const type = eliteV3.typography[mode];
+  const cardWidth = compact
+    ? eliteV3.home.landscapeWidth[mode]
+    : eliteV3.home.posterWidth[mode];
+  return (
+    <View style={s.homeShelfSection}>
+      <View style={s.homeShelfHeader}>
+        <Text
+          style={[
+            s.homeShelfTitle,
+            { color: colors.foreground, fontSize: type.section },
+          ]}
+        >
+          {title}
+        </Text>
+        <TvFocusPressable
+          focusId={`home-shelf:${title}:more`}
+          onFocus={onContentFocus}
+          onPress={onSeeAll}
+          style={s.homeSeeAllButton}
+        >
+          <Text style={[s.homeSeeAllText, { color: colors.primary }]}>
+            {seeAll}
+          </Text>
+          <Feather
+            name="arrow-right"
+            size={eliteV3.icon.compact}
+            color={colors.primary}
+          />
+        </TvFocusPressable>
+      </View>
+      {items.length ? (
+        <FlatList
+          ref={listRef}
+          horizontal
+          removeClippedSubviews={Platform.isTV ? false : undefined}
+          data={items}
+          keyExtractor={(item) => item.id}
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={s.homeShelfList}
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
+          windowSize={5}
+          renderItem={({ item, index: itemIndex }) => (
+            <TvFocusPressable
+              focusId={`home-shelf:${title}:${item.id}`}
+              onPress={item.onPress}
+              onLongPress={Platform.isTV ? item.onRemove : undefined}
+              onFocus={() => {
+                onContentFocus?.();
+                listRef.current?.scrollToIndex({
+                  index: itemIndex,
+                  animated: true,
+                  viewPosition: 0.45,
+                });
+              }}
+              style={[
+                compact ? s.homeShelfCardCompact : s.homeShelfCard,
+                {
+                  backgroundColor: colors.card,
+                  borderColor: colors.border,
+                  width: cardWidth,
+                },
+              ]}
+            >
+              <View
+                style={[
+                  compact ? s.homeShelfImageCompact : s.homeShelfImage,
+                  { backgroundColor: colors.muted },
+                ]}
+              >
+                <ResilientCatalogImage
+                  uri={item.image}
+                  resizeMode="cover"
+                  style={StyleSheet.absoluteFill}
+                  fallbackIcon={
+                    item.progress !== undefined
+                      ? "play-circle"
+                      : compact
+                        ? "radio"
+                        : "play-circle"
+                  }
+                />
+                {!Platform.isTV && item.onRemove ? (
+                  <Pressable
+                    onPress={item.onRemove}
+                    hitSlop={8}
+                    style={s.homeShelfRemove}
+                  >
+                    <Feather name="x" size={14} color={eliteV3.color.text} />
+                  </Pressable>
+                ) : null}
+              </View>
+              <Text
+                numberOfLines={1}
+                style={[
+                  s.homeShelfCardTitle,
+                  {
+                    color: colors.foreground,
+                    fontSize: type.meta,
+                    lineHeight: type.meta + eliteV3.space.xxs,
+                  },
+                ]}
+              >
+                {item.title}
+              </Text>
+              {item.subtitle ? (
+                <Text
+                  numberOfLines={1}
+                  style={[
+                    s.homeShelfCardMeta,
+                    {
+                      color: colors.mutedForeground,
+                      fontSize: type.meta,
+                      lineHeight: type.meta + eliteV3.space.xxs,
+                    },
+                  ]}
+                >
+                  {item.subtitle}
+                </Text>
+              ) : null}
+              {item.progress !== undefined ? (
+                <>
+                  <View
+                    style={[
+                      s.homeProgressTrack,
+                      { backgroundColor: colors.muted },
+                    ]}
+                  >
+                    <View
+                      style={[
+                        s.homeProgressFill,
+                        {
+                          width: `${Math.round(item.progress * 100)}%`,
+                          backgroundColor: colors.primary,
+                        },
+                      ]}
+                    />
+                  </View>
+                  {item.progressLabel ? (
+                    <Text
+                      style={[
+                        s.homeProgressLabel,
+                        { color: colors.mutedForeground },
+                      ]}
+                    >
+                      {item.progressLabel}
+                    </Text>
+                  ) : null}
+                </>
+              ) : null}
+            </TvFocusPressable>
+          )}
+        />
+      ) : loading ? (
+        <View style={s.homeShelfSkeletonRow}>
+          {[0, 1, 2].map((itemIndex) => (
+            <View
+              key={itemIndex}
+              style={[
+                s.homeShelfSkeletonCard,
+                { borderColor: colors.border, backgroundColor: colors.card },
+              ]}
+            >
+              <View
+                style={[
+                  s.homeShelfSkeletonImage,
+                  { backgroundColor: colors.muted },
+                ]}
+              />
+              <View
+                style={[
+                  s.homeSkeletonLine,
+                  { width: "72%", backgroundColor: colors.muted },
+                ]}
+              />
+            </View>
+          ))}
         </View>
-        <Text numberOfLines={1} style={[s.homeShelfCardTitle, { color: colors.foreground }]}>{item.title}</Text>
-        {item.subtitle ? <Text numberOfLines={1} style={[s.homeShelfCardMeta, { color: colors.mutedForeground }]}>{item.subtitle}</Text> : null}
-        {item.progress !== undefined ? <>
-          <View style={[s.homeProgressTrack, { backgroundColor: colors.muted }]}><View style={[s.homeProgressFill, { width: `${Math.round(item.progress * 100)}%`, backgroundColor: colors.primary }]} /></View>
-          {item.progressLabel ? <Text style={[s.homeProgressLabel, { color: colors.mutedForeground }]}>{item.progressLabel}</Text> : null}
-        </> : null}
-      </TvFocusPressable>}
-    /> : loading ? <View style={s.homeShelfSkeletonRow}>{[0, 1, 2].map((itemIndex) => <View key={itemIndex} style={[s.homeShelfSkeletonCard, { borderColor: colors.border, backgroundColor: colors.card }]}><View style={[s.homeShelfSkeletonImage, { backgroundColor: colors.muted }]} /><View style={[s.homeSkeletonLine, { width: "72%", backgroundColor: colors.muted }]} /></View>)}</View> : <TvFocusPressable focusId={`home-shelf:${title}:empty`} onFocus={onContentFocus} onPress={onSeeAll} style={[s.homeShelfEmpty, { borderColor: colors.border }]}><Text style={{ color: colors.mutedForeground }}>{emptyLabel || "—"}</Text><Feather name="arrow-right" size={17} color={colors.primary} /></TvFocusPressable>}
-  </View>;
+      ) : (
+        <TvFocusPressable
+          focusId={`home-shelf:${title}:empty`}
+          onFocus={onContentFocus}
+          onPress={onSeeAll}
+          style={[s.homeShelfEmpty, { borderColor: colors.border }]}
+        >
+          <Text style={{ color: colors.mutedForeground }}>
+            {emptyLabel || "—"}
+          </Text>
+          <Feather
+            name="arrow-right"
+            size={eliteV3.icon.compact}
+            color={colors.primary}
+          />
+        </TvFocusPressable>
+      )}
+    </View>
+  );
 }
 
 const s = StyleSheet.create({
-  homeDiscoveryShell: { paddingTop: 4, paddingBottom: 26, gap: 4 },
-  homeHeroCard: { aspectRatio: 2.25, minHeight: 190, maxHeight: 520, borderRadius: 24, overflow: "hidden", borderWidth: 2, justifyContent: "flex-end" },
-  homeHeroEmpty: { width: "100%", aspectRatio: 2.25, minHeight: 190, maxHeight: 420, borderRadius: 24, borderWidth: 1, overflow: "hidden", padding: 24 },
-  homeHeroCaption: { paddingHorizontal: 24, paddingBottom: 24, paddingTop: 70, maxWidth: 760 },
-  homeHeroEyebrow: { fontSize: 11, fontWeight: "800", letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 7 },
-  homeHeroImageTitle: { color: "#FFFFFF", fontSize: 30, lineHeight: 35, fontWeight: "800", textShadowColor: "rgba(0,0,0,0.7)", textShadowRadius: 8, textShadowOffset: { width: 0, height: 2 } },
-  homeHeroImageMeta: { color: "rgba(255,255,255,0.78)", fontSize: 13, fontWeight: "600", marginTop: 7 },
-  homeHeroTitle: { fontSize: 28, lineHeight: 34, fontWeight: "700", maxWidth: 620 },
-  homeHeroMeta: { fontSize: 13, marginTop: 7 },
-  homeHeroDots: { flexDirection: "row", justifyContent: "center", gap: 6, paddingTop: 10 },
-  homeHeroDot: { width: 6, height: 6, borderRadius: 6 },
-  homeCompactStats: { flexDirection: "row", gap: 10, marginTop: 18, marginBottom: 14 },
-  homeCompactStatCard: { flex: 1, minWidth: 0, minHeight: 76, borderWidth: 1, borderRadius: 16, paddingHorizontal: 9, paddingVertical: 10, flexDirection: "row", alignItems: "center", gap: 7, overflow: "hidden" },
-  homeCompactStatIcon: { width: 30, height: 30, borderRadius: 10, alignItems: "center", justifyContent: "center", flexShrink: 0 },
-  homeCompactStatLabel: { fontSize: 10, lineHeight: 13, fontWeight: "600" },
-  homeCompactStatValue: { fontSize: 17, lineHeight: 21, fontWeight: "800", marginTop: 1, flexShrink: 1 },
-  homeShelfSection: { marginTop: 24 },
-  homeShelfHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 10 },
-  homeShelfTitle: { fontSize: 20, lineHeight: 26, fontWeight: "700", letterSpacing: -0.25 },
-  homeSeeAllButton: { borderWidth: 2, borderColor: "transparent", borderRadius: 9, paddingHorizontal: 7, paddingVertical: 6, flexDirection: "row", alignItems: "center", gap: 5 },
-  homeSeeAllText: { fontSize: 12, fontWeight: "700" },
-  homeShelfList: { gap: 11, paddingVertical: 3, paddingHorizontal: 2 },
-  homeShelfCard: { width: 142, borderWidth: 2, borderRadius: 16, padding: 7, overflow: "hidden" },
-  homeShelfCardCompact: { width: 154, borderWidth: 2, borderRadius: 16, padding: 7, overflow: "hidden" },
-  homeShelfImage: { width: "100%", aspectRatio: 2 / 3, borderRadius: 11, overflow: "hidden" },
-  homeShelfImageCompact: { width: "100%", aspectRatio: 16 / 10, borderRadius: 11, overflow: "hidden" },
-  homeShelfRemove: { position: "absolute", top: 6, right: 6, width: 25, height: 25, borderRadius: 13, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.70)" },
-  homeShelfCardTitle: { fontSize: 13, lineHeight: 18, fontWeight: "700", marginTop: 7 },
-  homeShelfCardMeta: { fontSize: 11, lineHeight: 15, marginTop: 1 },
-  homeProgressTrack: { height: 5, borderRadius: 4, overflow: "hidden", marginTop: 7 },
+  homeDiscoveryShell: {
+    paddingTop: eliteV3.space.xxs,
+    paddingBottom: eliteV3.space.xl,
+    gap: eliteV3.space.xxs,
+  },
+  homeCompactStats: {
+    flexDirection: "row",
+    gap: 10,
+    marginTop: eliteV3.space.lg,
+    marginBottom: 14,
+  },
+  homeCompactStatCard: {
+    flex: 1,
+    minWidth: 0,
+    minHeight: 76,
+    borderWidth: 1,
+    borderRadius: eliteV3.radius.card,
+    paddingHorizontal: eliteV3.space.xs,
+    paddingVertical: eliteV3.space.xs,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: eliteV3.space.xs,
+    overflow: "hidden",
+  },
+  homeCompactStatIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: eliteV3.radius.control,
+    alignItems: "center",
+    justifyContent: "center",
+    flexShrink: 0,
+  },
+  homeCompactStatLabel: {
+    fontSize: eliteV3.typography.mobile.meta,
+    lineHeight: 13,
+    fontFamily: eliteV3.typography.family,
+  },
+  homeCompactStatValue: {
+    fontSize: eliteV3.typography.mobile.body,
+    lineHeight: 21,
+    fontFamily: eliteV3.typography.strong,
+    marginTop: 1,
+    flexShrink: 1,
+  },
+  homeShelfSection: { marginTop: eliteV3.space.sm * 2 },
+  homeShelfHeader: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: eliteV3.space.sm,
+    marginBottom: 10,
+  },
+  homeShelfTitle: {
+    fontSize: eliteV3.typography.tablet.section,
+    lineHeight: 26,
+    fontFamily: eliteV3.typography.strong,
+    letterSpacing: -0.25,
+  },
+  homeSeeAllButton: {
+    borderWidth: 2,
+    borderColor: "transparent",
+    borderRadius: eliteV3.radius.control,
+    paddingHorizontal: eliteV3.space.xs,
+    paddingVertical: 6,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 5,
+  },
+  homeSeeAllText: {
+    fontSize: eliteV3.typography.mobile.meta,
+    fontFamily: eliteV3.typography.strong,
+  },
+  homeShelfList: {
+    gap: eliteV3.space.sm,
+    paddingVertical: 3,
+    paddingHorizontal: 2,
+  },
+  homeShelfCard: {
+    width: eliteV3.home.posterWidth.tablet,
+    borderWidth: 2,
+    borderRadius: eliteV3.radius.card,
+    padding: eliteV3.space.xs,
+    overflow: "hidden",
+  },
+  homeShelfCardCompact: {
+    width: eliteV3.home.landscapeWidth.mobile,
+    borderWidth: 2,
+    borderRadius: eliteV3.radius.card,
+    padding: eliteV3.space.xs,
+    overflow: "hidden",
+  },
+  homeShelfImage: {
+    width: "100%",
+    aspectRatio: eliteV3.home.posterRatio,
+    borderRadius: eliteV3.radius.control,
+    overflow: "hidden",
+  },
+  homeShelfImageCompact: {
+    width: "100%",
+    aspectRatio: eliteV3.home.landscapeRatio,
+    borderRadius: eliteV3.radius.control,
+    overflow: "hidden",
+  },
+  homeShelfRemove: {
+    position: "absolute",
+    top: 6,
+    right: 6,
+    width: 25,
+    height: 25,
+    borderRadius: 13,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: eliteV3.home.overlay,
+  },
+  homeShelfCardTitle: {
+    fontSize: eliteV3.typography.tablet.meta,
+    lineHeight: 18,
+    fontFamily: eliteV3.typography.strong,
+    marginTop: eliteV3.space.xs,
+  },
+  homeShelfCardMeta: {
+    fontSize: eliteV3.typography.mobile.meta,
+    fontFamily: eliteV3.typography.family,
+    lineHeight: 15,
+    marginTop: 1,
+  },
+  homeProgressTrack: {
+    height: 5,
+    borderRadius: 4,
+    overflow: "hidden",
+    marginTop: eliteV3.space.xs,
+  },
   homeProgressFill: { height: "100%", borderRadius: 3 },
-  homeProgressLabel: { fontSize: 10, lineHeight: 13, fontWeight: "700", marginTop: 3, textAlign: "right" },
-  homeShelfEmpty: { minHeight: 58, borderWidth: 1, borderRadius: 14, borderStyle: "dashed", paddingHorizontal: 16, flexDirection: "row", alignItems: "center", justifyContent: "space-between" },
+  homeProgressLabel: {
+    fontSize: eliteV3.typography.mobile.meta,
+    lineHeight: 13,
+    fontFamily: eliteV3.typography.strong,
+    marginTop: 3,
+    textAlign: "right",
+  },
+  homeShelfEmpty: {
+    minHeight: 58,
+    borderWidth: 1,
+    borderRadius: eliteV3.radius.card,
+    borderStyle: "dashed",
+    paddingHorizontal: eliteV3.space.md,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
   homeSkeletonLine: { height: 12, borderRadius: 8, opacity: 0.72 },
-  homeShelfSkeletonRow: { flexDirection: "row", gap: 11, paddingVertical: 3 },
-  homeShelfSkeletonCard: { width: 142, borderWidth: 1, borderRadius: 16, padding: 7, gap: 9 },
-  homeShelfSkeletonImage: { width: "100%", aspectRatio: 2 / 3, borderRadius: 11, opacity: 0.72 },
-  homeTvFocusBase: { borderWidth: 4, borderColor: "transparent" },
-  homeTvFocusActive: { borderWidth: 4, shadowOpacity: 0.78, shadowRadius: 12, shadowOffset: { width: 0, height: 0 }, elevation: 8 },
+  homeShelfSkeletonRow: {
+    flexDirection: "row",
+    gap: eliteV3.space.sm,
+    paddingVertical: 3,
+  },
+  homeShelfSkeletonCard: {
+    width: eliteV3.home.posterWidth.tablet,
+    borderWidth: 1,
+    borderRadius: eliteV3.radius.card,
+    padding: eliteV3.space.xs,
+    gap: eliteV3.space.xs,
+  },
+  homeShelfSkeletonImage: {
+    width: "100%",
+    aspectRatio: eliteV3.home.posterRatio,
+    borderRadius: eliteV3.radius.control,
+    opacity: 0.72,
+  },
+  homeTvFocusBase: {
+    borderWidth: eliteV3.focus.width,
+    borderColor: "transparent",
+  },
+  homeTvFocusActive: {
+    borderWidth: eliteV3.focus.width,
+    shadowOpacity: 0.78,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 8,
+  },
 });

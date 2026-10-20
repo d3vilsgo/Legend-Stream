@@ -1,3 +1,4 @@
+import { eliteV3 } from "./eliteV3Tokens";
 import { nativeTvLayout, type TvWindow } from "../nativeTvResponsive";
 /** Native TV only. viewportHeight is the measured ScrollView AFTER header/navigation. */
 export function nativeTvHomeLayout(
@@ -14,10 +15,20 @@ export function nativeTvHomeLayout(
   );
   // Parent content paddingTop=18, Home paddingTop=4; bottom overscan is reserved once.
   const availableHeight = Math.max(1, viewport - 22 - tv.bottom);
-  const titleFont = Math.round(Math.max(24, Math.min(30, input.width / 50)));
+  const titleFont = Math.round(
+    Math.max(
+      eliteV3.typography.mobile.title,
+      Math.min(eliteV3.typography.tv.title, input.width / 50),
+    ),
+  );
   const titleLineHeight = titleFont + 4;
-  const metaFont = Math.round(Math.max(14, Math.min(18, input.width / 80)));
-  const padding = 12;
+  const metaFont = Math.round(
+    Math.max(
+      eliteV3.typography.tv.meta,
+      Math.min(eliteV3.typography.tv.body, input.width / 80),
+    ),
+  );
+  const padding = eliteV3.space.sm;
   const borderSpace = 8;
   const metaLineHeight = metaFont + 4;
   const shelfMargin = 24,

@@ -305,6 +305,8 @@ jobs:
         run: node artifacts/legendstream-xplayer/tests/u42HomeCollapsibleHostScenarios.mjs
       - name: Native TV Home production component render contract
         run: node artifacts/legendstream-xplayer/tests/nativeTvHomeRenderScenarios.mjs
+      - name: Elite V3 Home production formatting
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/components/home/HomeDiscovery.tsx artifacts/legendstream-xplayer/lib/design/eliteV3Tokens.ts artifacts/legendstream-xplayer/tests/u42HomeCollapsibleHostScenarios.mjs artifacts/legendstream-xplayer/scripts/build-home-review.mjs
       - name: Native TV Home helper and test formatting
         run: pnpm exec prettier --check artifacts/legendstream-xplayer/lib/design/nativeTvHomeLayout.ts artifacts/legendstream-xplayer/tests/nativeTvHomeLayoutScenarios.ts artifacts/legendstream-xplayer/tests/nativeTvHomeRenderScenarios.mjs
       - name: Native TV bounded persistence on exit

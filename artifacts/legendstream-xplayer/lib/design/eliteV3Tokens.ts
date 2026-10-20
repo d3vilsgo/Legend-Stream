@@ -29,12 +29,25 @@ export const eliteV3 = {
   icon: { compact: 20, control: 24, tv: 28 },
   focus: { width: 3, scale: 1 },
   target: { tv: 56, tablet: 48, mobile: 44 },
+  home: {
+    gradient: ["#07101FEE", "#07101F88", "#07101FEE"],
+    overlay: "#07101FCC",
+    posterWidth: { mobile: 124, tablet: 142, tv: 154 },
+    landscapeWidth: { mobile: 184, tablet: 212, tv: 224 },
+    posterRatio: 2 / 3,
+    landscapeRatio: 16 / 9,
+  },
   motion: { focus: 100, panel: 150, reduced: 0 },
 } as const;
 
 export type EliteV3Mode = "tv" | "tablet" | "mobile";
-const clamp = (v: number, low: number, high: number) => Math.max(low, Math.min(high, v));
-export function eliteV3Mode(width: number, height: number, nativeTv = false): EliteV3Mode {
+const clamp = (v: number, low: number, high: number) =>
+  Math.max(low, Math.min(high, v));
+export function eliteV3Mode(
+  width: number,
+  height: number,
+  nativeTv = false,
+): EliteV3Mode {
   if (nativeTv) return "tv";
   return Math.min(width, height) >= 600 ? "tablet" : "mobile";
 }
@@ -51,7 +64,9 @@ export function eliteV3Frame(
   const right = Math.max(0, safe.right ?? 0);
   const innerWidth = Math.max(1, width - left - right);
   const scale = clamp(fontScale, 0.85, 2);
-  const target = Math.ceil(Math.max(eliteV3.target[mode], type.body * scale * 2.4));
+  const target = Math.ceil(
+    Math.max(eliteV3.target[mode], type.body * scale * 2.4),
+  );
   const rail = nativeTv ? clamp(target + 12, 64, 84) : 0;
   const gap = mode === "tv" ? 16 : mode === "tablet" ? 12 : 10;
   const contentWidth = Math.max(1, innerWidth - rail - (rail ? 12 : 0));
@@ -65,18 +80,26 @@ export function eliteV3LivePanels(width: number, fontScale = 1) {
   const scale = clamp(fontScale, 0.85, 2);
   const stacked = width < 900 * Math.sqrt(scale);
   const gap = eliteV3.space.sm;
-  if (stacked) return {
-    stacked, categoryWidth: clamp(width * 0.26, 88, 180),
-    channelWidth: Math.max(1, width - clamp(width * 0.26, 88, 180) - gap),
-    videoWidth: width, gap,
-  };
+  if (stacked)
+    return {
+      stacked,
+      categoryWidth: clamp(width * 0.26, 88, 180),
+      channelWidth: Math.max(1, width - clamp(width * 0.26, 88, 180) - gap),
+      videoWidth: width,
+      gap,
+    };
   const browseWidth = Math.round(width * 0.32);
   const categoryWidth = clamp(browseWidth * 0.32, 100, 200);
   const channelWidth = Math.max(1, browseWidth - categoryWidth - gap);
   const videoWidth = Math.max(1, width - browseWidth - gap);
   return { stacked, categoryWidth, channelWidth, videoWidth, gap };
 }
-export function eliteV3TargetVisual(focused: boolean, selected: boolean, active: boolean, disabled = false) {
+export function eliteV3TargetVisual(
+  focused: boolean,
+  selected: boolean,
+  active: boolean,
+  disabled = false,
+) {
   return {
     borderWidth: eliteV3.focus.width,
     borderColor: focused ? eliteV3.color.focus : "transparent",
