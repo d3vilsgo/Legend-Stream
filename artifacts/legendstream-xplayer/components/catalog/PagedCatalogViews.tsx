@@ -5,6 +5,7 @@ import { beginPerformanceMeasurement, finishPerformanceMeasurement } from "@/lib
 import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
 import { currentMovie, pagedMovieInput, localXtreamMovie } from "@/lib/tmdb/movieInfoModel";
 import { EliteLiveCatalog } from "@/components/elite/EliteLiveCatalog";
+import { eliteV3 } from "@/lib/design/eliteV3Tokens";
 import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
 import { useResponsiveCatalogGrid } from "@/hooks/useResponsiveCatalogGrid";
 import {TVRemoteInspectorOverlay} from "@/components/tvPreview/TVRemoteInspector";
@@ -1321,7 +1322,7 @@ const s = StyleSheet.create({
   sortDropdownMenu: { marginTop: 6, borderWidth: 1, borderRadius: 12, padding: 6, gap: 3 },
   sortDropdownItem: { minHeight: Platform.isTV ? 42 : 48, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 9 },
   liveListContent: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center", gap: 8 },
-  gridListContent: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
+  gridListContent: { padding: eliteV3.space.md, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
   liveRow: { borderWidth: 1, borderRadius: 14, padding: 8, flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   liveMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
   liveProgram: { fontSize: 12.5, marginTop: 3 },
@@ -1330,7 +1331,7 @@ const s = StyleSheet.create({
   logo: { width: 50, height: 50, borderRadius: 10 },
   iconButton: { padding: 10 },
   card: { padding: 6 },
-  media: { borderWidth: 1, borderRadius: 14, overflow: "hidden" },
+  media: { borderWidth: 1, borderRadius: eliteV3.radius.card, overflow: "hidden" },
   posterBig: { width: "100%", aspectRatio: 2 / 3 },
   pageFooter: { height: 64, alignItems: "center", justifyContent: "center" },
   pageFooterSpacer: { height: 20 },
