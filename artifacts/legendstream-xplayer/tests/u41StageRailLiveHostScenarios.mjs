@@ -412,8 +412,8 @@ try {
       assert.equal(detailWidth, measured.detailWidth);
       assert.equal(categoryWidth, measured.categoryWidth);
       const browseWidth = measured.categoryWidth + measured.channelWidth + 12;
-      const browseRatio = browseWidth / measured.usableWidth;
-      assert(Math.abs(browseRatio - 0.32) < 0.025, "V3 Live 32% budget");
+      const deviation = Math.abs(browseWidth / measured.usableWidth - 0.32);
+      assert(deviation < 0.025, "V3 Live 32% budget");
       assert(detailWidth / measured.usableWidth > 0.60);
     }
     const scrollRequests = [];
