@@ -73,7 +73,7 @@ const mocks = {
     "export const resolveCatalogRuntimeSource=async()=>'';",
   "@/lib/catalogPageRepository":
     "export const getCachedLivePlaybackWindow=async()=>[],getCachedVodPlaybackWindow=async()=>[];",
-  "@/lib/epgRuntime": "export const registerEpgChannels=()=>{};",
+  "@/lib/epgRuntime": "export const registerEpgChannels=()=>{},selectProgramsAt=()=>({});",
   "@/lib/m3uInAppDiagnostics":
     "export const describeM3UPlaybackUri=()=>({}),recordM3UCompatPlayerMount=()=>{},recordM3ULiveQueueBegin=()=>{},recordM3ULiveQueueEnd=()=>{};",
   "@/lib/stalkerPlaybackTrace":
