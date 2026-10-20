@@ -1,4 +1,5 @@
 import { nativeTvLayout, type TvWindow } from "../nativeTvResponsive";
+import { eliteV3LivePanels } from "./eliteV3Tokens";
 /** Uses measured content bounds, after the existing navigation has taken its space. */
 export function eliteLiveLayout(input: TvWindow) {
   const base = nativeTvLayout(input);
@@ -6,17 +7,18 @@ export function eliteLiveLayout(input: TvWindow) {
   const scale = Math.max(1, Math.min(3, input.fontScale ?? 1));
   const stacked = width < 1050 * Math.sqrt(scale);
   // In stacked mode the channel viewport must retain usable width even on small TVs.
+  const v3 = eliteV3LivePanels(width, input.fontScale);
   const categoryWidth = stacked
     ? Math.max(96, Math.min(220, width * 0.28))
-    : Math.min(260, Math.max(180, width * 0.19));
+    : v3.categoryWidth;
   const channelWidth = stacked
     ? Math.max(96, width - categoryWidth - 24)
-    : Math.max(300, Math.min(480, width * 0.31));
-  // The channel list is the primary task; a secondary details pane may use
-  // only the space left after reserving category and channel navigation.
+    : v3.channelWidth;
+  // Video-heavy V3 reserves approximately 68% for EPG and future safe preview.
+  // This area remains a genuine information pane; no second VLC session exists.
   const detailWidth = stacked
     ? width
-    : Math.max(0, Math.min(300, width - categoryWidth - channelWidth - 36));
+    : Math.max(1, width - categoryWidth - channelWidth - 24);
   return {
     ...base,
     stacked,
