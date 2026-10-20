@@ -911,6 +911,10 @@ export function HomeHeroCarousel({
               padding: eliteV3.space.xs,
               borderRadius: eliteV3.radius.control,
               backgroundColor: eliteV3.home.overlay,
+              minWidth: eliteV3.target.mobile,
+              minHeight: eliteV3.target.mobile,
+              justifyContent: "center",
+              alignItems: "center",
             }}
           >
             <Text style={{ color: eliteV3.color.text }}>
@@ -1026,9 +1030,15 @@ function HomeShelf({
     <View style={s.homeShelfSection}>
       <View style={s.homeShelfHeader}>
         <Text
+          numberOfLines={1}
           style={[
             s.homeShelfTitle,
-            { color: colors.foreground, fontSize: type.section },
+            {
+              color: colors.foreground,
+              fontSize: type.section,
+              minWidth: 0,
+              flexShrink: 1,
+            },
           ]}
         >
           {title}
@@ -1037,7 +1047,10 @@ function HomeShelf({
           focusId={`home-shelf:${title}:more`}
           onFocus={onContentFocus}
           onPress={onSeeAll}
-          style={s.homeSeeAllButton}
+          style={[
+            s.homeSeeAllButton,
+            !Platform.isTV && { minHeight: eliteV3.target.mobile },
+          ]}
         >
           <Text style={[s.homeSeeAllText, { color: colors.primary }]}>
             {seeAll}
@@ -1093,13 +1106,7 @@ function HomeShelf({
                   uri={item.image}
                   resizeMode="cover"
                   style={StyleSheet.absoluteFill}
-                  fallbackIcon={
-                    item.progress !== undefined
-                      ? "play-circle"
-                      : compact
-                        ? "radio"
-                        : "play-circle"
-                  }
+                  fallbackIcon={compact ? "radio" : "play-circle"}
                 />
                 {!Platform.isTV && item.onRemove ? (
                   <Pressable
@@ -1217,6 +1224,12 @@ function HomeShelf({
     </View>
   );
 }
+
+const progressTrackSurface = {
+  borderRadius: eliteV3.space.xxs,
+  overflow: "hidden" as const,
+  marginTop: eliteV3.space.xs,
+};
 
 const s = StyleSheet.create({
   homeDiscoveryShell: {
@@ -1345,12 +1358,7 @@ const s = StyleSheet.create({
     lineHeight: 15,
     marginTop: 1,
   },
-  homeProgressTrack: {
-    height: 5,
-    borderRadius: 4,
-    overflow: "hidden",
-    marginTop: eliteV3.space.xs,
-  },
+  homeProgressTrack: { height: 5, ...progressTrackSurface },
   homeProgressFill: { height: "100%", borderRadius: 3 },
   homeProgressLabel: {
     fontSize: eliteV3.typography.mobile.meta,

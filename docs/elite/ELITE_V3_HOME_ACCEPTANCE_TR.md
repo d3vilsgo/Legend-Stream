@@ -47,3 +47,7 @@ Her profil fontScale 1/1.3/2 ile gerçek Home → Hero → Shelf → kart callba
 Üretilen önce/sonra HTML kaynak render incelemesidir. Ortamda Chromium executable bulunmadığından browser screenshot/piksel taşma doğrulaması yapılamadı. Onaylı Home görselinin metinsel içeriğine erişildi; piksel eşleşmesi henüz onaylanmadı. Erişilmiş veya fiziksel render gibi sunulmaz.
 
 **SOURCE/HOST PASS; VISUAL/PHYSICAL PENDING.** Homatics RIGHT, OK ve hızlı D-pad tarihsel FAIL açık kalır. Native TV Physical FAIL, TMDB LIVE BLOCKED, legacy 14 SKIP / 0 DELETED kayıtları değişmez. Homatics üzerinde raf/hero/rail Focus ve Back; Poco/tablet üzerinde büyük yazı, güvenli alan ve metin kırpılması yeniden kabul bekler. U4.4, yeni ekran, APK, merge/base/Draft değişikliği yok.
+
+## Son kalite düzeltmesi
+
+Quality #1541 / 39419273339 ilerleme çubuğu kaynak assertion'ında FAIL: Prettier `homeProgressTrack: { height: 5` ifadesini çok satıra açmıştı. 5 dp davranışı ve assertion korunarak yüzey stili ayrıldı; test silinmedi, regex gevşetilmedi. Büyük yazıda raf başlığı tek satır/daralabilir; mobil Tümünü gör ve Hero geçiş kontrolü en az 44 dp. V3 üretim host matrisi bu başlık ve dokunma alanını ayrıca kontrol eder. Final Quality yeni SHA üzerinde yeniden beklenir.

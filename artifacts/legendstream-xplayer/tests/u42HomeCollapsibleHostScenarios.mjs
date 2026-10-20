@@ -533,6 +533,18 @@ try {
       assert.equal(continuation.props.items[0].id, progress.id);
       assert.equal(continuation.props.compact, true);
       const shelf = renderChild(continuation.tag, continuation.props);
+      const shelfHeading = unique(
+        shelf,
+        (n) =>
+          n.tag === "Text" &&
+          n.props.children.includes(continuation.props.title),
+      );
+      assert.equal(shelfHeading.props.numberOfLines, 1);
+      assert.equal(flat(shelfHeading.props.style).flexShrink, 1);
+      const moreTarget = unique(shelf, (n) =>
+        n.props.focusId?.endsWith(":more"),
+      );
+      if (!isTV) assert(flat(moreTarget.props.style).minHeight >= 44);
       const list = unique(shelf, (n) => n.tag === "FlatList");
       assert.equal(list.props.keyExtractor(list.props.data[0]), progress.id);
       const card = list.props.renderItem({
