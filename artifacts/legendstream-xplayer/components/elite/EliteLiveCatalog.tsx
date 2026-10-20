@@ -16,6 +16,7 @@ import { TVPreviewPressable } from "@/components/tvPreview/TVPreviewFocus";
 import { selectProgramsAt } from "@/context/PlayerContext";
 import type { Channel, EpgProgram } from "@/lib/iptv";
 import { eliteTokens as tokens } from "@/lib/design/eliteTokens";
+import { eliteV3 } from "@/lib/design/eliteV3Tokens";
 import {
   eliteLiveInitial,
   eliteLiveReduce,
@@ -134,7 +135,7 @@ export function EliteLiveCatalog({
       onLayout={(e) => setBounds(e.nativeEvent.layout)}
     >
       <View style={s.toolbar}>
-        <Text style={[text, { fontSize: 26, fontWeight: "800", flex: 1 }]}>
+        <Text style={[text, { fontSize: eliteV3.typography.tv.title, fontWeight: "700", flex: 1 }]}>
           Canlı TV
         </Text>
         {button(
