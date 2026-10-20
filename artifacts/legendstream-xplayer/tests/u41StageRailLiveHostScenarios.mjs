@@ -411,8 +411,11 @@ try {
       });
       assert.equal(detailWidth, measured.detailWidth);
       assert.equal(categoryWidth, measured.categoryWidth);
+      const browseRatio =
+        (measured.categoryWidth + measured.channelWidth + 12) /
+        measured.usableWidth;
       assert(
-        Math.abs((measured.categoryWidth + measured.channelWidth + 12) / measured.usableWidth - 0.32) < 0.025,
+        Math.abs(browseRatio - 0.32) < 0.025,
         "V3 channel/category region occupies the specified 32% budget",
       );
       assert(detailWidth / measured.usableWidth > 0.60);
