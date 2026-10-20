@@ -1,6 +1,7 @@
 import { responsiveHomeHeroLayout } from "@/lib/homeHeroLayout";
 import { useUiPresentation } from "@/context/UiPresentationContext";
 import { nativeTvHomeLayout } from "@/lib/design/nativeTvHomeLayout";
+import { eliteV3 } from "@/lib/design/eliteV3Tokens";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
@@ -455,8 +456,8 @@ export function HomeHeroCarousel({
         paddingVertical: 10,
         borderRadius: 12,
         borderWidth: 2,
-        borderColor: primary ? "#56ddd0" : "#728088",
-        backgroundColor: primary ? "#56ddd0" : "#1c252dcc",
+        borderColor: primary ? eliteV3.color.primary : eliteV3.color.border,
+        backgroundColor: primary ? eliteV3.color.primary : eliteV3.color.panel,
         justifyContent: "center",
       }}
     >
@@ -464,7 +465,7 @@ export function HomeHeroCarousel({
         style={{
           fontSize: Platform.isTV ? 18 : 15,
           fontWeight: "800",
-          color: primary ? "#071c20" : "white",
+          color: primary ? "#FFFFFF" : eliteV3.color.text,
         }}
       >
         {label}
@@ -513,7 +514,7 @@ export function HomeHeroCarousel({
           {(!Platform.isTV || (!collapsed && heroHeight >= native.titleLineHeight * fontScale * native.titleLines + 60)) ? <Text
             numberOfLines={1}
             style={{
-              color: "#67e8d1",
+              color: eliteV3.color.primary,
               fontSize: 11,
               fontWeight: "800",
               letterSpacing: 2,
