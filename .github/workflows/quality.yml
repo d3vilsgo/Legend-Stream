@@ -353,6 +353,8 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/eliteLiveLayoutScenarios.ts
       - name: P0 production Live and Native TV navigation host acceptance
         run: node artifacts/legendstream-xplayer/tests/tvP0ProductionRenderScenarios.mjs
+      - name: Elite V3 responsive semantic design foundation
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/eliteV3FoundationScenarios.ts
       - name: Elite design state, geometry, alpha contrast and isolation
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/eliteDesignScenarios.ts
       - name: Elite showcase build (same React Native components)
