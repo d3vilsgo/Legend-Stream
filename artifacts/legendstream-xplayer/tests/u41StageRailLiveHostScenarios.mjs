@@ -268,7 +268,13 @@ try {
     assert.equal(step("home-hero:watch", "down"), "home-shelf:Films:movie-7");
     host.transitions = [];
     host.focus("nav:live");
-    for (const id of ["nav:home", "nav:movies", "nav:series", "nav:series", ""])
+    for (const id of [
+      "nav:home",
+      "nav:movies",
+      "nav:series",
+      "nav:series",
+      "",
+    ])
       host.focus(id);
     tree = host.render(ResponsiveContentNav, props);
     const before = all(tree, (n) => n.tag === "FocusButton").map(
