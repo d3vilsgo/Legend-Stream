@@ -189,7 +189,8 @@ async function main() {
     );
     assert.match(openLiveBlock, /url: channel\.streamUrl/);
     assert.match(openLiveBlock, /kind: "live"/);
-    assert.match(openLiveBlock, /returnTo: "live"/);
+    assert.match(openLiveBlock, /const openLive = \(channel: Channel, returnTo: ContentView = "live"\)/);
+    assert.match(openLiveBlock, /returnTo, liveIdentity: \{ providerId: channel.providerId, channelId: channel.id \}/);
     assert.match(openLiveBlock, /setView\("player"\)/);
     assert.match(screenSource, /<NativeVideoPlayer source=\{playable\.url\}/);
   });
