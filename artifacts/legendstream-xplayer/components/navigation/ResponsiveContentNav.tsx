@@ -182,7 +182,9 @@ export function ResponsiveContentNav<Key extends string>({
             left: 0,
             width: visualWidth,
             borderRadius: 16,
-            backgroundColor: open ? `${eliteV3.color.panel}F2` : `${eliteV3.color.panel}E8`,
+            backgroundColor: open
+              ? `${eliteV3.color.panel}F2`
+              : `${eliteV3.color.panel}E8`,
             borderWidth: 1,
             borderColor: eliteV3.color.border,
           }}
@@ -234,7 +236,10 @@ export function ResponsiveContentNav<Key extends string>({
                   position: "absolute",
                   left: railWidth,
                   width: Math.max(1, visualWidth - railWidth - 18),
-                  color: activeKey === item.key ? eliteV3.color.active : eliteV3.color.text,
+                  color:
+                    activeKey === item.key
+                      ? eliteV3.color.active
+                      : eliteV3.color.text,
                   fontSize: tv.labelFont,
                 }}
               >
