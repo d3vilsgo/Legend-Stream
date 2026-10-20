@@ -125,6 +125,9 @@ export function ResponsiveContentNav<Key extends string>({
   });
   const active = items.find((item) => item.key === activeKey) ?? items[0];
   const homeKey = items[0]?.key;
+  const railSurface = `${eliteV3.color.panel}${open ? "F2" : "E8"}`;
+  const activeTint = (key: Key, fallback: string) =>
+    activeKey === key ? eliteV3.color.active : fallback;
 
   useEffect(() => {
     setPreferInitialFocus(false);
@@ -182,9 +185,7 @@ export function ResponsiveContentNav<Key extends string>({
             left: 0,
             width: visualWidth,
             borderRadius: 16,
-            backgroundColor: open
-              ? `${eliteV3.color.panel}F2`
-              : `${eliteV3.color.panel}E8`,
+            backgroundColor: railSurface,
             borderWidth: 1,
             borderColor: eliteV3.color.border,
           }}
@@ -222,10 +223,7 @@ export function ResponsiveContentNav<Key extends string>({
                   width: railWidth - 12,
                   minHeight: tv.target,
                   paddingHorizontal: 4,
-                  borderColor:
-                    activeKey === item.key
-                      ? eliteV3.color.active
-                      : "transparent",
+                  borderColor: activeTint(item.key, "transparent"),
                 },
               ]}
             />
@@ -238,10 +236,7 @@ export function ResponsiveContentNav<Key extends string>({
                   position: "absolute",
                   left: railWidth,
                   width: Math.max(1, visualWidth - railWidth - 18),
-                  color:
-                    activeKey === item.key
-                      ? eliteV3.color.active
-                      : eliteV3.color.text,
+                  color: activeTint(item.key, eliteV3.color.text),
                   fontSize: tv.labelFont,
                 }}
               >
