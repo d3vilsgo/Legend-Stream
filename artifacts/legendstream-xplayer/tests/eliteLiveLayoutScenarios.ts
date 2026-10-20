@@ -17,11 +17,15 @@ for (const [width, height] of [
     for (const safeArea of [{}, { left: 48, right: 32, top: 24, bottom: 40 }]) {
       const g = eliteLiveLayout({ width, height, fontScale, safeArea });
       assert(g.detailWidth > 0);
-      if (!g.stacked)
+      if (!g.stacked) {
         assert(
           g.categoryWidth + g.channelWidth + g.detailWidth + 24 <=
             g.usableWidth + 0.01,
         );
+        const browse = (g.categoryWidth + g.channelWidth + 12) / g.usableWidth;
+        assert(Math.abs(browse - 0.32) < 0.025, "V3 browse budget must retain 32% for category/channel");
+        assert(g.detailWidth / g.usableWidth > 0.60, "V3 wide layout reserves video/EPG area");
+      }
       assert(g.rowHeight >= 54 * Math.max(1, fontScale) + 24);
       assert(g.left >= 8 && g.right >= 8);
       count++;
