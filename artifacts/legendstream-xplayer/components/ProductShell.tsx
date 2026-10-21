@@ -1,20 +1,54 @@
 import { MovieInfoServiceProvider } from "./tmdb/MovieInfoServiceProvider";
-import { TVRemoteInspectorOverlay, TVRemoteInspectorCollector } from "@/components/tvPreview/TVRemoteInspector";
-import React from "react";
-import { View } from "react-native";
+import {
+  TVRemoteInspectorOverlay,
+  TVRemoteInspectorCollector,
+} from "@/components/tvPreview/TVRemoteInspector";
+import React, { useState } from "react";
+import { Platform, View } from "react-native";
 import { shortSafeId, traceStalker } from "@/lib/stalkerPlaybackTrace";
 import OptimizedHomeScreenV6 from "@/components/OptimizedHomeScreenV6";
 import StalkerMainPage from "@/components/StalkerMainPage";
 import { usePlayer } from "@/context/PlayerContext";
 import { deriveProductCapabilities } from "@/lib/productContract";
 import { selectTransitionalProductSurface } from "@/lib/productShell";
-import { UiPresentationProvider } from "@/context/UiPresentationContext";
-import { TVPreviewControls, TVPreviewFocusProvider, TVPreviewFocusRegion } from "@/components/tvPreview/TVPreviewFocus";
+import {
+  UiPresentationProvider,
+  useUiPresentation,
+} from "@/context/UiPresentationContext";
+import {
+  TVPreviewControls,
+  TVPreviewFocusProvider,
+  TVPreviewFocusRegion,
+} from "@/components/tvPreview/TVPreviewFocus";
+import { EliteV4TvShell } from "@/components/eliteV4/EliteV4TvShell";
+import { EliteV4PreviewToggle } from "@/components/eliteV4/EliteV4PreviewToggle";
 
 function ProductShellContent() {
   const { provider } = usePlayer();
+  const { tvPreview } = useUiPresentation();
+  const [eliteV4Preview, setEliteV4Preview] = useState(false);
+  const previewAvailable = Platform.isTV || tvPreview;
 
-  traceStalker("PRODUCT_SHELL_RENDER", { providerPresent: Boolean(provider), providerType: provider?.type ?? "none", providerShortId: shortSafeId(provider?.id), selectedDelegate: provider ? selectTransitionalProductSurface(deriveProductCapabilities(provider.type)) : "paged", delegateKey: provider ? shortSafeId(provider.id) : "none" });
+  traceStalker("PRODUCT_SHELL_RENDER", {
+    providerPresent: Boolean(provider),
+    providerType: provider?.type ?? "none",
+    providerShortId: shortSafeId(provider?.id),
+    selectedDelegate: provider
+      ? selectTransitionalProductSurface(
+          deriveProductCapabilities(provider.type),
+        )
+      : "paged",
+    delegateKey: provider ? shortSafeId(provider.id) : "none",
+  });
+
+  if (provider && previewAvailable && eliteV4Preview) {
+    return (
+      <View style={{ flex: 1, minHeight: 0 }}>
+        <EliteV4TvShell onReturnToV3={() => setEliteV4Preview(false)} />
+        <EliteV4PreviewToggle enabled onChange={setEliteV4Preview} />
+      </View>
+    );
+  }
 
   if (!provider) {
     return <OptimizedHomeScreenV6 />;
@@ -26,26 +60,38 @@ function ProductShellContent() {
   // Keying the delegate by provider prevents product/player view state from
   // surviving a provider switch. Existing provider-switch generation/abort
   // guards remain authoritative below this boundary.
-  return surface === "stalker"
-    ? <StalkerMainPage key={provider.id} />
-    : <OptimizedHomeScreenV6 key={provider.id} />;
+  return (
+    <>
+      {surface === "stalker" ? (
+        <StalkerMainPage key={provider.id} />
+      ) : (
+        <OptimizedHomeScreenV6 key={provider.id} />
+      )}
+      {previewAvailable ? (
+        <EliteV4PreviewToggle enabled={false} onChange={setEliteV4Preview} />
+      ) : null}
+    </>
+  );
 }
-
 
 export default function ProductShell() {
   const { provider } = usePlayer();
   return (
     <MovieInfoServiceProvider>
-    <UiPresentationProvider>
-      <TVPreviewFocusProvider key={provider?.id ?? "disconnected"}>
-        <View style={{ flex: 1, minHeight: 0 }}>
-          <View style={{ flex: 1, minHeight: 0 }}><TVPreviewFocusRegion><ProductShellContent /></TVPreviewFocusRegion></View>
-          <TVPreviewControls />
-          <TVRemoteInspectorCollector />
-          <TVRemoteInspectorOverlay />
-        </View>
-      </TVPreviewFocusProvider>
-    </UiPresentationProvider>
+      <UiPresentationProvider>
+        <TVPreviewFocusProvider key={provider?.id ?? "disconnected"}>
+          <View style={{ flex: 1, minHeight: 0 }}>
+            <View style={{ flex: 1, minHeight: 0 }}>
+              <TVPreviewFocusRegion>
+                <ProductShellContent />
+              </TVPreviewFocusRegion>
+            </View>
+            <TVPreviewControls />
+            <TVRemoteInspectorCollector />
+            <TVRemoteInspectorOverlay />
+          </View>
+        </TVPreviewFocusProvider>
+      </UiPresentationProvider>
     </MovieInfoServiceProvider>
   );
 }
