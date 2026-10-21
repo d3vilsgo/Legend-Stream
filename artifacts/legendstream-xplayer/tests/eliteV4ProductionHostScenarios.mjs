@@ -24,7 +24,7 @@ const reactMock = `
   export default {createElement,useContext,useState,useRef,useMemo,useCallback,useEffect};
 `;
 const nativeMock = `
-  export const Pressable='Pressable',Image='Image',ImageBackground='ImageBackground',ScrollView='ScrollView',Text='Text',View='View';
+  export const Pressable='Pressable',Image='Image',ImageBackground='ImageBackground',ScrollView='ScrollView',Text='Text',View='View';export const Platform={isTV:false};
   export function findNodeHandle(ref){return ref?.handle??null;}
 `;
 try {
@@ -51,6 +51,10 @@ try {
             path: "react-native",
             namespace: "host",
           }));
+          build.onResolve({ filter: /^@\/components\/tvPreview\/TVPreviewFocus$/ }, () => ({
+            path: "tv-preview-focus",
+            namespace: "host",
+          }));
           build.onResolve({ filter: /^@expo\/vector-icons$/ }, () => ({
             path: "icons",
             namespace: "host",
@@ -65,7 +69,9 @@ try {
                 ? reactMock
                 : args.path === "react-native"
                   ? nativeMock
-                  : `export const ${args.path === "icons" ? "Feather" : "LinearGradient"}='${args.path}';`,
+                  : args.path === "tv-preview-focus"
+                    ? `export function TVPreviewPressable(props){return {type:'TVPreviewPressable',props};} export function useOptionalTVPreviewFocus(){return {enabled:true};}`
+                    : `export const ${args.path === "icons" ? "Feather" : "LinearGradient"}='${args.path}';`,
             loader: "js",
           }));
         },
@@ -177,16 +183,31 @@ try {
   );
 
   let selected = null;
-  const toggle = ui.EliteV4PreviewToggle({
+  const toggleElement = ui.EliteV4PreviewToggle({
     enabled: false,
     onChange: (value) => {
       selected = value;
     },
   });
+  const toggle = toggleElement.type(toggleElement.props);
   toggle.props.onPress();
   assert.equal(selected, true);
+  assert.equal(toggle.type, "TVPreviewPressable");
+  assert.equal(toggle.props.focusId, "elite-v4-preview-toggle");
   checks += 1;
-  console.log("PASS production preview selector enables V4 explicitly");
+  console.log("PASS production preview selector enables V4 and joins TV Preview focus");
+
+  let pressedV4 = false;
+  const v4ButtonElement = ui.EliteV4FocusButton({
+    focusId: "hero", region: "content", onPress: () => { pressedV4 = true; }, children: "Hero",
+  });
+  const v4Button = v4ButtonElement.type(v4ButtonElement.props);
+  assert.equal(v4Button.type, "TVPreviewPressable");
+  assert.equal(v4Button.props.focusId, "elite-v4:hero");
+  v4Button.props.onPress();
+  assert.equal(pressedV4, true);
+  checks += 1;
+  console.log("PASS production V4 controls expose their targets to virtual D-pad OK");
 
   const shell = readFileSync(join(app, "components/ProductShell.tsx"), "utf8");
   const legacyHome = readFileSync(
@@ -206,8 +227,8 @@ try {
     "PASS ProductShell defaults to V3 and routes V4 through separate components",
   );
 
-  assert.equal(checks, 6);
-  console.log(`Elite V4 production host scenarios: ${checks}/6 passed`);
+  assert.equal(checks, 7);
+  console.log(`Elite V4 production host scenarios: ${checks}/7 passed`);
 } finally {
   rmSync(out, { recursive: true, force: true });
 }
