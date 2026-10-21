@@ -62,17 +62,50 @@ try {
             path: "icons",
             namespace: "host",
           }));
-          build.onResolve({ filter: /^host-runtime$/ }, () => ({ path: "host-runtime", namespace: "host" }));
-          build.onResolve({ filter: /^\.\/tmdb\/MovieInfoServiceProvider$/ }, () => ({ path: "movie-info-service-provider", namespace: "host" }));
-          build.onResolve({ filter: /^@\/components\/tvPreview\/TVRemoteInspector$/ }, () => ({ path: "tv-remote-inspector", namespace: "host" }));
-          build.onResolve({ filter: /^@\/components\/OptimizedHomeScreenV6$/ }, () => ({ path: "v3-home", namespace: "host" }));
-          build.onResolve({ filter: /^@\/components\/StalkerMainPage$/ }, () => ({ path: "v3-stalker", namespace: "host" }));
-          build.onResolve({ filter: /^@\/context\/PlayerContext$/ }, () => ({ path: "player-context", namespace: "host" }));
-          build.onResolve({ filter: /^@\/context\/UiPresentationContext$/ }, () => ({ path: "ui-presentation-context", namespace: "host" }));
-          build.onResolve({ filter: /^@\/lib\/productContract$/ }, () => ({ path: "product-contract", namespace: "host" }));
-          build.onResolve({ filter: /^@\/lib\/productShell$/ }, () => ({ path: "product-shell", namespace: "host" }));
-          build.onResolve({ filter: /^@\/lib\/stalkerPlaybackTrace$/ }, () => ({ path: "stalker-trace", namespace: "host" }));
-          build.onResolve({ filter: /^@\/components\/eliteV4\/EliteV4TvShell$/ }, () => ({ path: "elite-v4-tv-shell", namespace: "host" }));
+          build.onResolve({ filter: /^host-runtime$/ }, () => ({
+            path: "host-runtime",
+            namespace: "host",
+          }));
+          build.onResolve(
+            { filter: /^\.\/tmdb\/MovieInfoServiceProvider$/ },
+            () => ({ path: "movie-info-service-provider", namespace: "host" }),
+          );
+          build.onResolve(
+            { filter: /^@\/components\/tvPreview\/TVRemoteInspector$/ },
+            () => ({ path: "tv-remote-inspector", namespace: "host" }),
+          );
+          build.onResolve(
+            { filter: /^@\/components\/OptimizedHomeScreenV6$/ },
+            () => ({ path: "v3-home", namespace: "host" }),
+          );
+          build.onResolve(
+            { filter: /^@\/components\/StalkerMainPage$/ },
+            () => ({ path: "v3-stalker", namespace: "host" }),
+          );
+          build.onResolve({ filter: /^@\/context\/PlayerContext$/ }, () => ({
+            path: "player-context",
+            namespace: "host",
+          }));
+          build.onResolve(
+            { filter: /^@\/context\/UiPresentationContext$/ },
+            () => ({ path: "ui-presentation-context", namespace: "host" }),
+          );
+          build.onResolve({ filter: /^@\/lib\/productContract$/ }, () => ({
+            path: "product-contract",
+            namespace: "host",
+          }));
+          build.onResolve({ filter: /^@\/lib\/productShell$/ }, () => ({
+            path: "product-shell",
+            namespace: "host",
+          }));
+          build.onResolve({ filter: /^@\/lib\/stalkerPlaybackTrace$/ }, () => ({
+            path: "stalker-trace",
+            namespace: "host",
+          }));
+          build.onResolve(
+            { filter: /^@\/components\/eliteV4\/EliteV4TvShell$/ },
+            () => ({ path: "elite-v4-tv-shell", namespace: "host" }),
+          );
           build.onResolve({ filter: /^expo-linear-gradient$/ }, () => ({
             path: "gradient",
             namespace: "host",
@@ -121,15 +154,16 @@ try {
                                       ? `import React from 'react'; export function EliteV4TvShell(props){return React.createElement('EliteV4TvShell',props);}`
                                       : args.path === "tv-preview-focus"
                                         ? `export function TVPreviewPressable(props){return {type:'TVPreviewPressable',props};} export function useOptionalTVPreviewFocus(){return {enabled:true};} export function TVPreviewControls(){return null;} export function TVPreviewFocusProvider({children}){return children;} export function TVPreviewFocusRegion({children}){return children;}`
-                    : args.path === "movie-info-service-provider"
-                      ? `export function useMovieInfoService(){return {};} export function MovieInfoServiceProvider({children}){return children;}`
-                      : args.path === "movie-info-modal"
-                        ? `export function MovieInfoModal(props){return {type:'MovieInfoModal',props};}`
-                        : args.path === "movie-info-service"
-                          ? `export function beginMovieEnrichment(){return ()=>{};}`
-                          : args.path === "movie-info-model"
-                            ? `export function localXtreamMovie(item){return {title:item.name??item.title??''};} export function movieInfoPresentation(local,input){return {title:local.title};} export function pagedMovieInput(){return {};}`
-                            : `export const ${args.path === "icons" ? "Feather" : "LinearGradient"}='${args.path}';`,
+                                        : args.path ===
+                                            "movie-info-service-provider"
+                                          ? `export function useMovieInfoService(){return {};} export function MovieInfoServiceProvider({children}){return children;}`
+                                          : args.path === "movie-info-modal"
+                                            ? `export function MovieInfoModal(props){return {type:'MovieInfoModal',props};}`
+                                            : args.path === "movie-info-service"
+                                              ? `export function beginMovieEnrichment(){return ()=>{};}`
+                                              : args.path === "movie-info-model"
+                                                ? `export function localXtreamMovie(item){return {title:item.name??item.title??''};} export function movieInfoPresentation(local,input){return {title:local.title};} export function pagedMovieInput(){return {};}`
+                                                : `export const ${args.path === "icons" ? "Feather" : "LinearGradient"}='${args.path}';`,
             loader: "js",
           }));
         },
@@ -341,43 +375,86 @@ try {
 
   ui.HostHooks.clear();
   ui.Platform.isTV = false;
-  ui.HostRuntime.player = { provider: { id: "provider-route-test", type: "xtream" } };
+  ui.HostRuntime.player = {
+    provider: { id: "provider-route-test", type: "xtream" },
+  };
   ui.HostRuntime.presentation = { tvPreview: true };
   let route = ui.ProductShellContent();
-  assert.equal(findElement(route, node => node.type === ui.EliteV4TvShell), null);
-  const previewToggleElement = findElement(route, node => node.type === ui.EliteV4PreviewToggle);
-  assert.ok(previewToggleElement, "V3 must expose a V4 selector in mobile TV Preview");
+  assert.equal(
+    findElement(route, (node) => node.type === ui.EliteV4TvShell),
+    null,
+  );
+  const previewToggleElement = findElement(
+    route,
+    (node) => node.type === ui.EliteV4PreviewToggle,
+  );
+  assert.ok(
+    previewToggleElement,
+    "V3 must expose a V4 selector in mobile TV Preview",
+  );
   const mobileToggle = previewToggleElement.type(previewToggleElement.props);
   mobileToggle.props.onPress();
   ui.HostHooks.reset();
   route = ui.ProductShellContent();
-  const mobileV4Shell = findElement(route, node => node.type === ui.EliteV4TvShell);
-  assert.ok(mobileV4Shell, "selecting V4 must render EliteV4TvShell from ProductShell");
-  assert.equal(findElement(route, node => node.type === ui.EliteV4PreviewToggle)?.props.enabled, true);
+  const mobileV4Shell = findElement(
+    route,
+    (node) => node.type === ui.EliteV4TvShell,
+  );
+  assert.ok(
+    mobileV4Shell,
+    "selecting V4 must render EliteV4TvShell from ProductShell",
+  );
+  assert.equal(
+    findElement(route, (node) => node.type === ui.EliteV4PreviewToggle)?.props
+      .enabled,
+    true,
+  );
   mobileV4Shell.props.onReturnToV3();
   ui.HostHooks.reset();
   route = ui.ProductShellContent();
-  assert.equal(findElement(route, node => node.type === ui.EliteV4TvShell), null);
+  assert.equal(
+    findElement(route, (node) => node.type === ui.EliteV4TvShell),
+    null,
+  );
   checks += 1;
-  console.log("PASS ProductShell route defaults to V3, activates V4, and returns to V3 in TV Preview");
+  console.log(
+    "PASS ProductShell route defaults to V3, activates V4, and returns to V3 in TV Preview",
+  );
 
   ui.HostHooks.clear();
   ui.Platform.isTV = true;
   ui.HostRuntime.presentation = { tvPreview: false };
   route = ui.ProductShellContent();
-  const nativeRouteToggleElement = findElement(route, node => node.type === ui.EliteV4PreviewToggle);
-  assert.ok(nativeRouteToggleElement, "Native TV must expose the V4 selector without TV Preview mode");
-  const nativeRouteToggle = nativeRouteToggleElement.type(nativeRouteToggleElement.props);
+  const nativeRouteToggleElement = findElement(
+    route,
+    (node) => node.type === ui.EliteV4PreviewToggle,
+  );
+  assert.ok(
+    nativeRouteToggleElement,
+    "Native TV must expose the V4 selector without TV Preview mode",
+  );
+  const nativeRouteToggle = nativeRouteToggleElement.type(
+    nativeRouteToggleElement.props,
+  );
   assert.equal(nativeRouteToggle.type, "Pressable");
   assert.equal(nativeRouteToggle.props.hasTVPreferredFocus, true);
   nativeRouteToggle.props.onPress();
   ui.HostHooks.reset();
   route = ui.ProductShellContent();
-  const nativeV4Shell = findElement(route, node => node.type === ui.EliteV4TvShell);
+  const nativeV4Shell = findElement(
+    route,
+    (node) => node.type === ui.EliteV4TvShell,
+  );
   assert.ok(nativeV4Shell, "Native TV V4 selection must render EliteV4TvShell");
   nativeV4Shell.props.onReturnToV3();
   ui.HostHooks.reset();
-  assert.equal(findElement(ui.ProductShellContent(), node => node.type === ui.EliteV4TvShell), null);
+  assert.equal(
+    findElement(
+      ui.ProductShellContent(),
+      (node) => node.type === ui.EliteV4TvShell,
+    ),
+    null,
+  );
   ui.Platform.isTV = false;
   checks += 1;
   console.log("PASS Native TV selection renders V4 and restores the V3 route");
