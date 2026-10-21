@@ -67,6 +67,23 @@ export function createTmdbDirectTransport(
     }
   }
   const lookup: MovieMetadataTransport["lookup"] = async (query) => {
+    if (query.providerTmdbId !== undefined) {
+      const verified = await detail(
+        { kind: query.kind, id: query.providerTmdbId },
+        "tr-TR",
+      );
+      if (!verified.title) return [];
+      return [
+        {
+          kind: query.kind,
+          id: verified.id,
+          title: verified.title,
+          originalTitle: verified.originalTitle,
+          year: verified.year,
+          evidence: "detail",
+        },
+      ];
+    }
     const kind = query.kind === "movie" ? "movie" : "tv";
     const params = new URLSearchParams({
       query: query.title,
