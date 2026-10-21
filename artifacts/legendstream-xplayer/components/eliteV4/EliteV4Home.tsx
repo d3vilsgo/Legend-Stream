@@ -8,11 +8,15 @@ import { eliteV4Theme as theme } from "@/lib/design/eliteV4Theme";
 export function EliteV4Home({
   items,
   providerName,
+  providerId,
+  providerType,
   loading,
   onOpen,
 }: {
   items: readonly EliteHomeItem[];
   providerName: string;
+  providerId: string;
+  providerType: string;
   loading: boolean;
   onOpen: (item: EliteHomeItem) => void;
 }) {
@@ -56,7 +60,12 @@ export function EliteV4Home({
           {providerName}
         </Text>
       </View>
-      <EliteV4Hero item={hero} onOpen={onOpen} />
+      <EliteV4Hero
+        item={hero}
+        onOpen={onOpen}
+        providerId={providerId}
+        providerType={providerType}
+      />
       {items.length ? (
         <EliteV4ContentRail items={items} onOpen={onOpen} />
       ) : (
