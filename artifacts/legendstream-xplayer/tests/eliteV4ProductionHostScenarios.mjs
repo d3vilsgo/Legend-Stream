@@ -51,10 +51,13 @@ try {
             path: "react-native",
             namespace: "host",
           }));
-          build.onResolve({ filter: /^@\/components\/tvPreview\/TVPreviewFocus$/ }, () => ({
-            path: "tv-preview-focus",
-            namespace: "host",
-          }));
+          build.onResolve(
+            { filter: /^@\/components\/tvPreview\/TVPreviewFocus$/ },
+            () => ({
+              path: "tv-preview-focus",
+              namespace: "host",
+            }),
+          );
           build.onResolve({ filter: /^@expo\/vector-icons$/ }, () => ({
             path: "icons",
             namespace: "host",
@@ -195,11 +198,18 @@ try {
   assert.equal(toggle.type, "TVPreviewPressable");
   assert.equal(toggle.props.focusId, "elite-v4-preview-toggle");
   checks += 1;
-  console.log("PASS production preview selector enables V4 and joins TV Preview focus");
+  console.log(
+    "PASS production preview selector enables V4 and joins TV Preview focus",
+  );
 
   let pressedV4 = false;
   const v4ButtonElement = ui.EliteV4FocusButton({
-    focusId: "hero", region: "content", onPress: () => { pressedV4 = true; }, children: "Hero",
+    focusId: "hero",
+    region: "content",
+    onPress: () => {
+      pressedV4 = true;
+    },
+    children: "Hero",
   });
   const v4Button = v4ButtonElement.type(v4ButtonElement.props);
   assert.equal(v4Button.type, "TVPreviewPressable");
@@ -207,7 +217,9 @@ try {
   v4Button.props.onPress();
   assert.equal(pressedV4, true);
   checks += 1;
-  console.log("PASS production V4 controls expose their targets to virtual D-pad OK");
+  console.log(
+    "PASS production V4 controls expose their targets to virtual D-pad OK",
+  );
 
   const shell = readFileSync(join(app, "components/ProductShell.tsx"), "utf8");
   const legacyHome = readFileSync(
