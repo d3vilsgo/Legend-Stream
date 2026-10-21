@@ -1,5 +1,6 @@
 import React, { useState } from "react";
-import { Pressable, Text } from "react-native";
+import { Platform, Text } from "react-native";
+import { TVPreviewPressable } from "@/components/tvPreview/TVPreviewFocus";
 import { eliteV4Theme as theme } from "@/lib/design/eliteV4Theme";
 
 export function EliteV4PreviewToggle({
@@ -11,7 +12,10 @@ export function EliteV4PreviewToggle({
 }) {
   const [focused, setFocused] = useState(false);
   return (
-    <Pressable
+    <TVPreviewPressable
+      focusId="elite-v4-preview-toggle"
+      focusScope="content"
+      eliteVisual
       onPress={() => onChange(!enabled)}
       onFocus={() => setFocused(true)}
       onBlur={() => setFocused(false)}
@@ -46,6 +50,6 @@ export function EliteV4PreviewToggle({
       >
         {enabled ? "V3'e dön" : "V4 önizleme"}
       </Text>
-    </Pressable>
+    </TVPreviewPressable>
   );
 }
