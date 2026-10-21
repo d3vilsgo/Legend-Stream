@@ -54,11 +54,15 @@ const h = (globalThis.__series = {
 });
 const mocks = {
   "./tmdb/MovieInfoServiceProvider": `export const MovieInfoServiceProvider='Metadata';`,
+  "@/components/tmdb/MovieInfoServiceProvider": `export const useMovieInfoService=()=>({});`,
+  "@/lib/tmdb/movieInfoService": `export const beginMovieEnrichment=(_service,_input,apply)=>{apply({status:'not-configured'});return()=>{};};`,
+  "@/lib/tmdb/metadata": `export const tmdbImageUrl=()=>null;`,
+  "@/lib/tmdb/matcher": `export const inferredYear=()=>undefined;`,
   "@/components/OptimizedHomeScreenV6": `export default 'PagedHome';`,
   "@/components/StalkerMainPage": `export default 'StalkerHome';`,
   "@/context/PlayerContext": `export const usePlayer=()=>({provider:globalThis.__series.shellProvider});`,
   "@/context/UiPresentationContext": `export const UiPresentationProvider='Presentation';`,
-  react: `export const useState=v=>globalThis.__series.state(v),useRef=v=>globalThis.__series.ref(v),useEffect=(f,d)=>globalThis.__series.effect(f,d),useMemo=(f,d)=>globalThis.__series.memo(f,d),useCallback=(f,d)=>globalThis.__series.memo(()=>f,d);export default {createElement:(tag,props,...children)=>({tag,props:{...props,children}})};`,
+  react: `export const useState=v=>globalThis.__series.state(v),useRef=v=>globalThis.__series.ref(v),useEffect=(f,d)=>globalThis.__series.effect(f,d),useMemo=(f,d)=>globalThis.__series.memo(f,d),useCallback=(f,d)=>globalThis.__series.memo(()=>f,d);export default {useState,createElement:(tag,props,...children)=>({tag,props:{...props,children}})};`,
   "react-native": `export const ActivityIndicator='Spinner',FlatList='FlatList',Image='Image',Modal='Modal',Text='Text',View='View';export const Platform={get isTV(){return globalThis.__series.native},OS:'android'};export const StyleSheet={create:s=>s};`,
   "react-native-safe-area-context": `export const useSafeAreaInsets=()=>({left:0,right:0,top:0,bottom:0});`,
   "@/context/I18nContext": `export const useI18n=()=>({t:k=>k});`,
