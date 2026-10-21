@@ -135,6 +135,8 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
         <EliteV4Home
           items={items}
           providerName={providerName}
+          providerId={provider.id}
+          providerType={provider.type}
           loading={isSyncing || (!currentSnapshot?.ready && !hasUsableCache)}
           onOpen={(item) => void openItem(item)}
         />
