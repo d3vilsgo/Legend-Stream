@@ -39,7 +39,7 @@ export function EliteV4Sidebar({ onReturnToV3 }: { onReturnToV3: () => void }) {
           focusId="sidebar-home"
           region="sidebar"
           initial={false}
-          neighbors={{ right: "hero" }}
+          neighbors={{ right: "hero", down: "sidebar-v3" }}
           onPress={() => undefined}
           accessibilityLabel="Ana Sayfa"
           style={{

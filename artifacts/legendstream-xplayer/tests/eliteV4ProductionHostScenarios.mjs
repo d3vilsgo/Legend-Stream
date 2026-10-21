@@ -262,9 +262,17 @@ try {
     join(app, "components/OptimizedHomeScreenPaged.tsx"),
     "utf8",
   );
-  assert.match(shell, /useState\(tvPreview\)/);
+  const sidebarSource = readFileSync(
+    join(app, "components/eliteV4/EliteV4Sidebar.tsx"),
+    "utf8",
+  );
+  assert.match(shell, /useState\(false\)/);
+  assert.doesNotMatch(shell, /setEliteV4Preview\(tvPreview\)/);
+  assert.match(shell, /const previewAvailable = Platform\.isTV \|\| tvPreview/);
   assert.match(shell, /provider && previewAvailable && eliteV4Preview/);
   assert.match(shell, /<OptimizedHomeScreenV6 key=\{provider\.id\} \/>/);
+  assert.match(sidebarSource, /right: "hero", down: "sidebar-v3"/);
+  assert.match(sidebarSource, /up: "sidebar-home"/);
   assert.match(legacyHome, /export default function OptimizedHomeScreenPaged/);
   assert.doesNotMatch(
     shell,

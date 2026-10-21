@@ -1,6 +1,6 @@
 import { MovieInfoServiceProvider } from "./tmdb/MovieInfoServiceProvider";
 import { TVRemoteInspectorOverlay, TVRemoteInspectorCollector } from "@/components/tvPreview/TVRemoteInspector";
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import { Platform, View } from "react-native";
 import { shortSafeId, traceStalker } from "@/lib/stalkerPlaybackTrace";
 import OptimizedHomeScreenV6 from "@/components/OptimizedHomeScreenV6";
@@ -16,14 +16,10 @@ import { EliteV4PreviewToggle } from "@/components/eliteV4/EliteV4PreviewToggle"
 function ProductShellContent() {
   const { provider } = usePlayer();
   const { tvPreview } = useUiPresentation();
-  const [eliteV4Preview, setEliteV4Preview] = useState(tvPreview);
+  // UI version is an explicit user choice; presentation mode only controls availability.
+  const [eliteV4Preview, setEliteV4Preview] = useState(false);
   const previewAvailable = Platform.isTV || tvPreview;
 
-  // Entering the explicit TV Preview mode on mobile opens the V4 test surface
-  // directly. Leaving TV Preview restores the default V3 surface.
-  useEffect(() => {
-    setEliteV4Preview(tvPreview);
-  }, [tvPreview]);
 
   traceStalker("PRODUCT_SHELL_RENDER", { providerPresent: Boolean(provider), providerType: provider?.type ?? "none", providerShortId: shortSafeId(provider?.id), selectedDelegate: provider ? selectTransitionalProductSurface(deriveProductCapabilities(provider.type)) : "paged", delegateKey: provider ? shortSafeId(provider.id) : "none" });
 
