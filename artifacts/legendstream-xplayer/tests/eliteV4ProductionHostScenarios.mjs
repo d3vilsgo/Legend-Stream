@@ -262,7 +262,7 @@ try {
     enabled: false,
     onChange: () => {},
   });
-  const nativeToggle = nativeToggleElement.type(nativeToggleElement.props);
+  const nativeToggle = nativeToggleElement;
   assert.equal(nativeToggle.type, "Pressable");
   assert.equal(nativeToggle.props.hasTVPreferredFocus, true);
   ui.Platform.isTV = false;
