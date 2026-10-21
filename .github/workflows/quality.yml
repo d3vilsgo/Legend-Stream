@@ -306,7 +306,7 @@ jobs:
       - name: Native TV Home production component render contract
         run: node artifacts/legendstream-xplayer/tests/nativeTvHomeRenderScenarios.mjs
       - name: Elite V4 isolated Home data and focus scenarios
-        run: node --import tsx artifacts/legendstream-xplayer/tests/eliteV4HomeFocusScenarios.ts
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/eliteV4HomeFocusScenarios.ts
       - name: Elite V4 production component host acceptance
         run: node artifacts/legendstream-xplayer/tests/eliteV4ProductionHostScenarios.mjs
       - name: Elite V4 source formatting
