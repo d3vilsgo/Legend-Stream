@@ -15,13 +15,13 @@ let checks = 0;
 const reactMock = `
   export function createContext(value){const context={_value:value};context.Provider={_context:context};return context;}
   export function useContext(context){return context._value;}
-  export function useState(value){let current=typeof value==='function'?value():value;return [current,next=>{current=typeof next==='function'?next(current):next}];}
+  const state=[];let cursor=0;export const HostHooks={reset(){cursor=0;},clear(){state.length=0;cursor=0;}};export function useState(value){const index=cursor++;if(!(index in state))state[index]=typeof value==='function'?value():value;return [state[index],next=>{state[index]=typeof next==='function'?next(state[index]):next}];}
   let handle=200;export function useRef(value){return {current:value??{handle:handle++}};}
   export function useMemo(factory){return factory();}
   export function useCallback(callback){return callback;}
   export function useEffect(_effect){}
   export function createElement(type,props,...children){return {type,props:{...(props??{}),children}};}
-  export default {createElement,useContext,useState,useRef,useMemo,useCallback,useEffect};
+  export default {createElement,Fragment:'Fragment',useContext,useState,useRef,useMemo,useCallback,useEffect};
 `;
 const nativeMock = `
   export const Pressable='Pressable',Image='Image',ImageBackground='ImageBackground',ScrollView='ScrollView',Text='Text',View='View';export const Platform={isTV:false};
@@ -30,7 +30,7 @@ const nativeMock = `
 try {
   await build({
     stdin: {
-      contents: `export {Platform} from 'react-native';export {EliteV4FocusSurface,EliteV4FocusButton} from './components/eliteV4/EliteV4FocusSurface';export {EliteV4Sidebar} from './components/eliteV4/EliteV4Sidebar';export {EliteV4Hero} from './components/eliteV4/EliteV4Hero';export {EliteV4ContentRail} from './components/eliteV4/EliteV4ContentRail';export {EliteV4Home} from './components/eliteV4/EliteV4Home';export {EliteV4PreviewToggle} from './components/eliteV4/EliteV4PreviewToggle';export {eliteV4Theme} from './lib/design/eliteV4Theme';`,
+      contents: `export {Platform} from 'react-native';export {HostHooks} from 'react';export {HostRuntime} from 'host-runtime';export {ProductShellContent} from './components/ProductShell';export {EliteV4FocusSurface,EliteV4FocusButton} from './components/eliteV4/EliteV4FocusSurface';export {EliteV4Sidebar} from './components/eliteV4/EliteV4Sidebar';export {EliteV4Hero} from './components/eliteV4/EliteV4Hero';export {EliteV4ContentRail} from './components/eliteV4/EliteV4ContentRail';export {EliteV4Home} from './components/eliteV4/EliteV4Home';export {EliteV4PreviewToggle} from './components/eliteV4/EliteV4PreviewToggle';export {eliteV4Theme} from './lib/design/eliteV4Theme';`,
       resolveDir: app,
       loader: "tsx",
     },
@@ -62,6 +62,17 @@ try {
             path: "icons",
             namespace: "host",
           }));
+          build.onResolve({ filter: /^host-runtime$/ }, () => ({ path: "host-runtime", namespace: "host" }));
+          build.onResolve({ filter: /^\.\/tmdb\/MovieInfoServiceProvider$/ }, () => ({ path: "movie-info-service-provider", namespace: "host" }));
+          build.onResolve({ filter: /^@\/components\/tvPreview\/TVRemoteInspector$/ }, () => ({ path: "tv-remote-inspector", namespace: "host" }));
+          build.onResolve({ filter: /^@\/components\/OptimizedHomeScreenV6$/ }, () => ({ path: "v3-home", namespace: "host" }));
+          build.onResolve({ filter: /^@\/components\/StalkerMainPage$/ }, () => ({ path: "v3-stalker", namespace: "host" }));
+          build.onResolve({ filter: /^@\/context\/PlayerContext$/ }, () => ({ path: "player-context", namespace: "host" }));
+          build.onResolve({ filter: /^@\/context\/UiPresentationContext$/ }, () => ({ path: "ui-presentation-context", namespace: "host" }));
+          build.onResolve({ filter: /^@\/lib\/productContract$/ }, () => ({ path: "product-contract", namespace: "host" }));
+          build.onResolve({ filter: /^@\/lib\/productShell$/ }, () => ({ path: "product-shell", namespace: "host" }));
+          build.onResolve({ filter: /^@\/lib\/stalkerPlaybackTrace$/ }, () => ({ path: "stalker-trace", namespace: "host" }));
+          build.onResolve({ filter: /^@\/components\/eliteV4\/EliteV4TvShell$/ }, () => ({ path: "elite-v4-tv-shell", namespace: "host" }));
           build.onResolve({ filter: /^expo-linear-gradient$/ }, () => ({
             path: "gradient",
             namespace: "host",
@@ -88,8 +99,28 @@ try {
                 ? reactMock
                 : args.path === "react-native"
                   ? nativeMock
-                  : args.path === "tv-preview-focus"
-                    ? `export function TVPreviewPressable(props){return {type:'TVPreviewPressable',props};} export function useOptionalTVPreviewFocus(){return {enabled:true};}`
+                  : args.path === "host-runtime"
+                    ? `export const HostRuntime={player:{provider:{id:'provider-1',type:'xtream'}},presentation:{tvPreview:true}};`
+                    : args.path === "player-context"
+                      ? `import {HostRuntime} from 'host-runtime'; export function usePlayer(){return HostRuntime.player;}`
+                      : args.path === "ui-presentation-context"
+                        ? `import {HostRuntime} from 'host-runtime'; export function useUiPresentation(){return HostRuntime.presentation;} export function UiPresentationProvider({children}){return children;}`
+                        : args.path === "v3-home"
+                          ? `export default function OptimizedHomeScreenV6(){return null;}`
+                          : args.path === "v3-stalker"
+                            ? `export default function StalkerMainPage(){return null;}`
+                            : args.path === "product-contract"
+                              ? `export function deriveProductCapabilities(){return {};}`
+                              : args.path === "product-shell"
+                                ? `export function selectTransitionalProductSurface(){return 'paged';}`
+                                : args.path === "stalker-trace"
+                                  ? `export function shortSafeId(value){return value??'none';} export function traceStalker(){}`
+                                  : args.path === "tv-remote-inspector"
+                                    ? `export function TVRemoteInspectorOverlay(){return null;} export function TVRemoteInspectorCollector(){return null;}`
+                                    : args.path === "elite-v4-tv-shell"
+                                      ? `import React from 'react'; export function EliteV4TvShell(props){return React.createElement('EliteV4TvShell',props);}`
+                                      : args.path === "tv-preview-focus"
+                                        ? `export function TVPreviewPressable(props){return {type:'TVPreviewPressable',props};} export function useOptionalTVPreviewFocus(){return {enabled:true};} export function TVPreviewControls(){return null;} export function TVPreviewFocusProvider({children}){return children;} export function TVPreviewFocusRegion({children}){return children;}`
                     : args.path === "movie-info-service-provider"
                       ? `export function useMovieInfoService(){return {};}`
                       : args.path === "movie-info-modal"
@@ -295,8 +326,64 @@ try {
     "PASS ProductShell defaults to V3 and routes V4 through separate components",
   );
 
-  assert.equal(checks, 8);
-  console.log(`Elite V4 production host scenarios: ${checks}/8 passed`);
+  const findElement = (node, predicate) => {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const found = findElement(child, predicate);
+        if (found) return found;
+      }
+      return null;
+    }
+    if (!node || typeof node !== "object") return null;
+    if (predicate(node)) return node;
+    return findElement(node.props?.children, predicate);
+  };
+
+  ui.HostHooks.clear();
+  ui.Platform.isTV = false;
+  ui.HostRuntime.player = { provider: { id: "provider-route-test", type: "xtream" } };
+  ui.HostRuntime.presentation = { tvPreview: true };
+  let route = ui.ProductShellContent();
+  assert.equal(findElement(route, node => node.type === ui.EliteV4TvShell), null);
+  const previewToggleElement = findElement(route, node => node.type === ui.EliteV4PreviewToggle);
+  assert.ok(previewToggleElement, "V3 must expose a V4 selector in mobile TV Preview");
+  const mobileToggle = previewToggleElement.type(previewToggleElement.props);
+  mobileToggle.props.onPress();
+  ui.HostHooks.reset();
+  route = ui.ProductShellContent();
+  const mobileV4Shell = findElement(route, node => node.type === ui.EliteV4TvShell);
+  assert.ok(mobileV4Shell, "selecting V4 must render EliteV4TvShell from ProductShell");
+  assert.equal(findElement(route, node => node.type === ui.EliteV4PreviewToggle)?.props.enabled, true);
+  mobileV4Shell.props.onReturnToV3();
+  ui.HostHooks.reset();
+  route = ui.ProductShellContent();
+  assert.equal(findElement(route, node => node.type === ui.EliteV4TvShell), null);
+  checks += 1;
+  console.log("PASS ProductShell route defaults to V3, activates V4, and returns to V3 in TV Preview");
+
+  ui.HostHooks.clear();
+  ui.Platform.isTV = true;
+  ui.HostRuntime.presentation = { tvPreview: false };
+  route = ui.ProductShellContent();
+  const nativeToggleElement = findElement(route, node => node.type === ui.EliteV4PreviewToggle);
+  assert.ok(nativeToggleElement, "Native TV must expose the V4 selector without TV Preview mode");
+  const nativeRouteToggle = nativeToggleElement.type(nativeToggleElement.props);
+  assert.equal(nativeRouteToggle.type, "Pressable");
+  assert.equal(nativeRouteToggle.props.hasTVPreferredFocus, true);
+  nativeRouteToggle.props.onPress();
+  ui.HostHooks.reset();
+  route = ui.ProductShellContent();
+  const nativeV4Shell = findElement(route, node => node.type === ui.EliteV4TvShell);
+  assert.ok(nativeV4Shell, "Native TV V4 selection must render EliteV4TvShell");
+  nativeV4Shell.props.onReturnToV3();
+  ui.HostHooks.reset();
+  assert.equal(findElement(ui.ProductShellContent(), node => node.type === ui.EliteV4TvShell), null);
+  ui.Platform.isTV = false;
+  checks += 1;
+  console.log("PASS Native TV selection renders V4 and restores the V3 route");
+
+  assert.equal(checks, 10);
+  console.log(`Elite V4 production host scenarios: ${checks}/10 passed`);
 } finally {
   rmSync(out, { recursive: true, force: true });
 }

@@ -13,7 +13,7 @@ import { TVPreviewControls, TVPreviewFocusProvider, TVPreviewFocusRegion } from 
 import { EliteV4TvShell } from "@/components/eliteV4/EliteV4TvShell";
 import { EliteV4PreviewToggle } from "@/components/eliteV4/EliteV4PreviewToggle";
 
-function ProductShellContent() {
+export function ProductShellContent() {
   const { provider } = usePlayer();
   const { tvPreview } = useUiPresentation();
   // UI version is an explicit user choice; presentation mode only controls availability.
