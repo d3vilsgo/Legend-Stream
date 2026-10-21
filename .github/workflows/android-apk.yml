@@ -26,6 +26,7 @@ on:
     branches:
       - feature/r18-tv-preview-virtual-dpad
       - feature/r18-native-tv-universal-apk
+      - integration/legendstream-u1
     tags:
       - "v*"
 
