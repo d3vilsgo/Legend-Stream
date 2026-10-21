@@ -38,6 +38,13 @@ export function pagedSeriesDetail(
     image: local?.cover || item.cover,
     description: local?.plot || item.plot,
     genre: local?.genre || item.genre,
+    year:
+      parseInt(
+        String(
+          local?.releaseDate || item.releaseDate || item.release_date || "",
+        ).slice(0, 4),
+        10,
+      ) || undefined,
     seasons: Object.entries(info?.episodes ?? {}).map(([id, episodes]) => ({
       id,
       label:
@@ -72,6 +79,9 @@ export function stalkerSeriesDetail(
     image: detail?.posterUrl || item.posterUrl,
     description: detail?.description || item.description,
     genre: detail?.genre || item.genre,
+    year:
+      parseInt(String(detail?.year || item.year || "").slice(0, 4), 10) ||
+      undefined,
     seasons: (detail?.seasons ?? []).map((season) => ({
       ...season,
       episodes: season.episodes.map((episode) => ({

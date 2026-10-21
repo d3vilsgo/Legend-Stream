@@ -1,5 +1,4 @@
 import { MovieInfoServiceProvider } from "./tmdb/MovieInfoServiceProvider";
-import type { ProxyAccess } from "@/lib/tmdbProxy/transport";
 import { TVRemoteInspectorOverlay, TVRemoteInspectorCollector } from "@/components/tvPreview/TVRemoteInspector";
 import React from "react";
 import { View } from "react-native";
@@ -33,10 +32,10 @@ function ProductShellContent() {
 }
 
 
-export default function ProductShell({ metadataAccess }: { metadataAccess?: ProxyAccess } = {}) {
+export default function ProductShell() {
   const { provider } = usePlayer();
   return (
-    <MovieInfoServiceProvider access={metadataAccess}>
+    <MovieInfoServiceProvider>
     <UiPresentationProvider>
       <TVPreviewFocusProvider key={provider?.id ?? "disconnected"}>
         <View style={{ flex: 1, minHeight: 0 }}>

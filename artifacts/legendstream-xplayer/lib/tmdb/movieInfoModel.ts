@@ -68,6 +68,7 @@ export function movieInfoPresentation(
     runtime: m?.runtimeMinutes,
     rating: m?.voteAverage,
     ratingSource: m?.voteAverage !== undefined ? "TMDB" : undefined,
+    trailerUrl: m?.trailerUrl,
     similarCount: m?.similar.length ?? 0,
     enriched: !!m,
   };

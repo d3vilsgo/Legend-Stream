@@ -325,6 +325,11 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvResponsiveScenarios.ts
       - name: TMDB metadata matching cache and identity foundation
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tmdbFoundationScenarios.ts
+      - name: Live TMDB direct API acceptance (movie, series, season, Turkish locale)
+        working-directory: artifacts/legendstream-xplayer
+        env:
+          TMDB_API_TOKEN: ${{ secrets.TMDB_API_TOKEN }}
+        run: node --import tsx tests/tmdbLiveAcceptance.ts
       - name: U4.3 Series Info identity origin episode and input ownership
         run: node artifacts/legendstream-xplayer/tests/u43SeriesFlowScenarios.mjs
       - name: U4.3 shared Series Info and controller formatting

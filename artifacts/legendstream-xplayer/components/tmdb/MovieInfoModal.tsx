@@ -266,6 +266,18 @@ export function MovieInfoModal({
               {infoRow("Özet", info.overview ?? "Özet bilgisi bulunmuyor.")}
               {infoRow("Oyuncular", info.cast)}
               {infoRow("Yönetmen", info.director)}
+              {info.trailerUrl ? (
+                <TVPreviewPressable
+                  eliteVisual
+                  focusScope="movie-info"
+                  focusId="movie-info:trailer"
+                  accessibilityRole="button"
+                  onPress={() => void Linking.openURL(info.trailerUrl!)}
+                  style={s.control}
+                >
+                  <Text style={text}>▶ Fragmanı aç</Text>
+                </TVPreviewPressable>
+              ) : null}
               {info.enriched ? (
                 <View style={s.field}>
                   <Text style={muted}>

@@ -28,6 +28,13 @@ import {
 } from "@/lib/goldenSeriesDetail";
 import { useI18n } from "@/context/I18nContext";
 import { eliteTokens as tokens } from "@/lib/design/eliteTokens";
+import { useMovieInfoService } from "@/components/tmdb/MovieInfoServiceProvider";
+import {
+  beginMovieEnrichment,
+  type MovieEnrichment,
+} from "@/lib/tmdb/movieInfoService";
+import { tmdbImageUrl } from "@/lib/tmdb/metadata";
+import { inferredYear } from "@/lib/tmdb/matcher";
 
 /** Shared Golden detail presentation. No provider/metadata requests or playback resolution. */
 export function SeriesInfoModal({
@@ -52,6 +59,27 @@ export function SeriesInfoModal({
   onEpisode: (seasonId: string, episodeId: string) => void;
 }) {
   const { t } = useI18n();
+  const metadataService = useMovieInfoService();
+  const metadataInput = useMemo(
+    () => ({
+      identity: {
+        providerId,
+        provider: "xtream" as const,
+        kind: "series" as const,
+        catalogId: detail.id,
+      },
+      catalogRevision: detail.id,
+      title: detail.title,
+      year: detail.year ?? inferredYear(detail.title),
+    }),
+    [providerId, detail.id, detail.title, detail.year],
+  );
+  const [metadata, setMetadata] = React.useState<MovieEnrichment | null>(null);
+  useEffect(() => {
+    setMetadata(null);
+    return beginMovieEnrichment(metadataService, metadataInput, setMetadata);
+  }, [metadataService, metadataInput]);
+  const tmdb = metadata?.status === "enriched" ? metadata.metadata : undefined;
   const insets = useSafeAreaInsets(),
     focus = useTVPreviewFocus();
   const [dialogShown, setDialogShown] = useState(false);
@@ -112,7 +140,7 @@ export function SeriesInfoModal({
     };
   }, [visible, providerId, detail.id, selectedSeasonId]);
   const [imageFailed, setImageFailed] = useState(false);
-  useEffect(() => setImageFailed(false), [detail.image]);
+  useEffect(() => setImageFailed(false), [detail.image, tmdb?.posterPath]);
   useEffect(() => {
     setSelectedSeasonId(initialGoldenSeriesSeasonId(orderedSeasons));
     setSelectedEpisodeId(null);
@@ -184,9 +212,14 @@ export function SeriesInfoModal({
       >
         <Text style={text}>← {t("back")}</Text>
       </TVPreviewPressable>
-      {detail.image && !imageFailed ? (
+      {(detail.image || tmdb?.posterPath) && !imageFailed ? (
         <Image
-          source={{ uri: detail.image }}
+          source={{
+            uri:
+              detail.image ||
+              tmdbImageUrl(tmdb?.posterPath, "w342") ||
+              undefined,
+          }}
           onError={() => setImageFailed(true)}
           style={{ width: 120, aspectRatio: 2 / 3, borderRadius: 12 }}
           resizeMode="contain"
@@ -196,11 +229,46 @@ export function SeriesInfoModal({
         accessibilityRole="header"
         style={[text, { fontSize: Platform.isTV ? 34 : 26, fontWeight: "800" }]}
       >
-        {detail.title}
+        {detail.title || tmdb?.title}
       </Text>
-      {detail.genre ? <Text style={text}>{detail.genre}</Text> : null}
-      {detail.description ? (
-        <Text style={text}>{detail.description}</Text>
+      {detail.genre || tmdb?.genres?.length ? (
+        <Text style={text}>
+          {detail.genre || tmdb?.genres.map((g) => g.name).join(" · ")}
+        </Text>
+      ) : null}
+      {detail.description || tmdb?.overview ? (
+        <Text style={text}>{detail.description || tmdb?.overview}</Text>
+      ) : null}
+      {tmdb?.voteAverage !== undefined ? (
+        <Text style={text}>
+          TMDB · {tmdb.voteAverage.toFixed(1)} / 10
+          {tmdb.year ? ` · ${tmdb.year}` : ""}
+        </Text>
+      ) : null}
+      {tmdb?.cast.length ? (
+        <Text style={text}>
+          Oyuncular ·{" "}
+          {tmdb.cast
+            .slice(0, 8)
+            .map((p) => p.name)
+            .join(", ")}
+        </Text>
+      ) : null}
+      {tmdb?.directors.length ? (
+        <Text style={text}>
+          Yapım ekibi · {tmdb.directors.map((p) => p.name).join(", ")}
+        </Text>
+      ) : null}
+      {tmdb?.seasons.length ? (
+        <Text style={text}>
+          TMDB sezonları ·{" "}
+          {tmdb.seasons
+            .map(
+              (s) =>
+                `S${s.number}${s.episodeCount ? ` (${s.episodeCount} bölüm)` : ""}`,
+            )
+            .join(" · ")}
+        </Text>
       ) : null}
       {error ? (
         <View style={{ gap: 10 }}>

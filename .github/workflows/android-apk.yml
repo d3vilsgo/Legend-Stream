@@ -130,6 +130,8 @@ jobs:
         env:
           EXPO_NO_DOCTOR: "1"
           NODE_ENV: production
+          # Public client token: compiled into the application and extractable from the APK.
+          EXPO_PUBLIC_TMDB_API_TOKEN: ${{ secrets.TMDB_API_TOKEN }}
           EXPO_PUBLIC_ENABLE_CATALOG_BENCHMARK: ${{ inputs.catalog_benchmark && '1' || '0' }}
         shell: bash
         run: |
@@ -223,6 +225,8 @@ jobs:
         working-directory: artifacts/legendstream-xplayer/android
         env:
           NODE_ENV: production
+          # Public client token: compiled into the application and extractable from the APK.
+          EXPO_PUBLIC_TMDB_API_TOKEN: ${{ secrets.TMDB_API_TOKEN }}
           GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.caching=false -Dorg.gradle.workers.max=2
           FULL_RELEASE: ${{ steps.mode.outputs.full_release }}
           DUAL_ABI: ${{ steps.mode.outputs.dual_abi }}
