@@ -6,8 +6,16 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { findNodeHandle, Platform, Pressable, type PressableProps } from "react-native";
-import { TVPreviewPressable, useOptionalTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
+import {
+  findNodeHandle,
+  Platform,
+  Pressable,
+  type PressableProps,
+} from "react-native";
+import {
+  TVPreviewPressable,
+  useOptionalTVPreviewFocus,
+} from "@/components/tvPreview/TVPreviewFocus";
 import type {
   EliteV4Direction,
   EliteV4FocusNode,
@@ -181,7 +189,9 @@ export function EliteV4FocusButton({
         focusScope="content"
         eliteVisual
         accessibilityRole="button"
-        accessibilityState={{ selected: selected || focus.selectedId === focusId }}
+        accessibilityState={{
+          selected: selected || focus.selectedId === focusId,
+        }}
         onFocus={handleFocus}
         onPress={handlePress}
         style={buttonStyle}
