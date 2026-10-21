@@ -6,7 +6,8 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { findNodeHandle, Pressable, type PressableProps } from "react-native";
+import { findNodeHandle, Platform, Pressable, type PressableProps } from "react-native";
+import { TVPreviewPressable, useOptionalTVPreviewFocus } from "@/components/tvPreview/TVPreviewFocus";
 import type {
   EliteV4Direction,
   EliteV4FocusNode,
@@ -133,6 +134,7 @@ export function EliteV4FocusButton({
   ...props
 }: EliteV4FocusButtonProps) {
   const focus = useEliteV4Focus();
+  const previewFocus = useOptionalTVPreviewFocus();
   const ref = useRef<React.ElementRef<typeof Pressable>>(null);
   const neighborKey = Object.entries(neighbors)
     .sort(([a], [b]) => a.localeCompare(b))
@@ -152,6 +154,42 @@ export function EliteV4FocusButton({
     nextFocusUp: focus.target(focusId, "up"),
     nextFocusDown: focus.target(focusId, "down"),
   };
+  const buttonStyle = ({ pressed }: { pressed: boolean }) => [
+    typeof style === "function" ? style({ pressed }) : style,
+    focus.focusedId === focusId && {
+      borderColor: eliteV4Theme.color.focus,
+      shadowColor: eliteV4Theme.color.focus,
+      shadowOpacity: 0.22,
+      shadowRadius: 12,
+      elevation: 5,
+    },
+    (selected || focus.selectedId === focusId) && {
+      backgroundColor: eliteV4Theme.color.accentSoft,
+    },
+  ];
+  const handleFocus = () => focus.setFocused(node);
+  const handlePress = () => {
+    focus.setSelected(focusId);
+    onPress();
+  };
+  if (previewFocus?.enabled && !Platform.isTV) {
+    return (
+      <TVPreviewPressable
+        {...props}
+        {...nativeFocus}
+        focusId={`elite-v4:${focusId}`}
+        focusScope="content"
+        eliteVisual
+        accessibilityRole="button"
+        accessibilityState={{ selected: selected || focus.selectedId === focusId }}
+        onFocus={handleFocus}
+        onPress={handlePress}
+        style={buttonStyle}
+      >
+        {children}
+      </TVPreviewPressable>
+    );
+  }
   return (
     <Pressable
       {...props}
@@ -163,24 +201,9 @@ export function EliteV4FocusButton({
       accessibilityState={{
         selected: selected || focus.selectedId === focusId,
       }}
-      onFocus={() => focus.setFocused(node)}
-      onPress={() => {
-        focus.setSelected(focusId);
-        onPress();
-      }}
-      style={({ pressed }) => [
-        typeof style === "function" ? style({ pressed }) : style,
-        focus.focusedId === focusId && {
-          borderColor: eliteV4Theme.color.focus,
-          shadowColor: eliteV4Theme.color.focus,
-          shadowOpacity: 0.22,
-          shadowRadius: 12,
-          elevation: 5,
-        },
-        (selected || focus.selectedId === focusId) && {
-          backgroundColor: eliteV4Theme.color.accentSoft,
-        },
-      ]}
+      onFocus={handleFocus}
+      onPress={handlePress}
+      style={buttonStyle}
     >
       {children}
     </Pressable>
