@@ -122,7 +122,7 @@ try {
                                       : args.path === "tv-preview-focus"
                                         ? `export function TVPreviewPressable(props){return {type:'TVPreviewPressable',props};} export function useOptionalTVPreviewFocus(){return {enabled:true};} export function TVPreviewControls(){return null;} export function TVPreviewFocusProvider({children}){return children;} export function TVPreviewFocusRegion({children}){return children;}`
                     : args.path === "movie-info-service-provider"
-                      ? `export function useMovieInfoService(){return {};}`
+                      ? `export function useMovieInfoService(){return {};} export function MovieInfoServiceProvider({children}){return children;}`
                       : args.path === "movie-info-modal"
                         ? `export function MovieInfoModal(props){return {type:'MovieInfoModal',props};}`
                         : args.path === "movie-info-service"
