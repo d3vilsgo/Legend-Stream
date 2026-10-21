@@ -30,12 +30,14 @@ export function EliteV4PreviewToggle({
         right: 22,
         zIndex: 200,
         elevation: 200,
-        minHeight: 38,
-        paddingHorizontal: 14,
+        minHeight: 48,
+        paddingHorizontal: 18,
         borderRadius: theme.radius.pill,
         borderWidth: 1,
-        borderColor: focused ? theme.color.focus : theme.color.border,
-        backgroundColor: theme.color.surfaceGlass,
+        borderColor: focused ? theme.color.foreground : theme.color.accent,
+        backgroundColor: enabled
+          ? theme.color.surfaceGlass
+          : theme.color.accent,
         alignItems: "center",
         justifyContent: "center",
         opacity: pressed ? 0.82 : 1,
@@ -43,12 +45,12 @@ export function EliteV4PreviewToggle({
     >
       <Text
         style={{
-          color: enabled ? theme.color.accent : theme.color.foreground,
-          fontSize: 12,
+          color: enabled ? theme.color.accent : theme.color.background,
+          fontSize: 13,
           fontWeight: "800",
         }}
       >
-        {enabled ? "V3'e dön" : "V4 önizleme"}
+        {enabled ? "V3'E DÖN" : "YENİ ARAYÜZÜ DENE · ELITE V4"}
       </Text>
     </TVPreviewPressable>
   );
