@@ -30,7 +30,7 @@ const nativeMock = `
 try {
   await build({
     stdin: {
-      contents: `export {EliteV4FocusSurface,EliteV4FocusButton} from './components/eliteV4/EliteV4FocusSurface';export {EliteV4Sidebar} from './components/eliteV4/EliteV4Sidebar';export {EliteV4Hero} from './components/eliteV4/EliteV4Hero';export {EliteV4ContentRail} from './components/eliteV4/EliteV4ContentRail';export {EliteV4Home} from './components/eliteV4/EliteV4Home';export {EliteV4PreviewToggle} from './components/eliteV4/EliteV4PreviewToggle';export {eliteV4Theme} from './lib/design/eliteV4Theme';`,
+      contents: `export {Platform} from 'react-native';export {EliteV4FocusSurface,EliteV4FocusButton} from './components/eliteV4/EliteV4FocusSurface';export {EliteV4Sidebar} from './components/eliteV4/EliteV4Sidebar';export {EliteV4Hero} from './components/eliteV4/EliteV4Hero';export {EliteV4ContentRail} from './components/eliteV4/EliteV4ContentRail';export {EliteV4Home} from './components/eliteV4/EliteV4Home';export {EliteV4PreviewToggle} from './components/eliteV4/EliteV4PreviewToggle';export {eliteV4Theme} from './lib/design/eliteV4Theme';`,
       resolveDir: app,
       loader: "tsx",
     },
@@ -257,6 +257,18 @@ try {
     "PASS production V4 controls expose their targets to virtual D-pad OK",
   );
 
+  ui.Platform.isTV = true;
+  const nativeToggleElement = ui.EliteV4PreviewToggle({
+    enabled: false,
+    onChange: () => {},
+  });
+  const nativeToggle = nativeToggleElement.type(nativeToggleElement.props);
+  assert.equal(nativeToggle.type, "Pressable");
+  assert.equal(nativeToggle.props.hasTVPreferredFocus, true);
+  ui.Platform.isTV = false;
+  checks += 1;
+  console.log("PASS Native TV V3 entry focuses the V4 selector first");
+
   const shell = readFileSync(join(app, "components/ProductShell.tsx"), "utf8");
   const legacyHome = readFileSync(
     join(app, "components/OptimizedHomeScreenPaged.tsx"),
@@ -283,8 +295,8 @@ try {
     "PASS ProductShell defaults to V3 and routes V4 through separate components",
   );
 
-  assert.equal(checks, 7);
-  console.log(`Elite V4 production host scenarios: ${checks}/7 passed`);
+  assert.equal(checks, 8);
+  console.log(`Elite V4 production host scenarios: ${checks}/8 passed`);
 } finally {
   rmSync(out, { recursive: true, force: true });
 }
