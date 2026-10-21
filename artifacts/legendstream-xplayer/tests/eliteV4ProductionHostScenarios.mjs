@@ -30,7 +30,7 @@ const nativeMock = `
 try {
   await build({
     stdin: {
-      contents: `export {Platform} from 'react-native';export {HostHooks} from 'react';export {HostRuntime} from 'host-runtime';export {ProductShellContent} from './components/ProductShell';export {EliteV4FocusSurface,EliteV4FocusButton} from './components/eliteV4/EliteV4FocusSurface';export {EliteV4Sidebar} from './components/eliteV4/EliteV4Sidebar';export {EliteV4Hero} from './components/eliteV4/EliteV4Hero';export {EliteV4ContentRail} from './components/eliteV4/EliteV4ContentRail';export {EliteV4Home} from './components/eliteV4/EliteV4Home';export {EliteV4PreviewToggle} from './components/eliteV4/EliteV4PreviewToggle';export {eliteV4Theme} from './lib/design/eliteV4Theme';`,
+      contents: `export {Platform} from 'react-native';export {HostHooks} from 'react';export {HostRuntime} from 'host-runtime';export {ProductShellContent} from './components/ProductShell';export {EliteV4TvShell} from '@/components/eliteV4/EliteV4TvShell';export {EliteV4FocusSurface,EliteV4FocusButton} from './components/eliteV4/EliteV4FocusSurface';export {EliteV4Sidebar} from './components/eliteV4/EliteV4Sidebar';export {EliteV4Hero} from './components/eliteV4/EliteV4Hero';export {EliteV4ContentRail} from './components/eliteV4/EliteV4ContentRail';export {EliteV4Home} from './components/eliteV4/EliteV4Home';export {EliteV4PreviewToggle} from './components/eliteV4/EliteV4PreviewToggle';export {eliteV4Theme} from './lib/design/eliteV4Theme';`,
       resolveDir: app,
       loader: "tsx",
     },
