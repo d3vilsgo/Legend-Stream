@@ -365,9 +365,9 @@ try {
   ui.Platform.isTV = true;
   ui.HostRuntime.presentation = { tvPreview: false };
   route = ui.ProductShellContent();
-  const nativeToggleElement = findElement(route, node => node.type === ui.EliteV4PreviewToggle);
-  assert.ok(nativeToggleElement, "Native TV must expose the V4 selector without TV Preview mode");
-  const nativeRouteToggle = nativeToggleElement.type(nativeToggleElement.props);
+  const nativeRouteToggleElement = findElement(route, node => node.type === ui.EliteV4PreviewToggle);
+  assert.ok(nativeRouteToggleElement, "Native TV must expose the V4 selector without TV Preview mode");
+  const nativeRouteToggle = nativeRouteToggleElement.type(nativeRouteToggleElement.props);
   assert.equal(nativeRouteToggle.type, "Pressable");
   assert.equal(nativeRouteToggle.props.hasTVPreferredFocus, true);
   nativeRouteToggle.props.onPress();
