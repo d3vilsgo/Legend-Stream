@@ -66,6 +66,22 @@ try {
             path: "gradient",
             namespace: "host",
           }));
+          build.onResolve(
+            { filter: /^@\/components\/tmdb\/MovieInfoServiceProvider$/ },
+            () => ({ path: "movie-info-service-provider", namespace: "host" }),
+          );
+          build.onResolve(
+            { filter: /^@\/components\/tmdb\/MovieInfoModal$/ },
+            () => ({ path: "movie-info-modal", namespace: "host" }),
+          );
+          build.onResolve(
+            { filter: /^@\/lib\/tmdb\/movieInfoService$/ },
+            () => ({ path: "movie-info-service", namespace: "host" }),
+          );
+          build.onResolve({ filter: /^@\/lib\/tmdb\/movieInfoModel$/ }, () => ({
+            path: "movie-info-model",
+            namespace: "host",
+          }));
           build.onLoad({ filter: /.*/, namespace: "host" }, (args) => ({
             contents:
               args.path === "react"
@@ -74,7 +90,15 @@ try {
                   ? nativeMock
                   : args.path === "tv-preview-focus"
                     ? `export function TVPreviewPressable(props){return {type:'TVPreviewPressable',props};} export function useOptionalTVPreviewFocus(){return {enabled:true};}`
-                    : `export const ${args.path === "icons" ? "Feather" : "LinearGradient"}='${args.path}';`,
+                    : args.path === "movie-info-service-provider"
+                      ? `export function useMovieInfoService(){return {};}`
+                      : args.path === "movie-info-modal"
+                        ? `export function MovieInfoModal(props){return {type:'MovieInfoModal',props};}`
+                        : args.path === "movie-info-service"
+                          ? `export function beginMovieEnrichment(){return ()=>{};}`
+                          : args.path === "movie-info-model"
+                            ? `export function localXtreamMovie(item){return {title:item.name??item.title??''};} export function movieInfoPresentation(local,input){return {title:local.title};} export function pagedMovieInput(){return {};}`
+                            : `export const ${args.path === "icons" ? "Feather" : "LinearGradient"}='${args.path}';`,
             loader: "js",
           }));
         },
@@ -139,11 +163,23 @@ try {
   let opened = null;
   const heroTree = ui.EliteV4Hero({
     item: homeItem,
+    providerId: "provider-1",
+    providerType: "xtream",
     onOpen: (item) => {
       opened = item;
     },
   });
-  const heroButton = heroTree.props.children[2].props.children[3];
+  const findFocusButton = (node, id) => {
+    if (!node || typeof node !== "object") return null;
+    if (node.props?.focusId === id) return node;
+    const children = node.props?.children;
+    for (const child of Array.isArray(children) ? children : [children]) {
+      const found = findFocusButton(child, id);
+      if (found) return found;
+    }
+    return null;
+  };
+  const heroButton = findFocusButton(heroTree, "hero");
   heroButton.props.onPress();
   assert.equal(opened, homeItem);
   checks += 1;
@@ -226,7 +262,7 @@ try {
     join(app, "components/OptimizedHomeScreenPaged.tsx"),
     "utf8",
   );
-  assert.match(shell, /useState\(false\)/);
+  assert.match(shell, /useState\(tvPreview\)/);
   assert.match(shell, /provider && previewAvailable && eliteV4Preview/);
   assert.match(shell, /<OptimizedHomeScreenV6 key=\{provider\.id\} \/>/);
   assert.match(legacyHome, /export default function OptimizedHomeScreenPaged/);
