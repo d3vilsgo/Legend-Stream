@@ -25,6 +25,7 @@ export function EliteV4Hero({
   height,
   width,
   firstRailFocusId,
+  onFocused,
 }: {
   item: EliteHomeItem | null;
   onOpen: (item: EliteHomeItem) => void;
@@ -33,6 +34,7 @@ export function EliteV4Hero({
   height: number;
   width: number;
   firstRailFocusId?: string;
+  onFocused?: () => void;
 }) {
   const service = useMovieInfoService();
   const [enrichment, setEnrichment] = useState<MovieEnrichment | null>(null);
@@ -77,7 +79,7 @@ export function EliteV4Hero({
   return (
     <View
       style={{
-        height,
+        minHeight: height,
         borderRadius: theme.radius.hero,
         overflow: "hidden",
         backgroundColor: theme.color.surfaceRaised,
@@ -104,10 +106,10 @@ export function EliteV4Hero({
       />
       <View
         style={{
-          position: "absolute",
-          left: inset,
-          right: inset,
-          bottom: compact ? 14 : 22,
+          flex: 1,
+          justifyContent: "flex-end",
+          paddingHorizontal: inset,
+          paddingVertical: compact ? 14 : 22,
           alignItems: "flex-start",
         }}
       >
@@ -214,6 +216,7 @@ export function EliteV4Hero({
               focusId="hero"
               region="content"
               initial
+              onFocused={onFocused}
               neighbors={{
                 left: "sidebar-home",
                 down: firstRailFocusId,
@@ -252,6 +255,7 @@ export function EliteV4Hero({
               <EliteV4FocusButton
                 focusId="hero-info"
                 region="content"
+                onFocused={onFocused}
                 neighbors={{
                   left: "hero",
                   down: firstRailFocusId,
@@ -289,6 +293,7 @@ export function EliteV4Hero({
             focusId="hero"
             region="content"
             initial
+            onFocused={onFocused}
             neighbors={{ left: "sidebar-home", down: firstRailFocusId }}
             onPress={() => undefined}
             accessibilityLabel="Katalog içerik alanı"

@@ -1,5 +1,20 @@
 # Elite V4 P1 görsel devam teslim kaydı
 
+## Eşzamanlı kaynak uzlaştırması ve görünür odak tamamlaması
+
+Çalışma sırasında remote HEAD `688c1060b201721dc4b9f44edeed090d6a087253` oldu.
+Bu commit'in bütün tasarım kararları, testleri ve beş proje kaydı korunarak
+yerel başlangıç tree `b9771cc798124d153f169cd4e0eaf25af323bb55` ile eşleştirildi.
+Ek olarak V4 raf/kart odağında gerçek ScrollView scrollTo callbackleri bağlandı;
+Hero odağı dikey konumu başa döndürür. Hero metin alanı normal akışa alındı ve
+sabit height yerine minHeight kullanıldı; font ölçeği arttığında eylemler için
+alan büyüyebilir. Native hedef kayıt revizyonu context memo bağımlılığına eklendi.
+Üretim host testi önceki 16 senaryonun tamamını koruyarak 18 senaryoya çıkarıldı;
+yeni testler gerçek üretim odak callbacklerinden dikey/yatay reveal ve Hero
+dönüşünü, ayrıca doğal metin akışını kontrol eder. Android layout/fiziksel kabul değildir.
+Final exact-SHA Quality ve aynı SHA Universal APK sonuçları run kayıtlarından doğrulanır.
+P1 fiziksel NOT TESTED / DEFERRED_RC; P0 kabulü ve tarihsel FAIL kayıtları korunur.
+
 
 ## Elite V4 P1 devamı — 23 Ekim 2026
 

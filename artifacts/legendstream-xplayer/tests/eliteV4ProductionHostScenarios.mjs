@@ -814,8 +814,60 @@ try {
     "PASS actual Preview adapter applies V4 thin focus and preserves V3 styling and CTA contrast",
   );
 
-  assert.equal(checks, 16);
-  console.log(`Elite V4 production host scenarios: ${checks}/16 passed`);
+  const verticalScroll = [];
+  measuredHome.props.ref.current = {
+    scrollTo: (entry) => verticalScroll.push(entry),
+  };
+  const revealRail = liveRail.type({
+    ...liveRail.props,
+    items: [liveItem, { ...liveItem, id: "live-2" }],
+  });
+  revealRail.props.onLayout({ nativeEvent: { layout: { y: 620 } } });
+  const railScroll = revealRail.props.children[1];
+  const horizontalScroll = [];
+  railScroll.props.ref.current = {
+    scrollTo: (entry) => horizontalScroll.push(entry),
+  };
+  const secondCard = railScroll.props.children.flat(Infinity)[1];
+  let focused = false;
+  const revealButton = ui.EliteV4FocusButton({
+    ...secondCard.props,
+    onFocused: () => {
+      focused = true;
+      secondCard.props.onFocused();
+    },
+  });
+  revealButton.props.onFocus();
+  assert.equal(focused, true);
+  assert.deepEqual(verticalScroll, [{ y: 608, animated: true }]);
+  assert.deepEqual(horizontalScroll, [
+    { x: liveRail.props.cardWidth + 6, animated: true },
+  ]);
+  const measuredHero = findElement(
+    measuredHome,
+    (node) => node.type === ui.EliteV4Hero,
+  );
+  measuredHero.props.onFocused();
+  assert.deepEqual(verticalScroll.at(-1), { y: 0, animated: true });
+  checks += 1;
+  console.log(
+    "PASS production focus callback reveals its rail/card and returns Hero to the top",
+  );
+
+  assert.equal(shortHero.props.style.minHeight, 196);
+  assert.equal(shortHero.props.style.height, undefined);
+  const heroBody = shortHero.props.children
+    .flat(Infinity)
+    .find((node) => node?.type === "View");
+  assert.equal(heroBody.props.style.position, undefined);
+  assert.equal(heroBody.props.style.justifyContent, "flex-end");
+  checks += 1;
+  console.log(
+    "PASS compact production Hero lets scaled text grow in normal layout flow",
+  );
+
+  assert.equal(checks, 18);
+  console.log(`Elite V4 production host scenarios: ${checks}/18 passed`);
 } finally {
   rmSync(out, { recursive: true, force: true });
 }

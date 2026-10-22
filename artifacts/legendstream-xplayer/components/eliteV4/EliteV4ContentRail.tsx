@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef } from "react";
 import { Image, ScrollView, Text, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { EliteV4FocusButton } from "./EliteV4FocusSurface";
@@ -13,6 +13,8 @@ export function EliteV4ContentRail({
   cardWidth = theme.layout.railCardMax,
   previousRail,
   nextRail,
+  onLayoutY,
+  onFocused,
 }: {
   title: string;
   railId?: string;
@@ -21,10 +23,16 @@ export function EliteV4ContentRail({
   cardWidth?: number;
   previousRail?: { id: string; items: readonly EliteHomeItem[] };
   nextRail?: { id: string; items: readonly EliteHomeItem[] };
+  onLayoutY?: (y: number) => void;
+  onFocused?: () => void;
 }) {
+  const scrollRef = useRef<ScrollView>(null);
   if (!items.length) return null;
   return (
-    <View style={{ marginBottom: theme.spacing.lg }}>
+    <View
+      onLayout={(event) => onLayoutY?.(event.nativeEvent.layout.y)}
+      style={{ marginBottom: theme.spacing.lg }}
+    >
       <View
         style={{
           flexDirection: "row",
@@ -50,6 +58,7 @@ export function EliteV4ContentRail({
         </Text>
       </View>
       <ScrollView
+        ref={scrollRef}
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{
@@ -88,6 +97,13 @@ export function EliteV4ContentRail({
                   : undefined,
               }}
               onPress={() => onOpen(item)}
+              onFocused={() => {
+                onFocused?.();
+                scrollRef.current?.scrollTo({
+                  x: Math.max(0, index * (cardWidth + 12) - 6),
+                  animated: true,
+                });
+              }}
               accessibilityLabel={`${item.title}, ${kindLabel}${isContinue ? ", izlemeye devam et" : ""}`}
               style={{
                 width: cardWidth,

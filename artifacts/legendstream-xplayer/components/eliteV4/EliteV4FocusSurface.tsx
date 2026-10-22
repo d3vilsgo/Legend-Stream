@@ -56,7 +56,7 @@ export function EliteV4FocusSurface({
   const [focusedId, setFocusedId] = useState<string | null>(initialFocusId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeRegion, setActiveRegion] = useState<EliteV4Region>("content");
-  const [, setRegistryRevision] = useState(0);
+  const [registryRevision, setRegistryRevision] = useState(0);
   const nodes = useRef(
     new Map<
       string,
@@ -112,7 +112,16 @@ export function EliteV4FocusSurface({
       setFocused,
       setSelected: setSelectedId,
     }),
-    [focusedId, selectedId, activeRegion, register, focus, target, setFocused],
+    [
+      focusedId,
+      selectedId,
+      activeRegion,
+      register,
+      focus,
+      target,
+      setFocused,
+      registryRevision,
+    ],
   );
   return (
     <FocusContext.Provider value={value}>{children}</FocusContext.Provider>
@@ -136,6 +145,7 @@ type EliteV4FocusButtonProps = Omit<
   selected?: boolean;
   children: React.ReactNode;
   initial?: boolean;
+  onFocused?: () => void;
 };
 
 export function EliteV4FocusButton({
@@ -146,6 +156,7 @@ export function EliteV4FocusButton({
   selected = false,
   children,
   initial = false,
+  onFocused,
   style,
   ...props
 }: EliteV4FocusButtonProps) {
@@ -180,7 +191,10 @@ export function EliteV4FocusButton({
       borderColor: eliteV4Theme.color.accent,
     },
   ];
-  const handleFocus = () => focus.setFocused(node);
+  const handleFocus = () => {
+    focus.setFocused(node);
+    onFocused?.();
+  };
   const handlePress = () => {
     focus.setSelected(focusId);
     onPress();

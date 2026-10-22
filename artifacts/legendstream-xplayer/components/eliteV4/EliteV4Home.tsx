@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useRef, useState } from "react";
 import { ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { EliteV4Hero } from "./EliteV4Hero";
 import { EliteV4ContentRail } from "./EliteV4ContentRail";
@@ -22,6 +22,8 @@ export function EliteV4Home({
 }) {
   const { width: windowWidth, height } = useWindowDimensions();
   const [measuredWidth, setMeasuredWidth] = useState(0);
+  const scrollRef = useRef<ScrollView>(null);
+  const railOffsets = useRef<Record<string, number>>({});
   const width = measuredWidth || windowWidth - theme.layout.sidebarCompact;
   const hero =
     sections.featured[0] ??
@@ -64,6 +66,7 @@ export function EliteV4Home({
 
   return (
     <ScrollView
+      ref={scrollRef}
       onLayout={(event) => setMeasuredWidth(event.nativeEvent.layout.width)}
       style={{ flex: 1, minWidth: 0, backgroundColor: theme.color.background }}
       contentContainerStyle={{
@@ -110,6 +113,7 @@ export function EliteV4Home({
         height={heroHeight}
         width={contentWidth}
         firstRailFocusId={firstRailFocusId}
+        onFocused={() => scrollRef.current?.scrollTo({ y: 0, animated: true })}
       />
       {visibleSections.map((section, index) => (
         <EliteV4ContentRail
@@ -121,6 +125,15 @@ export function EliteV4Home({
           cardWidth={cardWidth}
           previousRail={visibleSections[index - 1]}
           nextRail={visibleSections[index + 1]}
+          onLayoutY={(y) => {
+            railOffsets.current[section.id] = y;
+          }}
+          onFocused={() =>
+            scrollRef.current?.scrollTo({
+              y: Math.max(0, (railOffsets.current[section.id] ?? 0) - 12),
+              animated: true,
+            })
+          }
         />
       ))}
       {!hero && !visibleSections.length ? (
