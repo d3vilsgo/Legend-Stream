@@ -207,6 +207,12 @@ jobs:
           set -euo pipefail
           ui="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/uiPresentationScenarios.ts 2>&1 | tee /dev/stderr)"
           grep -F 'ui presentation scenarios: 23/23 passed' <<<"$ui"
+      - name: Premium design system foundation (12/12 required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          design="$(pnpm --filter @workspace/legendstream-xplayer exec tsx tests/designSystemScenarios.ts 2>&1 | tee /dev/stderr)"
+          grep -F 'premium design system scenarios: 12/12 passed' <<<"$design"
       - name: R18-C unified product shell contract
         shell: bash
         run: |
