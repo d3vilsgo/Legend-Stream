@@ -112,7 +112,7 @@ async function main() {
     const keys = ["home", "live", "movies", "series", "history", "downloads", "settings"];
     let cursor = -1;
     for (const key of keys) {
-      const next = stalkerMainSource.indexOf(`key: "${key}" as const`, cursor + 1);
+      const next = stalkerMainSource.indexOf(`key: "${key}"`, cursor + 1);
       assert.ok(next > cursor, `missing or out-of-order navigation key: ${key}`);
       cursor = next;
     }

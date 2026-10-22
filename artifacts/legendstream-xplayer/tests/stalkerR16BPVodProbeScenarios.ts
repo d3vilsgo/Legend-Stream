@@ -124,7 +124,8 @@ async function main() {
     assert.match(panelSource, /Üretim VOD değildir/);
     const productSource = source("components/OptimizedHomeScreenPaged.tsx");
     assert.doesNotMatch(productSource, /StalkerVodProbePanel|ProductLiveSurface/);
-    assert.match(productSource, /\{ key: "movies" as const, label: t\("movies"\), icon: "film" as const \}/);
+    assert.match(productSource, /ResponsiveContentNavItem<ContentView>\[\]/);
+    assert.match(productSource, /\{ key: "movies", label: t\("movies"\), shortLabel: t\("movies"\), icon: "film" \}/);
     const stalkerMoviesRoute = productSource
       .split("\n")
       .find((line) => line.includes('view === "movies" && provider.type === "stalker"')) ?? "";
