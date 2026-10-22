@@ -1,61 +1,105 @@
 import React from "react";
-import { ScrollView, Text, View } from "react-native";
+import { ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { EliteV4Hero } from "./EliteV4Hero";
 import { EliteV4ContentRail } from "./EliteV4ContentRail";
-import type { EliteHomeItem } from "@/lib/eliteV4HomeModel";
+import type { EliteHomeSections, EliteHomeItem } from "@/lib/eliteV4HomeModel";
 import { eliteV4Theme as theme } from "@/lib/design/eliteV4Theme";
 
+function cardWidthForViewport(width: number) {
+  const horizontalPadding = width < 600 ? 18 : 30;
+  const available = Math.max(
+    180,
+    width - theme.layout.sidebarCompact - horizontalPadding * 2 - 24,
+  );
+  return Math.max(
+    theme.layout.railCardMin,
+    Math.min(theme.layout.railCardMax, Math.floor(available / 1.65)),
+  );
+}
+
 export function EliteV4Home({
-  items,
+  sections,
   providerName,
   providerId,
   providerType,
   loading,
   onOpen,
 }: {
-  items: readonly EliteHomeItem[];
+  sections: EliteHomeSections;
   providerName: string;
   providerId: string;
   providerType: string;
   loading: boolean;
   onOpen: (item: EliteHomeItem) => void;
 }) {
-  const hero = items[0] ?? null;
+  const { width, height } = useWindowDimensions();
+  const hero =
+    sections.featured[0] ??
+    sections.continueWatching[0] ??
+    sections.movies[0] ??
+    sections.series[0] ??
+    sections.live[0] ??
+    null;
+  const padding = width < 600 ? 18 : 30;
+  const heroHeight = Math.max(
+    theme.layout.heroMinHeight,
+    Math.min(theme.layout.heroMaxHeight, Math.round(height * 0.35)),
+  );
+  const cardWidth = cardWidthForViewport(width);
+  const visibleSections = [
+    {
+      id: "featured",
+      title: "Öne Çıkanlar",
+      items: sections.featured.filter((item) => item.id !== hero?.id),
+    },
+    {
+      id: "continue",
+      title: "İzlemeye Devam Et",
+      items: sections.continueWatching,
+    },
+    { id: "live", title: "Canlı Kanallar", items: sections.live },
+    { id: "movies", title: "Filmler", items: sections.movies },
+    { id: "series", title: "Diziler", items: sections.series },
+  ].filter((section) => section.items.length > 0);
+  const firstRailFocusId = visibleSections[0]
+    ? `${visibleSections[0].id}-0`
+    : undefined;
+
   return (
     <ScrollView
-      style={{ flex: 1, backgroundColor: theme.color.background }}
+      style={{ flex: 1, minWidth: 0, backgroundColor: theme.color.background }}
       contentContainerStyle={{
-        paddingTop: 30,
-        paddingHorizontal: 38,
-        paddingBottom: 44,
+        paddingTop: 18,
+        paddingHorizontal: padding,
+        paddingBottom: 30,
       }}
       showsVerticalScrollIndicator={false}
     >
       <View
-        style={{ flexDirection: "row", alignItems: "center", marginBottom: 20 }}
+        style={{ flexDirection: "row", alignItems: "center", marginBottom: 13 }}
       >
         <Text
           style={{
             color: theme.color.foreground,
-            fontSize: 18,
-            fontWeight: "800",
-            letterSpacing: 0.5,
+            fontSize: 16,
+            fontWeight: "600",
+            letterSpacing: 0.4,
           }}
         >
           LEGENDSTREAM
         </Text>
         <View
           style={{
-            width: 5,
-            height: 5,
-            borderRadius: 3,
+            width: 4,
+            height: 4,
+            borderRadius: 2,
             backgroundColor: theme.color.accent,
-            marginHorizontal: 12,
+            marginHorizontal: 10,
           }}
         />
         <Text
           numberOfLines={1}
-          style={{ color: theme.color.muted, fontSize: 14, flexShrink: 1 }}
+          style={{ color: theme.color.muted, fontSize: 12, flexShrink: 1 }}
         >
           {providerName}
         </Text>
@@ -65,22 +109,33 @@ export function EliteV4Home({
         onOpen={onOpen}
         providerId={providerId}
         providerType={providerType}
+        height={heroHeight}
+        width={Math.max(260, width - theme.layout.sidebarCompact - padding * 2)}
+        firstRailFocusId={firstRailFocusId}
       />
-      {items.length ? (
-        <EliteV4ContentRail items={items} onOpen={onOpen} />
-      ) : (
+      {visibleSections.map((section) => (
+        <EliteV4ContentRail
+          key={section.id}
+          railId={section.id}
+          title={section.title}
+          items={section.items}
+          onOpen={onOpen}
+          cardWidth={cardWidth}
+        />
+      ))}
+      {!hero && !visibleSections.length ? (
         <Text
           style={{
             color: theme.color.muted,
-            fontSize: 16,
-            paddingVertical: 24,
+            fontSize: 14,
+            paddingVertical: 20,
           }}
         >
           {loading
             ? "Kataloğunuz yükleniyor…"
-            : "Bu sağlayıcıda henüz gösterilecek içerik yok."}
+            : "Bu sağlayıcıda gösterilecek içerik bulunamadı."}
         </Text>
-      )}
+      ) : null}
     </ScrollView>
   );
 }

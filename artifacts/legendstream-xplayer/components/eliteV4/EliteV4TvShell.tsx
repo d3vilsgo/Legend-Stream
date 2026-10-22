@@ -1,13 +1,20 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
 import { usePlayer, type Channel } from "@/context/PlayerContext";
 import { useCatalogSync } from "@/context/CatalogSyncContext";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
 import { resolveCatalogPlaybackSource } from "@/lib/catalogRuntime";
 import {
-  createEliteHomeItems,
+  createEliteHomeSections,
   type EliteHomeItem,
 } from "@/lib/eliteV4HomeModel";
+import {
+  MEDIA_PROGRESS_V2_STORAGE_KEY,
+  mediaProgressForProvider,
+  parseMediaProgressV2Payload,
+  type MediaProgressV2,
+} from "@/lib/mediaProgress";
 import type { CatalogPlaybackIdentity } from "@/lib/catalogPageRepository";
 import type { LiveChannelIdentity } from "@/lib/playerLiveQueue";
 import { EliteV4Home } from "./EliteV4Home";
@@ -30,6 +37,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
   const focus = useEliteV4Focus();
   const [playback, setPlayback] = useState<ActivePlayback | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [progress, setProgress] = useState<MediaProgressV2[]>([]);
   const providerIdRef = useRef(provider?.id ?? null);
   const returnFocusIdRef = useRef("hero");
   useEffect(() => {
@@ -38,6 +46,26 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
 
   const currentSnapshot =
     provider && snapshot.providerId === provider.id ? snapshot : null;
+  useEffect(() => {
+    let active = true;
+    setProgress([]);
+    if (!provider?.id)
+      return () => {
+        active = false;
+      };
+    void AsyncStorage.getItem(MEDIA_PROGRESS_V2_STORAGE_KEY)
+      .then((raw) => {
+        if (!active || !raw) return;
+        const parsed = parseMediaProgressV2Payload(raw);
+        setProgress(mediaProgressForProvider(parsed, provider.id));
+      })
+      .catch(() => {
+        if (active) setProgress([]);
+      });
+    return () => {
+      active = false;
+    };
+  }, [provider?.id]);
   const movies =
     provider?.type === "stalker" ? [] : (currentSnapshot?.movies ?? []);
   const liveItems = useMemo(() => {
@@ -51,15 +79,26 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
           channel.providerId === provider?.id &&
           (channel.contentType ?? "live") === "live",
       )
-      .slice(0, 12);
+      .slice(0, 24);
   }, [channels, currentSnapshot, hasUsableCache, provider?.id]);
-  const items = useMemo(
-    () => createEliteHomeItems(movies, liveItems),
-    [movies, liveItems],
+  const sections = useMemo(
+    () =>
+      createEliteHomeSections(
+        movies,
+        liveItems,
+        currentSnapshot?.series ?? [],
+        currentSnapshot?.newMovies ?? [],
+        progress,
+      ),
+    [movies, liveItems, currentSnapshot, progress],
   );
   const providerName = provider?.name?.trim() || "İçerik sağlayıcısı";
 
   const openItem = async (item: EliteHomeItem) => {
+    if (item.kind === "series") {
+      onReturnToV3();
+      return;
+    }
     if (!provider) return;
     const ownerId = provider.id;
     returnFocusIdRef.current = focus.focusedId ?? "hero";
@@ -133,7 +172,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
         }}
       >
         <EliteV4Home
-          items={items}
+          sections={sections}
           providerName={providerName}
           providerId={provider.id}
           providerType={provider.type}
@@ -156,7 +195,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
             {playbackError}
           </Text>
         ) : null}
-        {!items.length && isSyncing ? (
+        {!sections.featured.length && !sections.live.length && isSyncing ? (
           <ActivityIndicator
             color={theme.color.accent}
             style={{ position: "absolute", bottom: 24, right: 32 }}

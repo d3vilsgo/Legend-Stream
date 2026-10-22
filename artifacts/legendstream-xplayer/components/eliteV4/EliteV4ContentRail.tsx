@@ -1,119 +1,186 @@
 import React from "react";
 import { Image, ScrollView, Text, View } from "react-native";
+import { Feather } from "@expo/vector-icons";
 import { EliteV4FocusButton } from "./EliteV4FocusSurface";
 import type { EliteHomeItem } from "@/lib/eliteV4HomeModel";
 import { eliteV4Theme as theme } from "@/lib/design/eliteV4Theme";
 
 export function EliteV4ContentRail({
+  title,
+  railId = "rail",
   items,
   onOpen,
+  cardWidth = theme.layout.railCardMax,
 }: {
+  title: string;
+  railId?: string;
   items: readonly EliteHomeItem[];
   onOpen: (item: EliteHomeItem) => void;
+  cardWidth?: number;
 }) {
+  if (!items.length) return null;
   return (
-    <View>
+    <View style={{ marginBottom: theme.spacing.lg }}>
       <View
         style={{
           flexDirection: "row",
           alignItems: "baseline",
           justifyContent: "space-between",
-          marginBottom: 16,
+          marginBottom: 10,
+          paddingRight: 8,
         }}
       >
         <Text
           style={{
             color: theme.color.foreground,
             fontSize: theme.type.subtitle,
-            fontWeight: "800",
+            fontWeight: "600",
           }}
         >
-          {items[0]?.kind === "live" ? "Canlı Yayınlar" : "Sizin İçin"}
+          {title}
         </Text>
         <Text
           style={{ color: theme.color.quiet, fontSize: theme.type.eyebrow }}
         >
-          {items.length ? `${items.length} içerik` : "Katalog bekleniyor"}
+          {items.length}
         </Text>
       </View>
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
         contentContainerStyle={{
-          gap: 16,
+          gap: 12,
           paddingVertical: 8,
-          paddingRight: 36,
+          paddingRight: 28,
         }}
       >
         {items.map((item, index) => {
-          const id = `rail-${index}`;
+          const live = item.kind === "live";
+          const isContinue = item.progressFraction !== undefined;
+          const imageHeight = live ? 82 : Math.round(cardWidth * 1.34);
+          const kindLabel = live
+            ? "canlı kanal"
+            : item.kind === "series"
+              ? "dizi"
+              : "film";
           return (
             <EliteV4FocusButton
               key={item.id}
-              focusId={id}
+              focusId={`${railId}-${index}`}
               region="content"
               neighbors={{
-                left: index === 0 ? "sidebar-home" : `rail-${index - 1}`,
+                left: index === 0 ? "sidebar-home" : `${railId}-${index - 1}`,
                 right:
-                  index < items.length - 1 ? `rail-${index + 1}` : undefined,
+                  index < items.length - 1
+                    ? `${railId}-${index + 1}`
+                    : undefined,
                 up: "hero",
               }}
               onPress={() => onOpen(item)}
-              accessibilityLabel={`${item.title}, ${item.kind === "live" ? "canlı yayın" : "film"}`}
+              accessibilityLabel={`${item.title}, ${kindLabel}${isContinue ? ", izlemeye devam et" : ""}`}
               style={{
-                width: theme.layout.railCardWidth,
-                borderRadius: theme.radius.large,
-                borderWidth: 2,
-                borderColor: "transparent",
+                width: live ? Math.max(156, cardWidth * 0.82) : cardWidth,
+                borderRadius: theme.radius.medium,
+                borderWidth: 1,
+                borderColor: theme.color.border,
                 overflow: "hidden",
                 backgroundColor: theme.color.surface,
-                paddingBottom: 12,
               }}
             >
               {item.image ? (
                 <Image
                   source={{ uri: item.image }}
-                  resizeMode="cover"
+                  resizeMode={live ? "contain" : "cover"}
                   style={{
                     width: "100%",
-                    height: theme.layout.railCardHeight,
-                    backgroundColor: theme.color.surfaceRaised,
+                    height: imageHeight,
+                    padding: live ? 14 : 0,
+                    backgroundColor: live
+                      ? theme.color.surfaceRaised
+                      : "#101721",
                   }}
                 />
               ) : (
                 <View
                   style={{
                     width: "100%",
-                    height: theme.layout.railCardHeight,
+                    height: imageHeight,
                     backgroundColor: theme.color.surfaceRaised,
                     alignItems: "center",
                     justifyContent: "center",
                   }}
-                />
+                >
+                  <Feather
+                    name={
+                      live ? "radio" : item.kind === "series" ? "tv" : "film"
+                    }
+                    size={28}
+                    color={theme.color.quiet}
+                  />
+                </View>
               )}
-              <Text
-                numberOfLines={1}
+              <View
                 style={{
-                  color: theme.color.foreground,
-                  fontSize: 14,
-                  fontWeight: "700",
-                  marginTop: 10,
-                  marginHorizontal: 12,
+                  paddingHorizontal: 10,
+                  paddingTop: 9,
+                  paddingBottom: 11,
                 }}
               >
-                {item.title}
-              </Text>
-              <Text
-                numberOfLines={1}
-                style={{
-                  color: theme.color.muted,
-                  fontSize: 12,
-                  marginTop: 4,
-                  marginHorizontal: 12,
-                }}
-              >
-                {item.subtitle}
-              </Text>
+                <Text
+                  numberOfLines={2}
+                  style={{
+                    color: theme.color.foreground,
+                    fontSize: 13,
+                    fontWeight: "500",
+                    lineHeight: 18,
+                  }}
+                >
+                  {item.title}
+                </Text>
+                {item.subtitle ? (
+                  <Text
+                    numberOfLines={1}
+                    style={{
+                      color: theme.color.muted,
+                      fontSize: 11,
+                      marginTop: 4,
+                    }}
+                  >
+                    {item.subtitle}
+                  </Text>
+                ) : null}
+                {isContinue ? (
+                  <View
+                    style={{
+                      height: 3,
+                      marginTop: 9,
+                      borderRadius: 3,
+                      backgroundColor: theme.color.border,
+                      overflow: "hidden",
+                    }}
+                  >
+                    <View
+                      style={{
+                        width: `${Math.round((item.progressFraction ?? 0) * 100)}%`,
+                        height: "100%",
+                        backgroundColor: theme.color.accent,
+                      }}
+                    />
+                  </View>
+                ) : null}
+                {item.kind === "series" ? (
+                  <Text
+                    numberOfLines={1}
+                    style={{
+                      color: theme.color.quiet,
+                      fontSize: 10,
+                      marginTop: 5,
+                    }}
+                  >
+                    Seçmek için Elite V3'e geç
+                  </Text>
+                ) : null}
+              </View>
             </EliteV4FocusButton>
           );
         })}

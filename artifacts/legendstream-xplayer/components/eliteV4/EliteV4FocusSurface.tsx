@@ -168,8 +168,10 @@ export function EliteV4FocusButton({
       borderColor: eliteV4Theme.color.focus,
       shadowColor: eliteV4Theme.color.focus,
       shadowOpacity: 0.22,
-      shadowRadius: 12,
-      elevation: 5,
+      shadowRadius: 10,
+      elevation: 4,
+      transform: [{ scale: 1.015 }],
+      zIndex: 2,
     },
     (selected || focus.selectedId === focusId) && {
       backgroundColor: eliteV4Theme.color.accentSoft,

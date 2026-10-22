@@ -19,12 +19,14 @@ const reactMock = `
   let handle=200;export function useRef(value){return {current:value??{handle:handle++}};}
   export function useMemo(factory){return factory();}
   export function useCallback(callback){return callback;}
-  export function useEffect(_effect){}
+  export function useEffect(effect){if(effect?.toString().includes("Animated.timing"))effect();}
   export function createElement(type,props,...children){return {type,props:{...(props??{}),children}};}
   export default {createElement,Fragment:'Fragment',useContext,useState,useRef,useMemo,useCallback,useEffect};
 `;
 const nativeMock = `
-  export const Pressable='Pressable',Image='Image',ImageBackground='ImageBackground',ScrollView='ScrollView',Text='Text',View='View';export const Platform={isTV:false};
+  export const Pressable='Pressable',Image='Image',ImageBackground='ImageBackground',ScrollView='ScrollView',Text='Text',View='View';export const Platform={get isTV(){return globalThis.__eliteV4PlatformIsTV??false;},set isTV(value){globalThis.__eliteV4PlatformIsTV=value;}};
+  export const Animated={View:'AnimatedView',Value:class{constructor(value){this.value=value;}},timing(value,{toValue}){return{start(){value.value=toValue;}}}};
+  export function useWindowDimensions(){return {width:1280,height:720,scale:1,fontScale:1};}
   export function findNodeHandle(ref){return ref?.handle??null;}
 `;
 try {
@@ -228,6 +230,9 @@ try {
   let opened = null;
   const heroTree = ui.EliteV4Hero({
     item: homeItem,
+    height: 250,
+    width: 1160,
+    firstRailFocusId: "featured-0",
     providerId: "provider-1",
     providerType: "xtream",
     onOpen: (item) => {
@@ -254,7 +259,10 @@ try {
 
   opened = null;
   const railTree = ui.EliteV4ContentRail({
+    railId: "featured",
+    title: "Öne Çıkanlar",
     items: [homeItem],
+    cardWidth: 220,
     onOpen: (item) => {
       opened = item;
     },
@@ -263,22 +271,117 @@ try {
     railTree.props.children[1].props.children.flat(Infinity)[0];
   railButton.props.onPress();
   assert.equal(opened, homeItem);
-  assert.equal(railButton.props.focusId, "rail-0");
+  assert.equal(railButton.props.focusId, "featured-0");
   checks += 1;
   console.log(
     "PASS production Home rail OK invokes the selected provider content action",
   );
 
+  const seriesItem = {
+    id: "series-22",
+    kind: "series",
+    title: "Dizi",
+    image: "https://img.example/series.jpg",
+  };
+  const liveItem = {
+    id: "live-trt",
+    kind: "live",
+    title: "TRT Haber",
+    image: "https://img.example/logo.png",
+  };
+  const homeTree = ui.EliteV4Home({
+    sections: {
+      featured: [],
+      continueWatching: [],
+      live: [liveItem],
+      movies: [homeItem],
+      series: [seriesItem],
+    },
+    providerName: "Demo Provider",
+    providerId: "provider-1",
+    providerType: "xtream",
+    loading: false,
+    onOpen: () => {},
+  });
+  const flattenTree = (node, output = []) => {
+    if (Array.isArray(node)) {
+      node.forEach((child) => flattenTree(child, output));
+      return output;
+    }
+    if (!node || typeof node !== "object") return output;
+    if (node.type === ui.EliteV4Hero || node.type === ui.EliteV4ContentRail) {
+      flattenTree(node.type(node.props), output);
+      return output;
+    }
+    output.push(node);
+    flattenTree(node.props?.children, output);
+    return output;
+  };
+  const homeNodes = flattenTree(homeTree);
+  const homeText = homeNodes
+    .filter((node) => node.type === "Text")
+    .map((node) => node.props.children)
+    .flat(Infinity);
+  assert.ok(homeText.includes("Canlı Kanallar"));
+  assert.ok(homeText.includes("Filmler"));
+  assert.ok(homeText.includes("Diziler"));
+  assert.ok(homeNodes.some((node) => node.props?.focusId === "live-0"));
+  assert.ok(homeNodes.some((node) => node.props?.focusId === "movies-0"));
+  assert.ok(homeNodes.some((node) => node.props?.focusId === "series-0"));
+  const renderedHero = homeNodes.find((node) => node.props?.focusId === "hero");
+  assert.equal(renderedHero.props.neighbors.down, "live-0");
+  assert.equal(
+    homeNodes.find((node) => node.props?.focusId === "live-0").props.neighbors
+      .left,
+    "sidebar-home",
+  );
+  checks += 1;
+  console.log(
+    "PASS production EliteV4Home renders typed provider shelves with hidden empty sections",
+  );
+
+  const emptyHomeTree = ui.EliteV4Home({
+    sections: {
+      featured: [],
+      continueWatching: [],
+      live: [],
+      movies: [],
+      series: [],
+    },
+    providerName: "Empty Provider",
+    providerId: "provider-1",
+    providerType: "xtream",
+    loading: false,
+    onOpen: () => {},
+  });
+  const emptyNodes = flattenTree(emptyHomeTree);
+  const emptyTexts = emptyNodes
+    .filter((node) => node.type === "Text")
+    .map((node) => node.props.children)
+    .flat(Infinity);
+  assert.ok(
+    emptyTexts.includes("Bu sağlayıcıda gösterilecek içerik bulunamadı."),
+  );
+  assert.ok(!emptyTexts.includes("Filmler"));
+  assert.ok(
+    emptyNodes.some((node) => node.props?.focusId === "hero"),
+    "empty Hero must retain an explicit Sidebar RIGHT target",
+  );
+  checks += 1;
+  console.log(
+    "PASS empty production Home hides catalog rails and keeps a reachable Hero focus target",
+  );
+
   context.activeRegion = "content";
   const compact = ui.EliteV4Sidebar({ onReturnToV3: () => {} });
   assert.equal(
-    compact.props.style.width,
+    compact.props.style.width.value,
     ui.eliteV4Theme.layout.sidebarCompact,
   );
   context.activeRegion = "sidebar";
   const expanded = ui.EliteV4Sidebar({ onReturnToV3: () => {} });
   assert.equal(
-    expanded.props.style.width,
+    expanded.props.style.width.value,
     ui.eliteV4Theme.layout.sidebarExpanded,
   );
   checks += 1;
@@ -323,6 +426,7 @@ try {
   );
 
   ui.Platform.isTV = true;
+  assert.equal(ui.Platform.isTV, true);
   const nativeToggleElement = ui.EliteV4PreviewToggle({
     enabled: false,
     onChange: () => {},
@@ -348,8 +452,12 @@ try {
   assert.match(shell, /const previewAvailable = Platform\.isTV \|\| tvPreview/);
   assert.match(shell, /provider && previewAvailable && eliteV4Preview/);
   assert.match(shell, /<OptimizedHomeScreenV6 key=\{provider\.id\} \/>/);
-  assert.match(sidebarSource, /right: "hero", down: "sidebar-v3"/);
-  assert.match(sidebarSource, /up: "sidebar-home"/);
+  assert.match(sidebarSource, /right: "hero"/);
+  assert.match(sidebarSource, /next: "sidebar-live"/);
+  assert.match(sidebarSource, /previous: "sidebar-home"/);
+  assert.match(sidebarSource, /up: entry.previous/);
+  assert.match(sidebarSource, /down: entry.next/);
+  assert.match(sidebarSource, /activeRegion === "sidebar"/);
   assert.match(legacyHome, /export default function OptimizedHomeScreenPaged/);
   assert.doesNotMatch(
     shell,
@@ -459,8 +567,8 @@ try {
   checks += 1;
   console.log("PASS Native TV selection renders V4 and restores the V3 route");
 
-  assert.equal(checks, 10);
-  console.log(`Elite V4 production host scenarios: ${checks}/10 passed`);
+  assert.equal(checks, 12);
+  console.log(`Elite V4 production host scenarios: ${checks}/12 passed`);
 } finally {
   rmSync(out, { recursive: true, force: true });
 }

@@ -1,23 +1,141 @@
-import React from "react";
+import React, { useEffect, useRef } from "react";
+import { Animated, Text, View } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import { Text, View } from "react-native";
 import { EliteV4FocusButton, useEliteV4Focus } from "./EliteV4FocusSurface";
 import { eliteV4Theme as theme } from "@/lib/design/eliteV4Theme";
+
+type SidebarEntry = {
+  id: string;
+  label: string;
+  icon: string;
+  active?: boolean;
+  previous?: string;
+  next?: string;
+};
+
+const entries: readonly SidebarEntry[] = [
+  {
+    id: "sidebar-home",
+    label: "Ana Sayfa",
+    icon: "home",
+    active: true,
+    previous: "sidebar-v3",
+    next: "sidebar-live",
+  },
+  {
+    id: "sidebar-live",
+    label: "Canlı TV",
+    icon: "radio",
+    previous: "sidebar-home",
+    next: "sidebar-movies",
+  },
+  {
+    id: "sidebar-movies",
+    label: "Filmler",
+    icon: "film",
+    previous: "sidebar-live",
+    next: "sidebar-series",
+  },
+  {
+    id: "sidebar-series",
+    label: "Diziler",
+    icon: "tv",
+    previous: "sidebar-movies",
+    next: "sidebar-history",
+  },
+  {
+    id: "sidebar-history",
+    label: "İzlemeye Devam Et",
+    icon: "clock",
+    previous: "sidebar-series",
+    next: "sidebar-settings",
+  },
+  {
+    id: "sidebar-settings",
+    label: "Ayarlar",
+    icon: "settings",
+    previous: "sidebar-history",
+    next: "sidebar-v3",
+  },
+];
 
 export function EliteV4Sidebar({ onReturnToV3 }: { onReturnToV3: () => void }) {
   const { activeRegion } = useEliteV4Focus();
   const expanded = activeRegion === "sidebar";
-  return (
-    <View
+  const width = useRef(new Animated.Value(theme.layout.sidebarCompact)).current;
+  useEffect(() => {
+    Animated.timing(width, {
+      toValue: expanded
+        ? theme.layout.sidebarExpanded
+        : theme.layout.sidebarCompact,
+      duration: 145,
+      useNativeDriver: false,
+    }).start();
+  }, [expanded, width]);
+
+  const renderEntry = (entry: SidebarEntry) => (
+    <EliteV4FocusButton
+      key={entry.id}
+      focusId={entry.id}
+      region="sidebar"
+      selected={entry.active}
+      neighbors={{
+        right: "hero",
+        ...(entry.previous ? { up: entry.previous } : {}),
+        ...(entry.next ? { down: entry.next } : {}),
+      }}
+      onPress={entry.active ? () => undefined : onReturnToV3}
+      accessibilityLabel={
+        entry.active
+          ? entry.label
+          : `${entry.label}. Mevcut Elite V3 navigasyonunu aç`
+      }
       style={{
-        width: expanded
-          ? theme.layout.sidebarExpanded
-          : theme.layout.sidebarCompact,
+        minHeight: 48,
+        marginBottom: 5,
+        borderRadius: theme.radius.medium,
+        borderWidth: 1,
+        borderColor: "transparent",
+        backgroundColor: entry.active ? theme.color.accentSoft : "transparent",
+        flexDirection: "row",
+        alignItems: "center",
+        justifyContent: expanded ? "flex-start" : "center",
+        gap: 13,
+        paddingHorizontal: expanded ? 13 : 0,
+      }}
+    >
+      <Feather
+        name={entry.icon as never}
+        size={19}
+        color={entry.active ? theme.color.accent : theme.color.muted}
+      />
+      {expanded ? (
+        <Text
+          numberOfLines={1}
+          style={{
+            flex: 1,
+            color: entry.active ? theme.color.foreground : theme.color.muted,
+            fontSize: 14,
+            fontWeight: entry.active ? "600" : "400",
+          }}
+        >
+          {entry.active ? entry.label : `${entry.label} · V3`}
+        </Text>
+      ) : null}
+    </EliteV4FocusButton>
+  );
+
+  return (
+    <Animated.View
+      style={{
+        width,
+        flexShrink: 0,
         backgroundColor: theme.color.surface,
         borderRightWidth: 1,
         borderColor: theme.color.border,
-        paddingHorizontal: expanded ? 17 : 12,
-        paddingVertical: 24,
+        paddingHorizontal: expanded ? 12 : 8,
+        paddingTop: 18,
+        paddingBottom: 16,
         justifyContent: "space-between",
         zIndex: 3,
       }}
@@ -26,74 +144,46 @@ export function EliteV4Sidebar({ onReturnToV3 }: { onReturnToV3: () => void }) {
         <Text
           style={{
             color: theme.color.accent,
-            fontSize: 13,
-            fontWeight: "900",
-            letterSpacing: 1.6,
-            marginBottom: 36,
+            fontSize: 11,
+            fontWeight: "700",
+            letterSpacing: 1.4,
+            marginBottom: 22,
             textAlign: expanded ? "left" : "center",
           }}
         >
           {expanded ? "ELITE V4" : "E4"}
         </Text>
-        <EliteV4FocusButton
-          focusId="sidebar-home"
-          region="sidebar"
-          initial={false}
-          neighbors={{ right: "hero", down: "sidebar-v3" }}
-          onPress={() => undefined}
-          accessibilityLabel="Ana Sayfa"
-          style={{
-            minHeight: 54,
-            borderRadius: theme.radius.medium,
-            borderWidth: 1,
-            borderColor: "transparent",
-            backgroundColor: theme.color.accentSoft,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: expanded ? "flex-start" : "center",
-            gap: 15,
-            paddingHorizontal: expanded ? 16 : 0,
-          }}
-        >
-          <Feather name="home" size={20} color={theme.color.accent} />
-          {expanded ? (
-            <Text
-              style={{
-                color: theme.color.foreground,
-                fontSize: 15,
-                fontWeight: "700",
-              }}
-            >
-              Ana Sayfa
-            </Text>
-          ) : null}
-        </EliteV4FocusButton>
+        {entries.map(renderEntry)}
       </View>
       <EliteV4FocusButton
         focusId="sidebar-v3"
         region="sidebar"
-        neighbors={{ right: "hero", up: "sidebar-home" }}
+        neighbors={{
+          right: "hero",
+          up: "sidebar-settings",
+          down: "sidebar-home",
+        }}
         onPress={onReturnToV3}
         accessibilityLabel="Elite V3'e dön"
         style={{
-          minHeight: 52,
+          minHeight: 46,
           borderRadius: theme.radius.medium,
           borderWidth: 1,
           borderColor: theme.color.border,
           flexDirection: "row",
           alignItems: "center",
           justifyContent: expanded ? "flex-start" : "center",
-          gap: 13,
-          paddingHorizontal: expanded ? 14 : 0,
+          gap: 12,
+          paddingHorizontal: expanded ? 13 : 0,
         }}
       >
-        <Feather name="corner-up-left" size={19} color={theme.color.muted} />
+        <Feather name="corner-up-left" size={18} color={theme.color.muted} />
         {expanded ? (
-          <Text style={{ color: theme.color.muted, fontSize: 14 }}>
-            Elite V3
+          <Text style={{ color: theme.color.muted, fontSize: 13 }}>
+            Elite V3'e dön
           </Text>
         ) : null}
       </EliteV4FocusButton>
-    </View>
+    </Animated.View>
   );
 }

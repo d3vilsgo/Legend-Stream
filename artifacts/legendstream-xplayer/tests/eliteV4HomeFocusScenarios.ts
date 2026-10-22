@@ -1,12 +1,19 @@
 import assert from "node:assert/strict";
-import { createEliteHomeItems } from "../lib/eliteV4HomeModel";
+import {
+  createEliteHomeItems,
+  createEliteHomeSections,
+} from "../lib/eliteV4HomeModel";
 import {
   isEliteV4FocusNodeVisible,
   resolveEliteV4Target,
   type EliteV4FocusNode,
 } from "../lib/eliteV4Focus";
 import type { Channel } from "../lib/iptv";
-import type { XtreamVodItem } from "../lib/xtreamCatalog";
+import type { XtreamSeriesItem, XtreamVodItem } from "../lib/xtreamCatalog";
+import {
+  mediaProgressForProvider,
+  type MediaProgressV2,
+} from "../lib/mediaProgress";
 
 let checks = 0;
 function check(name: string, run: () => void) {
@@ -33,6 +40,29 @@ const live: Channel = {
   name: "TRT Haber",
   streamUrl: "https://stream.example/live.m3u8",
   category: "Haber",
+};
+const series: XtreamSeriesItem = {
+  series_id: "series-22",
+  name: "Dizi",
+  cover: "https://img.example/series.jpg",
+  genre: "Drama",
+  releaseDate: "2024",
+};
+const movieProgress: MediaProgressV2 = {
+  schemaVersion: 2,
+  id: "progress-501",
+  providerId: "provider-1",
+  kind: "movie",
+  title: movieA.name,
+  playbackRef: {
+    type: "xtream-vod",
+    streamId: "501",
+    containerExtension: "mp4",
+    sourceMode: "canonical",
+  },
+  position: 300,
+  duration: 1000,
+  updatedAt: 20,
 };
 const nodes: Record<string, EliteV4FocusNode> = {
   sidebar: {
@@ -117,5 +147,48 @@ check("Unknown or directionless transitions resolve safely", () => {
   assert.equal(resolveEliteV4Target(nodes.hero, "up"), null);
 });
 
-assert.equal(checks, 10);
-console.log(`Elite V4 Home/Focus production scenarios: ${checks}/10 passed`);
+check(
+  "Home sections retain real movie, series, live identities and separate categories",
+  () => {
+    const sections = createEliteHomeSections(
+      [movieA, movieB],
+      [live],
+      [series],
+      [movieB],
+      [movieProgress],
+    );
+    assert.deepEqual(
+      sections.featured.map((item) => item.id),
+      ["movie-502"],
+    );
+    assert.equal(sections.movies[0]?.movie, movieA);
+    assert.equal(sections.live[0]?.channel, live);
+    assert.equal(sections.series[0]?.series, series);
+    assert.equal(sections.continueWatching[0]?.movie, movieA);
+    assert.equal(sections.continueWatching[0]?.progressFraction, 0.3);
+  },
+);
+check(
+  "Home hides stale and near-complete progress instead of inventing matches",
+  () => {
+    const stale = {
+      ...movieProgress,
+      playbackRef: { ...movieProgress.playbackRef, streamId: "999" },
+    };
+    const foreign = { ...movieProgress, providerId: "other-provider" };
+    const done = { ...movieProgress, position: 990 };
+    const scoped = mediaProgressForProvider(
+      [stale, foreign, done],
+      "provider-1",
+    );
+    const sections = createEliteHomeSections([movieA], [live], [], [], scoped);
+    assert.deepEqual(sections.continueWatching, []);
+    assert.deepEqual(sections.featured, []);
+  },
+);
+check("Home hides empty shelves when provider categories have no items", () => {
+  const sections = createEliteHomeSections([], [], [], [], []);
+  assert.deepEqual(Object.values(sections), [[], [], [], [], []]);
+});
+assert.equal(checks, 13);
+console.log(`Elite V4 Home/Focus production scenarios: ${checks}/13 passed`);

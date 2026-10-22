@@ -22,11 +22,17 @@ export function EliteV4Hero({
   onOpen,
   providerId,
   providerType,
+  height,
+  width,
+  firstRailFocusId,
 }: {
   item: EliteHomeItem | null;
   onOpen: (item: EliteHomeItem) => void;
   providerId: string;
   providerType: string;
+  height: number;
+  width: number;
+  firstRailFocusId?: string;
 }) {
   const service = useMovieInfoService();
   const [enrichment, setEnrichment] = useState<MovieEnrichment | null>(null);
@@ -50,38 +56,48 @@ export function EliteV4Hero({
   const presentation =
     input && local ? movieInfoPresentation(local, input, tmdb) : null;
   const background = presentation?.backdrop || item?.image;
+  const actionLabel =
+    item?.progressFraction !== undefined
+      ? "Devam et"
+      : item?.kind === "live"
+        ? "Canlı yayını izle"
+        : "Filmi izle";
+  const heroLabel =
+    item?.kind === "live"
+      ? "CANLI YAYIN"
+      : item?.progressFraction !== undefined
+        ? "İZLEMEYE DEVAM ET"
+        : "ÖNE ÇIKAN";
+  const titleSize = Math.max(25, Math.min(theme.type.hero, width * 0.032));
+
   return (
     <View
       style={{
-        height: 360,
+        height,
         borderRadius: theme.radius.hero,
         overflow: "hidden",
         backgroundColor: theme.color.surfaceRaised,
-        marginBottom: theme.spacing.xl,
+        marginBottom: theme.spacing.lg,
       }}
     >
       {background ? (
         <ImageBackground
           source={{ uri: background }}
           resizeMode="cover"
-          style={{ flex: 1, justifyContent: "flex-end" }}
+          style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }}
         />
       ) : null}
       <LinearGradient
-        colors={[
-          "rgba(8,10,14,0.02)",
-          "rgba(8,10,14,0.48)",
-          "rgba(8,10,14,0.97)",
-        ]}
+        colors={["rgba(5,9,15,0.08)", "rgba(5,9,15,0.48)", "rgba(5,9,15,0.94)"]}
         locations={[0, 0.48, 1]}
         style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }}
       />
       <View
         style={{
           position: "absolute",
-          left: 34,
-          right: 34,
-          bottom: 30,
+          left: 22,
+          right: 22,
+          bottom: 18,
           alignItems: "flex-start",
         }}
       >
@@ -89,37 +105,39 @@ export function EliteV4Hero({
           style={{
             color: theme.color.accent,
             fontSize: theme.type.eyebrow,
-            fontWeight: "800",
-            letterSpacing: 2,
-            marginBottom: 12,
+            fontWeight: "600",
+            letterSpacing: 1.5,
+            marginBottom: 6,
           }}
         >
-          ÖNE ÇIKAN
+          {item ? heroLabel : "ELITE V4"}
         </Text>
         <Text
           numberOfLines={2}
           style={{
             color: theme.color.foreground,
-            fontSize: theme.type.hero,
-            fontWeight: "900",
-            maxWidth: 760,
-            letterSpacing: -1.4,
+            fontSize: titleSize,
+            fontWeight: "600",
+            maxWidth: Math.min(width * 0.78, 720),
+            letterSpacing: -0.5,
           }}
         >
-          {presentation?.title || item?.title || "LegendStream"}
+          {presentation?.title || item?.title || "İçerikleriniz burada"}
         </Text>
         <Text
           numberOfLines={2}
           style={{
             color: theme.color.muted,
             fontSize: theme.type.body,
-            marginTop: 8,
-            maxWidth: 650,
+            marginTop: 5,
+            maxWidth: Math.min(width * 0.68, 640),
           }}
         >
           {presentation?.overview ||
             item?.subtitle ||
-            "Kataloğunuz hazır olduğunda içerikler burada görünür."}
+            (item
+              ? "Sağlayıcı kataloğunuzdan seçildi."
+              : "Sağlayıcı kataloğu yüklendiğinde içerikler burada görünecek.")}
         </Text>
         {presentation &&
         (presentation.year ||
@@ -129,29 +147,17 @@ export function EliteV4Hero({
             style={{
               flexDirection: "row",
               alignItems: "center",
-              gap: 9,
-              marginTop: 11,
+              gap: 8,
+              marginTop: 7,
             }}
           >
             {presentation.year ? (
-              <Text
-                style={{
-                  color: theme.color.foreground,
-                  fontSize: 13,
-                  fontWeight: "700",
-                }}
-              >
+              <Text style={{ color: theme.color.foreground, fontSize: 12 }}>
                 {presentation.year}
               </Text>
             ) : null}
             {presentation.rating !== undefined ? (
-              <Text
-                style={{
-                  color: theme.color.accent,
-                  fontSize: 13,
-                  fontWeight: "800",
-                }}
-              >
+              <Text style={{ color: theme.color.accent, fontSize: 12 }}>
                 ★ {presentation.rating.toFixed(1)}
               </Text>
             ) : null}
@@ -160,8 +166,8 @@ export function EliteV4Hero({
                 numberOfLines={1}
                 style={{
                   color: theme.color.muted,
-                  fontSize: 13,
-                  maxWidth: 340,
+                  fontSize: 12,
+                  maxWidth: 260,
                 }}
               >
                 {presentation.genre}
@@ -171,8 +177,7 @@ export function EliteV4Hero({
               <Text
                 style={{
                   color: theme.color.accent,
-                  fontSize: 11,
-                  fontWeight: "900",
+                  fontSize: 10,
                   letterSpacing: 1,
                 }}
               >
@@ -186,8 +191,8 @@ export function EliteV4Hero({
             style={{
               flexDirection: "row",
               alignItems: "center",
-              gap: 12,
-              marginTop: 20,
+              gap: 10,
+              marginTop: 13,
             }}
           >
             <EliteV4FocusButton
@@ -196,68 +201,97 @@ export function EliteV4Hero({
               initial
               neighbors={{
                 left: "sidebar-home",
-                down: "rail-0",
-                right: input ? "hero-info" : "rail-0",
+                down: firstRailFocusId,
+                right: input ? "hero-info" : firstRailFocusId,
               }}
               onPress={() => onOpen(item)}
-              accessibilityLabel={`${item.title} oynat`}
+              accessibilityLabel={`${item.title}, ${actionLabel}`}
               style={{
-                marginTop: 0,
-                minHeight: 50,
+                minHeight: 44,
                 borderRadius: theme.radius.pill,
-                backgroundColor: theme.color.foreground,
-                borderWidth: 2,
+                backgroundColor: theme.color.accent,
+                borderWidth: 1,
                 borderColor: "transparent",
-                paddingHorizontal: 23,
+                paddingHorizontal: 18,
                 flexDirection: "row",
                 alignItems: "center",
-                gap: 10,
+                gap: 8,
               }}
             >
-              <Feather name="play" size={17} color={theme.color.background} />
+              <Feather
+                name={item.kind === "live" ? "radio" : "play"}
+                size={16}
+                color={theme.color.background}
+              />
               <Text
                 style={{
                   color: theme.color.background,
-                  fontWeight: "900",
-                  fontSize: 14,
+                  fontWeight: "600",
+                  fontSize: 13,
                 }}
               >
-                Şimdi izle
+                {actionLabel}
               </Text>
             </EliteV4FocusButton>
             {input && local ? (
               <EliteV4FocusButton
                 focusId="hero-info"
                 region="content"
-                neighbors={{ left: "hero", down: "rail-0", right: "rail-0" }}
+                neighbors={{
+                  left: "hero",
+                  down: firstRailFocusId,
+                  right: firstRailFocusId,
+                }}
                 onPress={() => setShowInfo(true)}
-                accessibilityLabel={`${item.title} TMDB bilgileri`}
+                accessibilityLabel={`${item.title} film bilgileri`}
                 style={{
-                  minHeight: 50,
+                  minHeight: 44,
                   borderRadius: theme.radius.pill,
                   borderWidth: 1,
                   borderColor: theme.color.border,
                   backgroundColor: theme.color.surfaceGlass,
-                  paddingHorizontal: 20,
+                  paddingHorizontal: 16,
                   flexDirection: "row",
                   alignItems: "center",
-                  gap: 9,
+                  gap: 8,
                 }}
               >
-                <Feather name="info" size={17} color={theme.color.foreground} />
+                <Feather name="info" size={16} color={theme.color.foreground} />
                 <Text
                   style={{
                     color: theme.color.foreground,
-                    fontWeight: "800",
-                    fontSize: 14,
+                    fontWeight: "500",
+                    fontSize: 13,
                   }}
                 >
-                  Film bilgisi
+                  Detay / Bilgi
                 </Text>
               </EliteV4FocusButton>
             ) : null}
           </View>
-        ) : null}
+        ) : (
+          <EliteV4FocusButton
+            focusId="hero"
+            region="content"
+            initial
+            neighbors={{ left: "sidebar-home", down: firstRailFocusId }}
+            onPress={() => undefined}
+            accessibilityLabel="Katalog içerik alanı"
+            style={{
+              minHeight: 40,
+              borderRadius: theme.radius.pill,
+              borderWidth: 1,
+              borderColor: theme.color.border,
+              backgroundColor: theme.color.surfaceGlass,
+              paddingHorizontal: 15,
+              justifyContent: "center",
+            }}
+          >
+            <Text style={{ color: theme.color.muted, fontSize: 12 }}>
+              Katalog içeriği yüklendiğinde burada gösterilir
+            </Text>
+          </EliteV4FocusButton>
+        )}
       </View>
       {showInfo && input && local ? (
         <MovieInfoModal
