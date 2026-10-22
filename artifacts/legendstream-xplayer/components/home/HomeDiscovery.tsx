@@ -9,6 +9,7 @@ import { useMediaLibrary } from "@/context/MediaLibraryContext";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { normalizeImageUrl } from "@/lib/imageUrl";
+import { computeHomeHeroLayout } from "@/lib/homeHeroLayout";
 import { visibleProgressRatio } from "@/lib/historyPresentation";
 import type { Channel } from "@/lib/iptv";
 import type { XtreamSeriesItem, XtreamVodItem } from "@/lib/xtreamCatalog";
@@ -320,8 +321,9 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
   loading?: boolean;
 }) {
   const colors = useColors();
-  const { width } = useWindowDimensions();
-  const cardWidth = Math.max(280, Math.min(width - 36, 1464));
+  const { width, height } = useWindowDimensions();
+  const heroLayout = useMemo(() => computeHomeHeroLayout({ width, height, isTv: Platform.isTV }), [height, width]);
+  const { cardWidth } = heroLayout;
   const listRef = useRef<FlatList<HomeHeroEntry>>(null);
   const [index, setIndex] = useState(0);
 
@@ -339,7 +341,7 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
 
   if (!items.length) {
     if (loading) {
-      return <View style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}> 
+      return <View style={[s.homeHeroEmpty, heroLayout.emptyStyle, { borderColor: colors.border, backgroundColor: colors.card }]}>
         <LinearGradient colors={["rgba(0,212,255,0.10)", "rgba(5,9,20,0.02)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
         <View style={{ flex: 1, justifyContent: "flex-end", gap: 10 }}>
           <View style={[s.homeSkeletonLine, { width: "28%", backgroundColor: colors.muted }]} />
@@ -348,7 +350,7 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
         </View>
       </View>;
     }
-    return <TvFocusPressable preferredFocus onPress={onDiscover} style={[s.homeHeroEmpty, { borderColor: colors.border, backgroundColor: colors.card }]}> 
+    return <TvFocusPressable preferredFocus onPress={onDiscover} style={[s.homeHeroEmpty, heroLayout.emptyStyle, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <LinearGradient colors={["rgba(0,212,255,0.12)", "rgba(5,9,20,0.02)"]} style={StyleSheet.absoluteFill} pointerEvents="none" />
       <View style={{ flex: 1, justifyContent: "flex-end" }}>
         <Text style={[s.homeHeroEyebrow, { color: colors.primary }]}>{providerName}</Text>
@@ -372,13 +374,13 @@ function HomeHeroCarousel({ items, eyebrow, providerName, onOpen, onDiscover, di
         preferredFocus={itemIndex === 0}
         onPress={() => onOpen(item)}
         onFocus={() => listRef.current?.scrollToIndex({ index: itemIndex, animated: true })}
-        style={[s.homeHeroCard, { width: cardWidth, borderColor: "transparent" }]}
+        style={[s.homeHeroCard, heroLayout.frameStyle, { borderColor: "transparent" }]}
       >
         <ResilientCatalogImage uri={item.image} resizeMode="cover" style={StyleSheet.absoluteFill} />
         <LinearGradient colors={["rgba(2,6,16,0.02)", "rgba(2,6,16,0.18)", "rgba(2,6,16,0.92)"]} locations={[0, 0.5, 1]} style={StyleSheet.absoluteFill} pointerEvents="none" />
-        <View style={s.homeHeroCaption}>
+        <View style={[s.homeHeroCaption, heroLayout.captionStyle]}>
           <Text style={[s.homeHeroEyebrow, { color: colors.primary }]}>{eyebrow}</Text>
-          <Text numberOfLines={2} style={s.homeHeroImageTitle}>{item.title}</Text>
+          <Text numberOfLines={2} style={[s.homeHeroImageTitle, heroLayout.imageTitleStyle]}>{item.title}</Text>
           <Text numberOfLines={1} style={s.homeHeroImageMeta}>{item.subtitle}</Text>
         </View>
       </TvFocusPressable>}
@@ -460,9 +462,9 @@ function HomeShelf({ title, seeAll, items, onSeeAll, compact = false, emptyLabel
 
 const s = StyleSheet.create({
   homeDiscoveryShell: { paddingTop: 4, paddingBottom: 26, gap: 4 },
-  homeHeroCard: { aspectRatio: 2.25, minHeight: 190, maxHeight: 520, borderRadius: 24, overflow: "hidden", borderWidth: 2, justifyContent: "flex-end" },
-  homeHeroEmpty: { width: "100%", aspectRatio: 2.25, minHeight: 190, maxHeight: 420, borderRadius: 24, borderWidth: 1, overflow: "hidden", padding: 24 },
-  homeHeroCaption: { paddingHorizontal: 24, paddingBottom: 24, paddingTop: 70, maxWidth: 760 },
+  homeHeroCard: { borderRadius: 24, overflow: "hidden", borderWidth: 2, justifyContent: "flex-end" },
+  homeHeroEmpty: { borderRadius: 24, borderWidth: 1, overflow: "hidden" },
+  homeHeroCaption: {},
   homeHeroEyebrow: { fontSize: 11, fontWeight: "800", letterSpacing: 1.4, textTransform: "uppercase", marginBottom: 7 },
   homeHeroImageTitle: { color: "#FFFFFF", fontSize: 30, lineHeight: 35, fontWeight: "800", textShadowColor: "rgba(0,0,0,0.7)", textShadowRadius: 8, textShadowOffset: { width: 0, height: 2 } },
   homeHeroImageMeta: { color: "rgba(255,255,255,0.78)", fontSize: 13, fontWeight: "600", marginTop: 7 },
