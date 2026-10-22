@@ -1,0 +1,20 @@
+import assert from "node:assert/strict";
+import { resolveDevicePresentation } from "../lib/devicePresentation";
+
+const phone = resolveDevicePresentation({width: 393,height:873,nativeTv:false});
+assert.deepEqual([phone.deviceClass,phone.catalogMode,phone.catalogOrientation],["phone","phonePortrait","portrait"]);
+const phoneRotated = resolveDevicePresentation({width:873,height:393,nativeTv:false});
+assert.equal(phoneRotated.catalogMode,"phonePortrait");
+assert.equal(phoneRotated.catalogOrientation,"portrait");
+const tabletP = resolveDevicePresentation({width:800,height:1280,nativeTv:false});
+const tabletL = resolveDevicePresentation({width:1280,height:800,nativeTv:false});
+assert.deepEqual([tabletP.catalogMode,tabletL.catalogMode],["tabletPortrait","tabletLandscape"]);
+assert.equal(tabletL.catalogOrientation,"free");
+const preview = resolveDevicePresentation({width:393,height:873,nativeTv:false,tvPreview:true});
+assert.deepEqual([preview.deviceClass,preview.catalogMode,preview.preview,preview.catalogOrientation],["phone","tv",true,"landscape"]);
+const nativeTv = resolveDevicePresentation({width:1920,height:1080,nativeTv:true,tvPreview:true});
+assert.deepEqual([nativeTv.deviceClass,nativeTv.preview,nativeTv.catalogMode],["tv",false,"tv"]);
+assert.equal(resolveDevicePresentation({width:0,height:0,nativeTv:false}).catalogMode,"phonePortrait");
+assert.equal(resolveDevicePresentation({width:600,height:900,nativeTv:false}).deviceClass,"tablet");
+assert.equal(resolveDevicePresentation({width:599,height:900,nativeTv:false}).deviceClass,"phone");
+console.log("device presentation foundation scenarios passed.");

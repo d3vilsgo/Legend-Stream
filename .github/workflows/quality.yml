@@ -228,6 +228,11 @@ jobs:
             exit 1
           fi
           echo 'Repository hygiene guard passed.'
+      - name: Device presentation foundation scenarios
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm --filter @workspace/legendstream-xplayer exec tsx tests/devicePresentationScenarios.ts
       - name: Typecheck mobile app
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references
