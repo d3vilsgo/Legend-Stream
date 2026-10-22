@@ -26,7 +26,7 @@ const reactMock = `
 const nativeMock = `
   export const Pressable='Pressable',Image='Image',ImageBackground='ImageBackground',ScrollView='ScrollView',Text='Text',View='View';export const Platform={get isTV(){return globalThis.__eliteV4PlatformIsTV??false;},set isTV(value){globalThis.__eliteV4PlatformIsTV=value;}};
   export const Animated={View:'AnimatedView',Value:class{constructor(value){this.value=value;}},timing(value,{toValue}){return{start(){value.value=toValue;}}}};
-  export function useWindowDimensions(){return {width:1280,height:720,scale:1,fontScale:1};}
+  export function useWindowDimensions(){return globalThis.__eliteViewport??{width:1280,height:720,scale:1,fontScale:1};}
   export function findNodeHandle(ref){return ref?.handle??null;}
 `;
 try {
@@ -375,13 +375,13 @@ try {
   context.activeRegion = "content";
   const compact = ui.EliteV4Sidebar({ onReturnToV3: () => {} });
   assert.equal(
-    compact.props.style.width.value,
+    compact.props.style.width,
     ui.eliteV4Theme.layout.sidebarCompact,
   );
   context.activeRegion = "sidebar";
   const expanded = ui.EliteV4Sidebar({ onReturnToV3: () => {} });
   assert.equal(
-    expanded.props.style.width.value,
+    expanded.props.style.width,
     ui.eliteV4Theme.layout.sidebarExpanded,
   );
   checks += 1;
@@ -567,8 +567,255 @@ try {
   checks += 1;
   console.log("PASS Native TV selection renders V4 and restores the V3 route");
 
-  assert.equal(checks, 12);
-  console.log(`Elite V4 production host scenarios: ${checks}/12 passed`);
+  // Measured content width must drive Hero geometry when the menu expands.
+  ui.HostHooks.clear();
+  let measuredHome = ui.EliteV4Home({
+    sections: {
+      featured: [homeItem],
+      continueWatching: [],
+      live: [liveItem],
+      movies: [homeItem],
+      series: [],
+    },
+    providerName: "Provider",
+    providerId: "p",
+    providerType: "xtream",
+    loading: false,
+    onOpen() {},
+  });
+  measuredHome.props.onLayout({ nativeEvent: { layout: { width: 820 } } });
+  ui.HostHooks.reset();
+  measuredHome = ui.EliteV4Home({
+    sections: {
+      featured: [homeItem],
+      continueWatching: [],
+      live: [liveItem],
+      movies: [homeItem],
+      series: [],
+    },
+    providerName: "Provider",
+    providerId: "p",
+    providerType: "xtream",
+    loading: false,
+    onOpen() {},
+  });
+  assert.equal(
+    findElement(measuredHome, (node) => node.type === ui.EliteV4Hero).props
+      .width,
+    760,
+  );
+  const measuredRails = measuredHome.props.children
+    .flat(Infinity)
+    .filter((node) => node?.type === ui.EliteV4ContentRail);
+  const liveRail = measuredRails.find((node) => node.props.railId === "live");
+  const movieRail = measuredRails.find(
+    (node) => node.props.railId === "movies",
+  );
+  assert.equal(
+    findElement(
+      liveRail.type(liveRail.props),
+      (node) => node.props?.focusId === "live-0",
+    ).props.neighbors.down,
+    "movies-0",
+  );
+  assert.equal(
+    findElement(
+      movieRail.type(movieRail.props),
+      (node) => node.props?.focusId === "movies-0",
+    ).props.neighbors.up,
+    "live-0",
+  );
+  checks += 1;
+  console.log(
+    "PASS production Home measures the remaining slot and connects adjacent shelves",
+  );
+
+  // Narrow landscape layout and short Hero preserve visible, bounded actions.
+  globalThis.__eliteViewport = { width: 640, height: 360 };
+  context.activeRegion = "sidebar";
+  const narrowSidebar = ui.EliteV4Sidebar({ onReturnToV3() {} });
+  assert.equal(narrowSidebar.props.style.width, 192);
+  assert.equal(narrowSidebar.props.style.flexShrink, 0);
+  assert.equal(narrowSidebar.props.style.overflow, "hidden");
+  assert.equal(narrowSidebar.props.children[0].type, "ScrollView");
+  ui.HostHooks.clear();
+  const shortHero = ui.EliteV4Hero({
+    item: homeItem,
+    height: 196,
+    width: 412,
+    providerId: "p",
+    providerType: "xtream",
+    onOpen() {},
+  });
+  const shortTitle = findElement(
+    shortHero,
+    (node) =>
+      node.type === "Text" && node.props.children?.includes(homeItem.title),
+  );
+  assert.equal(shortTitle.props.numberOfLines, 1);
+  const action = findFocusButton(shortHero, "hero");
+  assert.equal(action.props.style.borderWidth, 1);
+  checks += 1;
+  console.log(
+    "PASS narrow Sidebar reserves width and short Hero bounds title and actions",
+  );
+  delete globalThis.__eliteViewport;
+
+  context.focusedId = "hero";
+  ui.HostHooks.clear();
+  ui.Platform.isTV = true;
+  const refinedNative = ui.EliteV4FocusButton({
+    focusId: "hero",
+    region: "content",
+    children: "Hero",
+    onPress() {},
+  });
+  const nativeStyle = Object.assign(
+    {},
+    ...refinedNative.props.style({ pressed: false }).filter(Boolean),
+  );
+  assert.equal(nativeStyle.borderWidth, 1);
+  assert.equal(nativeStyle.borderColor, ui.eliteV4Theme.color.focus);
+  assert.equal(nativeStyle.transform, undefined);
+  const selectedPrimary = ui.EliteV4FocusButton({
+    focusId: "hero",
+    region: "content",
+    selected: true,
+    style: { backgroundColor: "#70D8D0" },
+    children: "Hero",
+    onPress() {},
+  });
+  assert.equal(
+    Object.assign(
+      {},
+      ...selectedPrimary.props.style({ pressed: false }).filter(Boolean),
+    ).backgroundColor,
+    "#70D8D0",
+  );
+  ui.Platform.isTV = false;
+  const refinedPreview = ui.EliteV4FocusButton({
+    focusId: "hero",
+    region: "content",
+    children: "Hero",
+    onPress() {},
+  });
+  assert.equal(refinedPreview.props.focusVisualStyle.borderWidth, 1);
+  assert.equal(
+    refinedPreview.props.focusVisualStyle.borderColor,
+    nativeStyle.borderColor,
+  );
+  checks += 1;
+  console.log(
+    "PASS V4 Native and Preview request the same thin focus without layout scale",
+  );
+
+  // Compile the actual shared Preview adapter, not a copied styling helper.
+  await build({
+    stdin: {
+      contents: `export {TVPreviewPressable} from './components/tvPreview/TVPreviewFocus'; export {HostContexts,HostHooks} from 'react';`,
+      resolveDir: app,
+      loader: "tsx",
+    },
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    outfile: join(out, "preview.cjs"),
+    logLevel: "silent",
+    plugins: [
+      {
+        name: "preview-boundaries",
+        setup(build) {
+          build.onResolve(
+            {
+              filter:
+                /^(react$|react-native$|react-native-safe-area-context$|@\/)/,
+            },
+            (args) => ({ path: args.path, namespace: "preview-host" }),
+          );
+          build.onLoad(
+            { filter: /.*/, namespace: "preview-host" },
+            ({ path }) => ({
+              loader: "js",
+              contents:
+                path === "react"
+                  ? reactMock
+                      .replace(
+                        "export function createContext(value){",
+                        "export const HostContexts=[];export function useId(){return 'generated';} export function createContext(value){",
+                      )
+                      .replace(
+                        "return context;}",
+                        "HostContexts.push(context);return context;}",
+                      )
+                  : path === "react-native"
+                    ? nativeMock +
+                      `export const StyleSheet={create:value=>value};`
+                    : path === "react-native-safe-area-context"
+                      ? `export function useSafeAreaInsets(){return {};}`
+                      : path.endsWith("/useColors")
+                        ? `export function useColors(){return {primary:'#00f'};}`
+                        : path.endsWith("/useNativeTvTarget")
+                          ? `export function useNativeTvTarget(){return {focused:false,register(){}};}`
+                          : path.endsWith("/UiPresentationContext")
+                            ? `export function useUiPresentation(){return {tvPreview:true};}`
+                            : path.endsWith("/tvPreviewFocus")
+                              ? `export function createTVPreviewFocusController(){return {};}`
+                              : path.endsWith("/tvRemoteInspector")
+                                ? `export function inspectorAction(){}`
+                                : `export function nativeTvModalShown(){} export function requestTvTargetFocus(){} export function setNativeTvScope(){} export function subscribeNativeTvFocus(){}`,
+            }),
+          );
+        },
+      },
+    ],
+  });
+  const adapter = req(join(out, "preview.cjs"));
+  adapter.HostContexts[0]._value = {
+    enabled: true,
+    focusedId: "elite-v4:hero",
+    nativeScope: "content",
+    register() {},
+    rememberNativeFocus() {},
+  };
+  const customStyle = refinedPreview.props.focusVisualStyle;
+  const actualPreview = adapter.TVPreviewPressable({
+    focusId: "elite-v4:hero",
+    focusVisualStyle: customStyle,
+    style: { backgroundColor: "#70D8D0" },
+    children: "Hero",
+  });
+  const previewStyle = Object.assign(
+    {},
+    ...actualPreview.props.style({ pressed: false }).filter(Boolean),
+  );
+  assert.equal(previewStyle.borderWidth, 1);
+  assert.equal(previewStyle.borderColor, ui.eliteV4Theme.color.focus);
+  assert.equal(
+    previewStyle.backgroundColor,
+    "#70D8D0",
+    "focused primary CTA must retain dark-text contrast",
+  );
+  adapter.HostHooks.clear();
+  adapter.HostContexts[0]._value.focusedId = "v3-button";
+  const actualLegacy = adapter.TVPreviewPressable({
+    focusId: "v3-button",
+    eliteVisual: true,
+    children: "V3",
+  });
+  const legacyStyle = Object.assign(
+    {},
+    ...actualLegacy.props.style({ pressed: false }).filter(Boolean),
+  );
+  assert.equal(legacyStyle.borderWidth, 4);
+  assert.equal(legacyStyle.borderColor, "#ffffff");
+  assert.equal(legacyStyle.backgroundColor, "#1C2530");
+  checks += 1;
+  console.log(
+    "PASS actual Preview adapter applies V4 thin focus and preserves V3 styling and CTA contrast",
+  );
+
+  assert.equal(checks, 16);
+  console.log(`Elite V4 production host scenarios: ${checks}/16 passed`);
 } finally {
   rmSync(out, { recursive: true, force: true });
 }

@@ -1,5 +1,5 @@
-import React, { useEffect, useRef } from "react";
-import { Animated, Text, View } from "react-native";
+import React from "react";
+import { ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { EliteV4FocusButton, useEliteV4Focus } from "./EliteV4FocusSurface";
 import { eliteV4Theme as theme } from "@/lib/design/eliteV4Theme";
@@ -62,16 +62,10 @@ const entries: readonly SidebarEntry[] = [
 export function EliteV4Sidebar({ onReturnToV3 }: { onReturnToV3: () => void }) {
   const { activeRegion } = useEliteV4Focus();
   const expanded = activeRegion === "sidebar";
-  const width = useRef(new Animated.Value(theme.layout.sidebarCompact)).current;
-  useEffect(() => {
-    Animated.timing(width, {
-      toValue: expanded
-        ? theme.layout.sidebarExpanded
-        : theme.layout.sidebarCompact,
-      duration: 145,
-      useNativeDriver: false,
-    }).start();
-  }, [expanded, width]);
+  const viewport = useWindowDimensions();
+  const width = expanded
+    ? Math.min(theme.layout.sidebarExpanded, Math.round(viewport.width * 0.3))
+    : theme.layout.sidebarCompact;
 
   const renderEntry = (entry: SidebarEntry) => (
     <EliteV4FocusButton
@@ -119,14 +113,14 @@ export function EliteV4Sidebar({ onReturnToV3 }: { onReturnToV3: () => void }) {
             fontWeight: entry.active ? "600" : "400",
           }}
         >
-          {entry.active ? entry.label : `${entry.label} · V3`}
+          {entry.label}
         </Text>
       ) : null}
     </EliteV4FocusButton>
   );
 
   return (
-    <Animated.View
+    <View
       style={{
         width,
         flexShrink: 0,
@@ -137,10 +131,14 @@ export function EliteV4Sidebar({ onReturnToV3 }: { onReturnToV3: () => void }) {
         paddingTop: 18,
         paddingBottom: 16,
         justifyContent: "space-between",
-        zIndex: 3,
+        overflow: "hidden",
       }}
     >
-      <View>
+      <ScrollView
+        style={{ flex: 1, minHeight: 0 }}
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 12 }}
+      >
         <Text
           style={{
             color: theme.color.accent,
@@ -154,7 +152,7 @@ export function EliteV4Sidebar({ onReturnToV3 }: { onReturnToV3: () => void }) {
           {expanded ? "ELITE V4" : "E4"}
         </Text>
         {entries.map(renderEntry)}
-      </View>
+      </ScrollView>
       <EliteV4FocusButton
         focusId="sidebar-v3"
         region="sidebar"
@@ -184,6 +182,6 @@ export function EliteV4Sidebar({ onReturnToV3 }: { onReturnToV3: () => void }) {
           </Text>
         ) : null}
       </EliteV4FocusButton>
-    </Animated.View>
+    </View>
   );
 }

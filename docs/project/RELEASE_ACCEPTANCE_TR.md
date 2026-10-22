@@ -420,3 +420,11 @@ Başlangıç `48565355c809932f75a6d83411f460848650ee6d` (Quality #1491 SUCCESS);
 - Bu kayıt commit'i dahil final remote SHA için Quality zorunludur; bu metin gelecekteki run sonucunu PASS varsaymaz. Exact-SHA SUCCESS ardından aynı SHA Universal APK üretimi ve artifact doğrulaması teslim raporunda gösterilecektir. APK fiziksel PASS sayılmaz.
 
 Homatics LEFT/UP/DOWN/RIGHT/OK/BACK, uzun basış, hızlı karşı yön, ekran/modal/provider/session geçişi ve Player hata/Back RC kabulü açık. Mobil üretim yoğunluk dosyaları değiştirilmedi; Poco cihaz regresyonu fiziksel bekler. Tarihsel **Native TV Physical FAIL**, **TMDB LIVE BLOCKED**, **legacy 14 SKIP / 0 DELETED** korunur. PR #143 OPEN/DRAFT, base değişmedi; merge/yeni branch/yeni PR yok. U4.4 DEFERRED; başlanmadı.
+
+
+## Elite V4 P1 devamı — 23 Ekim 2026
+
+Başlangıç HEAD: `e6b4eab367a6816f1f2011c28a9941fc9fb2e368`; PR #143 ve mevcut branch/base/Draft korunur.
+Sidebar kompakt 68 dp, genişken en çok 208 dp/viewport %30; normal akışta yer ayırır, kısa ekranda menü kaydırılır. Home gerçek içerik genişliğini ölçer. Hero kısa ekranda tek satır başlık/özet ve sınırlı aksiyonlar; yatay/dikey scrim. Raflar ortak genişlik, footer ritmi ve komşu raflara açık Focus hedefleri kullanır. V4 Focus 1 dp turkuaz ve hafif ışıma; ölçek büyütme kaldırıldı. Preview adapter isteğe bağlı focusVisualStyle ile V4 görünümünü korur; varsayılan V3 stili aynı kalır.
+Üretim host 16/16; Home/Focus model 13/13; TV Preview 32/32; yerel TypeScript PASS. Assertion gevşetme/skip yok; animated width.value beklentisi normal-akış sayısal width sözleşmesine güncellendi. Exact-SHA Quality ve aynı commit Universal APK push sonrası doğrulanacak; bu kayıt CI SUCCESS iddiası değildir.
+Telefon/tablet TV Preview ve Native TV kaynak/host kapsamı; Android/Google TV/Box fiziksel kabulü bu değişiklik için NOT TESTED / DEFERRED_RC. P0 kullanıcısının bildirdiği V3/V4 ve Sidebar geçiş kabulü korunur; tarihsel Physical FAIL kayıtları silinmez. Diziler ve Home dışı Sidebar aksiyonları mevcut V3 handoff yolunu kullanmaya devam eder; tam V4 ekran parity henüz tamamlanmadı. GEN2, sağlayıcı/TMDB/EPG/Player servisleri ve V3 ekranları değişmedi. Gerçek cihaz/emülatör ekran görüntüsü üretilmedi.

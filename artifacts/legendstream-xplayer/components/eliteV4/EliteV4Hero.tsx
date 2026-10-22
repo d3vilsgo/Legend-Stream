@@ -61,14 +61,18 @@ export function EliteV4Hero({
       ? "Devam et"
       : item?.kind === "live"
         ? "Canlı yayını izle"
-        : "Filmi izle";
+        : item?.kind === "series"
+          ? "Bölümleri gör"
+          : "Filmi izle";
   const heroLabel =
     item?.kind === "live"
       ? "CANLI YAYIN"
       : item?.progressFraction !== undefined
         ? "İZLEMEYE DEVAM ET"
         : "ÖNE ÇIKAN";
-  const titleSize = Math.max(25, Math.min(theme.type.hero, width * 0.032));
+  const compact = height < 240;
+  const inset = width < 560 ? 16 : 26;
+  const titleSize = Math.max(22, Math.min(theme.type.hero, width * 0.042));
 
   return (
     <View
@@ -88,16 +92,22 @@ export function EliteV4Hero({
         />
       ) : null}
       <LinearGradient
-        colors={["rgba(5,9,15,0.08)", "rgba(5,9,15,0.48)", "rgba(5,9,15,0.94)"]}
+        start={{ x: 0, y: 0.5 }}
+        end={{ x: 1, y: 0.5 }}
+        colors={["rgba(5,9,15,0.92)", "rgba(5,9,15,0.60)", "rgba(5,9,15,0.08)"]}
         locations={[0, 0.48, 1]}
+        style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }}
+      />
+      <LinearGradient
+        colors={["transparent", "rgba(5,9,15,0.84)"]}
         style={{ position: "absolute", left: 0, right: 0, top: 0, bottom: 0 }}
       />
       <View
         style={{
           position: "absolute",
-          left: 22,
-          right: 22,
-          bottom: 18,
+          left: inset,
+          right: inset,
+          bottom: compact ? 14 : 22,
           alignItems: "flex-start",
         }}
       >
@@ -113,22 +123,24 @@ export function EliteV4Hero({
           {item ? heroLabel : "ELITE V4"}
         </Text>
         <Text
-          numberOfLines={2}
+          numberOfLines={compact ? 1 : 2}
           style={{
             color: theme.color.foreground,
             fontSize: titleSize,
             fontWeight: "600",
-            maxWidth: Math.min(width * 0.78, 720),
+            maxWidth: Math.min(width - inset * 2, 720),
+            lineHeight: Math.round(titleSize * 1.12),
             letterSpacing: -0.5,
           }}
         >
           {presentation?.title || item?.title || "İçerikleriniz burada"}
         </Text>
         <Text
-          numberOfLines={2}
+          numberOfLines={compact ? 1 : 2}
           style={{
             color: theme.color.muted,
-            fontSize: theme.type.body,
+            fontSize: compact ? 13 : theme.type.body,
+            lineHeight: compact ? 18 : 21,
             marginTop: 5,
             maxWidth: Math.min(width * 0.68, 640),
           }}
@@ -139,7 +151,8 @@ export function EliteV4Hero({
               ? "Sağlayıcı kataloğunuzdan seçildi."
               : "Sağlayıcı kataloğu yüklendiğinde içerikler burada görünecek.")}
         </Text>
-        {presentation &&
+        {!compact &&
+        presentation &&
         (presentation.year ||
           presentation.rating !== undefined ||
           presentation.genre) ? (
@@ -190,6 +203,8 @@ export function EliteV4Hero({
           <View
             style={{
               flexDirection: "row",
+              flexWrap: "wrap",
+              maxWidth: "100%",
               alignItems: "center",
               gap: 10,
               marginTop: 13,
@@ -264,7 +279,7 @@ export function EliteV4Hero({
                     fontSize: 13,
                   }}
                 >
-                  Detay / Bilgi
+                  Bilgi
                 </Text>
               </EliteV4FocusButton>
             ) : null}

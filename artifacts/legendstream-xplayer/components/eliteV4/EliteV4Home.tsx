@@ -1,21 +1,9 @@
-import React from "react";
+import React, { useState } from "react";
 import { ScrollView, Text, View, useWindowDimensions } from "react-native";
 import { EliteV4Hero } from "./EliteV4Hero";
 import { EliteV4ContentRail } from "./EliteV4ContentRail";
 import type { EliteHomeSections, EliteHomeItem } from "@/lib/eliteV4HomeModel";
 import { eliteV4Theme as theme } from "@/lib/design/eliteV4Theme";
-
-function cardWidthForViewport(width: number) {
-  const horizontalPadding = width < 600 ? 18 : 30;
-  const available = Math.max(
-    180,
-    width - theme.layout.sidebarCompact - horizontalPadding * 2 - 24,
-  );
-  return Math.max(
-    theme.layout.railCardMin,
-    Math.min(theme.layout.railCardMax, Math.floor(available / 1.65)),
-  );
-}
 
 export function EliteV4Home({
   sections,
@@ -32,7 +20,9 @@ export function EliteV4Home({
   loading: boolean;
   onOpen: (item: EliteHomeItem) => void;
 }) {
-  const { width, height } = useWindowDimensions();
+  const { width: windowWidth, height } = useWindowDimensions();
+  const [measuredWidth, setMeasuredWidth] = useState(0);
+  const width = measuredWidth || windowWidth - theme.layout.sidebarCompact;
   const hero =
     sections.featured[0] ??
     sections.continueWatching[0] ??
@@ -45,7 +35,14 @@ export function EliteV4Home({
     theme.layout.heroMinHeight,
     Math.min(theme.layout.heroMaxHeight, Math.round(height * 0.35)),
   );
-  const cardWidth = cardWidthForViewport(width);
+  const contentWidth = Math.max(1, width - padding * 2);
+  const cardWidth = Math.max(
+    theme.layout.railCardMin,
+    Math.min(
+      theme.layout.railCardMax,
+      Math.floor(contentWidth / (width < 600 ? 2.4 : 4.8)),
+    ),
+  );
   const visibleSections = [
     {
       id: "featured",
@@ -67,6 +64,7 @@ export function EliteV4Home({
 
   return (
     <ScrollView
+      onLayout={(event) => setMeasuredWidth(event.nativeEvent.layout.width)}
       style={{ flex: 1, minWidth: 0, backgroundColor: theme.color.background }}
       contentContainerStyle={{
         paddingTop: 18,
@@ -110,10 +108,10 @@ export function EliteV4Home({
         providerId={providerId}
         providerType={providerType}
         height={heroHeight}
-        width={Math.max(260, width - theme.layout.sidebarCompact - padding * 2)}
+        width={contentWidth}
         firstRailFocusId={firstRailFocusId}
       />
-      {visibleSections.map((section) => (
+      {visibleSections.map((section, index) => (
         <EliteV4ContentRail
           key={section.id}
           railId={section.id}
@@ -121,6 +119,8 @@ export function EliteV4Home({
           items={section.items}
           onOpen={onOpen}
           cardWidth={cardWidth}
+          previousRail={visibleSections[index - 1]}
+          nextRail={visibleSections[index + 1]}
         />
       ))}
       {!hero && !visibleSections.length ? (

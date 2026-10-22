@@ -11,12 +11,16 @@ export function EliteV4ContentRail({
   items,
   onOpen,
   cardWidth = theme.layout.railCardMax,
+  previousRail,
+  nextRail,
 }: {
   title: string;
   railId?: string;
   items: readonly EliteHomeItem[];
   onOpen: (item: EliteHomeItem) => void;
   cardWidth?: number;
+  previousRail?: { id: string; items: readonly EliteHomeItem[] };
+  nextRail?: { id: string; items: readonly EliteHomeItem[] };
 }) {
   if (!items.length) return null;
   return (
@@ -57,7 +61,9 @@ export function EliteV4ContentRail({
         {items.map((item, index) => {
           const live = item.kind === "live";
           const isContinue = item.progressFraction !== undefined;
-          const imageHeight = live ? 82 : Math.round(cardWidth * 1.34);
+          const imageHeight = live
+            ? Math.round(cardWidth * 0.56)
+            : Math.round(cardWidth * 1.34);
           const kindLabel = live
             ? "canlı kanal"
             : item.kind === "series"
@@ -74,12 +80,17 @@ export function EliteV4ContentRail({
                   index < items.length - 1
                     ? `${railId}-${index + 1}`
                     : undefined,
-                up: "hero",
+                up: previousRail
+                  ? `${previousRail.id}-${Math.min(index, previousRail.items.length - 1)}`
+                  : "hero",
+                down: nextRail
+                  ? `${nextRail.id}-${Math.min(index, nextRail.items.length - 1)}`
+                  : undefined,
               }}
               onPress={() => onOpen(item)}
               accessibilityLabel={`${item.title}, ${kindLabel}${isContinue ? ", izlemeye devam et" : ""}`}
               style={{
-                width: live ? Math.max(156, cardWidth * 0.82) : cardWidth,
+                width: cardWidth,
                 borderRadius: theme.radius.medium,
                 borderWidth: 1,
                 borderColor: theme.color.border,
@@ -121,6 +132,7 @@ export function EliteV4ContentRail({
               )}
               <View
                 style={{
+                  minHeight: isContinue ? 94 : 76,
                   paddingHorizontal: 10,
                   paddingTop: 9,
                   paddingBottom: 11,

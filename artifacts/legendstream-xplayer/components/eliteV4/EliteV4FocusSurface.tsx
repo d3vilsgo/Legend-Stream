@@ -38,6 +38,14 @@ type FocusContextValue = {
   target: (id: string, direction: EliteV4Direction) => number | undefined;
 };
 const FocusContext = createContext<FocusContextValue | null>(null);
+const REFINED_FOCUS = {
+  borderWidth: 1,
+  borderColor: eliteV4Theme.color.focus,
+  shadowColor: eliteV4Theme.color.focus,
+  shadowOpacity: 0.28,
+  shadowRadius: 8,
+  elevation: 3,
+};
 const EMPTY_NEIGHBORS: Partial<Record<EliteV4Direction, string>> =
   Object.freeze({});
 
@@ -165,16 +173,11 @@ export function EliteV4FocusButton({
   const buttonStyle = ({ pressed }: { pressed: boolean }) => [
     typeof style === "function" ? style({ pressed }) : style,
     focus.focusedId === focusId && {
-      borderColor: eliteV4Theme.color.focus,
-      shadowColor: eliteV4Theme.color.focus,
-      shadowOpacity: 0.22,
-      shadowRadius: 10,
-      elevation: 4,
-      transform: [{ scale: 1.015 }],
+      ...REFINED_FOCUS,
       zIndex: 2,
     },
     (selected || focus.selectedId === focusId) && {
-      backgroundColor: eliteV4Theme.color.accentSoft,
+      borderColor: eliteV4Theme.color.accent,
     },
   ];
   const handleFocus = () => focus.setFocused(node);
@@ -190,6 +193,7 @@ export function EliteV4FocusButton({
         focusId={`elite-v4:${focusId}`}
         focusScope="content"
         eliteVisual
+        focusVisualStyle={REFINED_FOCUS}
         accessibilityRole="button"
         accessibilityState={{
           selected: selected || focus.selectedId === focusId,
