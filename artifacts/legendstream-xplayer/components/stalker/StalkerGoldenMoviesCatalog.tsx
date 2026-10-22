@@ -20,6 +20,7 @@ import { FocusButton } from "@/components/FocusButton";
 import { useI18n } from "@/context/I18nContext";
 import { useColors } from "@/hooks/useColors";
 import { shouldUseWholeCatalogLoadingSkeleton } from "@/lib/catalogSearchPresentation";
+import { computePosterGridLayout } from "@/lib/catalogGridLayout";
 import {
   useStalkerMoviesCatalog,
   type StalkerMoviePlayable,
@@ -73,7 +74,8 @@ export function StalkerGoldenMoviesCatalog({
     category.id === catalog.selectedCategoryId && category.id !== globalCategoryId,
   )?.title;
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const columns = width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const gridLayout = useMemo(() => computePosterGridLayout(width), [width]);
+  const columns = gridLayout.columns;
 
   if (shouldUseWholeCatalogLoadingSkeleton(catalog.loadingInitial, catalog.visibleItems.length, catalog.search)) {
     return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
@@ -83,7 +85,7 @@ export function StalkerGoldenMoviesCatalog({
     <FlatList
       key={`stalker-movies-${columns}`}
       style={{ flex: 1 }}
-      contentContainerStyle={s.gridListContent}
+      contentContainerStyle={[s.gridListContent, { width: gridLayout.contentWidth, paddingHorizontal: gridLayout.outerPadding }]}
       data={sortedItems}
       numColumns={columns}
       keyExtractor={(item) => item.portalId}
@@ -104,7 +106,7 @@ export function StalkerGoldenMoviesCatalog({
         : <View style={s.emptyGrid}><Text>—</Text></View>}
       onEndReached={catalog.loadMore}
       onEndReachedThreshold={0.55}
-      renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
+      renderItem={({ item }) => <View style={{ width: gridLayout.columnWidth }}>
         <GridCard
           title={item.title}
           image={item.posterUrl}
@@ -164,15 +166,17 @@ function CatalogHeader({ title, detail, search, onSearch, loading, onRefresh, ch
 }) {
   const colors = useColors();
   const { t } = useI18n();
-  return <View style={s.catalogHeaderRoot}>
-    <View style={s.catalogHead}>
+  const { width } = useWindowDimensions();
+  const compact = width >= 700;
+  return <View style={[s.catalogHeaderRoot, compact ? s.catalogHeaderCompact : null]}>
+    <View style={[s.catalogHead, compact ? s.catalogHeadCompact : null]}>
       <View>
-        <Text style={[s.title, { color: colors.foreground }]}>{title}</Text>
+        <Text style={[s.title, compact ? s.titleCompact : null, { color: colors.foreground }]}>{title}</Text>
         <Text style={{ color: colors.mutedForeground }}>{detail}</Text>
       </View>
       <FocusButton label={loading ? t("loading") : t("refresh")} icon="refresh-cw" variant="ghost" onPress={onRefresh} disabled={loading} />
     </View>
-    <View style={[s.search, { borderColor: colors.border, backgroundColor: colors.card }]}>
+    <View style={[s.search, compact ? s.searchCompact : null, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Feather name="search" size={18} color={colors.mutedForeground} />
       <TextInput
         value={search}
@@ -325,7 +329,7 @@ function GridCard({ title, image, onPress }: { title: string; image?: string; on
       {image
         ? <Image source={{ uri: image }} style={s.posterBig} resizeMode="cover" />
         : <View style={[s.posterBig, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}><Feather name="play-circle" size={30} color={colors.primary} /></View>}
-      <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", padding: 9 }}>{title}</Text>
+      <Text numberOfLines={2} style={[s.gridCardTitle, { color: colors.foreground }]}>{title}</Text>
     </View>
   </Pressable>;
 }
@@ -339,18 +343,23 @@ function PageFooter({ loading }: { loading: boolean }) {
 
 const s = StyleSheet.create({
   catalogHeaderRoot: { paddingBottom: 4 },
+  catalogHeaderCompact: { paddingBottom: 0 },
   catalogHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8, marginBottom: 12 },
+  catalogHeadCompact: { marginBottom: 6 },
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },
+  titleCompact: { fontSize: 24, marginBottom: 2 },
   search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
+  searchCompact: { minHeight: 42 },
   activeCategoryChip: { alignSelf: "flex-start", maxWidth: "100%", borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, flexDirection: "row", alignItems: "center", gap: 7 },
-  sortDropdownWrap: { paddingTop: 10, paddingBottom: 10, alignSelf: "stretch" },
+  sortDropdownWrap: { paddingTop: 7, paddingBottom: 7, alignSelf: "stretch" },
   sortDropdownButton: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
   sortDropdownMenu: { marginTop: 6, borderWidth: 1, borderRadius: 12, padding: 6, gap: 3 },
   sortDropdownItem: { minHeight: 42, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 9 },
-  gridListContent: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
+  gridListContent: { paddingVertical: 18, paddingBottom: 40, maxWidth: 1500, alignSelf: "center" },
   card: { padding: 6 },
   media: { borderWidth: 1, borderRadius: 14, overflow: "hidden" },
   posterBig: { width: "100%", aspectRatio: 2 / 3 },
+  gridCardTitle: { height: 54, paddingHorizontal: 9, paddingVertical: 8, fontWeight: "700", lineHeight: 18 },
   pageFooter: { height: 64, alignItems: "center", justifyContent: "center" },
   pageFooterSpacer: { height: 20 },
   skeletonRoot: { flex: 1, minHeight: 220, alignItems: "center", justifyContent: "center", gap: 10, padding: 24 },
