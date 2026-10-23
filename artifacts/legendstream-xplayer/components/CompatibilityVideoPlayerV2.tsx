@@ -1,3 +1,4 @@
+import type { EpisodeProgressContext } from "@/lib/mediaProgress";
 import { inspectorAction } from "@/lib/tvRemoteInspector";
 import { persistBeforePlayerExit } from "@/lib/playerExitPersistence";
 import { configureTvRemote, subscribeTvRemote } from "@/modules/legendstream-tv-remote";
@@ -99,6 +100,7 @@ type PlaybackSnapshot = {
   position: number;
   duration: number;
   progressRef?: MediaPlaybackRef;
+  episodeContext?: EpisodeProgressContext;
 };
 
 export function CompatibilityVideoPlayer({
@@ -109,6 +111,7 @@ export function CompatibilityVideoPlayer({
   liveIdentity,
   vodIdentity,
   progressRef,
+  episodeContext,
   autoFullscreen = true,
   onFullscreenExit,
   allowDownload = false,
@@ -120,6 +123,7 @@ export function CompatibilityVideoPlayer({
   liveIdentity?: LiveChannelIdentity;
   vodIdentity?: CatalogPlaybackIdentity;
   progressRef?: MediaPlaybackRef;
+  episodeContext?: EpisodeProgressContext;
   autoFullscreen?: boolean;
   onFullscreenExit?: () => void;
   allowDownload?: boolean;
@@ -129,7 +133,7 @@ export function CompatibilityVideoPlayer({
   useEffect(() => {
     if (Platform.isTV) return pushScope?.("player");
   }, [pushScope]);
-  const { getProgress, saveProgress } = useMediaLibrary();
+  const { getProgress, saveProgress, beginProgressSession } = useMediaLibrary();
   const {
     provider,
     channels,
@@ -159,6 +163,7 @@ export function CompatibilityVideoPlayer({
     position: 0,
     duration: 0,
     progressRef,
+    episodeContext,
   });
 
   const [currentSource, setCurrentSource] = useState(source);
@@ -206,6 +211,8 @@ export function CompatibilityVideoPlayer({
   const surfaceSequence = useRef(0);
   const surfaceOwner = useMemo(() => ({ id: ++surfaceSequence.current }), [currentSource, retryRevision, codecMode, provider?.id]);
   playbackOwner.current = surfaceOwner;
+  const progressSession=useMemo(()=>beginProgressSession?.(currentSource,playbackRef.current.progressRef)??null,[beginProgressSession,currentSource,source,progressRef,provider?.id]);
+  const progressSessionRef=useRef(progressSession);progressSessionRef.current=progressSession;
   useEffect(() => () => { if (playbackOwner.current === surfaceOwner) playbackOwner.current = {}; }, [surfaceOwner]);
   const errorRef = useRef<string | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
@@ -391,6 +398,8 @@ export function CompatibilityVideoPlayer({
       position: snapshot.position,
       duration: snapshot.duration,
       playbackRef: snapshot.progressRef,
+      episodeContext: snapshot.episodeContext,
+      session: progressSessionRef.current,
     });
   }, [saveProgress]);
 
@@ -401,6 +410,10 @@ export function CompatibilityVideoPlayer({
       void persistProgress();
     };
   }, [persistProgress]);
+  useEffect(()=>{
+    const sub=AppState.addEventListener("change",state=>{if(state!=="active")void persistProgress();});
+    return()=>sub.remove();
+  },[persistProgress]);
 
   useEffect(() => {
     let cancelled = false;
@@ -553,11 +566,16 @@ export function CompatibilityVideoPlayer({
     tracedItemId.current = item.id;
     await persistProgress();
     const kind: PlayerMediaKind = item.isLive ? "live" : inferMediaKind(item.source);
+    const previous=playbackRef.current;
+    const episode=episodeQueue?.items.find(value=>value.id===item.id&&value.url===item.source);
+    const nextRef:MediaPlaybackRef|undefined=kind==="episode"&&episode&&provider ? provider.type==="m3u"?{type:"m3u-episode",itemId:item.id}:provider.type==="xtream"?{type:"xtream-episode",episodeId:item.id,containerExtension:(item.source.match(/\.([a-zA-Z0-9]{1,10})(?:[?#]|$)/)?.[1]||"mp4"),sourceMode:previous.progressRef?.type==="xtream-episode"?previous.progressRef.sourceMode:"canonical",...(previous.episodeContext?.seriesId?{seriesId:previous.episodeContext.seriesId}:{})}:undefined:undefined;
     playbackRef.current = {
       source: item.source,
       title: item.title,
-      subtitle: item.subtitle,
+      subtitle: kind==="episode" && previous.episodeContext ? previous.subtitle : item.subtitle,
       kind,
+      progressRef:nextRef,
+      episodeContext: episode&&previous.episodeContext?{seriesId:previous.episodeContext.seriesId,seasonId:episode.season,episodeNumber:episode.episodeNumber}:undefined,
       position: 0,
       duration: 0,
     };
@@ -591,7 +609,7 @@ export function CompatibilityVideoPlayer({
     if (item.isLive) void recordWatched(item.id);
     revealControls();
     revealMediaInfo();
-  }, [currentSource, effectiveUri, persistProgress, provider, recordWatched, revealControls, revealMediaInfo]);
+  }, [currentSource, effectiveUri, episodeQueue, persistProgress, provider, recordWatched, revealControls, revealMediaInfo]);
 
   const moveRelative = useCallback((delta: number) => {
     if (!canNavigate) return;
@@ -788,10 +806,11 @@ export function CompatibilityVideoPlayer({
   }, [codecMode, revealControls, revealMediaInfo]);
 
   const handleEnd = useCallback(() => {
+    if(playbackRef.current.duration>0){playbackRef.current.position=playbackRef.current.duration;void persistProgress();}
     if (currentKind === "episode" && currentIndex >= 0 && currentIndex < selectableItems.length - 1) {
       moveRelative(1);
     }
-  }, [currentIndex, currentKind, moveRelative, selectableItems.length]);
+  }, [currentIndex, currentKind, moveRelative, selectableItems.length,persistProgress]);
 
   const enterPip = useCallback(async () => {
     if (!pipSupported) return;

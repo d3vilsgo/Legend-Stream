@@ -483,3 +483,8 @@ Açık sınırlar: Stalker'ın yüklenen alt kümede sıralaması ve totalItems=
 | Elite V4 Series | SOURCE/HOST IMPLEMENTED; RC DEFERRED | Xtream/M3U gerçek katalog-hiyerarşi-resolver; Stalker gerçek oturum/controller/create_link. Movies ile ortak premium sunum. Yeni Series 22/22; fiziksel kabul DEFERRED_RC. |
 
 Ayrıntı: [Elite V4 P3 Series](../elite/ELITE_V4_P3_SERIES_TR.md).
+
+ 
+## Elite V4 P4 — History / Continue Watching / Favorites
+
+Mevcut persistence anahtarları üzerinde provider/account izolasyonu, gerçek Player ilerlemesi, V4 History/Favorites ekranları ve reaktif Home rafı entegre edildi. Yeni depolama sistemi veya backend yoktur. Yerel 208/208 üretim host/servis senaryosu; final SHA Quality kanıtı teslim mesajında doğrulanır. Fiziksel kabul **DEFERRED_RC**; APK bu aşamada üretilmez. P5 Settings ve kalan Stalker Live kapsamı açıktır. Ayrıntı ve sınırlamalar: [P4 raporu](../elite/ELITE_V4_P4_LIBRARY_TR.md).

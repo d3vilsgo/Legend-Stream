@@ -12,6 +12,10 @@ export function EliteV4Home({
   providerType,
   loading,
   onOpen,
+  onProgressInfo,
+  onProgressRemove,
+  onFavorite,
+  isFavorite,
 }: {
   sections: EliteHomeSections;
   providerName: string;
@@ -19,6 +23,10 @@ export function EliteV4Home({
   providerType: string;
   loading: boolean;
   onOpen: (item: EliteHomeItem) => void;
+  onFavorite?: (item: EliteHomeItem) => void;
+  isFavorite?: (item: EliteHomeItem) => boolean;
+  onProgressInfo?: (item: EliteHomeItem, origin: string) => void;
+  onProgressRemove?: (item: EliteHomeItem, index: number) => void;
 }) {
   const { width: windowWidth, height } = useWindowDimensions();
   const [measuredWidth, setMeasuredWidth] = useState(0);
@@ -122,6 +130,10 @@ export function EliteV4Home({
           title={section.title}
           items={section.items}
           onOpen={onOpen}
+          onProgressInfo={onProgressInfo}
+          onFavorite={onFavorite}
+          isFavorite={isFavorite}
+          onProgressRemove={onProgressRemove}
           cardWidth={cardWidth}
           previousRail={visibleSections[index - 1]}
           nextRail={visibleSections[index + 1]}

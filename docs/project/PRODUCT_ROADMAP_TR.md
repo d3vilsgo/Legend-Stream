@@ -478,3 +478,8 @@ Açık sınırlar: Stalker'ın yüklenen alt kümede sıralaması ve totalItems=
 Series P3: gerçek katalog, sezon/bölüm, provider playback ve premium ortak grid/Hero kaynak uygulaması tamamlandı; RC DEFERRED. Sonraki entegrasyon: kalan Stalker Live, kalan ürün parity, ardından aynı final kaynak için bütünleşik Universal APK ve fiziksel RC. Bu görevde APK başlatılmaz.
 
 Ayrıntı: [Elite V4 P3 Series](../elite/ELITE_V4_P3_SERIES_TR.md).
+
+ 
+## Elite V4 P4 — History / Continue Watching / Favorites
+
+Mevcut persistence anahtarları üzerinde provider/account izolasyonu, gerçek Player ilerlemesi, V4 History/Favorites ekranları ve reaktif Home rafı entegre edildi. Yeni depolama sistemi veya backend yoktur. Yerel 208/208 üretim host/servis senaryosu; final SHA Quality kanıtı teslim mesajında doğrulanır. Fiziksel kabul **DEFERRED_RC**; APK bu aşamada üretilmez. P5 Settings ve kalan Stalker Live kapsamı açıktır. Ayrıntı ve sınırlamalar: [P4 raporu](../elite/ELITE_V4_P4_LIBRARY_TR.md).

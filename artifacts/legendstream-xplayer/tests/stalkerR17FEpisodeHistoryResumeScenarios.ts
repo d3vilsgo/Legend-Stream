@@ -183,12 +183,12 @@ async function main() {
   assert.match(historyBlock, /historyPlaybackAbortRef\.current\?\.abort\(\)[\s\S]*?\+\+historyPlaybackSequenceRef\.current/);
   assert.match(historyBlock, /abort\.signal\.aborted \|\| sequence !== historyPlaybackSequenceRef\.current/);
   assert.match(historyBlock, /catch \(caught\)[\s\S]*?setCatalogError\(redactSensitiveText/);
-  assert.match(mediaSource, /type: "stalker-episode"; seriesId: string; seasonId: string; episodeId: string/);
-  assert.match(librarySource, /entry\.playbackRef\.type === "stalker-vod" \|\| entry\.playbackRef\.type === "stalker-episode"/);
+  assert.match(mediaSource.replace(/\s+/g," "), /type: "stalker-episode"; seriesId: string; seasonId: string; episodeId: string/);
+  assert.match(librarySource.replace(/\s+/g," "), /entry\.playbackRef\.type === "stalker-vod" \|\| entry\.playbackRef\.type === "stalker-episode"/);
   assert.match(playerSource, /saveProgress\(\{[\s\S]*?subtitle: snapshot\.subtitle[\s\S]*?playbackRef: snapshot\.progressRef/);
   assert.match(playerSource, /getProgress\(snapshot\.source, snapshot\.progressRef\)/);
   assert.match(playerSource, /saved\.position > 5[\s\S]*?vlcRef\.current\?\.seek/);
-  assert.match(librarySource, /item\.duration <= 0 \|\| item\.position < Math\.max\(0, item\.duration - 30\)/);
+  assert.match(librarySource.replace(/\s+/g," "), /item\.duration <= 0 \|\| item\.position < Math\.max\(0, item\.duration - 30\)/);
   assert.doesNotMatch(surfaceSource, /NativeVideoPlayer|CompatibilityVideoPlayer/);
 
   process.stdout.write("Stalker R17-F Episode History/Resume scenarios: 41/41 passed\n");

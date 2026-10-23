@@ -39,6 +39,11 @@ try {
         name: "live-host-boundaries",
         setup(build) {
           const mocks = {
+            "@/context/MediaLibraryContext": `export const useMediaLibrary=()=>({entries:[],historyEntries:[],loaded:true});`,
+            "./EliteV4LibraryCatalog": `export const EliteV4LibraryCatalog='Library';`,
+            "./EliteV4LibraryDetail": `export const EliteV4LibraryDetail='LibraryDetail';`,
+            "@/lib/eliteV4Library": `export const continueWatching=()=>[],favoriteForProgress=()=>null,progressCaption=()=>'',resolveLibraryProgress=async()=>'',resolveLibraryMovie=async()=>'';`,
+
             "./EliteV4SeriesCatalog": `export const EliteV4SeriesCatalog='Series';`,
             "./EliteV4LiveCatalog": `export const EliteV4LiveCatalog='Live';`,
             "expo-linear-gradient": `export const LinearGradient='Gradient';`,
@@ -46,7 +51,7 @@ try {
             "@/components/tmdb/MovieInfoServiceProvider": `export function useMovieInfoService(){return {};}`,
             "@/lib/tmdb/movieInfoService": `import {Runtime} from 'live-runtime';export function beginMovieEnrichment(service,input,callback){const entry={input,callback,cancelled:false};Runtime.enrich.push(entry);return()=>{entry.cancelled=true;};}`,
             "@/hooks/useStalkerMoviesCatalog": `import {Runtime} from 'live-runtime';export function useStalkerMoviesCatalog(options){Runtime.stalkerOptions=options;return Runtime.stalker;}`,
-            "@/lib/stalkerProductSession": `import {Runtime} from 'live-runtime';export function readCurrentStalkerProductSession(){return{providerScopeId:Runtime.sessionScope??'session-safe-1'};}`,
+            "@/lib/stalkerProductSession": `import {Runtime} from 'live-runtime';export function readCurrentStalkerProductSession(){return{providerScopeId:Runtime.sessionScope??'session-safe-1'};}export function isCurrentStalkerProductSession(){return true;}`,
             react,
             "live-runtime": runtime,
             "react-native": `import {Runtime} from 'live-runtime';export const View='View',Text='Text',Image='Image',ImageBackground='ImageBackground',ScrollView='ScrollView',FlatList='FlatList',TextInput='TextInput',ActivityIndicator='ActivityIndicator',Pressable='Pressable';export const Platform={get isTV(){return Runtime.isTV;}};export function useWindowDimensions(){return{width:Runtime.width,height:Runtime.height??720,fontScale:Runtime.fontScale??1};}export function findNodeHandle(ref){return ref?.handle??null;}export const BackHandler={addEventListener(_,fn){Runtime.nativeBack=fn;return{remove(){Runtime.nativeBack=null;}}}};`,

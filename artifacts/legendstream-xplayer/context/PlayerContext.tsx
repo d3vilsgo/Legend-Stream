@@ -1,3 +1,4 @@
+import { LibraryMutationQueue, parseContentFavorites, setContentFavorite as updateContentFavorites, type ContentFavorite } from "@/lib/contentFavorites";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, {
   createContext,
@@ -185,6 +186,7 @@ interface PlayerState {
   channels: Channel[];
   epg: EpgProgram[];
   favorites: string[];
+  mediaFavorites?: ContentFavorite[];
   history: string[];
   activeProviderId?: string;
 }
@@ -226,6 +228,9 @@ interface PlayerContextValue extends PlayerState {
   loadEpgManually: (providerId: string) => Promise<void>;
   resolveProviderForSwitch: (providerId: string) => Promise<ProviderConfig | null>;
   setActiveProvider: (providerId: string) => Promise<boolean>;
+  favoriteError: string | null;
+  historyTimes: Record<string,number>;
+  setMediaFavorite: (item:Omit<ContentFavorite,"addedAt">,selected:boolean)=>Promise<void>;
   toggleFavorite: (channelId: string) => Promise<void>;
   recordWatched: (channelId: string) => Promise<void>;
   removeWatched: (channelId: string) => Promise<void>;
@@ -429,6 +434,7 @@ function serializedPlayerState(next: PlayerState) {
     provider: next.provider ? storedProviderFrom(next.provider) : null,
     activeProviderId: next.activeProviderId,
     favorites: next.favorites.slice(0, 500),
+    mediaFavorites: next.mediaFavorites ?? [],
   });
 }
 
@@ -606,6 +612,7 @@ const readState = async (liveHistory: LiveHistoryOwner): Promise<PlayerState> =>
     channels: [],
     epg: [],
     favorites: favoritesSource.slice(0, 500),
+    mediaFavorites: parseContentFavorites(v3Saved?.mediaFavorites),
     history: liveHistory.forProvider(provider?.id),
     activeProviderId: activeProviderId ?? provider?.id,
   };
@@ -817,6 +824,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     (CatalogSyncOwnership & { sequence: number }) | null
   >(null);
   const stateRef = useRef(state);
+  const libraryWrites = useRef(new LibraryMutationQueue());
+  const [favoriteError,setFavoriteError] = useState<string|null>(null);
   const activeProviderGenerationRef = useRef(0);
   const providerLoadGateRef = useRef(new ProviderLoadRequestGate());
   const playerBusySequenceRef = useRef(0);
@@ -973,7 +982,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
+      await libraryWrites.current.run(()=>AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(stateRef.current)));
       await AsyncStorage.setItem(SECURE_MIGRATION_KEY, "1");
     } catch {
       // Keep the in-memory session usable and leave the previous on-disk state intact.
@@ -989,13 +998,13 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (!isCurrentConnectAttempt(attempt)) return null;
       const restoreCurrentState = async () => {
         try {
-          await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(stateRef.current));
+          await libraryWrites.current.run(()=>AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(stateRef.current)));
         } catch {
           // Best-effort rollback only; stale connect state is never applied in memory.
         }
       };
       try {
-        await AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(next));
+        await libraryWrites.current.run(()=>AsyncStorage.setItem(STORAGE_KEY, serializedPlayerState(stateRef.current)));
         if (!isCurrentConnectAttempt(attempt)) {
           await restoreCurrentState();
           return null;
@@ -1098,7 +1107,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     const prepareMs = Date.now() - prepareStartedAt;
 
     const writeStartedAt = Date.now();
-    await AsyncStorage.setItem(STORAGE_KEY, serialized);
+    await libraryWrites.current.run(()=>AsyncStorage.setItem(STORAGE_KEY, serialized));
     const asyncStorageWriteMs = Date.now() - writeStartedAt;
     const stateApplyStartedAt = Date.now();
     applyPlayerState(next);
@@ -1584,6 +1593,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
         nextProvider?.id ?? (providers.length ? providers[0].id : LOGGED_OUT),
       channels,
       favorites: current.favorites.filter((id) => channelIds.has(id)),
+      mediaFavorites: (current.mediaFavorites??[]).filter(item=>item.providerId!==providerId),
       history: liveHistoryOwner.forProvider(nextProvider?.id),
       epg: current.epg.filter((program) => channelIds.has(program.channelId)),
     });
@@ -1973,12 +1983,33 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     refreshEpg,
   ]);
 
-  const toggleFavorite = async (channelId: string) => {
-    const current = stateRef.current;
-    const favorites = current.favorites.includes(channelId)
-      ? current.favorites.filter((id) => id !== channelId)
-      : [...current.favorites, channelId];
-    await persist({ ...current, favorites });
+  const mutateFavorites = async (ownerId:string,mutate:(current:PlayerState)=>PlayerState) => {
+    try {
+      await libraryWrites.current.run(async()=>{
+        const current=stateRef.current;
+        if(current.provider?.id!==ownerId || !current.providers.some(p=>p.id===ownerId))return;
+        const next=mutate(current);
+        const serialized=serializedPlayerState(next);
+        await AsyncStorage.setItem(STORAGE_KEY,serialized);
+        if(await AsyncStorage.getItem(STORAGE_KEY)!==serialized)throw new Error("FAVORITES_WRITE_FAILED");
+        // Do not restore a provider snapshot after an asynchronous account switch.
+        applyPlayerState({...stateRef.current,favorites:next.favorites,mediaFavorites:(next.mediaFavorites??[]).filter(item=>stateRef.current.providers.some(p=>p.id===item.providerId))});
+        setFavoriteError(null);
+      });
+    }catch{if(stateRef.current.provider?.id===ownerId)setFavoriteError("Favoriler kaydedilemedi. Önceki kayıtlar korundu; yeniden deneyin.");}
+  };
+  const setMediaFavorite = async (item:Omit<ContentFavorite,"addedAt">,selected:boolean)=>{
+    const current=stateRef.current;
+    if(current.provider?.id!==item.providerId)return;
+    let value:ContentFavorite;
+    try { value=parseContentFavorites([{...item,title:item.title.slice(0,512),addedAt:Date.now()}])[0]; }
+    catch { setFavoriteError("Favori kimliği doğrulanamadı; önceki kayıtlar korundu."); return; }
+    await mutateFavorites(item.providerId,current=>({...current,mediaFavorites:updateContentFavorites(current.mediaFavorites??[],value,selected)}));
+  };
+  const toggleFavorite = async (channelId:string)=>{
+    const current=stateRef.current, ownerId=current.provider?.id;
+    if(!ownerId || (providerIdFromChannelId(channelId)!==ownerId && !current.channels.some(channel=>channel.id===channelId&&channel.providerId===ownerId)))return;
+    await mutateFavorites(ownerId,current=>({...current,favorites:current.favorites.includes(channelId)?current.favorites.filter(id=>id!==channelId):[...current.favorites,channelId]}));
   };
 
   const recordWatched = async (channelId: string) => {
@@ -2036,6 +2067,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       loadEpgManually,
       resolveProviderForSwitch,
       setActiveProvider,
+      favoriteError,
+      historyTimes: liveHistoryOwner.timesForProvider(state.provider?.id),
+      setMediaFavorite,
       toggleFavorite,
       recordWatched,
       removeWatched,
@@ -2051,6 +2085,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       isEpgLoading,
       error,
       scopedError,
+      favoriteError,
       m3uCatalogCommit,
       refreshEpg,
       loadEpgManually,

@@ -1,6 +1,26 @@
+import {
+  useMediaLibrary,
+  type MediaProgress,
+} from "@/context/MediaLibraryContext";
+import {
+  continueWatching,
+  favoriteForProgress,
+  progressCaption,
+  resolveLibraryProgress,
+  resolveLibraryMovie,
+  type LibraryTarget,
+} from "@/lib/eliteV4Library";
+import {
+  readCurrentStalkerProductSession,
+  isCurrentStalkerProductSession,
+} from "@/lib/stalkerProductSession";
+import { EliteV4LibraryCatalog } from "./EliteV4LibraryCatalog";
+import { EliteV4LibraryDetail } from "./EliteV4LibraryDetail";
+import type { V4Movie } from "@/lib/eliteV4Movies";
+import type { EpisodeProgressContext } from "@/lib/mediaProgress";
+import type { V4SeriesPlayable } from "./EliteV4SeriesCatalog";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Text, View } from "react-native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import { usePlayer, type Channel } from "@/context/PlayerContext";
 import { useCatalogSync } from "@/context/CatalogSyncContext";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
@@ -9,13 +29,7 @@ import {
   createEliteHomeSections,
   type EliteHomeItem,
 } from "@/lib/eliteV4HomeModel";
-import {
-  MEDIA_PROGRESS_V2_STORAGE_KEY,
-  mediaProgressForProvider,
-  parseMediaProgressV2Payload,
-  type MediaProgressV2,
-  type MediaPlaybackRef,
-} from "@/lib/mediaProgress";
+import { type MediaPlaybackRef } from "@/lib/mediaProgress";
 import type { CatalogPlaybackIdentity } from "@/lib/catalogPageRepository";
 import type { LiveChannelIdentity } from "@/lib/playerLiveQueue";
 import { EliteV4SeriesCatalog } from "./EliteV4SeriesCatalog";
@@ -32,22 +46,49 @@ type ActivePlayback = {
   subtitle?: string;
   kind: "live" | "movie" | "episode";
   progressRef?: MediaPlaybackRef;
+  episodeContext?: EpisodeProgressContext;
+  detailOwner?: boolean;
   vodIdentity?: CatalogPlaybackIdentity;
   liveIdentity?: LiveChannelIdentity;
 };
 
 function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
-  const { provider, channels, recordWatched } = usePlayer();
+  const {
+    provider,
+    channels,
+    recordWatched,
+    favoriteError,
+    mediaFavorites,
+    favorites,
+    setMediaFavorite,
+    toggleFavorite,
+  } = usePlayer();
+  const favoriteRecords = useRef(mediaFavorites ?? []);
+  favoriteRecords.current = mediaFavorites ?? [];
+  const library = useMediaLibrary();
+  const historyEntries = library.historyEntries ?? library.entries ?? [];
+  const latestEntries = useRef(historyEntries);
+  latestEntries.current = historyEntries;
   const { snapshot, hasUsableCache, isSyncing } = useCatalogSync();
   const focus = useEliteV4Focus();
-  const [route, setRoute] = useState<"home" | "live" | "movies" | "series">(
-    "home",
-  );
+  const [route, setRoute] = useState<
+    "home" | "live" | "movies" | "series" | "history" | "favorites"
+  >("home");
   const routeRef = useRef(route);
   routeRef.current = route;
   const [playback, setPlayback] = useState<ActivePlayback | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
-  const [progress, setProgress] = useState<MediaProgressV2[]>([]);
+  const progress = historyEntries;
+  const [detail, setDetail] = useState<{
+    target: LibraryTarget;
+    origin: string;
+  } | null>(null);
+  const detailRef = useRef(detail);
+  detailRef.current = detail;
+  const providerRef = useRef(provider);
+  providerRef.current = provider;
+  const libraryAbort = useRef<AbortController | null>(null),
+    libraryLock = useRef(false);
   const providerIdRef = useRef(provider?.id ?? null);
   const returnFocusIdRef = useRef("hero");
   providerIdRef.current = provider?.id ?? null;
@@ -61,26 +102,19 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
 
   const currentSnapshot =
     provider && snapshot.providerId === provider.id ? snapshot : null;
+  useEffect(
+    () => () => {
+      libraryAbort.current?.abort();
+    },
+    [],
+  );
   useEffect(() => {
-    let active = true;
-    setProgress([]);
-    if (!provider?.id)
-      return () => {
-        active = false;
-      };
-    void AsyncStorage.getItem(MEDIA_PROGRESS_V2_STORAGE_KEY)
-      .then((raw) => {
-        if (!active || !raw) return;
-        const parsed = parseMediaProgressV2Payload(raw);
-        setProgress(mediaProgressForProvider(parsed, provider.id));
-      })
-      .catch(() => {
-        if (active) setProgress([]);
-      });
-    return () => {
-      active = false;
-    };
-  }, [provider?.id]);
+    requestIdRef.current += 1;
+    libraryAbort.current?.abort();
+    libraryLock.current = false;
+    setDetail(null);
+    setPlayback(null);
+  }, [provider]);
   const movies =
     provider?.type === "stalker" ? [] : (currentSnapshot?.movies ?? []);
   const liveItems = useMemo(() => {
@@ -96,7 +130,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
       )
       .slice(0, 24);
   }, [channels, currentSnapshot, hasUsableCache, provider?.id]);
-  const sections = useMemo(
+  const baseSections = useMemo(
     () =>
       createEliteHomeSections(
         movies,
@@ -107,12 +141,203 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
       ),
     [movies, liveItems, currentSnapshot, progress],
   );
+  const continuations = provider
+    ? continueWatching(historyEntries, provider.id).slice(0, 12)
+    : [];
+  const sections = {
+    ...baseSections,
+    continueWatching: continuations.map((entry) => ({
+      id: `progress-${entry.id}`,
+      kind: entry.kind === "episode" ? ("series" as const) : ("movie" as const),
+      title:
+        entry.kind === "episode" ? entry.subtitle || entry.title : entry.title,
+      subtitle: progressCaption(entry),
+      progress: entry,
+      progressFraction: entry.position / entry.duration,
+    })),
+  };
+  const openDetail = (target: LibraryTarget, origin: string) => {
+    if (!provider || target.providerId !== provider.id || playback) return;
+    requestIdRef.current += 1;
+    libraryAbort.current?.abort();
+    libraryLock.current = false;
+    const next = { target, origin };
+    detailRef.current = next;
+    setDetail(next);
+    setPlaybackError(null);
+  };
+  const closeDetail = () => {
+    const old = detailRef.current;
+    requestIdRef.current += 1;
+    libraryAbort.current?.abort();
+    libraryLock.current = false;
+    detailRef.current = null;
+    setDetail(null);
+    requestAnimationFrame(() => {
+      if (old && providerIdRef.current === old.target.providerId) {
+        const exists = favoriteRecords.current.some(
+          (item) =>
+            item.providerId === old.target.providerId &&
+            item.kind === old.target.kind &&
+            item.catalogId === old.target.catalogId,
+        );
+        focus.focus(
+          routeRef.current === "favorites" && !exists
+            ? "v4-favorites-filter-all"
+            : old.origin,
+        );
+      }
+    });
+  };
+  const beginLibraryRequest = () => {
+    libraryAbort.current?.abort();
+    const abort = new AbortController();
+    libraryAbort.current = abort;
+    return { abort, ticket: ++requestIdRef.current };
+  };
+  const resume = async (entry: MediaProgress, origin: string) => {
+    if (
+      !provider ||
+      entry.providerId !== provider.id ||
+      libraryLock.current ||
+      playback ||
+      !latestEntries.current.some(
+        (e) => e.id === entry.id && e.providerId === provider.id,
+      )
+    )
+      return;
+    libraryLock.current = true;
+    const { abort, ticket } = beginLibraryRequest();
+    returnFocusIdRef.current = origin;
+    setPlaybackError(null);
+    let session: ReturnType<typeof readCurrentStalkerProductSession> | null =
+      null;
+    try {
+      session =
+        provider.type === "stalker"
+          ? readCurrentStalkerProductSession({ ...provider, type: "stalker" })
+          : null;
+      const url = await resolveLibraryProgress(provider, entry, abort.signal);
+      if (
+        abort.signal.aborted ||
+        ticket !== requestIdRef.current ||
+        providerRef.current !== provider ||
+        !latestEntries.current.some(
+          (e) => e.id === entry.id && e.providerId === provider.id,
+        ) ||
+        (session &&
+          !isCurrentStalkerProductSession(
+            { ...provider, type: "stalker" },
+            session.session,
+          ))
+      )
+        return;
+      setPlayback({
+        url,
+        title: entry.title,
+        subtitle: entry.subtitle,
+        kind: entry.kind,
+        progressRef: entry.playbackRef,
+        episodeContext: entry.episodeContext,
+      });
+    } catch {
+      if (!abort.signal.aborted && ticket === requestIdRef.current)
+        setPlaybackError(
+          "Kayıt yeniden açılamadı. Sağlayıcı kaynağını kontrol edin; kaydınız korundu.",
+        );
+    } finally {
+      if (ticket === requestIdRef.current) libraryLock.current = false;
+    }
+  };
+  const playLibraryMovie = async (movie: V4Movie) => {
+    if (
+      !provider ||
+      libraryLock.current ||
+      !detailRef.current ||
+      movie.input.identity.providerId !== provider.id
+    )
+      return;
+    libraryLock.current = true;
+    const selection = detailRef.current,
+      { abort, ticket } = beginLibraryRequest();
+    try {
+      const url = await resolveLibraryMovie(provider, movie, abort.signal);
+      if (
+        abort.signal.aborted ||
+        ticket !== requestIdRef.current ||
+        providerRef.current !== provider ||
+        detailRef.current !== selection
+      )
+        return;
+      const ref: MediaPlaybackRef =
+        movie.source.kind === "stalker"
+          ? {
+              type: "stalker-vod",
+              itemId: movie.id,
+              categoryId: movie.source.item.categoryId || "",
+            }
+          : provider.type === "m3u"
+            ? { type: "m3u-vod", itemId: movie.id }
+            : {
+                type: "xtream-vod",
+                streamId: movie.id,
+                containerExtension:
+                  movie.source.item.container_extension || "mp4",
+                sourceMode: movie.source.item.direct_source
+                  ? "direct"
+                  : "canonical",
+              };
+      setPlayback({
+        url,
+        title: movie.title,
+        kind: "movie",
+        progressRef: ref,
+        detailOwner: true,
+        vodIdentity: { providerId: provider.id, itemId: movie.id },
+      });
+    } finally {
+      if (ticket === requestIdRef.current) libraryLock.current = false;
+    }
+  };
+  const playSeries = (value: V4SeriesPlayable) => {
+    if (
+      !provider ||
+      value.providerId !== providerIdRef.current ||
+      (routeRef.current !== "series" && !detailRef.current)
+    )
+      return;
+    requestIdRef.current += 1;
+    setPlaybackError(null);
+    returnFocusIdRef.current = focus.focusedId ?? "v4-series-hero";
+    setPlayback({
+      url: value.url,
+      title: value.title,
+      subtitle: value.subtitle,
+      kind: "episode",
+      progressRef: value.progressRef,
+      episodeContext: value.episodeContext,
+      detailOwner: !!detailRef.current,
+    });
+  };
   const providerName = provider?.name?.trim() || "İçerik sağlayıcısı";
 
   const openItem = async (item: EliteHomeItem, originFocusId?: string) => {
+    if (item.progress) {
+      void resume(item.progress, originFocusId ?? focus.focusedId ?? "hero");
+      return;
+    }
     const requestId = ++requestIdRef.current;
     if (item.kind === "series") {
-      navigate("series");
+      if (provider && item.series)
+        openDetail(
+          {
+            providerId: provider.id,
+            kind: "series",
+            catalogId: String(item.series.series_id),
+            title: item.title,
+          },
+          originFocusId ?? focus.focusedId ?? "hero",
+        );
       return;
     }
     if (!provider) return;
@@ -135,6 +360,15 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
           title: item.title,
           subtitle: item.subtitle,
           kind: "movie",
+          progressRef:
+            provider.type === "m3u"
+              ? { type: "m3u-vod", itemId: String(item.movie.stream_id) }
+              : {
+                  type: "xtream-vod",
+                  streamId: String(item.movie.stream_id),
+                  containerExtension: item.movie.container_extension || "mp4",
+                  sourceMode: item.movie.direct_source ? "direct" : "canonical",
+                },
           vodIdentity: {
             providerId: ownerId,
             itemId: String(item.movie.stream_id),
@@ -180,20 +414,28 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
     }
   };
 
-  const navigate = (next: "home" | "live" | "movies" | "series") => {
+  const navigate = (
+    next: "home" | "live" | "movies" | "series" | "history" | "favorites",
+  ) => {
     requestIdRef.current += 1;
+    libraryAbort.current?.abort();
+    libraryLock.current = false;
+    detailRef.current = null;
+    setDetail(null);
     routeRef.current = next;
     setRoute(next);
     setPlaybackError(null);
     requestAnimationFrame(() =>
       focus.focus(
-        next === "series"
-          ? "v4-series-hero"
-          : next === "live"
-            ? "v4-live-search"
-            : next === "movies"
-              ? "v4-movies-hero"
-              : "hero",
+        next === "history" || next === "favorites"
+          ? `v4-${next}-filter-all`
+          : next === "series"
+            ? "v4-series-hero"
+            : next === "live"
+              ? "v4-live-search"
+              : next === "movies"
+                ? "v4-movies-hero"
+                : "hero",
       ),
     );
   };
@@ -212,13 +454,15 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
         onReturnToV3={onReturnToV3}
         activeId={`sidebar-${route}`}
         contentFocusId={
-          route === "series"
-            ? "v4-series-hero"
-            : route === "live"
-              ? "v4-live-search"
-              : route === "movies"
-                ? "v4-movies-hero"
-                : "hero"
+          route === "history" || route === "favorites"
+            ? `v4-${route}-filter-all`
+            : route === "series"
+              ? "v4-series-hero"
+              : route === "live"
+                ? "v4-live-search"
+                : route === "movies"
+                  ? "v4-movies-hero"
+                  : "hero"
         }
         liveAvailable={provider.type === "xtream" || provider.type === "m3u"}
         onNavigate={navigate}
@@ -230,33 +474,32 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
           backgroundColor: theme.color.background,
         }}
       >
-        {route === "series" ? (
+        {route === "history" || route === "favorites" ? (
+          <EliteV4LibraryCatalog
+            key={`${provider.id}:${route}`}
+            mode={route}
+            active={!playback && !detail}
+            onBack={() => navigate("home")}
+            onResume={(entry, origin) => void resume(entry, origin)}
+            onDetail={openDetail}
+            onLive={(channel, origin) =>
+              void openItem(
+                { id: channel.id, kind: "live", title: channel.name, channel },
+                origin,
+              )
+            }
+          />
+        ) : route === "series" ? (
           <EliteV4SeriesCatalog
             key={provider.id}
-            active={!playback}
+            active={!playback && !detail}
             onBack={() => navigate("home")}
-            onPlayable={(value) => {
-              if (
-                value.providerId !== providerIdRef.current ||
-                routeRef.current !== "series"
-              )
-                return;
-              requestIdRef.current += 1;
-              setPlaybackError(null);
-              returnFocusIdRef.current = focus.focusedId ?? "v4-series-hero";
-              setPlayback({
-                url: value.url,
-                title: value.title,
-                subtitle: value.subtitle,
-                kind: "episode",
-                progressRef: value.progressRef,
-              });
-            }}
+            onPlayable={playSeries}
           />
         ) : route === "live" ? (
           <EliteV4LiveCatalog
             key={provider.id}
-            active={!playback}
+            active={!playback && !detail}
             onBack={() => navigate("home")}
             onOpen={(channel) =>
               void openItem({
@@ -269,7 +512,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
           />
         ) : route === "movies" ? (
           <EliteV4MoviesCatalog
-            active={!playback}
+            active={!playback && !detail}
             onBack={() => navigate("home")}
             onPlay={(movie, origin) => {
               if (movie.source.kind === "paged")
@@ -298,6 +541,11 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
                 title: movie.title,
                 subtitle: movie.subtitle,
                 kind: "movie",
+                progressRef: {
+                  type: "stalker-vod",
+                  itemId: movie.itemId,
+                  categoryId: movie.categoryId,
+                },
                 vodIdentity: { providerId: provider.id, itemId: movie.itemId },
               });
             }}
@@ -310,8 +558,98 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
             providerType={provider.type}
             loading={isSyncing || (!currentSnapshot?.ready && !hasUsableCache)}
             onOpen={(item) => void openItem(item)}
+            isFavorite={(item) =>
+              item.channel
+                ? (favorites ?? []).includes(item.channel.id)
+                : (mediaFavorites ?? []).some(
+                    (value) =>
+                      value.providerId === provider.id &&
+                      value.kind ===
+                        (item.kind === "series" ? "series" : "movie") &&
+                      value.catalogId ===
+                        String(item.movie?.stream_id ?? item.series?.series_id),
+                  )
+            }
+            onFavorite={(item) => {
+              if (providerRef.current !== provider) return;
+              if (item.channel) {
+                void toggleFavorite?.(item.channel.id);
+                return;
+              }
+              const id = item.movie?.stream_id ?? item.series?.series_id;
+              if (id === undefined) return;
+              const target = {
+                providerId: provider.id,
+                kind:
+                  item.kind === "series"
+                    ? ("series" as const)
+                    : ("movie" as const),
+                catalogId: String(id),
+                title: item.title,
+              };
+              const selected = favoriteRecords.current.some(
+                (value) =>
+                  value.providerId === target.providerId &&
+                  value.kind === target.kind &&
+                  value.catalogId === target.catalogId,
+              );
+              void setMediaFavorite?.(target, !selected);
+            }}
+            onProgressInfo={(item, origin) => {
+              const target = item.progress
+                ? favoriteForProgress(item.progress)
+                : null;
+              if (target) openDetail(target, origin);
+              else
+                setPlaybackError("Bu eski kaydın katalog kimliği bulunmuyor.");
+            }}
+            onProgressRemove={(item, index) => {
+              if (!item.progress) return;
+              const target = favoriteForProgress(item.progress),
+                ids = latestEntries.current
+                  .filter(
+                    (e) =>
+                      e.id === item.progress!.id ||
+                      (target?.kind === "series" &&
+                        favoriteForProgress(e)?.catalogId === target.catalogId),
+                  )
+                  .map((e) => e.id);
+              void library
+                .removeProgressEntries(ids)
+                .then(() =>
+                  requestAnimationFrame(() =>
+                    focus.focus(
+                      continuations.length > 1
+                        ? `continue-${Math.min(index, continuations.length - 2)}`
+                        : "hero",
+                    ),
+                  ),
+                );
+            }}
           />
         )}
+        {detail ? (
+          <EliteV4LibraryDetail
+            key={JSON.stringify([
+              provider.id,
+              detail.target.kind,
+              detail.target.catalogId,
+            ])}
+            target={detail.target}
+            active={!playback}
+            onClose={closeDetail}
+            onMovie={playLibraryMovie}
+            onSeries={playSeries}
+          />
+        ) : null}
+        {favoriteError || library.storageError ? (
+          <Text
+            accessibilityRole="alert"
+            style={{ color: theme.color.danger, padding: 12 }}
+          >
+            {favoriteError || library.storageError}
+          </Text>
+        ) : null}
         {playbackError ? (
           <Text
             accessibilityRole="alert"
@@ -349,11 +687,13 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
           }}
         >
           <NativeVideoPlayer
+            key={`${provider.id}:${playback.url}`}
             source={playback.url}
             title={playback.title}
             subtitle={playback.subtitle}
             mediaKind={playback.kind}
             progressRef={playback.progressRef}
+            episodeContext={playback.episodeContext}
             vodIdentity={playback.vodIdentity}
             liveIdentity={playback.liveIdentity}
             autoFullscreen
@@ -362,7 +702,12 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
               requestIdRef.current += 1;
               setPlayback(null);
               requestAnimationFrame(() => {
-                if (playback.kind !== "episode")
+                if (
+                  !playback.detailOwner &&
+                  !(
+                    playback.kind === "episode" && routeRef.current === "series"
+                  )
+                )
                   focus.focus(returnFocusIdRef.current);
               });
             }}

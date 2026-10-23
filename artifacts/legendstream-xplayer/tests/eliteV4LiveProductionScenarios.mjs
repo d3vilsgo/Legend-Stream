@@ -38,6 +38,11 @@ try {
         name: "live-host-boundaries",
         setup(build) {
           const mocks = {
+            "@/context/MediaLibraryContext": `export const useMediaLibrary=()=>({entries:[],historyEntries:[],loaded:true});`,
+            "./EliteV4LibraryCatalog": `export const EliteV4LibraryCatalog='Library';`,
+            "./EliteV4LibraryDetail": `export const EliteV4LibraryDetail='LibraryDetail';`,
+            "@/lib/eliteV4Library": `export const continueWatching=()=>[],favoriteForProgress=()=>null,progressCaption=()=>'',resolveLibraryProgress=async()=>'',resolveLibraryMovie=async()=>'';`,
+
             "./EliteV4SeriesCatalog": `export const EliteV4SeriesCatalog='Series';`,
             "./EliteV4MoviesCatalog": `export const EliteV4MoviesCatalog='Movies';`,
             react,

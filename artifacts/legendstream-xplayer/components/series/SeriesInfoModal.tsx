@@ -53,6 +53,7 @@ export function SeriesInfoModal({
   loading,
   error,
   busy = false,
+  favoriteAction,
   visible = true,
   onClose,
   onRetry,
@@ -65,6 +66,7 @@ export function SeriesInfoModal({
   loading: boolean;
   error?: string | null;
   busy?: boolean;
+  favoriteAction?: React.ReactNode;
   visible?: boolean;
   onClose: () => void;
   onRetry?: () => void;
@@ -434,6 +436,7 @@ export function SeriesInfoModal({
             .join(" · ")}
         </Text>
       ) : null}
+      {favoriteAction}
       {error ? (
         <View style={{ gap: 10 }}>
           <Text accessibilityRole="alert" style={text}>

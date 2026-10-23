@@ -461,3 +461,8 @@ Açık sınırlar: Stalker'ın yüklenen alt kümede sıralaması ve totalItems=
 P3 Series kaynak/host uygulaması eklendi; canlı provider/TMDB ve Homatics fiziksel kabulü DEFERRED_RC. Stalker global sıralama yok; arama/sayfalama controller limitlerine ve portalın bildirdiği sayfa verilerine bağlı. Opaque sezon veya eksik episodeNumber için TMDB bölüm eşleştirmesi yapılmaz. V4 Stalker Live ve kalan tam ekran parity açık; bu kayıt eski FAIL/PARTIAL sonuçlarını kapatmaz.
 
 Ayrıntı: [Elite V4 P3 Series](../elite/ELITE_V4_P3_SERIES_TR.md).
+
+ 
+## Elite V4 P4 — History / Continue Watching / Favorites
+
+Mevcut persistence anahtarları üzerinde provider/account izolasyonu, gerçek Player ilerlemesi, V4 History/Favorites ekranları ve reaktif Home rafı entegre edildi. Yeni depolama sistemi veya backend yoktur. Yerel 208/208 üretim host/servis senaryosu; final SHA Quality kanıtı teslim mesajında doğrulanır. Fiziksel kabul **DEFERRED_RC**; APK bu aşamada üretilmez. P5 Settings ve kalan Stalker Live kapsamı açıktır. Ayrıntı ve sınırlamalar: [P4 raporu](../elite/ELITE_V4_P4_LIBRARY_TR.md).

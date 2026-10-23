@@ -1,5 +1,9 @@
 import * as SQLite from "expo-sqlite";
-import { initCatalogCache, getCachedCategories, getCatalogSyncState } from "./catalogCache";
+import {
+  initCatalogCache,
+  getCachedCategories,
+  getCatalogSyncState,
+} from "./catalogCache";
 import {
   buildCatalogPageSql,
   catalogPageCursorFromRow,
@@ -69,7 +73,8 @@ export type CatalogPageItems = {
   series: XtreamSeriesItem[];
 };
 
-export type CatalogPageItem<K extends CatalogPageKind> = CatalogPageItems[K][number];
+export type CatalogPageItem<K extends CatalogPageKind> =
+  CatalogPageItems[K][number];
 
 export type CatalogPlaybackIdentity = {
   providerId: string;
@@ -88,7 +93,8 @@ async function pageDatabase(diagnosticM3U = false) {
     safeLog.info("M3U_DB_PAGE_OPEN_BEGIN", { timestamp: startedAt });
   }
   await initCatalogCache();
-  if (!pageDatabasePromise) pageDatabasePromise = SQLite.openDatabaseAsync(CATALOG_DB_NAME);
+  if (!pageDatabasePromise)
+    pageDatabasePromise = SQLite.openDatabaseAsync(CATALOG_DB_NAME);
   const db = await pageDatabasePromise;
   if (!pageIndexesReady) {
     const indexes = [
@@ -130,7 +136,10 @@ async function pageDatabase(diagnosticM3U = false) {
     for (const index of indexes) {
       const indexStartedAt = Date.now();
       if (diagnosticM3U) {
-        safeLog.info("M3U_INDEX_CREATE_BEGIN", { index: index.name, timestamp: indexStartedAt });
+        safeLog.info("M3U_INDEX_CREATE_BEGIN", {
+          index: index.name,
+          timestamp: indexStartedAt,
+        });
       }
       await db.execAsync(index.sql);
       if (diagnosticM3U) {
@@ -159,7 +168,11 @@ async function pageDatabase(diagnosticM3U = false) {
 function safePayload(
   provider: CatalogRuntimeProvider,
   row: CatalogPageSqlRow,
-): PersistedLiveCatalogItem | PersistedVodCatalogItem | PersistedSeriesCatalogItem | null {
+):
+  | PersistedLiveCatalogItem
+  | PersistedVodCatalogItem
+  | PersistedSeriesCatalogItem
+  | null {
   if (!row.payload) return null;
   try {
     return normalizePersistedCatalogPayload(
@@ -208,15 +221,16 @@ function mapRows(
   return items;
 }
 
-function compatibleProvider(provider: CatalogRuntimeProvider, request: CatalogPageRequest) {
+function compatibleProvider(
+  provider: CatalogRuntimeProvider,
+  request: CatalogPageRequest,
+) {
   return (
     provider.id === request.providerId &&
     provider.type === request.providerType &&
-    (
-      provider.type === "m3u" ||
+    (provider.type === "m3u" ||
       provider.type === "xtream" ||
-      (provider.type === "stalker" && request.kind === "live")
-    )
+      (provider.type === "stalker" && request.kind === "live"))
   );
 }
 
@@ -231,29 +245,41 @@ export async function getCachedCatalogPage<K extends CatalogPageKind>(
   const plan = buildCatalogPageSql(request);
 
   const countStartedAt = Date.now();
-  const countRow = await db.getFirstAsync<{ count: number }>(plan.countSql, ...plan.countArgs);
+  const countRow = await db.getFirstAsync<{ count: number }>(
+    plan.countSql,
+    ...plan.countArgs,
+  );
   const rawTotal = Math.max(0, Number(countRow?.count ?? 0));
   const state = await getCatalogSyncState(request.providerId);
   const countKnown = rawTotal > 0 || state?.phase === "ready";
   const catalogCountMs = Date.now() - countStartedAt;
-  if (request.providerType === "m3u") recordM3UFirstQueryTiming("countQueryMs", catalogCountMs);
+  if (request.providerType === "m3u")
+    recordM3UFirstQueryTiming("countQueryMs", catalogCountMs);
 
   const pageReadStartedAt = Date.now();
-  const rows = await db.getAllAsync<CatalogPageSqlRow>(plan.pageSql, ...plan.pageArgs);
+  const rows = await db.getAllAsync<CatalogPageSqlRow>(
+    plan.pageSql,
+    ...plan.pageArgs,
+  );
   const catalogPageReadMs = Date.now() - pageReadStartedAt;
-  if (request.providerType === "m3u") recordM3UFirstQueryTiming("pageQueryMs", catalogPageReadMs);
+  if (request.providerType === "m3u")
+    recordM3UFirstQueryTiming("pageQueryMs", catalogPageReadMs);
 
   const pageMapStartedAt = Date.now();
   const items = mapRows(provider, request, rows) as CatalogPageItem<K>[];
   const catalogPageMapMs = Date.now() - pageMapStartedAt;
 
   const seen = catalogPageCursorSeen(request.cursor) + rows.length;
-  const hasMore = countKnown
-    ? seen < rawTotal
-    : rows.length === plan.limit;
-  const nextCursor = hasMore && rows.length
-    ? catalogPageCursorFromRow(request, rows[rows.length - 1], request.cursor, rows.length)
-    : null;
+  const hasMore = countKnown ? seen < rawTotal : rows.length === plan.limit;
+  const nextCursor =
+    hasMore && rows.length
+      ? catalogPageCursorFromRow(
+          request,
+          rows[rows.length - 1],
+          request.cursor,
+          rows.length,
+        )
+      : null;
   const totalCount = countKnown ? rawTotal : null;
 
   safeLog.info("LS_CATALOG_PAGE", {
@@ -293,7 +319,9 @@ export function noteCatalogPageCommit(
   });
 }
 
-export async function getM3UDiagnosticSourceShape(providerId: string): Promise<M3USourceShape> {
+export async function getM3UDiagnosticSourceShape(
+  providerId: string,
+): Promise<M3USourceShape> {
   const db = await pageDatabase(true);
   const aggregate = await db.getFirstAsync<{
     live_items: number | null;
@@ -353,7 +381,10 @@ export async function getM3UDiagnosticSourceShape(providerId: string): Promise<M
     maxCategoryItems: Math.max(0, Number(maxCategory?.max_items ?? 0)),
     duplicateIds: Math.max(0, Number(duplicates?.duplicate_count ?? 0)),
     emptyCategories: Math.max(0, Number(aggregate?.empty_categories ?? 0)),
-    avgPayloadLen: Math.max(0, Math.round(Number(aggregate?.avg_payload_len ?? 0))),
+    avgPayloadLen: Math.max(
+      0,
+      Math.round(Number(aggregate?.avg_payload_len ?? 0)),
+    ),
     maxPayloadLen: Math.max(0, Number(aggregate?.max_payload_len ?? 0)),
     avgNameLen: Math.max(0, Math.round(Number(aggregate?.avg_name_len ?? 0))),
     maxNameLen: Math.max(0, Number(aggregate?.max_name_len ?? 0)),
@@ -370,7 +401,11 @@ export async function getCachedCatalogCategories(
   const categoryStartedAt = Date.now();
   if (kind !== "live") {
     const result = await getCachedCategories(providerId, kind);
-    if (diagnosticM3U) recordM3UFirstQueryTiming("categoryQueryMs", Date.now() - categoryStartedAt);
+    if (diagnosticM3U)
+      recordM3UFirstQueryTiming(
+        "categoryQueryMs",
+        Date.now() - categoryStartedAt,
+      );
     return result;
   }
   const db = await pageDatabase(diagnosticM3U);
@@ -383,8 +418,14 @@ export async function getCachedCatalogCategories(
   let stalkerLive = false;
   if (sample?.payload) {
     try {
-      const persisted = normalizePersistedCatalogPayload(providerId, "live", JSON.parse(sample.payload));
-      stalkerLive = persisted?.catalogKind === "live" && persisted.playbackRef.type === "stalker-live";
+      const persisted = normalizePersistedCatalogPayload(
+        providerId,
+        "live",
+        JSON.parse(sample.payload),
+      );
+      stalkerLive =
+        persisted?.catalogKind === "live" &&
+        persisted.playbackRef.type === "stalker-live";
     } catch {
       stalkerLive = false;
     }
@@ -394,21 +435,31 @@ export async function getCachedCatalogCategories(
       LIVE_CATEGORY_FIRST_SEEN_SQL,
       providerId,
     );
-    if (diagnosticM3U) recordM3UFirstQueryTiming("categoryQueryMs", Date.now() - categoryStartedAt);
+    if (diagnosticM3U)
+      recordM3UFirstQueryTiming(
+        "categoryQueryMs",
+        Date.now() - categoryStartedAt,
+      );
     return rows.map((row) => ({
       category_id: row.category_id,
       category_name: row.category_id,
     }));
   }
-  const rows = await db.getAllAsync<{ category_id: string; category_name: string | null }>(
-    LIVE_CATEGORIES_WITH_NAMES_SQL,
-    providerId,
-    providerId,
-  );
-  if (diagnosticM3U) recordM3UFirstQueryTiming("categoryQueryMs", Date.now() - categoryStartedAt);
+  const rows = await db.getAllAsync<{
+    category_id: string;
+    category_name: string | null;
+  }>(LIVE_CATEGORIES_WITH_NAMES_SQL, providerId, providerId);
+  if (diagnosticM3U)
+    recordM3UFirstQueryTiming(
+      "categoryQueryMs",
+      Date.now() - categoryStartedAt,
+    );
   return rows.map((row) => ({
     category_id: row.category_id,
-    category_name: resolveLiveCategoryDisplayName(row.category_id, row.category_name),
+    category_name: resolveLiveCategoryDisplayName(
+      row.category_id,
+      row.category_name,
+    ),
   }));
 }
 
@@ -446,7 +497,10 @@ export async function getCachedCatalogCategoryMetadata(
   };
 }
 
-async function persistedSeriesRow(provider: CatalogRuntimeProvider, seriesId: string) {
+async function persistedSeriesRow(
+  provider: CatalogRuntimeProvider,
+  seriesId: string,
+) {
   const providerId = provider.id;
   const db = await pageDatabase();
   const row = await db.getFirstAsync<{ payload: string }>(
@@ -510,7 +564,11 @@ function rowCategoryPredicate(categoryId: string | null) {
     : { sql: "category_id = ?", args: [categoryId] };
 }
 
-async function currentCatalogRow(providerId: string, kind: "live" | "vod", itemId: string) {
+async function currentCatalogRow(
+  providerId: string,
+  kind: "live" | "vod",
+  itemId: string,
+) {
   const db = await pageDatabase();
   return db.getFirstAsync<{
     row_id: number;
@@ -540,7 +598,10 @@ export async function getCachedLivePlaybackWindow(
   const db = await pageDatabase();
   const current = await currentCatalogRow(provider.id, "live", identity.itemId);
   if (!current) return [];
-  const safeLimit = Math.max(1, Math.min(LIVE_PLAYBACK_WINDOW_MAX, Math.trunc(limit)));
+  const safeLimit = Math.max(
+    1,
+    Math.min(LIVE_PLAYBACK_WINDOW_MAX, Math.trunc(limit)),
+  );
   const beforeLimit = Math.floor((safeLimit - 1) / 2);
   const afterLimit = safeLimit - beforeLimit - 1;
   const category = rowCategoryPredicate(current.category_id);
@@ -566,12 +627,22 @@ export async function getCachedLivePlaybackWindow(
     current.row_id,
     afterLimit,
   );
-  const payloads = [...before.reverse(), { payload: current.payload }, ...after];
+  const payloads = [
+    ...before.reverse(),
+    { payload: current.payload },
+    ...after,
+  ];
   const channels: Channel[] = [];
   for (const row of payloads) {
     try {
-      const persisted = normalizePersistedCatalogPayload(provider.id, "live", JSON.parse(row.payload), provider);
-      if (persisted?.catalogKind === "live") channels.push(liveRuntimeItem(persisted, provider));
+      const persisted = normalizePersistedCatalogPayload(
+        provider.id,
+        "live",
+        JSON.parse(row.payload),
+        provider,
+      );
+      if (persisted?.catalogKind === "live")
+        channels.push(liveRuntimeItem(persisted, provider));
     } catch {
       // Skip malformed persisted rows without widening the bounded playback window.
     }
@@ -588,7 +659,10 @@ export async function getCachedVodPlaybackWindow(
   const db = await pageDatabase();
   const current = await currentCatalogRow(provider.id, "vod", identity.itemId);
   if (!current) return [];
-  const safeLimit = Math.max(1, Math.min(VOD_PLAYBACK_WINDOW_MAX, Math.trunc(limit)));
+  const safeLimit = Math.max(
+    1,
+    Math.min(VOD_PLAYBACK_WINDOW_MAX, Math.trunc(limit)),
+  );
   const beforeLimit = Math.floor((safeLimit - 1) / 2);
   const afterLimit = safeLimit - beforeLimit - 1;
   const category = rowCategoryPredicate(current.category_id);
@@ -636,15 +710,76 @@ export async function getCachedVodPlaybackWindow(
     current.item_id,
     afterLimit,
   );
-  const payloads = [...before.reverse(), { payload: current.payload }, ...after];
+  const payloads = [
+    ...before.reverse(),
+    { payload: current.payload },
+    ...after,
+  ];
   const items: XtreamVodItem[] = [];
   for (const row of payloads) {
     try {
-      const persisted = normalizePersistedCatalogPayload(provider.id, "vod", JSON.parse(row.payload), provider);
-      if (persisted?.catalogKind === "vod") items.push(vodRuntimeItem(persisted, provider));
+      const persisted = normalizePersistedCatalogPayload(
+        provider.id,
+        "vod",
+        JSON.parse(row.payload),
+        provider,
+      );
+      if (persisted?.catalogKind === "vod")
+        items.push(vodRuntimeItem(persisted, provider));
     } catch {
       // Skip malformed persisted rows without widening the bounded playback window.
     }
   }
   return items;
+}
+
+/** Exact provider-owned lookup for saved library identities, independent of Home sampling. */
+export async function getCachedLibraryItem(
+  provider: CatalogRuntimeProvider,
+  kind: "movie" | "series",
+  id: string,
+) {
+  if (kind === "series") {
+    const row = await persistedSeriesRow(provider, id);
+    return row
+      ? ({
+          series_id: row.series_id,
+          name: row.name,
+          cover: row.cover,
+          plot: row.plot,
+          genre: row.genre,
+          releaseDate: row.releaseDate,
+          category_id: row.category_id,
+        } satisfies XtreamSeriesItem)
+      : null;
+  }
+  const row = await currentCatalogRow(provider.id, "vod", id);
+  if (!row?.payload) return null;
+  const item = normalizePersistedCatalogPayload(
+    provider.id,
+    "vod",
+    JSON.parse(row.payload),
+    provider,
+  );
+  return item?.catalogKind === "vod" ? vodRuntimeItem(item, provider) : null;
+}
+export async function getCachedM3UEpisodeParent(
+  provider: CatalogRuntimeProvider,
+  episodeId: string,
+) {
+  if (provider.type !== "m3u") return null;
+  const db = await pageDatabase();
+  const row = await db.getFirstAsync<{ payload: string }>(
+    `SELECT payload FROM catalog_items WHERE provider_id = ? AND kind = 'series' AND EXISTS (SELECT 1 FROM json_each(json_extract(catalog_items.payload, '$.m3uEpisodes')) WHERE json_extract(value, '$.id') = ?) LIMIT 1`,
+    provider.id,
+    episodeId,
+  );
+  if (!row) return null;
+  const item = normalizePersistedCatalogPayload(
+    provider.id,
+    "series",
+    JSON.parse(row.payload),
+    provider,
+  );
+  return item?.catalogKind === "series" ? item : null;
 }

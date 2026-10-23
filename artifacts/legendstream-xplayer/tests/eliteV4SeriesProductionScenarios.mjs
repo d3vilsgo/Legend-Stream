@@ -39,6 +39,10 @@ try {
         name: "live-host-boundaries",
         setup(build) {
           const mocks = {
+            "./EliteV4LibraryCatalog": `export const EliteV4LibraryCatalog='Library';`,
+            "./EliteV4LibraryDetail": `export const EliteV4LibraryDetail='LibraryDetail';`,
+            "@/lib/eliteV4Library": `export const continueWatching=()=>[],favoriteForProgress=()=>null,progressCaption=()=>'',resolveLibraryProgress=async()=>'',resolveLibraryMovie=async()=>'';`,
+
             "@/lib/tmdb/directTransport": `import {Runtime} from 'live-runtime';export function fetchTmdbSeason(...args){Runtime.seasonReads.push(args);return Runtime.seasonLookup(...args);}`,
 
             "react-native-safe-area-context": `export const useSafeAreaInsets=()=>({top:0,bottom:0,left:0,right:0});`,

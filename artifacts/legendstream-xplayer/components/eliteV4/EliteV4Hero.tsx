@@ -1,3 +1,4 @@
+import { EliteV4FavoriteAction } from "./EliteV4FavoriteAction";
 import React, { useEffect, useMemo, useState } from "react";
 import { ImageBackground, Text, View } from "react-native";
 import { LinearGradient } from "expo-linear-gradient";
@@ -316,6 +317,19 @@ export function EliteV4Hero({
       {showInfo && input && local ? (
         <MovieInfoModal
           input={input}
+          favoriteAction={
+            <EliteV4FavoriteAction
+              target={{
+                providerId: input.identity.providerId,
+                kind: input.identity.kind,
+                catalogId: input.identity.catalogId,
+                title: item?.title ?? local.title,
+              }}
+              scope="movie-info"
+              focusId="v4-home-info-favorite"
+            />
+          }
+          focusVisualStyle={{ borderWidth: 1, borderColor: theme.color.focus }}
           local={local}
           onClose={() => setShowInfo(false)}
           onPlay={() => {

@@ -878,3 +878,6 @@ await import("./eliteV4LiveProductionScenarios.mjs");
 await import("./eliteV4MoviesProductionScenarios.mjs");
 
 await import("./eliteV4SeriesProductionScenarios.mjs");
+
+await import("./eliteV4PersistenceProductionScenarios.mjs");
+await import("./eliteV4LibraryProductionScenarios.mjs");

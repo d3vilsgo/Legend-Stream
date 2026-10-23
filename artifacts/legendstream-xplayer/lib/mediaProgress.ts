@@ -24,9 +24,19 @@ export type MediaPlaybackRef =
   | { type: "m3u-vod"; itemId: string }
   | { type: "m3u-episode"; itemId: string }
   | { type: "stalker-vod"; itemId: string; categoryId: string }
-  | { type: "stalker-episode"; seriesId: string; seasonId: string; episodeId: string }
+  | {
+      type: "stalker-episode";
+      seriesId: string;
+      seasonId: string;
+      episodeId: string;
+    }
   | { type: "unresolved"; mediaKind: MediaKind; legacyTag: string };
 
+export type EpisodeProgressContext = {
+  seriesId: string;
+  seasonId: string;
+  episodeNumber?: number;
+};
 export type MediaProgressV2 = {
   schemaVersion: 2;
   id: string;
@@ -38,6 +48,7 @@ export type MediaProgressV2 = {
   position: number;
   duration: number;
   updatedAt: number;
+  episodeContext?: EpisodeProgressContext;
 };
 
 export type LegacyMediaProgressV1 = {
@@ -65,12 +76,15 @@ export type MediaProgressStorageAdapter = {
 
 const asObject = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null;
 
 const safeDecode = (value: string) => {
-  try { return decodeURIComponent(value); }
-  catch { return value; }
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 };
 
 const safeExtension = (value: string | undefined, fallback = "mp4") =>
@@ -88,7 +102,9 @@ const hashText = (value: string) => {
 export function normalizeXtreamProgressBaseUrl(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed) return null;
-  const candidate = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  const candidate = /^[a-z][a-z\d+.-]*:\/\//i.test(trimmed)
+    ? trimmed
+    : `http://${trimmed}`;
   try {
     const url = new URL(candidate);
     url.username = "";
@@ -96,7 +112,8 @@ export function normalizeXtreamProgressBaseUrl(value: string): string | null {
     url.search = "";
     url.hash = "";
     let path = url.pathname.replace(/\/+$/, "");
-    if (/\/get\.php$/i.test(path)) path = path.slice(0, path.length - "/get.php".length);
+    if (/\/get\.php$/i.test(path))
+      path = path.slice(0, path.length - "/get.php".length);
     url.pathname = path || "/";
     return url.toString().replace(/\/+$/, "");
   } catch {
@@ -122,7 +139,10 @@ export function parseCanonicalXtreamProgressSource(
     let markerIndex = -1;
     for (let index = rawParts.length - 4; index >= 0; index -= 1) {
       const part = rawParts[index].toLowerCase();
-      if ((part === "movie" || part === "series") && rawParts.length === index + 4) {
+      if (
+        (part === "movie" || part === "series") &&
+        rawParts.length === index + 4
+      ) {
         markerIndex = index;
         break;
       }
@@ -133,11 +153,17 @@ export function parseCanonicalXtreamProgressSource(
     const password = safeDecode(rawParts[markerIndex + 2]);
     const file = safeDecode(rawParts[markerIndex + 3]);
     const dot = file.lastIndexOf(".");
-    if (!username || !password || dot <= 0 || dot === file.length - 1) return null;
+    if (!username || !password || dot <= 0 || dot === file.length - 1)
+      return null;
     const itemId = file.slice(0, dot);
     const containerExtension = safeExtension(file.slice(dot + 1));
-    const prefix = rawParts.slice(0, markerIndex).map((part) => `/${part}`).join("");
-    const baseUrl = normalizeXtreamProgressBaseUrl(`${url.origin}${prefix || "/"}`);
+    const prefix = rawParts
+      .slice(0, markerIndex)
+      .map((part) => `/${part}`)
+      .join("");
+    const baseUrl = normalizeXtreamProgressBaseUrl(
+      `${url.origin}${prefix || "/"}`,
+    );
     if (!baseUrl || !itemId) return null;
     return {
       kind: marker === "movie" ? "movie" : "episode",
@@ -152,7 +178,9 @@ export function parseCanonicalXtreamProgressSource(
   }
 }
 
-function playbackRefFromCanonical(parsed: ParsedCanonicalXtreamProgressSource): MediaPlaybackRef {
+function playbackRefFromCanonical(
+  parsed: ParsedCanonicalXtreamProgressSource,
+): MediaPlaybackRef {
   return parsed.kind === "movie"
     ? {
         type: "xtream-vod",
@@ -168,14 +196,19 @@ function playbackRefFromCanonical(parsed: ParsedCanonicalXtreamProgressSource): 
       };
 }
 
-function parseLegacyCatalogRuntimeSource(source: string): { providerId: string; ref: MediaPlaybackRef } | null {
+function parseLegacyCatalogRuntimeSource(
+  source: string,
+): { providerId: string; ref: MediaPlaybackRef } | null {
   if (!source.startsWith("legendstream-catalog:")) return null;
   try {
     const url = new URL(source);
-    if (url.protocol !== "legendstream-catalog:" || url.hostname !== "xtream") return null;
+    if (url.protocol !== "legendstream-catalog:" || url.hostname !== "xtream")
+      return null;
     const parts = url.pathname.split("/").filter(Boolean).map(safeDecode);
     if (parts.length !== 3 || parts[0] !== "movie") return null;
-    const containerExtension = safeExtension(url.searchParams.get("ext") || undefined);
+    const containerExtension = safeExtension(
+      url.searchParams.get("ext") || undefined,
+    );
     if (!parts[1] || !parts[2]) return null;
     return {
       providerId: parts[1],
@@ -197,15 +230,24 @@ function exactProviderForCanonical(
 ): string | null {
   const matches = snapshots.filter((snapshot) => {
     if (snapshot.type !== "xtream") return false;
-    const base = normalizeXtreamProgressBaseUrl(snapshot.secrets.url || snapshot.secrets.playlistUrl || "");
-    return base === parsed.baseUrl &&
+    const base = normalizeXtreamProgressBaseUrl(
+      snapshot.secrets.url || snapshot.secrets.playlistUrl || "",
+    );
+    return (
+      base === parsed.baseUrl &&
       (snapshot.secrets.username || "") === parsed.username &&
-      (snapshot.secrets.password || "") === parsed.password;
+      (snapshot.secrets.password || "") === parsed.password
+    );
   });
   return matches.length === 1 ? matches[0].providerId : null;
 }
 
-function legacyTag(kind: MediaKind, title: string, updatedAt: number, index: number) {
+function legacyTag(
+  kind: MediaKind,
+  title: string,
+  updatedAt: number,
+  index: number,
+) {
   return hashText(`${kind}\u0000${title}\u0000${updatedAt}\u0000${index}`);
 }
 
@@ -223,11 +265,18 @@ function progressId(
 function parseLegacyEntry(value: unknown): LegacyMediaProgressV1 | null {
   const raw = asObject(value);
   if (!raw || (raw.kind !== "movie" && raw.kind !== "episode")) return null;
-  if (typeof raw.title !== "string" || typeof raw.source !== "string") return null;
+  if (typeof raw.title !== "string" || typeof raw.source !== "string")
+    return null;
   const position = Number(raw.position);
   const duration = Number(raw.duration);
   const updatedAt = Number(raw.updatedAt);
-  if (!Number.isFinite(position) || position < 0 || !Number.isFinite(duration) || duration < 0 || !Number.isFinite(updatedAt)) {
+  if (
+    !Number.isFinite(position) ||
+    position < 0 ||
+    !Number.isFinite(duration) ||
+    duration < 0 ||
+    !Number.isFinite(updatedAt)
+  ) {
     return null;
   }
   return {
@@ -251,22 +300,42 @@ export function migrateMediaProgressV1Entries(
     if (!legacy) throw asMediaProgressMigrationError();
 
     const runtime = parseLegacyCatalogRuntimeSource(legacy.source);
-    const canonical = runtime ? null : parseCanonicalXtreamProgressSource(legacy.source);
-    const runtimeProviderId = runtime && snapshots.some((snapshot) => snapshot.providerId === runtime.providerId)
-      ? runtime.providerId
-      : null;
-    const providerId = runtimeProviderId ?? (canonical ? exactProviderForCanonical(canonical, snapshots) : null);
-    const ref = runtime?.ref ?? (canonical
-      ? playbackRefFromCanonical(canonical)
-      : {
-          type: "unresolved" as const,
-          mediaKind: legacy.kind,
-          legacyTag: legacyTag(legacy.kind, legacy.title, legacy.updatedAt, index),
-        });
+    const canonical = runtime
+      ? null
+      : parseCanonicalXtreamProgressSource(legacy.source);
+    const runtimeProviderId =
+      runtime &&
+      snapshots.some((snapshot) => snapshot.providerId === runtime.providerId)
+        ? runtime.providerId
+        : null;
+    const providerId =
+      runtimeProviderId ??
+      (canonical ? exactProviderForCanonical(canonical, snapshots) : null);
+    const ref =
+      runtime?.ref ??
+      (canonical
+        ? playbackRefFromCanonical(canonical)
+        : {
+            type: "unresolved" as const,
+            mediaKind: legacy.kind,
+            legacyTag: legacyTag(
+              legacy.kind,
+              legacy.title,
+              legacy.updatedAt,
+              index,
+            ),
+          });
 
     return {
       schemaVersion: 2 as const,
-      id: progressId(providerId, legacy.kind, ref, legacy.title, legacy.updatedAt, index),
+      id: progressId(
+        providerId,
+        legacy.kind,
+        ref,
+        legacy.title,
+        legacy.updatedAt,
+        index,
+      ),
       providerId,
       kind: legacy.kind,
       title: legacy.title,
@@ -283,53 +352,87 @@ function isPlaybackRef(value: unknown): value is MediaPlaybackRef {
   const raw = asObject(value);
   if (!raw || typeof raw.type !== "string") return false;
   if (raw.type === "xtream-vod") {
-    return typeof raw.streamId === "string" && raw.streamId.length > 0 &&
-      typeof raw.containerExtension === "string" && /^[a-zA-Z0-9]{1,10}$/.test(raw.containerExtension) &&
-      (raw.sourceMode === "canonical" || raw.sourceMode === "direct");
+    return (
+      typeof raw.streamId === "string" &&
+      raw.streamId.length > 0 &&
+      typeof raw.containerExtension === "string" &&
+      /^[a-zA-Z0-9]{1,10}$/.test(raw.containerExtension) &&
+      (raw.sourceMode === "canonical" || raw.sourceMode === "direct")
+    );
   }
   if (raw.type === "xtream-episode") {
-    return typeof raw.episodeId === "string" && raw.episodeId.length > 0 &&
-      typeof raw.containerExtension === "string" && /^[a-zA-Z0-9]{1,10}$/.test(raw.containerExtension) &&
+    return (
+      typeof raw.episodeId === "string" &&
+      raw.episodeId.length > 0 &&
+      typeof raw.containerExtension === "string" &&
+      /^[a-zA-Z0-9]{1,10}$/.test(raw.containerExtension) &&
       (raw.sourceMode === "canonical" || raw.sourceMode === "direct") &&
-      (raw.seriesId === undefined || typeof raw.seriesId === "string");
+      (raw.seriesId === undefined || typeof raw.seriesId === "string")
+    );
   }
   if (raw.type === "m3u-vod" || raw.type === "m3u-episode") {
     return typeof raw.itemId === "string" && raw.itemId.length > 0;
   }
   if (raw.type === "stalker-vod") {
-    return typeof raw.itemId === "string" && raw.itemId.length > 0 &&
-      typeof raw.categoryId === "string" && raw.categoryId.length > 0;
+    return (
+      typeof raw.itemId === "string" &&
+      raw.itemId.length > 0 &&
+      typeof raw.categoryId === "string" &&
+      raw.categoryId.length > 0
+    );
   }
   if (raw.type === "stalker-episode") {
-    return typeof raw.seriesId === "string" && raw.seriesId.length > 0 &&
-      typeof raw.seasonId === "string" && raw.seasonId.length > 0 &&
-      typeof raw.episodeId === "string" && raw.episodeId.length > 0;
+    return (
+      typeof raw.seriesId === "string" &&
+      raw.seriesId.length > 0 &&
+      typeof raw.seasonId === "string" &&
+      raw.seasonId.length > 0 &&
+      typeof raw.episodeId === "string" &&
+      raw.episodeId.length > 0
+    );
   }
-  return raw.type === "unresolved" &&
+  return (
+    raw.type === "unresolved" &&
     (raw.mediaKind === "movie" || raw.mediaKind === "episode") &&
-    typeof raw.legacyTag === "string" && raw.legacyTag.length > 0;
+    typeof raw.legacyTag === "string" &&
+    raw.legacyTag.length > 0
+  );
 }
 
 export function parseMediaProgressV2Payload(raw: string): MediaProgressV2[] {
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); }
-  catch { throw asMediaProgressMigrationError(); }
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    throw asMediaProgressMigrationError();
+  }
   if (!Array.isArray(parsed)) throw asMediaProgressMigrationError();
   const entries: MediaProgressV2[] = [];
   for (const value of parsed) {
     const item = asObject(value);
-    if (!item || item.schemaVersion !== 2 || typeof item.id !== "string" || !item.id ||
+    if (
+      !item ||
+      item.schemaVersion !== 2 ||
+      typeof item.id !== "string" ||
+      !item.id ||
       (item.providerId !== null && typeof item.providerId !== "string") ||
       (item.kind !== "movie" && item.kind !== "episode") ||
       typeof item.title !== "string" ||
       (item.subtitle !== undefined && typeof item.subtitle !== "string") ||
-      !isPlaybackRef(item.playbackRef)) {
+      !isPlaybackRef(item.playbackRef)
+    ) {
       throw asMediaProgressMigrationError();
     }
     const position = Number(item.position);
     const duration = Number(item.duration);
     const updatedAt = Number(item.updatedAt);
-    if (!Number.isFinite(position) || position < 0 || !Number.isFinite(duration) || duration < 0 || !Number.isFinite(updatedAt)) {
+    if (
+      !Number.isFinite(position) ||
+      position < 0 ||
+      !Number.isFinite(duration) ||
+      duration < 0 ||
+      !Number.isFinite(updatedAt)
+    ) {
       throw asMediaProgressMigrationError();
     }
     entries.push({
@@ -343,14 +446,50 @@ export function parseMediaProgressV2Payload(raw: string): MediaProgressV2[] {
       position,
       duration,
       updatedAt,
+      ...(item.episodeContext &&
+      typeof item.episodeContext === "object" &&
+      typeof (item.episodeContext as EpisodeProgressContext).seriesId ===
+        "string" &&
+      typeof (item.episodeContext as EpisodeProgressContext).seasonId ===
+        "string"
+        ? {
+            episodeContext: {
+              seriesId: (item.episodeContext as EpisodeProgressContext)
+                .seriesId,
+              seasonId: (item.episodeContext as EpisodeProgressContext)
+                .seasonId,
+              ...(Number.isInteger(
+                (item.episodeContext as EpisodeProgressContext).episodeNumber,
+              )
+                ? {
+                    episodeNumber: (
+                      item.episodeContext as EpisodeProgressContext
+                    ).episodeNumber,
+                  }
+                : {}),
+            },
+          }
+        : {}),
     });
   }
   return entries;
 }
 
 const FORBIDDEN_PERSISTED_KEYS = new Set([
-  "source", "url", "playlisturl", "epgurl", "username", "password", "mac", "credentials",
-  "token", "authtoken", "sessiontoken", "authorization", "cookie", "cmd",
+  "source",
+  "url",
+  "playlisturl",
+  "epgurl",
+  "username",
+  "password",
+  "mac",
+  "credentials",
+  "token",
+  "authtoken",
+  "sessiontoken",
+  "authorization",
+  "cookie",
+  "cmd",
 ]);
 
 function containsForbiddenKey(value: unknown): boolean {
@@ -368,11 +507,22 @@ function secretValues(snapshots: readonly MediaProgressCredentialSnapshot[]) {
   const values = new Set<string>();
   for (const snapshot of snapshots) {
     const secrets = snapshot.secrets;
-    for (const key of ["url", "playlistUrl", "epgUrl", "username", "password", "mac"] as const) {
+    for (const key of [
+      "url",
+      "playlistUrl",
+      "epgUrl",
+      "username",
+      "password",
+      "mac",
+    ] as const) {
       const value = secrets[key];
       if (!value || value.length < 4) continue;
       values.add(value);
-      try { values.add(encodeURIComponent(value)); } catch { /* no-op */ }
+      try {
+        values.add(encodeURIComponent(value));
+      } catch {
+        /* no-op */
+      }
     }
   }
   return [...values];
@@ -403,13 +553,15 @@ export async function commitMediaProgressV2(
   snapshots: readonly MediaProgressCredentialSnapshot[],
 ): Promise<MediaProgressV2[]> {
   try {
-    if (!isMediaProgressV2PayloadSafe(entries, snapshots)) throw asMediaProgressMigrationError();
+    if (!isMediaProgressV2PayloadSafe(entries, snapshots))
+      throw asMediaProgressMigrationError();
     const serialized = JSON.stringify(entries);
     await storage.setItem(MEDIA_PROGRESS_V2_STORAGE_KEY, serialized);
     const readBack = await storage.getItem(MEDIA_PROGRESS_V2_STORAGE_KEY);
     if (readBack !== serialized) throw asMediaProgressMigrationError();
     const verified = parseMediaProgressV2Payload(readBack);
-    if (!isMediaProgressV2PayloadSafe(verified, snapshots)) throw asMediaProgressMigrationError();
+    if (!isMediaProgressV2PayloadSafe(verified, snapshots))
+      throw asMediaProgressMigrationError();
     return verified;
   } catch (caught) {
     throw asMediaProgressMigrationError(caught);
@@ -417,8 +569,11 @@ export async function commitMediaProgressV2(
 }
 
 function parseLegacyPayload(raw: string): unknown {
-  try { return JSON.parse(raw); }
-  catch { throw asMediaProgressMigrationError(); }
+  try {
+    return JSON.parse(raw);
+  } catch {
+    throw asMediaProgressMigrationError();
+  }
 }
 
 export async function migrateMediaProgressStorage(
@@ -434,8 +589,10 @@ export async function migrateMediaProgressStorage(
     if (v2Raw !== null) {
       try {
         const existing = parseMediaProgressV2Payload(v2Raw);
-        if (!isMediaProgressV2PayloadSafe(existing, snapshots)) throw asMediaProgressMigrationError();
-        if (v1Raw !== null) await storage.removeItem(MEDIA_PROGRESS_V1_STORAGE_KEY);
+        if (!isMediaProgressV2PayloadSafe(existing, snapshots))
+          throw asMediaProgressMigrationError();
+        if (v1Raw !== null)
+          await storage.removeItem(MEDIA_PROGRESS_V1_STORAGE_KEY);
         return existing;
       } catch {
         // If K1 left a partial/corrupt V2 but V1 still exists, V1 is the
@@ -446,7 +603,10 @@ export async function migrateMediaProgressStorage(
     }
 
     if (v1Raw === null) return [];
-    const migrated = migrateMediaProgressV1Entries(parseLegacyPayload(v1Raw), snapshots);
+    const migrated = migrateMediaProgressV1Entries(
+      parseLegacyPayload(v1Raw),
+      snapshots,
+    );
     const verified = await commitMediaProgressV2(storage, migrated, snapshots);
     await storage.removeItem(MEDIA_PROGRESS_V1_STORAGE_KEY);
     return verified;
@@ -464,22 +624,36 @@ export function playbackRefKey(ref: MediaPlaybackRef): string {
   }
   if (ref.type === "m3u-vod") return `m3u-vod:${ref.itemId}`;
   if (ref.type === "m3u-episode") return `m3u-episode:${ref.itemId}`;
-  if (ref.type === "stalker-vod") return `stalker-vod:${ref.itemId}:${ref.categoryId}`;
+  if (ref.type === "stalker-vod")
+    return `stalker-vod:${ref.itemId}:${ref.categoryId}`;
   if (ref.type === "stalker-episode") {
     return `stalker-episode:${ref.seriesId}:${ref.seasonId}:${ref.episodeId}`;
   }
   return `unresolved:${ref.mediaKind}:${ref.legacyTag}`;
 }
 
-export function samePlaybackRef(a: MediaPlaybackRef, b: MediaPlaybackRef): boolean {
-  if (a.type === "unresolved" || b.type === "unresolved" || a.type !== b.type) return false;
-  if (a.type === "xtream-vod" && b.type === "xtream-vod") return a.streamId === b.streamId;
-  if (a.type === "xtream-episode" && b.type === "xtream-episode") return a.episodeId === b.episodeId;
-  if (a.type === "m3u-vod" && b.type === "m3u-vod") return a.itemId === b.itemId;
-  if (a.type === "m3u-episode" && b.type === "m3u-episode") return a.itemId === b.itemId;
-  if (a.type === "stalker-vod" && b.type === "stalker-vod") return a.itemId === b.itemId;
+export function samePlaybackRef(
+  a: MediaPlaybackRef,
+  b: MediaPlaybackRef,
+): boolean {
+  if (a.type === "unresolved" || b.type === "unresolved" || a.type !== b.type)
+    return false;
+  if (a.type === "xtream-vod" && b.type === "xtream-vod")
+    return a.streamId === b.streamId;
+  if (a.type === "xtream-episode" && b.type === "xtream-episode")
+    return a.episodeId === b.episodeId;
+  if (a.type === "m3u-vod" && b.type === "m3u-vod")
+    return a.itemId === b.itemId;
+  if (a.type === "m3u-episode" && b.type === "m3u-episode")
+    return a.itemId === b.itemId;
+  if (a.type === "stalker-vod" && b.type === "stalker-vod")
+    return a.itemId === b.itemId;
   if (a.type === "stalker-episode" && b.type === "stalker-episode") {
-    return a.seriesId === b.seriesId && a.seasonId === b.seasonId && a.episodeId === b.episodeId;
+    return (
+      a.seriesId === b.seriesId &&
+      a.seasonId === b.seasonId &&
+      a.episodeId === b.episodeId
+    );
   }
   return false;
 }
@@ -489,12 +663,17 @@ export function mediaPlaybackRefMatchesProvider(
   providerType: MediaProgressCredentialSnapshot["type"],
   kind: MediaKind,
 ) {
-  if (ref.type === "stalker-vod") return providerType === "stalker" && kind === "movie";
-  if (ref.type === "stalker-episode") return providerType === "stalker" && kind === "episode";
-  if (ref.type === "xtream-vod") return providerType === "xtream" && kind === "movie";
-  if (ref.type === "xtream-episode") return providerType === "xtream" && kind === "episode";
+  if (ref.type === "stalker-vod")
+    return providerType === "stalker" && kind === "movie";
+  if (ref.type === "stalker-episode")
+    return providerType === "stalker" && kind === "episode";
+  if (ref.type === "xtream-vod")
+    return providerType === "xtream" && kind === "movie";
+  if (ref.type === "xtream-episode")
+    return providerType === "xtream" && kind === "episode";
   if (ref.type === "m3u-vod") return providerType === "m3u" && kind === "movie";
-  if (ref.type === "m3u-episode") return providerType === "m3u" && kind === "episode";
+  if (ref.type === "m3u-episode")
+    return providerType === "m3u" && kind === "episode";
   return false;
 }
 
@@ -504,13 +683,20 @@ export function upsertMediaProgressByIdentity(
 ): MediaProgressV2[] {
   return [
     next,
-    ...entries.filter((entry) => !(
-      entry.providerId === next.providerId && samePlaybackRef(entry.playbackRef, next.playbackRef)
-    )),
+    ...entries.filter(
+      (entry) =>
+        !(
+          entry.providerId === next.providerId &&
+          samePlaybackRef(entry.playbackRef, next.playbackRef)
+        ),
+    ),
   ];
 }
 
-export function trimMediaProgressByScope(entries: readonly MediaProgressV2[], limit = 100): MediaProgressV2[] {
+export function trimMediaProgressByScope(
+  entries: readonly MediaProgressV2[],
+  limit = 100,
+): MediaProgressV2[] {
   const counts = new Map<string, number>();
   const result: MediaProgressV2[] = [];
   for (const entry of entries) {
@@ -552,17 +738,28 @@ export function claimProgressForProvider(
   providerId: string,
   ref: MediaPlaybackRef,
 ): { entry?: MediaProgressV2; entries: MediaProgressV2[]; changed: boolean } {
-  if (ref.type === "unresolved") return { entries: [...entries], changed: false };
+  if (ref.type === "unresolved")
+    return { entries: [...entries], changed: false };
   const candidates = entries.filter(
-    (entry) => (entry.providerId === providerId || entry.providerId === null) && samePlaybackRef(entry.playbackRef, ref),
+    (entry) =>
+      (entry.providerId === providerId || entry.providerId === null) &&
+      samePlaybackRef(entry.playbackRef, ref),
   );
   if (!candidates.length) return { entries: [...entries], changed: false };
-  const winner = [...candidates].sort((a, b) => b.updatedAt - a.updatedAt || b.position - a.position)[0];
-  const claimed: MediaProgressV2 = winner.providerId === providerId
-    ? winner
-    : { ...winner, providerId };
+  const winner = [...candidates].sort(
+    (a, b) => b.updatedAt - a.updatedAt || b.position - a.position,
+  )[0];
+  const claimed: MediaProgressV2 =
+    winner.providerId === providerId ? winner : { ...winner, providerId };
   const candidateIds = new Set(candidates.map((entry) => entry.id));
-  const next = [claimed, ...entries.filter((entry) => !candidateIds.has(entry.id))];
+  const next = [
+    claimed,
+    ...entries.filter((entry) => !candidateIds.has(entry.id)),
+  ];
   const changed = candidates.length > 1 || winner.providerId === null;
-  return { entry: claimed, entries: changed ? trimMediaProgressByScope(next) : [...entries], changed };
+  return {
+    entry: claimed,
+    entries: changed ? trimMediaProgressByScope(next) : [...entries],
+    changed,
+  };
 }

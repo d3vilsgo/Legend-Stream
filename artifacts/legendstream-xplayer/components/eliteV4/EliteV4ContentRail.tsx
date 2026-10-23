@@ -15,6 +15,10 @@ export function EliteV4ContentRail({
   nextRail,
   onLayoutY,
   onFocused,
+  onProgressInfo,
+  onProgressRemove,
+  onFavorite,
+  isFavorite,
 }: {
   title: string;
   railId?: string;
@@ -25,6 +29,10 @@ export function EliteV4ContentRail({
   nextRail?: { id: string; items: readonly EliteHomeItem[] };
   onLayoutY?: (y: number) => void;
   onFocused?: () => void;
+  onFavorite?: (item: EliteHomeItem) => void;
+  isFavorite?: (item: EliteHomeItem) => boolean;
+  onProgressInfo?: (item: EliteHomeItem, origin: string) => void;
+  onProgressRemove?: (item: EliteHomeItem, index: number) => void;
 }) {
   const scrollRef = useRef<ScrollView>(null);
   if (!items.length) return null;
@@ -70,15 +78,16 @@ export function EliteV4ContentRail({
         {items.map((item, index) => {
           const live = item.kind === "live";
           const isContinue = item.progressFraction !== undefined;
-          const imageHeight = live
-            ? Math.round(cardWidth * 0.56)
-            : Math.round(cardWidth * 1.34);
+          const imageHeight =
+            live || isContinue
+              ? Math.round(cardWidth * 0.56)
+              : Math.round(cardWidth * 1.34);
           const kindLabel = live
             ? "canlı kanal"
             : item.kind === "series"
               ? "dizi"
               : "film";
-          return (
+          const card = (
             <EliteV4FocusButton
               key={item.id}
               focusId={`${railId}-${index}`}
@@ -92,9 +101,14 @@ export function EliteV4ContentRail({
                 up: previousRail
                   ? `${previousRail.id}-${Math.min(index, previousRail.items.length - 1)}`
                   : "hero",
-                down: nextRail
-                  ? `${nextRail.id}-${Math.min(index, nextRail.items.length - 1)}`
-                  : undefined,
+                down:
+                  item.progress && onProgressInfo
+                    ? `${railId}-${index}:info`
+                    : !item.progress && onFavorite
+                      ? `${railId}-${index}:favorite`
+                      : nextRail
+                        ? `${nextRail.id}-${Math.min(index, nextRail.items.length - 1)}`
+                        : undefined,
               }}
               onPress={() => onOpen(item)}
               onFocused={() => {
@@ -178,6 +192,17 @@ export function EliteV4ContentRail({
                   </Text>
                 ) : null}
                 {isContinue ? (
+                  <Text
+                    style={{
+                      color: theme.color.accent,
+                      fontSize: 12,
+                      marginTop: 6,
+                    }}
+                  >
+                    Devam et
+                  </Text>
+                ) : null}
+                {isContinue ? (
                   <View
                     style={{
                       height: 3,
@@ -205,11 +230,111 @@ export function EliteV4ContentRail({
                       marginTop: 5,
                     }}
                   >
-                    Seçmek için Elite V3'e geç
+                    Sezonları ve bölümleri aç
                   </Text>
                 ) : null}
               </View>
             </EliteV4FocusButton>
+          );
+          if (!item.progress && onFavorite)
+            return (
+              <View key={item.id} style={{ width: cardWidth }}>
+                {card}
+                <EliteV4FocusButton
+                  focusId={`${railId}-${index}:favorite`}
+                  region="content"
+                  onPress={() => onFavorite(item)}
+                  neighbors={{
+                    up: `${railId}-${index}`,
+                    left: `${railId}-${index}`,
+                    right: items[index + 1]
+                      ? `${railId}-${index + 1}`
+                      : undefined,
+                    down: nextRail
+                      ? `${nextRail.id}-${Math.min(index, nextRail.items.length - 1)}`
+                      : undefined,
+                  }}
+                  accessibilityLabel={
+                    isFavorite?.(item)
+                      ? "Favorilerden çıkar"
+                      : "Favorilere ekle"
+                  }
+                  style={{
+                    padding: 10,
+                    borderWidth: 1,
+                    borderColor: theme.color.border,
+                    backgroundColor: theme.color.surface,
+                    borderRadius: 8,
+                  }}
+                >
+                  <Text style={{ color: theme.color.accent, fontSize: 12 }}>
+                    {isFavorite?.(item)
+                      ? "★ Favorilerimde"
+                      : "☆ Favorilere ekle"}
+                  </Text>
+                </EliteV4FocusButton>
+              </View>
+            );
+          if (!item.progress || !onProgressInfo || !onProgressRemove)
+            return card;
+          return (
+            <View key={item.id} style={{ width: cardWidth }}>
+              {card}
+              <View style={{ flexDirection: "row", gap: 6, marginTop: 6 }}>
+                <EliteV4FocusButton
+                  focusId={`${railId}-${index}:info`}
+                  region="content"
+                  onPress={() =>
+                    onProgressInfo(item, `${railId}-${index}:info`)
+                  }
+                  neighbors={{
+                    up: `${railId}-${index}`,
+                    left: `${railId}-${index}`,
+                    right: `${railId}-${index}:remove`,
+                    down: nextRail
+                      ? `${nextRail.id}-${Math.min(index, nextRail.items.length - 1)}`
+                      : undefined,
+                  }}
+                  accessibilityLabel="İçerik bilgileri"
+                  style={{
+                    padding: 10,
+                    flex: 1,
+                    backgroundColor: theme.color.surface,
+                    borderWidth: 1,
+                    borderColor: theme.color.border,
+                    borderRadius: 8,
+                  }}
+                >
+                  <Text style={{ color: theme.color.muted, fontSize: 12 }}>
+                    Bilgiler
+                  </Text>
+                </EliteV4FocusButton>
+                <EliteV4FocusButton
+                  focusId={`${railId}-${index}:remove`}
+                  region="content"
+                  onPress={() => onProgressRemove(item, index)}
+                  neighbors={{
+                    up: `${railId}-${index}`,
+                    left: `${railId}-${index}:info`,
+                    down: nextRail
+                      ? `${nextRail.id}-${Math.min(index, nextRail.items.length - 1)}`
+                      : undefined,
+                  }}
+                  accessibilityLabel="Raftan kaldır"
+                  style={{
+                    padding: 10,
+                    backgroundColor: theme.color.surface,
+                    borderWidth: 1,
+                    borderColor: theme.color.border,
+                    borderRadius: 8,
+                  }}
+                >
+                  <Text style={{ color: theme.color.muted, fontSize: 12 }}>
+                    Kaldır
+                  </Text>
+                </EliteV4FocusButton>
+              </View>
+            </View>
           );
         })}
       </ScrollView>

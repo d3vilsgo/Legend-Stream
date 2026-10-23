@@ -605,3 +605,8 @@ Açık sınırlar: Stalker'ın yüklenen alt kümede sıralaması ve totalItems=
 Başlangıç HEAD `4271184ac380f41bc2c9158b58db7e4ee0bb6cc9` ve tüm kaynak blob bütünlüğü doğrulandı. Series route, gerçek provider katalog/detail ve episode progressRef → mevcut Player bağlantısı uygulandı. Yeni 22/22 host; mevcut Home 18/18, Live 14/14, Movies 14/14, U4.3 Series 40/40, Home Info 15/15. Final exact-SHA Quality push sonrası gerçek run üzerinden doğrulanır. PR #143 aynı branch/base OPEN/DRAFT; APK yok.
 
 Ayrıntı: [Elite V4 P3 Series](../elite/ELITE_V4_P3_SERIES_TR.md).
+
+ 
+## Elite V4 P4 — History / Continue Watching / Favorites
+
+Mevcut persistence anahtarları üzerinde provider/account izolasyonu, gerçek Player ilerlemesi, V4 History/Favorites ekranları ve reaktif Home rafı entegre edildi. Yeni depolama sistemi veya backend yoktur. Yerel 208/208 üretim host/servis senaryosu; final SHA Quality kanıtı teslim mesajında doğrulanır. Fiziksel kabul **DEFERRED_RC**; APK bu aşamada üretilmez. P5 Settings ve kalan Stalker Live kapsamı açıktır. Ayrıntı ve sınırlamalar: [P4 raporu](../elite/ELITE_V4_P4_LIBRARY_TR.md).

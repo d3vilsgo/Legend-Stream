@@ -33,6 +33,11 @@ export function createPagedSeriesFlow(options: {
     url: string;
     origin: SeriesOrigin;
     progressRef: MediaPlaybackRef;
+    episodeContext: {
+      seriesId: string;
+      seasonId: string;
+      episodeNumber?: number;
+    };
   }) => void;
 }) {
   let state: PagedSeriesState | null = null;
@@ -137,6 +142,13 @@ export function createPagedSeriesFlow(options: {
         subtitle: state!.item.name,
         url,
         origin: state!.origin,
+        episodeContext: {
+          seriesId: String(state!.item.series_id),
+          seasonId,
+          ...(episode.episode_num !== undefined
+            ? { episodeNumber: episode.episode_num }
+            : {}),
+        },
         progressRef: episodeProgressRef(
           options.provider,
           String(state!.item.series_id),

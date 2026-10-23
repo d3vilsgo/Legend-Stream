@@ -13,6 +13,7 @@ import type { CatalogPageSort } from "./catalogPaging";
 export type V4CatalogCard = {
   id: string;
   title: string;
+  categoryId?: string;
   poster?: string;
   backdrop?: string;
   input: EnrichmentInput;
@@ -56,6 +57,7 @@ export function v4StalkerMovies(
         });
   return sorted.map((item) => ({
     id: item.portalId,
+    categoryId: item.categoryId,
     title: item.title,
     poster: item.posterUrl,
     input: stalkerMovieInput(providerId, scope, item),

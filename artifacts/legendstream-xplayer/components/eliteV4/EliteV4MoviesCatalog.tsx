@@ -1,3 +1,4 @@
+import { EliteV4FavoriteAction } from "./EliteV4FavoriteAction";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
@@ -291,6 +292,7 @@ export function EliteV4MoviesHero({
 type MoviesViewProps<T extends V4CatalogCard> = {
   series?: boolean;
   renderInfo?: (item: T, origin: string, close: () => void) => React.ReactNode;
+  favoritesEnabled?: boolean;
   items: readonly T[];
   categories: readonly Category[];
   category: string | null;
@@ -707,77 +709,105 @@ export function EliteV4MoviesView<T extends V4CatalogCard>(
                 (rowIndex < rows.length - 1 ? items[items.length - 1] : null);
               const image = normalizeImageUrl(movie.poster);
               return (
-                <EliteV4FocusButton
-                  key={movie.id}
-                  focusId={cardId(movie.id)}
-                  region="content"
-                  disabled={blocked}
-                  accessibilityLabel={`${movie.title}, ${series ? "dizi" : "film"} bilgileri`}
-                  onFocused={() =>
-                    list.current?.scrollToOffset({
-                      offset:
-                        headerHeight.current +
-                        rowIndex *
-                          (layout.posterHeight +
-                            layout.captionHeight +
-                            layout.gap),
-                      animated: true,
-                    })
-                  }
-                  onPress={() => info(movie, cardId(movie.id))}
-                  neighbors={{
-                    left: column ? cardId(row[column - 1].id) : sidebar,
-                    right: row[column + 1]
-                      ? cardId(row[column + 1].id)
-                      : undefined,
-                    up: up ? cardId(up.id) : `${prefix}hero`,
-                    down: down ? cardId(down.id) : `${prefix}status`,
-                  }}
-                  style={{
-                    width: layout.cardWidth,
-                    borderRadius: theme.radius.medium,
-                    borderWidth: 1,
-                    borderColor: theme.color.border,
-                    backgroundColor: theme.color.surface,
-                    overflow: "hidden",
-                  }}
-                >
-                  {image ? (
-                    <Image
-                      source={{ uri: image }}
-                      resizeMode="cover"
-                      style={{ width: "100%", height: layout.posterHeight }}
-                    />
-                  ) : (
-                    <View
-                      style={{
-                        height: layout.posterHeight,
-                        justifyContent: "center",
-                        alignItems: "center",
-                        backgroundColor: theme.color.surfaceRaised,
-                      }}
-                    >
-                      <Feather
-                        name="film"
-                        size={32}
-                        color={theme.color.quiet}
+                <View key={movie.id} style={{ width: layout.cardWidth }}>
+                  <EliteV4FocusButton
+                    key={movie.id}
+                    focusId={cardId(movie.id)}
+                    region="content"
+                    disabled={blocked}
+                    accessibilityLabel={`${movie.title}, ${series ? "dizi" : "film"} bilgileri`}
+                    onFocused={() =>
+                      list.current?.scrollToOffset({
+                        offset:
+                          headerHeight.current +
+                          rowIndex *
+                            (layout.posterHeight +
+                              layout.captionHeight +
+                              layout.gap +
+                              (props.favoritesEnabled ? 44 : 0)),
+                        animated: true,
+                      })
+                    }
+                    onPress={() => info(movie, cardId(movie.id))}
+                    neighbors={{
+                      left: column ? cardId(row[column - 1].id) : sidebar,
+                      right: row[column + 1]
+                        ? cardId(row[column + 1].id)
+                        : undefined,
+                      up: up ? cardId(up.id) : `${prefix}hero`,
+                      down: props.favoritesEnabled
+                        ? `${cardId(movie.id)}:favorite`
+                        : down
+                          ? cardId(down.id)
+                          : `${prefix}status`,
+                    }}
+                    style={{
+                      width: layout.cardWidth,
+                      borderRadius: theme.radius.medium,
+                      borderWidth: 1,
+                      borderColor: theme.color.border,
+                      backgroundColor: theme.color.surface,
+                      overflow: "hidden",
+                    }}
+                  >
+                    {image ? (
+                      <Image
+                        source={{ uri: image }}
+                        resizeMode="cover"
+                        style={{ width: "100%", height: layout.posterHeight }}
                       />
+                    ) : (
+                      <View
+                        style={{
+                          height: layout.posterHeight,
+                          justifyContent: "center",
+                          alignItems: "center",
+                          backgroundColor: theme.color.surfaceRaised,
+                        }}
+                      >
+                        <Feather
+                          name="film"
+                          size={32}
+                          color={theme.color.quiet}
+                        />
+                      </View>
+                    )}
+                    <View style={{ height: layout.captionHeight, padding: 10 }}>
+                      <Text
+                        numberOfLines={2}
+                        style={{
+                          color: theme.color.foreground,
+                          fontSize: Platform.isTV ? 18 : 15,
+                          lineHeight: Platform.isTV ? 24 : 20,
+                          fontWeight: "500",
+                        }}
+                      >
+                        {movie.title}
+                      </Text>
                     </View>
-                  )}
-                  <View style={{ height: layout.captionHeight, padding: 10 }}>
-                    <Text
-                      numberOfLines={2}
-                      style={{
-                        color: theme.color.foreground,
-                        fontSize: Platform.isTV ? 18 : 15,
-                        lineHeight: Platform.isTV ? 24 : 20,
-                        fontWeight: "500",
+                  </EliteV4FocusButton>
+                  {props.favoritesEnabled ? (
+                    <EliteV4FavoriteAction
+                      target={{
+                        providerId: movie.input.identity.providerId,
+                        kind: movie.input.identity.kind,
+                        catalogId: movie.input.identity.catalogId,
+                        title: movie.title,
+                        categoryId: movie.categoryId,
                       }}
-                    >
-                      {movie.title}
-                    </Text>
-                  </View>
-                </EliteV4FocusButton>
+                      focusId={`${cardId(movie.id)}:favorite`}
+                      disabled={blocked}
+                      neighbors={{
+                        up: cardId(movie.id),
+                        left: cardId(movie.id),
+                        right: row[column + 1]
+                          ? cardId(row[column + 1].id)
+                          : undefined,
+                        down: down ? cardId(down.id) : `${prefix}status`,
+                      }}
+                    />
+                  ) : null}
+                </View>
               );
             })}
           </View>
@@ -859,6 +889,19 @@ export function EliteV4MoviesView<T extends V4CatalogCard>(
             key={`${scope}:${currentInfo.id}`}
             input={currentInfo.input}
             local={currentInfo.local}
+            favoriteAction={
+              <EliteV4FavoriteAction
+                target={{
+                  providerId: currentInfo.input.identity.providerId,
+                  kind: currentInfo.input.identity.kind,
+                  catalogId: currentInfo.id,
+                  title: currentInfo.title,
+                  categoryId: currentInfo.categoryId,
+                }}
+                focusId="v4-movie-info-favorite"
+                scope="movie-info"
+              />
+            }
             focusVisualStyle={movieFocusStyle}
             onClose={closeInfo}
             closeOnPlay={false}
@@ -945,6 +988,7 @@ function PagedMovies({
   }, [provider.id, revision]);
   return (
     <EliteV4MoviesView
+      favoritesEnabled
       {...props}
       scope={scope}
       items={v4PagedMovies(
@@ -1010,6 +1054,7 @@ function StalkerMovies({
   latest.current = { scope, active: props.active };
   return (
     <EliteV4MoviesView
+      favoritesEnabled
       {...props}
       scope={scope}
       items={v4StalkerMovies(provider.id, scope, catalog.visibleItems, sort)}

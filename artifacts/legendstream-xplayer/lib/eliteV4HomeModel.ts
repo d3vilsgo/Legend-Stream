@@ -1,3 +1,4 @@
+import type { MediaProgress } from "@/context/MediaLibraryContext";
 import type { Channel } from "@/context/PlayerContext";
 import type { MediaProgressV2 } from "@/lib/mediaProgress";
 import type { XtreamSeriesItem, XtreamVodItem } from "@/lib/xtreamCatalog";
@@ -13,6 +14,7 @@ export type EliteHomeItem = Readonly<{
   channel?: Channel;
   series?: XtreamSeriesItem;
   progressFraction?: number;
+  progress?: MediaProgress;
 }>;
 
 export type EliteHomeSections = Readonly<{

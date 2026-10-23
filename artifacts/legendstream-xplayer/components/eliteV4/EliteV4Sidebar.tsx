@@ -45,16 +45,23 @@ const entries: readonly SidebarEntry[] = [
   },
   {
     id: "sidebar-history",
-    label: "İzlemeye Devam Et",
+    label: "İzleme Geçmişi",
     icon: "clock",
     previous: "sidebar-series",
+    next: "sidebar-favorites",
+  },
+  {
+    id: "sidebar-favorites",
+    label: "Favorilerim",
+    icon: "star",
+    previous: "sidebar-history",
     next: "sidebar-settings",
   },
   {
     id: "sidebar-settings",
     label: "Ayarlar",
     icon: "settings",
-    previous: "sidebar-history",
+    previous: "sidebar-favorites",
     next: "sidebar-v3",
   },
 ];
@@ -69,7 +76,9 @@ export function EliteV4Sidebar({
   onReturnToV3: () => void;
   activeId?: string;
   contentFocusId?: string;
-  onNavigate?: (route: "home" | "live" | "movies" | "series") => void;
+  onNavigate?: (
+    route: "home" | "live" | "movies" | "series" | "history" | "favorites",
+  ) => void;
   liveAvailable?: boolean;
 }) {
   const { activeRegion } = useEliteV4Focus();
@@ -82,15 +91,19 @@ export function EliteV4Sidebar({
   const renderEntry = (entry: SidebarEntry) => {
     const active = entry.id === activeId;
     const route =
-      entry.id === "sidebar-series" && onNavigate
-        ? "series"
-        : entry.id === "sidebar-movies" && onNavigate
-          ? "movies"
-          : entry.id === "sidebar-home"
-            ? "home"
-            : entry.id === "sidebar-live" && liveAvailable
-              ? "live"
-              : null;
+      entry.id === "sidebar-history" && onNavigate
+        ? "history"
+        : entry.id === "sidebar-favorites" && onNavigate
+          ? "favorites"
+          : entry.id === "sidebar-series" && onNavigate
+            ? "series"
+            : entry.id === "sidebar-movies" && onNavigate
+              ? "movies"
+              : entry.id === "sidebar-home"
+                ? "home"
+                : entry.id === "sidebar-live" && liveAvailable
+                  ? "live"
+                  : null;
     return (
       <EliteV4FocusButton
         key={entry.id}

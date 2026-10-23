@@ -464,3 +464,8 @@ Açık sınırlar: Stalker'ın yüklenen alt kümede sıralaması ve totalItems=
 Series yeni üretim host 22/22; Home/Sidebar/Focus 18/18, Live 14/14, Movies 14/14, U4.3 Series 40/40, Home Info 15/15; R17-H4 15/15, R17-E 24/24, R17-F 41/41; TMDB foundation 57/57 ve Movie Info 35/35. TypeScript/format ve final exact-SHA Quality ayrı doğrulanır; başlangıç #1628 yeni HEAD için PASS değildir. Fiziksel kabul DEFERRED_RC; gerçek ekran görüntüsü ve APK yok. P0 kullanıcı kabulü ve tarihsel Native TV Physical FAIL korunur.
 
 Ayrıntı: [Elite V4 P3 Series](../elite/ELITE_V4_P3_SERIES_TR.md).
+
+ 
+## Elite V4 P4 — History / Continue Watching / Favorites
+
+Mevcut persistence anahtarları üzerinde provider/account izolasyonu, gerçek Player ilerlemesi, V4 History/Favorites ekranları ve reaktif Home rafı entegre edildi. Yeni depolama sistemi veya backend yoktur. Yerel 208/208 üretim host/servis senaryosu; final SHA Quality kanıtı teslim mesajında doğrulanır. Fiziksel kabul **DEFERRED_RC**; APK bu aşamada üretilmez. P5 Settings ve kalan Stalker Live kapsamı açıktır. Ayrıntı ve sınırlamalar: [P4 raporu](../elite/ELITE_V4_P4_LIBRARY_TR.md).

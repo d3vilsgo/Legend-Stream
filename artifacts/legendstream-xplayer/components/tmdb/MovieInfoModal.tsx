@@ -44,6 +44,7 @@ export function MovieInfoModal({
   closeOnPlay = true,
   playback,
   focusVisualStyle,
+  favoriteAction,
 }: {
   input: EnrichmentInput;
   local: LocalMovieInfo;
@@ -53,6 +54,7 @@ export function MovieInfoModal({
   closeOnPlay?: boolean;
   playback?: { busy: boolean; error: string | null };
   focusVisualStyle?: ViewStyle;
+  favoriteAction?: React.ReactNode;
 }) {
   const playLocked = useRef(false);
   const alive = useRef(true);
@@ -312,6 +314,7 @@ export function MovieInfoModal({
                   </TVPreviewPressable>
                 </View>
               ) : null}
+              {favoriteAction}
             </ScrollView>
           </View>
         </TVPreviewFocusRegion>

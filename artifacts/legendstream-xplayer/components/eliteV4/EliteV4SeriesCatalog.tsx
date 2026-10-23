@@ -1,3 +1,4 @@
+import { EliteV4FavoriteAction } from "./EliteV4FavoriteAction";
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { usePlayer, type ProviderConfig } from "@/context/PlayerContext";
 import { useCatalogSync } from "@/context/CatalogSyncContext";
@@ -41,6 +42,11 @@ export type V4SeriesPlayable = {
   title: string;
   subtitle: string;
   progressRef: MediaPlaybackRef;
+  episodeContext?: {
+    seriesId: string;
+    seasonId: string;
+    episodeNumber?: number;
+  };
 };
 type Props = {
   active?: boolean;
@@ -86,6 +92,18 @@ export function EliteV4PagedSeriesDetail({
   if (!detail) return null;
   return (
     <SeriesInfoModal
+      favoriteAction={
+        <EliteV4FavoriteAction
+          target={{
+            providerId: provider.id,
+            kind: "series",
+            catalogId: item.id,
+            title: item.title,
+          }}
+          focusId="v4-series-info-favorite"
+          scope="series-info"
+        />
+      }
       variant="eliteV4"
       metadataInput={item.input}
       providerId={provider.id}
@@ -165,6 +183,7 @@ function PagedSeries({
   return (
     <EliteV4MoviesView
       series
+      favoritesEnabled
       {...props}
       scope={scope}
       items={v4PagedSeries(
@@ -305,6 +324,13 @@ export function EliteV4StalkerSeriesDetail({
         url: intent.url,
         title: intent.title,
         subtitle: intent.subtitle,
+        episodeContext: {
+          seriesId: detail.seriesId,
+          seasonId,
+          episodeNumber: detail.seasons
+            .find((s) => s.id === seasonId)
+            ?.episodes.find((e) => e.id === episodeId)?.episodeNumber,
+        },
         progressRef: {
           type: "stalker-episode",
           seriesId: detail.seriesId,
@@ -324,6 +350,18 @@ export function EliteV4StalkerSeriesDetail({
   if (item.source.kind !== "stalker") return null;
   return (
     <SeriesInfoModal
+      favoriteAction={
+        <EliteV4FavoriteAction
+          target={{
+            providerId: provider.id,
+            kind: "series",
+            catalogId: item.id,
+            title: item.title,
+          }}
+          focusId="v4-series-info-favorite"
+          scope="series-info"
+        />
+      }
       variant="eliteV4"
       metadataInput={item.input}
       providerId={provider.id}
@@ -529,6 +567,7 @@ export function EliteV4StalkerSeries({
   return (
     <EliteV4MoviesView
       series
+      favoritesEnabled
       {...props}
       scope={scope}
       items={v4StalkerSeries(

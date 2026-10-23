@@ -56,7 +56,8 @@ const mocks = {
     "export const VlcPlaybackSurface='VLC';",
   "@react-native-async-storage/async-storage":
     "export default {getItem:async()=>null,setItem:async()=>{}};",
-  "@/lib/tvRemoteInspector": "export const inspectorAction=()=>{},inspectorRail=()=>{};",
+  "@/lib/tvRemoteInspector":
+    "export const inspectorAction=()=>{},inspectorRail=()=>{};",
   "@/modules/legendstream-tv-remote":
     "export const configureTvRemote=()=>{},subscribeTvRemote=()=>({remove(){}}),subscribeNativeTvFocus=()=>({remove(){}});",
   "@/hooks/usePlayerOrientation":
@@ -67,13 +68,14 @@ const mocks = {
   "@/lib/playerPreferences":
     "export const DEFAULT_PLAYER_CHROME_TIMEOUT_SECONDS=5,getPlayerChromeTimeoutSeconds=async()=>5;",
   "@/lib/xtreamCatalog":
-    "export const buildVodStreamUrl=()=>'',getEpisodePlaybackQueue=()=>[],getVodPlaybackQueue=()=>[];",
+    "export const buildVodStreamUrl=()=>'',getEpisodePlaybackQueue=()=>globalThis.__visible.episodeQueue,getVodPlaybackQueue=()=>undefined;",
   "@/lib/catalogPersistence": "export const isCatalogRuntimeSource=()=>false;",
   "@/lib/catalogRuntime":
     "export const resolveCatalogRuntimeSource=async()=>'';",
   "@/lib/catalogPageRepository":
     "export const getCachedLivePlaybackWindow=async()=>[],getCachedVodPlaybackWindow=async()=>[];",
-  "@/lib/epgRuntime": "export const registerEpgChannels=()=>{},selectProgramsAt=()=>({});",
+  "@/lib/epgRuntime":
+    "export const registerEpgChannels=()=>{},selectProgramsAt=()=>({});",
   "@/lib/m3uInAppDiagnostics":
     "export const describeM3UPlaybackUri=()=>({}),recordM3UCompatPlayerMount=()=>{},recordM3ULiveQueueBegin=()=>{},recordM3ULiveQueueEnd=()=>{};",
   "@/lib/stalkerPlaybackTrace":
@@ -82,7 +84,7 @@ const mocks = {
     "export const beginPlaybackAttempt=()=>{},getActivePlaybackAttemptId=()=>null,markPlaybackEvent=()=>{},markStartupEvent=()=>{};",
 
   react: `const h=globalThis.__visible;export const useState=v=>h.state(v),useRef=v=>h.ref(v),useMemo=(f,d)=>h.memo(f,d),useCallback=(f,d)=>h.memo(()=>f,d),useReducer=(reduce,v)=>{const [state,set]=h.state(v);return [state,event=>set(now=>reduce(now,event))]},useEffect=(f,d)=>h.effect(f,d);export const useSyncExternalStore=(s,g)=>g();export const memo=f=>f,createContext=v=>({value:v,Provider:'Provider'}),useContext=c=>c.value;export default {createElement:(tag,props,...children)=>({tag,props:{...props,children}})};`,
-  "react-native": `export const View='View',Text='Text',Pressable='Button',Image='Image',FlatList='FlatList',ScrollView='ScrollView',Modal='Modal',KeyboardAvoidingView='KeyboardAvoidingView',TextInput='TextInput',ActivityIndicator='ActivityIndicator';export const Animated={Value:class{},View:'AnimatedView',timing:()=>({start(){}})};export const Platform={get isTV(){return globalThis.__visible.native},OS:'android'};export const StyleSheet={create:s=>s,absoluteFill:{},absoluteFillObject:{}};export const useWindowDimensions=()=>globalThis.__visible;export const Keyboard={addListener:(name,f)=>{globalThis.__visible.listeners[name]=f;return {remove(){delete globalThis.__visible.listeners[name]}}}};export const AppState={addEventListener:()=>({remove(){}})};export const BackHandler={addEventListener:(name,f)=>{globalThis.__visible.hardwareBack=f;return {remove(){}}}};`,
+  "react-native": `export const View='View',Text='Text',Pressable='Button',Image='Image',FlatList='FlatList',ScrollView='ScrollView',Modal='Modal',KeyboardAvoidingView='KeyboardAvoidingView',TextInput='TextInput',ActivityIndicator='ActivityIndicator';export const Animated={Value:class{},View:'AnimatedView',timing:()=>({start(){}})};export const Platform={get isTV(){return globalThis.__visible.native},OS:'android'};export const StyleSheet={create:s=>s,absoluteFill:{},absoluteFillObject:{}};export const useWindowDimensions=()=>globalThis.__visible;export const Keyboard={addListener:(name,f)=>{globalThis.__visible.listeners[name]=f;return {remove(){delete globalThis.__visible.listeners[name]}}}};export const AppState={addEventListener:(_name,fn)=>{const h=globalThis.__visible;h.appListeners??=[];h.appListeners.push(fn);return{remove(){h.appListeners=h.appListeners.filter(v=>v!==fn);}}}};export const BackHandler={addEventListener:(name,f)=>{globalThis.__visible.hardwareBack=f;return {remove(){}}}};`,
   "react-native-safe-area-context": `export const useSafeAreaInsets=()=>({top:0,bottom:20,left:0,right:0});`,
   "@expo/vector-icons": `export const Feather='Icon',MaterialIcons='Icon';`,
   "expo-linear-gradient": `export const LinearGradient='Gradient';`,
@@ -90,7 +92,7 @@ const mocks = {
   "@/hooks/useColors": `export const useColors=()=>({primary:'#67e8d1',foreground:'white',mutedForeground:'#aaa',border:'#333',card:'#111'});`,
   "@/context/PlayerContext": `export const selectProgramsAt=()=>({}),selectChannelEpg=()=>({});export const usePlayer=()=>({provider:null,channels:[],epg:[],isEpgLoading:false,recordWatched(){}});`,
   "@/context/I18nContext": `export const useI18n=()=>({language:'tr',t:k=>k});`,
-  "@/context/MediaLibraryContext": `export const useMediaLibrary=()=>({entries:[],loaded:true,removeProgress(){},getProgress(){},saveProgress:async()=>{}});`,
+  "@/context/MediaLibraryContext": `export const useMediaLibrary=()=>({entries:[],loaded:true,removeProgress(){},getProgress:(...args)=>{globalThis.__visible.progressLookup=args;return globalThis.__visible.restoreEntry;},beginProgressSession:(source,ref)=>{globalThis.__visible.progressSession={providerId:'provider',ref,epoch:1};return globalThis.__visible.progressSession;},saveProgress:async entry=>{globalThis.__visible.persisted??=[];globalThis.__visible.persisted.push(entry);}});`,
   "@/components/tvPreview/TVPreviewFocus": `export const TVPreviewPressable='Button',TVPreviewFocusRegion='Region',TVPreviewControls='Controls';export const useOptionalTVPreviewFocus=()=>null;export const useTVPreviewFocus=()=>({nativeScope:'category-picker',pushFocusScope:()=>{globalThis.__visible.scope=true;return ()=>{globalThis.__visible.scope=false}},registerBackAction:f=>{globalThis.__visible.back=f;return ()=>{globalThis.__visible.back=null}},modalShown:()=>{globalThis.__visible.shown=true}});`,
   "@/components/FocusButton": `export const FocusButton='Button';`,
   "@/components/player/PlayerRemotePressable": `export const PlayerRemotePressable='Button',PlayerRemoteFocusBoundary='Boundary';`,
@@ -687,6 +689,104 @@ try {
       assert.equal(h.hardwareBack(), true);
       await new Promise((resolve) => setImmediate(resolve));
       assert.equal(exits, 1);
+    },
+  );
+  await testAsync(
+    "P4 production Player restores exact episode progress and flushes the owned snapshot on background and exit",
+    async () => {
+      h.native = true;
+      h.persisted = [];
+      h.restoreEntry = { position: 75, duration: 2000 };
+      const ref = {
+          type: "stalker-episode",
+          seriesId: "show",
+          seasonId: "02",
+          episodeId: "009",
+        },
+        context = { seriesId: "show", seasonId: "02", episodeNumber: 9 };
+      const props = {
+        source: "https://example.invalid/opaque-episode",
+        title: "Episode nine",
+        subtitle: "Provider show",
+        mediaKind: "episode",
+        progressRef: ref,
+        episodeContext: context,
+        onFullscreenExit: () => {
+          h.p4Exited = true;
+        },
+      };
+      let tree = render(() => CompatibilityVideoPlayer(props));
+      tree = render(() => CompatibilityVideoPlayer(props));
+      let vlc = nodes(tree).find((n) => n.tag === "VLC");
+      let seek;
+      vlc.props.ref.current = { seek: (value) => (seek = value) };
+      vlc.props.onLoad({ duration: 2000 });
+      assert.deepEqual(h.progressLookup, [props.source, ref]);
+      assert.equal(seek, 75 / 2000);
+      vlc.props.onProgress({ currentTime: 120, duration: 2000 });
+      for (const listener of h.appListeners ?? []) listener("background");
+      await new Promise((r) => setImmediate(r));
+      assert.equal(h.persisted.at(-1).position, 120);
+      assert.equal(h.persisted.at(-1).playbackRef, ref);
+      assert.deepEqual(h.persisted.at(-1).episodeContext, context);
+      assert.equal(h.persisted.at(-1).session.ref, ref);
+      tree = render(() => CompatibilityVideoPlayer(props));
+      nodes(tree)
+        .find((n) => n.tag === "PlayerChrome")
+        .props.onExit();
+      await new Promise((r) => setImmediate(r));
+      assert.equal(h.p4Exited, true);
+      assert.equal(h.persisted.at(-1).position, 120);
+      h.restoreEntry = undefined;
+    },
+  );
+  await testAsync(
+    "P4 real completion event persists duration and live streams never create media progress",
+    async () => {
+      h.native = true;
+      h.persisted = [];
+      const props = {
+        source: "https://example.invalid/movie.mp4",
+        title: "Provider film",
+        mediaKind: "movie",
+        progressRef: {
+          type: "xtream-vod",
+          streamId: "7",
+          containerExtension: "mp4",
+          sourceMode: "canonical",
+        },
+      };
+      let tree = render(() => CompatibilityVideoPlayer(props));
+      tree = render(() => CompatibilityVideoPlayer(props));
+      const vlc = nodes(tree).find((n) => n.tag === "VLC");
+      vlc.props.onLoad({ duration: 2000 });
+      vlc.props.onProgress({ currentTime: 120, duration: 2000 });
+      vlc.props.onEnd();
+      await new Promise((r) => setImmediate(r));
+      assert.equal(h.persisted.at(-1).position, 2000);
+      assert.equal(h.persisted.at(-1).duration, 2000);
+      clean();
+      h.persisted = [];
+      let live = render(() =>
+        CompatibilityVideoPlayer({
+          source: "https://example.invalid/live",
+          title: "Channel",
+          mediaKind: "live",
+        }),
+      );
+      live = render(() =>
+        CompatibilityVideoPlayer({
+          source: "https://example.invalid/live",
+          title: "Channel",
+          mediaKind: "live",
+        }),
+      );
+      const surface = nodes(live).find((n) => n.tag === "VLC");
+      surface.props.onLoad({ duration: 1000 });
+      surface.props.onProgress({ currentTime: 100, duration: 1000 });
+      for (const listener of h.appListeners ?? []) listener("background");
+      await new Promise((r) => setImmediate(r));
+      assert.equal(h.persisted.length, 0);
     },
   );
   console.log(
