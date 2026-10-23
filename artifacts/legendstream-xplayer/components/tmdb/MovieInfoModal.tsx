@@ -9,6 +9,7 @@ import {
   Text,
   View,
   useWindowDimensions,
+  type ViewStyle,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import {
@@ -42,6 +43,7 @@ export function MovieInfoModal({
   service: injectedService,
   closeOnPlay = true,
   playback,
+  focusVisualStyle,
 }: {
   input: EnrichmentInput;
   local: LocalMovieInfo;
@@ -50,6 +52,7 @@ export function MovieInfoModal({
   service?: MovieInfoService;
   closeOnPlay?: boolean;
   playback?: { busy: boolean; error: string | null };
+  focusVisualStyle?: ViewStyle;
 }) {
   const playLocked = useRef(false);
   const alive = useRef(true);
@@ -156,6 +159,7 @@ export function MovieInfoModal({
               }}
             >
               <TVPreviewPressable
+                focusVisualStyle={focusVisualStyle}
                 eliteVisual
                 focusScope="movie-info"
                 focusId="movie-info:back"
@@ -218,6 +222,7 @@ export function MovieInfoModal({
                     <Text style={muted}>Sağlayıcı puanı · {local.rating}</Text>
                   ) : null}
                   <TVPreviewPressable
+                    focusVisualStyle={focusVisualStyle}
                     eliteVisual
                     focusScope="movie-info"
                     focusId="movie-info:play"
@@ -268,6 +273,7 @@ export function MovieInfoModal({
               {infoRow("Yönetmen", info.director)}
               {info.trailerUrl ? (
                 <TVPreviewPressable
+                  focusVisualStyle={focusVisualStyle}
                   eliteVisual
                   focusScope="movie-info"
                   focusId="movie-info:trailer"
@@ -289,6 +295,7 @@ export function MovieInfoModal({
                     certified by TMDB.
                   </Text>
                   <TVPreviewPressable
+                    focusVisualStyle={focusVisualStyle}
                     eliteVisual
                     focusScope="movie-info"
                     focusId="movie-info:attribution"

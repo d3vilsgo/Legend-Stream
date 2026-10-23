@@ -874,3 +874,5 @@ try {
 }
 
 await import("./eliteV4LiveProductionScenarios.mjs");
+
+await import("./eliteV4MoviesProductionScenarios.mjs");

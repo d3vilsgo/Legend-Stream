@@ -38,6 +38,7 @@ try {
         name: "live-host-boundaries",
         setup(build) {
           const mocks = {
+            "./EliteV4MoviesCatalog": `export const EliteV4MoviesCatalog='Movies';`,
             react,
             "live-runtime": runtime,
             "react-native": `import {Runtime} from 'live-runtime';export const View='View',Text='Text',Image='Image',ScrollView='ScrollView',FlatList='FlatList',TextInput='TextInput',ActivityIndicator='ActivityIndicator',Pressable='Pressable';export const Platform={get isTV(){return Runtime.isTV;}};export function useWindowDimensions(){return{width:Runtime.width,height:720,fontScale:1};}export function findNodeHandle(ref){return ref?.handle??null;}export const BackHandler={addEventListener(_,fn){Runtime.nativeBack=fn;return{remove(){Runtime.nativeBack=null;}}}};`,

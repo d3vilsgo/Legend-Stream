@@ -17,6 +17,7 @@ import {
 } from "@/lib/mediaProgress";
 import type { CatalogPlaybackIdentity } from "@/lib/catalogPageRepository";
 import type { LiveChannelIdentity } from "@/lib/playerLiveQueue";
+import { EliteV4MoviesCatalog } from "./EliteV4MoviesCatalog";
 import { EliteV4LiveCatalog } from "./EliteV4LiveCatalog";
 import { EliteV4Home } from "./EliteV4Home";
 import { EliteV4Sidebar } from "./EliteV4Sidebar";
@@ -36,7 +37,9 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
   const { provider, channels, recordWatched } = usePlayer();
   const { snapshot, hasUsableCache, isSyncing } = useCatalogSync();
   const focus = useEliteV4Focus();
-  const [route, setRoute] = useState<"home" | "live">("home");
+  const [route, setRoute] = useState<"home" | "live" | "movies">("home");
+  const routeRef = useRef(route);
+  routeRef.current = route;
   const [playback, setPlayback] = useState<ActivePlayback | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [progress, setProgress] = useState<MediaProgressV2[]>([]);
@@ -101,7 +104,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
   );
   const providerName = provider?.name?.trim() || "İçerik sağlayıcısı";
 
-  const openItem = async (item: EliteHomeItem) => {
+  const openItem = async (item: EliteHomeItem, originFocusId?: string) => {
     const requestId = ++requestIdRef.current;
     if (item.kind === "series") {
       onReturnToV3();
@@ -109,7 +112,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
     }
     if (!provider) return;
     const ownerId = provider.id;
-    returnFocusIdRef.current = focus.focusedId ?? "hero";
+    returnFocusIdRef.current = originFocusId ?? focus.focusedId ?? "hero";
     setPlaybackError(null);
     try {
       if (item.kind === "movie" && item.movie) {
@@ -172,12 +175,19 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
     }
   };
 
-  const navigate = (next: "home" | "live") => {
+  const navigate = (next: "home" | "live" | "movies") => {
     requestIdRef.current += 1;
+    routeRef.current = next;
     setRoute(next);
     setPlaybackError(null);
     requestAnimationFrame(() =>
-      focus.focus(next === "live" ? "v4-live-search" : "hero"),
+      focus.focus(
+        next === "live"
+          ? "v4-live-search"
+          : next === "movies"
+            ? "v4-movies-hero"
+            : "hero",
+      ),
     );
   };
 
@@ -194,7 +204,13 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
       <EliteV4Sidebar
         onReturnToV3={onReturnToV3}
         activeId={`sidebar-${route}`}
-        contentFocusId={route === "live" ? "v4-live-search" : "hero"}
+        contentFocusId={
+          route === "live"
+            ? "v4-live-search"
+            : route === "movies"
+              ? "v4-movies-hero"
+              : "hero"
+        }
         liveAvailable={provider.type === "xtream" || provider.type === "m3u"}
         onNavigate={navigate}
       />
@@ -218,6 +234,41 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
                 channel,
               })
             }
+          />
+        ) : route === "movies" ? (
+          <EliteV4MoviesCatalog
+            active={!playback}
+            onBack={() => navigate("home")}
+            onPlay={(movie, origin) => {
+              if (movie.source.kind === "paged")
+                void openItem(
+                  {
+                    id: `movie-${movie.id}`,
+                    kind: "movie",
+                    title: movie.title,
+                    movie: movie.source.item,
+                  },
+                  origin,
+                );
+            }}
+            onStalkerPlayable={(movie, origin) => {
+              if (
+                provider.type !== "stalker" ||
+                providerIdRef.current !== provider.id ||
+                routeRef.current !== "movies"
+              )
+                return;
+              requestIdRef.current += 1;
+              setPlaybackError(null);
+              returnFocusIdRef.current = origin;
+              setPlayback({
+                url: movie.url,
+                title: movie.title,
+                subtitle: movie.subtitle,
+                kind: "movie",
+                vodIdentity: { providerId: provider.id, itemId: movie.itemId },
+              });
+            }}
           />
         ) : (
           <EliteV4Home
