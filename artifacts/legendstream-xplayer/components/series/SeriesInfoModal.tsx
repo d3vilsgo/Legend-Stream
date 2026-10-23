@@ -27,18 +27,28 @@ import {
   type GoldenSeriesEpisodeModel,
 } from "@/lib/goldenSeriesDetail";
 import { useI18n } from "@/context/I18nContext";
-import { eliteTokens as tokens } from "@/lib/design/eliteTokens";
+import { eliteTokens as legacyTokens } from "@/lib/design/eliteTokens";
 import { useMovieInfoService } from "@/components/tmdb/MovieInfoServiceProvider";
 import {
   beginMovieEnrichment,
   type MovieEnrichment,
 } from "@/lib/tmdb/movieInfoService";
 import { tmdbImageUrl } from "@/lib/tmdb/metadata";
+import { eliteV4Theme } from "@/lib/design/eliteV4Theme";
+import type { EnrichmentInput } from "@/lib/tmdb/contract";
+import { fetchTmdbSeason } from "@/lib/tmdb/directTransport";
+import { enrichV4ProviderEpisodes } from "@/lib/eliteV4Series";
 import { inferredYear } from "@/lib/tmdb/matcher";
 
-/** Shared Golden detail presentation. No provider/metadata requests or playback resolution. */
+const v4Selections = new Map<
+  string,
+  { season: string | null; episode: string | null; offset: number }
+>();
+/** Shared provider-owned hierarchy; optional V4 metadata never resolves playback. */
 export function SeriesInfoModal({
   providerId,
+  variant,
+  metadataInput: suppliedMetadataInput,
   detail,
   loading,
   error,
@@ -48,6 +58,8 @@ export function SeriesInfoModal({
   onRetry,
   onEpisode,
 }: {
+  variant?: "eliteV4";
+  metadataInput?: EnrichmentInput;
   providerId: string;
   detail: GoldenSeriesDetailModel;
   loading: boolean;
@@ -58,28 +70,55 @@ export function SeriesInfoModal({
   onRetry?: () => void;
   onEpisode: (seasonId: string, episodeId: string) => void;
 }) {
+  const v4 = variant === "eliteV4";
+  const tokens = v4
+    ? {
+        ...legacyTokens,
+        color: {
+          ...legacyTokens.color,
+          canvas: eliteV4Theme.color.background,
+          surface: eliteV4Theme.color.surface,
+          text: eliteV4Theme.color.foreground,
+          accent: eliteV4Theme.color.accent,
+          selected: eliteV4Theme.color.accentSoft,
+        },
+      }
+    : legacyTokens;
+  const focusVisualStyle = v4
+    ? {
+        borderWidth: 1,
+        borderColor: eliteV4Theme.color.focus,
+        shadowColor: eliteV4Theme.color.focus,
+        shadowRadius: 8,
+        shadowOpacity: 0.28,
+      }
+    : undefined;
   const { t } = useI18n();
   const metadataService = useMovieInfoService();
   const metadataInput = useMemo(
-    () => ({
-      identity: {
-        providerId,
-        provider: "xtream" as const,
-        kind: "series" as const,
-        catalogId: detail.id,
+    () =>
+      suppliedMetadataInput ?? {
+        identity: {
+          providerId,
+          provider: "xtream" as const,
+          kind: "series" as const,
+          catalogId: detail.id,
+        },
+        catalogRevision: detail.id,
+        title: detail.title,
+        year: detail.year ?? inferredYear(detail.title),
       },
-      catalogRevision: detail.id,
-      title: detail.title,
-      year: detail.year ?? inferredYear(detail.title),
-    }),
-    [providerId, detail.id, detail.title, detail.year],
+    [suppliedMetadataInput, providerId, detail.id, detail.title, detail.year],
   );
   const [metadata, setMetadata] = React.useState<MovieEnrichment | null>(null);
   useEffect(() => {
     setMetadata(null);
     return beginMovieEnrichment(metadataService, metadataInput, setMetadata);
   }, [metadataService, metadataInput]);
-  const tmdb = metadata?.status === "enriched" ? metadata.metadata : undefined;
+  const tmdb =
+    metadata?.status === "enriched" && metadata.metadata.kind === "series"
+      ? metadata.metadata
+      : undefined;
   const insets = useSafeAreaInsets(),
     focus = useTVPreviewFocus();
   const [dialogShown, setDialogShown] = useState(false);
@@ -99,6 +138,24 @@ export function SeriesInfoModal({
   const [selectedEpisodeId, setSelectedEpisodeId] = useState<string | null>(
     null,
   );
+  const actionOwner = useRef({
+    providerId,
+    id: detail.id,
+    season: selectedSeasonId,
+    visible,
+    busy,
+  });
+  actionOwner.current = {
+    providerId,
+    id: detail.id,
+    season: selectedSeasonId,
+    visible,
+    busy,
+  };
+  const episodeLock = useRef(false);
+  useEffect(() => {
+    if (!busy) episodeLock.current = false;
+  }, [busy, visible]);
   const selectedSeason = selectedGoldenSeriesSeason(
     orderedSeasons,
     selectedSeasonId,
@@ -120,6 +177,66 @@ export function SeriesInfoModal({
   }, [visible, selectedSeasonId, orderedSeasons.length]);
   const list = useRef<FlatList<GoldenSeriesEpisodeModel>>(null),
     offset = useRef(0);
+  const remembered = useRef({
+    season: selectedSeasonId,
+    episode: selectedEpisodeId,
+    offset: 0,
+  });
+  remembered.current = {
+    season: selectedSeasonId,
+    episode: selectedEpisodeId,
+    offset: offset.current,
+  };
+  useEffect(
+    () => () => {
+      if (!v4) return;
+      const key = JSON.stringify([providerId, detail.id]);
+      v4Selections.delete(key);
+      v4Selections.set(key, { ...remembered.current, offset: offset.current });
+      if (v4Selections.size > 48)
+        v4Selections.delete(v4Selections.keys().next().value!);
+    },
+    [v4, providerId, detail.id],
+  );
+  const seasonNumber =
+    selectedSeason?.seasonNumber ??
+    (selectedSeason && /^\d+$/.test(selectedSeason.id)
+      ? Number(selectedSeason.id)
+      : undefined);
+  const seasonKey = JSON.stringify([
+    providerId,
+    detail.id,
+    tmdb?.id,
+    seasonNumber,
+  ]);
+  const [seasonMetadata, setSeasonMetadata] = useState<{
+    key: string;
+    value: Awaited<ReturnType<typeof fetchTmdbSeason>>;
+  } | null>(null);
+  useEffect(() => {
+    const token = process.env.EXPO_PUBLIC_TMDB_API_TOKEN;
+    if (!v4 || !visible || !token || !tmdb || seasonNumber === undefined)
+      return;
+    let alive = true;
+    void fetchTmdbSeason(token, tmdb.id, seasonNumber, "tr-TR")
+      .then((value) => {
+        if (alive && value.season === seasonNumber)
+          setSeasonMetadata({ key: seasonKey, value });
+      })
+      .catch(() => {
+        /* Provider episodes remain authoritative. */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [v4, visible, seasonKey]);
+  const visibleEpisodes =
+    v4 && seasonMetadata?.key === seasonKey
+      ? enrichV4ProviderEpisodes(
+          selectedSeason?.episodes ?? [],
+          seasonMetadata.value.episodes,
+        )
+      : (selectedSeason?.episodes ?? []);
   const restoreContext = JSON.stringify([
     providerId,
     detail.id,
@@ -145,6 +262,14 @@ export function SeriesInfoModal({
     setSelectedSeasonId(initialGoldenSeriesSeasonId(orderedSeasons));
     setSelectedEpisodeId(null);
     offset.current = 0;
+    if (v4) {
+      const saved = v4Selections.get(JSON.stringify([providerId, detail.id]));
+      if (saved) {
+        setSelectedSeasonId(saved.season);
+        setSelectedEpisodeId(saved.episode);
+        offset.current = saved.offset;
+      }
+    } else offset.current = 0;
     setImageFailed(false);
   }, [providerId, detail.id]);
   useEffect(() => {
@@ -191,18 +316,28 @@ export function SeriesInfoModal({
       });
   };
   const control = {
-    minHeight: 60,
-    padding: 14,
-    borderWidth: 4,
+    minHeight: v4 ? 48 : 60,
+    padding: v4 ? 12 : 14,
+    borderWidth: v4 ? 1 : 4,
     borderColor: "transparent",
     borderRadius: 12,
     backgroundColor: tokens.color.surface,
   };
-  const text = { color: tokens.color.text, fontSize: Platform.isTV ? 22 : 16 };
+  const text = {
+    color: tokens.color.text,
+    fontSize: Platform.isTV ? (v4 ? 18 : 22) : 16,
+  };
   const header = (
-    <View style={{ gap: 14, paddingBottom: 20 }}>
+    <View
+      style={{
+        gap: v4 ? 8 : 14,
+        paddingBottom: 20,
+        paddingRight: v4 && (detail.image || tmdb?.posterPath) ? 104 : 0,
+      }}
+    >
       <TVPreviewPressable
         eliteVisual
+        focusVisualStyle={focusVisualStyle}
         focusScope="series-info"
         focusId={`series-info:${detail.id}:back`}
         hasTVPreferredFocus={!selectedEpisodeId}
@@ -221,13 +356,27 @@ export function SeriesInfoModal({
               undefined,
           }}
           onError={() => setImageFailed(true)}
-          style={{ width: 120, aspectRatio: 2 / 3, borderRadius: 12 }}
+          style={
+            v4
+              ? {
+                  position: "absolute",
+                  right: 0,
+                  top: 60,
+                  width: 88,
+                  aspectRatio: 2 / 3,
+                  borderRadius: 8,
+                }
+              : { width: 120, aspectRatio: 2 / 3, borderRadius: 12 }
+          }
           resizeMode="contain"
         />
       ) : null}
       <Text
         accessibilityRole="header"
-        style={[text, { fontSize: Platform.isTV ? 34 : 26, fontWeight: "800" }]}
+        style={[
+          text,
+          { fontSize: Platform.isTV ? (v4 ? 28 : 34) : 26, fontWeight: "800" },
+        ]}
       >
         {detail.title || tmdb?.title}
       </Text>
@@ -237,7 +386,22 @@ export function SeriesInfoModal({
         </Text>
       ) : null}
       {detail.description || tmdb?.overview ? (
-        <Text style={text}>{detail.description || tmdb?.overview}</Text>
+        <Text numberOfLines={v4 ? 3 : undefined} style={text}>
+          {detail.description || tmdb?.overview}
+        </Text>
+      ) : null}
+      {v4 &&
+      (detail.year || (tmdb?.voteAverage === undefined && detail.rating)) ? (
+        <Text style={text}>
+          {[
+            detail.year,
+            tmdb?.voteAverage === undefined && detail.rating
+              ? `Sağlayıcı puanı · ${detail.rating}`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </Text>
       ) : null}
       {tmdb?.voteAverage !== undefined ? (
         <Text style={text}>
@@ -245,7 +409,7 @@ export function SeriesInfoModal({
           {tmdb.year ? ` · ${tmdb.year}` : ""}
         </Text>
       ) : null}
-      {tmdb?.cast.length ? (
+      {!v4 && tmdb?.cast.length ? (
         <Text style={text}>
           Oyuncular ·{" "}
           {tmdb.cast
@@ -254,12 +418,12 @@ export function SeriesInfoModal({
             .join(", ")}
         </Text>
       ) : null}
-      {tmdb?.directors.length ? (
+      {!v4 && tmdb?.directors.length ? (
         <Text style={text}>
           Yapım ekibi · {tmdb.directors.map((p) => p.name).join(", ")}
         </Text>
       ) : null}
-      {tmdb?.seasons.length ? (
+      {!v4 && tmdb?.seasons.length ? (
         <Text style={text}>
           TMDB sezonları ·{" "}
           {tmdb.seasons
@@ -278,6 +442,7 @@ export function SeriesInfoModal({
           {onRetry ? (
             <TVPreviewPressable
               eliteVisual
+              focusVisualStyle={focusVisualStyle}
               focusScope="series-info"
               focusId={`series-info:${detail.id}:retry`}
               disabled={busy || loading}
@@ -296,7 +461,13 @@ export function SeriesInfoModal({
         />
       ) : null}
       {!loading && !orderedSeasons.length ? (
-        <Text style={text}>{t("noEpisodes")}</Text>
+        <Text style={text}>
+          {v4 && suppliedMetadataInput?.identity.provider === "m3u"
+            ? "Playlist bu dizi için kullanılabilir sezon/bölüm hiyerarşisi sunmuyor."
+            : v4 && suppliedMetadataInput?.identity.provider === "stalker"
+              ? "Portal kullanılabilir sezon/bölüm hiyerarşisi sunmuyor."
+              : t("noEpisodes")}
+        </Text>
       ) : null}
       {!loading && orderedSeasons.length > 0 && !selectedSeason ? (
         <Text style={text}>{t("selectSeason")}</Text>
@@ -346,17 +517,35 @@ export function SeriesInfoModal({
               maxToRenderPerBatch={8}
               windowSize={5}
               showsHorizontalScrollIndicator={false}
-              renderItem={({ item: season }) => (
+              renderItem={({ item: season, index }) => (
                 <TVPreviewPressable
                   eliteVisual
+                  focusVisualStyle={focusVisualStyle}
                   focusScope="series-info"
                   focusId={`series-info:${detail.id}:season:${season.id}`}
+                  onFocus={
+                    v4
+                      ? () =>
+                          seasonStrip.current?.scrollToIndex({
+                            index,
+                            viewPosition: 0.5,
+                            animated: false,
+                          })
+                      : undefined
+                  }
                   accessibilityRole="button"
                   accessibilityState={{
                     selected: season.id === selectedSeasonId,
                   }}
                   onPress={() => {
-                    if (busy) return;
+                    if (
+                      busy ||
+                      (v4 &&
+                        (!actionOwner.current.visible || episodeLock.current))
+                    )
+                      return;
+                    actionOwner.current.season = season.id;
+                    episodeLock.current = false;
                     restoreRevision.current += 1;
                     restorePending.current = true;
                     offset.current = 0;
@@ -407,7 +596,20 @@ export function SeriesInfoModal({
               }}
               scrollEventThrottle={32}
               onContentSizeChange={restore}
-              renderItem={({ item: episode }) => {
+              onScrollToIndexFailed={
+                v4
+                  ? (info) =>
+                      list.current?.scrollToOffset({
+                        offset: info.averageItemLength * info.index,
+                        animated: false,
+                      })
+                  : undefined
+              }
+              renderItem={({ item: providerEpisode, index }) => {
+                const episode = v4
+                  ? (visibleEpisodes.find((e) => e.id === providerEpisode.id) ??
+                    providerEpisode)
+                  : providerEpisode;
                 const progress = episode.progressRef
                   ? entries.find(
                       (entry) =>
@@ -421,8 +623,19 @@ export function SeriesInfoModal({
                 return (
                   <TVPreviewPressable
                     eliteVisual
+                    focusVisualStyle={focusVisualStyle}
                     focusScope="series-info"
                     focusId={`series-info:${detail.id}:episode:${selectedSeason!.id}:${episode.id}`}
+                    onFocus={
+                      v4
+                        ? () =>
+                            list.current?.scrollToIndex({
+                              index,
+                              viewPosition: 0.5,
+                              animated: false,
+                            })
+                        : undefined
+                    }
                     hasTVPreferredFocus={selectedEpisodeId === episode.id}
                     accessibilityRole="button"
                     accessibilityState={{
@@ -430,7 +643,17 @@ export function SeriesInfoModal({
                       disabled: busy,
                     }}
                     onPress={() => {
-                      if (busy) return;
+                      if (
+                        busy ||
+                        (v4 &&
+                          (episodeLock.current ||
+                            !actionOwner.current.visible ||
+                            actionOwner.current.id !== detail.id ||
+                            actionOwner.current.providerId !== providerId ||
+                            actionOwner.current.season !== selectedSeason!.id))
+                      )
+                        return;
+                      if (v4) episodeLock.current = true;
                       setSelectedEpisodeId(episode.id);
                       onEpisode(selectedSeason!.id, episode.id);
                     }}
@@ -445,16 +668,41 @@ export function SeriesInfoModal({
                       },
                     ]}
                   >
-                    <Text style={text}>{episode.title}</Text>
+                    {v4 && episode.image ? (
+                      <Image
+                        source={{ uri: episode.image }}
+                        style={{
+                          width: 112,
+                          aspectRatio: 16 / 9,
+                          borderRadius: 6,
+                          marginBottom: 8,
+                        }}
+                        resizeMode="cover"
+                      />
+                    ) : null}
+                    <Text numberOfLines={v4 ? 2 : undefined} style={text}>
+                      {v4 && episode.episodeNumber !== undefined
+                        ? `${episode.episodeNumber}. `
+                        : ""}
+                      {episode.title}
+                    </Text>
                     {episode.description ? (
-                      <Text style={text}>{episode.description}</Text>
+                      <Text numberOfLines={v4 ? 2 : undefined} style={text}>
+                        {episode.description}
+                      </Text>
                     ) : null}
                     {episode.duration ? (
                       <Text style={text}>{episode.duration}</Text>
                     ) : null}
                     {progress ? (
                       <Text style={text}>
-                        İzlenen: {Math.floor(progress.position / 60)} dk
+                        {v4 &&
+                        progress.position > 0 &&
+                        (!progress.duration ||
+                          progress.position < progress.duration * 0.95)
+                          ? "Devam et · "
+                          : "İzlenen: "}
+                        {Math.floor(progress.position / 60)} dk
                         {progress.duration > 0
                           ? ` / ${Math.floor(progress.duration / 60)} dk`
                           : ""}

@@ -14,9 +14,11 @@ import {
   mediaProgressForProvider,
   parseMediaProgressV2Payload,
   type MediaProgressV2,
+  type MediaPlaybackRef,
 } from "@/lib/mediaProgress";
 import type { CatalogPlaybackIdentity } from "@/lib/catalogPageRepository";
 import type { LiveChannelIdentity } from "@/lib/playerLiveQueue";
+import { EliteV4SeriesCatalog } from "./EliteV4SeriesCatalog";
 import { EliteV4MoviesCatalog } from "./EliteV4MoviesCatalog";
 import { EliteV4LiveCatalog } from "./EliteV4LiveCatalog";
 import { EliteV4Home } from "./EliteV4Home";
@@ -28,7 +30,8 @@ type ActivePlayback = {
   url: string;
   title: string;
   subtitle?: string;
-  kind: "live" | "movie";
+  kind: "live" | "movie" | "episode";
+  progressRef?: MediaPlaybackRef;
   vodIdentity?: CatalogPlaybackIdentity;
   liveIdentity?: LiveChannelIdentity;
 };
@@ -37,7 +40,9 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
   const { provider, channels, recordWatched } = usePlayer();
   const { snapshot, hasUsableCache, isSyncing } = useCatalogSync();
   const focus = useEliteV4Focus();
-  const [route, setRoute] = useState<"home" | "live" | "movies">("home");
+  const [route, setRoute] = useState<"home" | "live" | "movies" | "series">(
+    "home",
+  );
   const routeRef = useRef(route);
   routeRef.current = route;
   const [playback, setPlayback] = useState<ActivePlayback | null>(null);
@@ -107,7 +112,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
   const openItem = async (item: EliteHomeItem, originFocusId?: string) => {
     const requestId = ++requestIdRef.current;
     if (item.kind === "series") {
-      onReturnToV3();
+      navigate("series");
       return;
     }
     if (!provider) return;
@@ -175,18 +180,20 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
     }
   };
 
-  const navigate = (next: "home" | "live" | "movies") => {
+  const navigate = (next: "home" | "live" | "movies" | "series") => {
     requestIdRef.current += 1;
     routeRef.current = next;
     setRoute(next);
     setPlaybackError(null);
     requestAnimationFrame(() =>
       focus.focus(
-        next === "live"
-          ? "v4-live-search"
-          : next === "movies"
-            ? "v4-movies-hero"
-            : "hero",
+        next === "series"
+          ? "v4-series-hero"
+          : next === "live"
+            ? "v4-live-search"
+            : next === "movies"
+              ? "v4-movies-hero"
+              : "hero",
       ),
     );
   };
@@ -205,11 +212,13 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
         onReturnToV3={onReturnToV3}
         activeId={`sidebar-${route}`}
         contentFocusId={
-          route === "live"
-            ? "v4-live-search"
-            : route === "movies"
-              ? "v4-movies-hero"
-              : "hero"
+          route === "series"
+            ? "v4-series-hero"
+            : route === "live"
+              ? "v4-live-search"
+              : route === "movies"
+                ? "v4-movies-hero"
+                : "hero"
         }
         liveAvailable={provider.type === "xtream" || provider.type === "m3u"}
         onNavigate={navigate}
@@ -221,7 +230,30 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
           backgroundColor: theme.color.background,
         }}
       >
-        {route === "live" ? (
+        {route === "series" ? (
+          <EliteV4SeriesCatalog
+            key={provider.id}
+            active={!playback}
+            onBack={() => navigate("home")}
+            onPlayable={(value) => {
+              if (
+                value.providerId !== providerIdRef.current ||
+                routeRef.current !== "series"
+              )
+                return;
+              requestIdRef.current += 1;
+              setPlaybackError(null);
+              returnFocusIdRef.current = focus.focusedId ?? "v4-series-hero";
+              setPlayback({
+                url: value.url,
+                title: value.title,
+                subtitle: value.subtitle,
+                kind: "episode",
+                progressRef: value.progressRef,
+              });
+            }}
+          />
+        ) : route === "live" ? (
           <EliteV4LiveCatalog
             key={provider.id}
             active={!playback}
@@ -321,6 +353,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
             title={playback.title}
             subtitle={playback.subtitle}
             mediaKind={playback.kind}
+            progressRef={playback.progressRef}
             vodIdentity={playback.vodIdentity}
             liveIdentity={playback.liveIdentity}
             autoFullscreen
@@ -329,7 +362,8 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
               requestIdRef.current += 1;
               setPlayback(null);
               requestAnimationFrame(() => {
-                focus.focus(returnFocusIdRef.current);
+                if (playback.kind !== "episode")
+                  focus.focus(returnFocusIdRef.current);
               });
             }}
           />

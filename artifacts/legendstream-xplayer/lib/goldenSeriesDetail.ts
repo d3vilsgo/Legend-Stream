@@ -13,6 +13,7 @@ export type GoldenSeriesEpisodeModel = {
   episodeNumber?: number;
   description?: string;
   duration?: string;
+  image?: string;
   progressRef?: MediaPlaybackRef;
 };
 export type GoldenSeriesSeasonModel = {
@@ -28,6 +29,7 @@ export type GoldenSeriesDetailModel = {
   description?: string;
   genre?: string;
   year?: number;
+  rating?: string;
   seasons: GoldenSeriesSeasonModel[];
 };
 

@@ -33,6 +33,7 @@ import {
   beginMovieEnrichment,
   type MovieEnrichment,
 } from "@/lib/tmdb/movieInfoService";
+import { tmdbImageUrl } from "@/lib/tmdb/metadata";
 import { movieInfoPresentation } from "@/lib/tmdb/movieInfoModel";
 import { matchCacheKey } from "@/lib/tmdb/cache";
 import { hasPlayerBackOwner } from "@/lib/playerRemoteOwnership";
@@ -44,6 +45,7 @@ import {
   v4MovieFocusId,
   v4MoviesLayout,
   type V4Movie,
+  type V4CatalogCard,
 } from "@/lib/eliteV4Movies";
 import { EliteV4FocusButton, useEliteV4Focus } from "./EliteV4FocusSurface";
 import { eliteV4Theme as theme } from "@/lib/design/eliteV4Theme";
@@ -80,8 +82,10 @@ export function EliteV4MoviesHero({
   onPlay,
   onFocused,
   disabled,
+  series = false,
 }: {
-  movie: V4Movie | null;
+  movie: V4CatalogCard | null;
+  series?: boolean;
   height: number;
   nextFocusId: string;
   onInfo: () => void;
@@ -89,6 +93,8 @@ export function EliteV4MoviesHero({
   onFocused: () => void;
   disabled: boolean;
 }) {
+  const prefix = series ? "v4-series-" : "v4-movies-";
+  const sidebar = series ? "sidebar-series" : "sidebar-movies";
   const service = useMovieInfoService();
   const [result, setResult] = useState<{
     key: string;
@@ -105,8 +111,25 @@ export function EliteV4MoviesHero({
     result?.key === key && result.value.status === "enriched"
       ? result.value.metadata
       : undefined;
+  const seriesMetadata =
+    series && metadata?.kind === "series" ? metadata : undefined;
   const info = movie
-    ? movieInfoPresentation(movie.local, movie.input, metadata)
+    ? series
+      ? {
+          title: movie.title,
+          poster:
+            movie.poster || tmdbImageUrl(seriesMetadata?.posterPath, "w342"),
+          backdrop:
+            tmdbImageUrl(seriesMetadata?.backdropPath, "w1280") ||
+            movie.backdrop,
+          overview: movie.local.overview || seriesMetadata?.overview,
+          genre:
+            movie.local.genre ||
+            seriesMetadata?.genres.map((g) => g.name).join(" · "),
+          year: movie.input.year || seriesMetadata?.year,
+          rating: seriesMetadata?.voteAverage,
+        }
+      : movieInfoPresentation(movie.local, movie.input, metadata)
     : null;
   const background = normalizeImageUrl(info?.backdrop || info?.poster);
   const compact = height < 230;
@@ -148,7 +171,7 @@ export function EliteV4MoviesHero({
             marginBottom: 6,
           }}
         >
-          FİLMLER
+          {series ? "DİZİLER" : "FİLMLER"}
         </Text>
         <Text
           numberOfLines={compact ? 1 : 2}
@@ -160,7 +183,7 @@ export function EliteV4MoviesHero({
             maxWidth: 780,
           }}
         >
-          {info?.title || "Film kataloğunuz"}
+          {info?.title || (series ? "Dizi kataloğunuz" : "Film kataloğunuz")}
         </Text>
         <Text
           numberOfLines={compact ? 1 : 2}
@@ -176,8 +199,18 @@ export function EliteV4MoviesHero({
             (movie
               ? [info?.year, info?.genre].filter(Boolean).join(" · ") ||
                 "Sağlayıcı kataloğunuzdan"
-              : "Filmler yüklendiğinde burada gösterilir.")}
+              : series
+                ? "Diziler yüklendiğinde burada gösterilir."
+                : "Filmler yüklendiğinde burada gösterilir.")}
         </Text>
+        {series && (info?.year || info?.genre) ? (
+          <Text
+            numberOfLines={1}
+            style={{ color: theme.color.muted, fontSize: 12, marginTop: 4 }}
+          >
+            {[info.year, info.genre].filter(Boolean).join(" · ")}
+          </Text>
+        ) : null}
         {info?.rating !== undefined ? (
           <Text
             style={{ color: theme.color.accent, fontSize: 12, marginTop: 6 }}
@@ -194,40 +227,48 @@ export function EliteV4MoviesHero({
           }}
         >
           <EliteV4FocusButton
-            focusId="v4-movies-hero"
+            focusId={`${prefix}hero`}
             region="content"
             initial
             disabled={disabled}
             onFocused={onFocused}
             neighbors={{
-              left: "sidebar-movies",
-              right: movie ? "v4-movies-play" : undefined,
-              up: "v4-movies-search",
+              left: sidebar,
+              right: movie ? `${prefix}play` : undefined,
+              up: `${prefix}search`,
               down: nextFocusId,
             }}
             onPress={onInfo}
             accessibilityLabel={
-              movie ? `${movie.title}, film bilgileri` : "Film katalog alanı"
+              movie
+                ? `${movie.title}, ${series ? "dizi" : "film"} bilgileri`
+                : series
+                  ? "Dizi katalog alanı"
+                  : "Film katalog alanı"
             }
             style={actionStyle}
           >
             <Text style={{ color: theme.color.foreground, fontSize: 13 }}>
-              {movie ? "Film bilgileri" : "Katalog"}
+              {movie
+                ? series
+                  ? "Sezonlar ve bölümler"
+                  : "Film bilgileri"
+                : "Katalog"}
             </Text>
           </EliteV4FocusButton>
           {movie ? (
             <EliteV4FocusButton
-              focusId="v4-movies-play"
+              focusId={`${prefix}play`}
               region="content"
               disabled={disabled}
               onFocused={onFocused}
               neighbors={{
-                left: "v4-movies-hero",
-                up: "v4-movies-search",
+                left: `${prefix}hero`,
+                up: `${prefix}search`,
                 down: nextFocusId,
               }}
               onPress={onPlay}
-              accessibilityLabel={`${movie.title}, filmi izle`}
+              accessibilityLabel={`${movie.title}, ${series ? "bölümleri aç" : "filmi izle"}`}
               style={{ ...actionStyle, backgroundColor: theme.color.accent }}
             >
               <Text
@@ -237,7 +278,7 @@ export function EliteV4MoviesHero({
                   fontWeight: "600",
                 }}
               >
-                Filmi izle
+                {series ? "Bölümleri aç" : "Filmi izle"}
               </Text>
             </EliteV4FocusButton>
           ) : null}
@@ -247,8 +288,10 @@ export function EliteV4MoviesHero({
   );
 }
 
-type MoviesViewProps = {
-  items: readonly V4Movie[];
+type MoviesViewProps<T extends V4CatalogCard> = {
+  series?: boolean;
+  renderInfo?: (item: T, origin: string, close: () => void) => React.ReactNode;
+  items: readonly T[];
   categories: readonly Category[];
   category: string | null;
   onCategory: (id: string) => void;
@@ -266,12 +309,18 @@ type MoviesViewProps = {
   scope: string;
   onMore: () => void;
   onReload: () => void;
-  onPlay: (movie: V4Movie, origin: string) => void;
+  onPlay: (movie: T, origin: string) => void;
   onBack: () => void;
   active?: boolean;
   busy?: boolean;
 };
-export function EliteV4MoviesView(props: MoviesViewProps) {
+export function EliteV4MoviesView<T extends V4CatalogCard>(
+  props: MoviesViewProps<T>,
+) {
+  const series = props.series ?? false;
+  const prefix = series ? "v4-series-" : "v4-movies-";
+  const sidebar = series ? "sidebar-series" : "sidebar-movies";
+  const cardId = (id: string) => `${prefix}card:${id}`;
   const {
     items,
     categories,
@@ -291,7 +340,16 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
     scope: string;
     origin: string;
   } | null>(null);
-  const list = useRef<FlatList<readonly V4Movie[]>>(null);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const selectionOwner = useRef(selection);
+  selectionOwner.current = selection;
+  const list = useRef<FlatList<readonly T[]>>(null);
   const input = useRef<TextInput>(null);
   const categoryList = useRef<ScrollView>(null);
   const offsets = useRef<Record<string, number>>({});
@@ -307,44 +365,63 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
     Platform.isTV,
   );
   const rows = useMemo(() => {
-    const next: V4Movie[][] = [];
+    const next: T[][] = [];
     for (let i = 0; i < items.length; i += layout.columns)
       next.push(items.slice(i, i + layout.columns));
     return next;
   }, [items, layout.columns]);
-  const first = items[0] ? v4MovieFocusId(items[0].id) : "v4-movies-status";
+  const first = items[0] ? cardId(items[0].id) : `${prefix}status`;
   const currentInfo =
     selection?.scope === scope
       ? items.find((item) => item.id === selection.id)
       : null;
   const backBlocked = !active || !!currentInfo;
   const blocked = backBlocked || !!props.busy;
-  const valid = (movie: V4Movie) =>
+  const valid = (movie: T) =>
     latest.current.active !== false && latest.current.scope === scope
       ? latest.current.items.find((item) => item.id === movie.id)
       : undefined;
-  const play = (movie: V4Movie, origin: string) => {
+  const play = (movie: T, origin: string) => {
     const current = valid(movie);
-    if (current && !latest.current.busy) props.onPlay(current, origin);
+    if (current && !latest.current.busy && (!series || mounted.current))
+      props.onPlay(current, origin);
   };
-  const info = (movie: V4Movie, origin: string) => {
-    if (!latest.current.busy && valid(movie))
-      setSelection({ id: movie.id, scope, origin });
+  const info = (movie: T, origin: string) => {
+    if (!latest.current.busy && valid(movie) && (!series || mounted.current)) {
+      const next = { id: movie.id, scope, origin };
+      selectionOwner.current = next;
+      setSelection(next);
+    }
   };
   const closeInfo = () => {
+    if (
+      series &&
+      (selectionOwner.current !== selection || latest.current.scope !== scope)
+    )
+      return;
+    selectionOwner.current = null;
     setSelection(null);
     if (
       selection &&
       latest.current.scope === selection.scope &&
       latest.current.active !== false
     )
-      requestAnimationFrame(() => focus.focus(selection.origin));
+      requestAnimationFrame(() => {
+        if (
+          !series ||
+          (mounted.current &&
+            latest.current.scope === selection.scope &&
+            latest.current.active !== false &&
+            !selectionOwner.current)
+        )
+          focus.focus(selection.origin);
+      });
   };
   const back = () => {
     if (searchOpen) {
       input.current?.blur();
       setSearchOpen(false);
-      focus.focus("v4-movies-search");
+      focus.focus(`${prefix}search`);
     } else props.onBack();
   };
   useEffect(() => {
@@ -380,7 +457,7 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
     return () => sub.remove();
   }, [backBlocked, searchOpen, props.onBack]);
   useEffect(() => {
-    if (!active || !focus.focusedId?.startsWith("v4-movies-card:")) return;
+    if (!active || !focus.focusedId?.startsWith(`${prefix}card:`)) return;
     const id = focus.focusedId;
     requestAnimationFrame(() => focus.focus(id));
   }, [layout.columns]);
@@ -400,7 +477,7 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
       onFocused={() =>
         list.current?.scrollToOffset({ offset: 0, animated: true })
       }
-      neighbors={{ left, right, down: "v4-movies-hero" }}
+      neighbors={{ left, right, down: `${prefix}hero` }}
       style={actionStyle}
     >
       <Text style={{ color: theme.color.foreground, fontSize: 13 }}>
@@ -435,17 +512,18 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
             fontWeight: "600",
           }}
         >
-          Filmler{props.count !== null ? ` · ${props.count}` : ""}
+          {series ? "Diziler" : "Filmler"}
+          {props.count !== null ? ` · ${props.count}` : ""}
         </Text>
         {action(
-          "v4-movies-search",
-          searchOpen ? "Aramayı kapat" : "Film ara",
+          `${prefix}search`,
+          searchOpen ? "Aramayı kapat" : series ? "Dizi ara" : "Film ara",
           () => setSearchOpen((value) => !value),
-          "sidebar-movies",
-          "v4-movies-sort",
+          sidebar,
+          `${prefix}sort`,
         )}
         {action(
-          "v4-movies-sort",
+          `${prefix}sort`,
           availableSorts.find((item) => item.id === sort)?.name ||
             "Sağlayıcı sırası",
           () =>
@@ -455,16 +533,16 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
                   availableSorts.length
               ].id,
             ),
-          "v4-movies-search",
-          "v4-movies-back",
+          `${prefix}search`,
+          `${prefix}back`,
         )}
-        {action("v4-movies-back", "Ana Sayfa", back, "v4-movies-sort")}
+        {action(`${prefix}back`, "Ana Sayfa", back, `${prefix}sort`)}
       </View>
       {searchOpen ? (
         <TextInput
           ref={input}
-          accessibilityLabel="V4 film arama"
-          placeholder="Film adı…"
+          accessibilityLabel={series ? "V4 dizi arama" : "V4 film arama"}
+          placeholder={series ? "Dizi adı…" : "Film adı…"}
           placeholderTextColor={theme.color.quiet}
           value={search}
           onChangeText={props.onSearch}
@@ -472,7 +550,7 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
           onSubmitEditing={() => {
             input.current?.blur();
             setSearchOpen(false);
-            focus.focus("v4-movies-search");
+            focus.focus(`${prefix}search`);
           }}
           style={{
             minHeight: 44,
@@ -487,16 +565,20 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
         />
       ) : null}
       <EliteV4MoviesHero
+        series={series}
         movie={items[0] ?? null}
         height={layout.heroHeight}
         nextFocusId={
-          categories[0] ? `v4-movies-category:${categories[0].id}` : first
+          categories[0] ? `${prefix}category:${categories[0].id}` : first
         }
         onInfo={() => {
-          if (items[0]) info(items[0], "v4-movies-hero");
+          if (items[0]) info(items[0], `${prefix}hero`);
         }}
         onPlay={() => {
-          if (items[0]) play(items[0], "v4-movies-play");
+          if (items[0]) {
+            if (series) info(items[0], `${prefix}play`);
+            else play(items[0], `${prefix}play`);
+          }
         }}
         onFocused={() =>
           list.current?.scrollToOffset({ offset: 0, animated: true })
@@ -513,7 +595,7 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
         {categories.map((item, index) => (
           <EliteV4FocusButton
             key={item.id}
-            focusId={`v4-movies-category:${item.id}`}
+            focusId={`${prefix}category:${item.id}`}
             region="content"
             disabled={blocked}
             selected={item.id === category}
@@ -530,12 +612,12 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
             onPress={() => props.onCategory(item.id)}
             neighbors={{
               left: index
-                ? `v4-movies-category:${categories[index - 1].id}`
-                : "sidebar-movies",
+                ? `${prefix}category:${categories[index - 1].id}`
+                : sidebar,
               right: categories[index + 1]
-                ? `v4-movies-category:${categories[index + 1].id}`
+                ? `${prefix}category:${categories[index + 1].id}`
                 : undefined,
-              up: "v4-movies-hero",
+              up: `${prefix}hero`,
               down: first,
             }}
             style={{
@@ -564,7 +646,7 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
         <Text
           style={{ color: theme.color.muted, fontSize: 12, marginBottom: 10 }}
         >
-          Sıralama yüklenmiş Stalker filmleri üzerinde uygulanır.
+          Sıralama yalnız yüklenmiş Stalker kayıtları üzerinde uygulanır.
         </Text>
       ) : null}
       {props.error ? (
@@ -572,7 +654,9 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
           accessibilityRole="alert"
           style={{ color: theme.color.danger, marginBottom: 10 }}
         >
-          Film kataloğu güncellenemedi. Yeniden deneyebilirsiniz.
+          {series
+            ? "Dizi kataloğu güncellenemedi. Yeniden deneyebilirsiniz."
+            : "Film kataloğu güncellenemedi. Yeniden deneyebilirsiniz."}
         </Text>
       ) : null}
     </View>
@@ -625,10 +709,10 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
               return (
                 <EliteV4FocusButton
                   key={movie.id}
-                  focusId={v4MovieFocusId(movie.id)}
+                  focusId={cardId(movie.id)}
                   region="content"
                   disabled={blocked}
-                  accessibilityLabel={`${movie.title}, film bilgileri`}
+                  accessibilityLabel={`${movie.title}, ${series ? "dizi" : "film"} bilgileri`}
                   onFocused={() =>
                     list.current?.scrollToOffset({
                       offset:
@@ -640,16 +724,14 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
                       animated: true,
                     })
                   }
-                  onPress={() => info(movie, v4MovieFocusId(movie.id))}
+                  onPress={() => info(movie, cardId(movie.id))}
                   neighbors={{
-                    left: column
-                      ? v4MovieFocusId(row[column - 1].id)
-                      : "sidebar-movies",
+                    left: column ? cardId(row[column - 1].id) : sidebar,
                     right: row[column + 1]
-                      ? v4MovieFocusId(row[column + 1].id)
+                      ? cardId(row[column + 1].id)
                       : undefined,
-                    up: up ? v4MovieFocusId(up.id) : "v4-movies-hero",
-                    down: down ? v4MovieFocusId(down.id) : "v4-movies-status",
+                    up: up ? cardId(up.id) : `${prefix}hero`,
+                    down: down ? cardId(down.id) : `${prefix}status`,
                   }}
                   style={{
                     width: layout.cardWidth,
@@ -707,10 +789,16 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
             ) : (
               <Text style={{ color: theme.color.muted }}>
                 {props.error
-                  ? "Filmler yüklenemedi."
+                  ? series
+                    ? "Diziler yüklenemedi."
+                    : "Filmler yüklenemedi."
                   : search.trim()
-                    ? "Aramanıza uygun film bulunamadı."
-                    : "Bu kategoride film bulunmuyor."}
+                    ? series
+                      ? "Aramanıza uygun dizi bulunamadı."
+                      : "Aramanıza uygun film bulunamadı."
+                    : series
+                      ? "Bu kategoride dizi bulunmuyor."
+                      : "Bu kategoride film bulunmuyor."}
               </Text>
             )}
           </View>
@@ -721,29 +809,31 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
               <ActivityIndicator color={theme.color.accent} />
             ) : null}
             <EliteV4FocusButton
-              focusId="v4-movies-status"
+              focusId={`${prefix}status`}
               region="content"
               disabled={blocked || props.loading || props.loadingMore}
               accessibilityLabel={
                 props.error
                   ? "Yeniden dene"
                   : props.hasMore
-                    ? "Daha fazla film"
+                    ? series
+                      ? "Daha fazla dizi"
+                      : "Daha fazla film"
                     : "Listenin başına dön"
               }
               neighbors={{
-                left: "sidebar-movies",
+                left: sidebar,
                 up: items.length
-                  ? v4MovieFocusId(items[items.length - 1].id)
-                  : "v4-movies-hero",
-                down: "v4-movies-hero",
+                  ? cardId(items[items.length - 1].id)
+                  : `${prefix}hero`,
+                down: `${prefix}hero`,
               }}
               onPress={() => {
                 if (props.error) props.onReload();
                 else if (props.hasMore) props.onMore();
                 else {
                   list.current?.scrollToOffset({ offset: 0, animated: true });
-                  focus.focus("v4-movies-hero");
+                  focus.focus(`${prefix}hero`);
                 }
               }}
               style={actionStyle}
@@ -752,7 +842,9 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
                 {props.error
                   ? "Yeniden dene"
                   : props.hasMore
-                    ? "Daha fazla film"
+                    ? series
+                      ? "Daha fazla dizi"
+                      : "Daha fazla film"
                     : "Listenin başına dön"}
               </Text>
             </EliteV4FocusButton>
@@ -760,28 +852,32 @@ export function EliteV4MoviesView(props: MoviesViewProps) {
         }
       />
       {currentInfo && selection ? (
-        <MovieInfoModal
-          key={`${scope}:${currentInfo.id}`}
-          input={currentInfo.input}
-          local={currentInfo.local}
-          focusVisualStyle={movieFocusStyle}
-          onClose={closeInfo}
-          closeOnPlay={false}
-          onPlay={() => {
-            if (
-              latest.current.scope !== selection.scope ||
-              latest.current.active === false
-            )
-              return;
-            const current = latest.current.items.find(
-              (item) => item.id === selection.id,
-            );
-            if (current) {
-              setSelection(null);
-              play(current, selection.origin);
-            }
-          }}
-        />
+        props.renderInfo ? (
+          props.renderInfo(currentInfo, selection.origin, closeInfo)
+        ) : (
+          <MovieInfoModal
+            key={`${scope}:${currentInfo.id}`}
+            input={currentInfo.input}
+            local={currentInfo.local}
+            focusVisualStyle={movieFocusStyle}
+            onClose={closeInfo}
+            closeOnPlay={false}
+            onPlay={() => {
+              if (
+                latest.current.scope !== selection.scope ||
+                latest.current.active === false
+              )
+                return;
+              const current = latest.current.items.find(
+                (item) => item.id === selection.id,
+              );
+              if (current) {
+                setSelection(null);
+                play(current, selection.origin);
+              }
+            }}
+          />
+        )
       ) : null}
     </View>
   );
@@ -952,10 +1048,12 @@ function StalkerMovies({
 export function EliteV4MoviesUnavailable({
   onBack,
   active = true,
+  series = false,
   message = "Bu sağlayıcı için film kataloğu kullanılamıyor. Stalker için portal adresi ve MAC bilgisi gerekir.",
 }: {
   onBack: () => void;
   active?: boolean;
+  series?: boolean;
   message?: string;
 }) {
   const preview = useOptionalTVPreviewFocus();
@@ -988,11 +1086,11 @@ export function EliteV4MoviesUnavailable({
         {message}
       </Text>
       <EliteV4FocusButton
-        focusId="v4-movies-hero"
+        focusId={series ? "v4-series-hero" : "v4-movies-hero"}
         region="content"
         disabled={!active}
         onPress={onBack}
-        neighbors={{ left: "sidebar-movies" }}
+        neighbors={{ left: series ? "sidebar-series" : "sidebar-movies" }}
         style={actionStyle}
         accessibilityLabel="Ana Sayfa"
       >

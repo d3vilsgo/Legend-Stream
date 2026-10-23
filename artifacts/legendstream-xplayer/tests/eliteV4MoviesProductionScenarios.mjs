@@ -39,6 +39,7 @@ try {
         name: "live-host-boundaries",
         setup(build) {
           const mocks = {
+            "./EliteV4SeriesCatalog": `export const EliteV4SeriesCatalog='Series';`,
             "./EliteV4LiveCatalog": `export const EliteV4LiveCatalog='Live';`,
             "expo-linear-gradient": `export const LinearGradient='Gradient';`,
             "@/components/tmdb/MovieInfoModal": `export const MovieInfoModal='MovieInfoModal';`,

@@ -38,6 +38,7 @@ try {
         name: "live-host-boundaries",
         setup(build) {
           const mocks = {
+            "./EliteV4SeriesCatalog": `export const EliteV4SeriesCatalog='Series';`,
             "./EliteV4MoviesCatalog": `export const EliteV4MoviesCatalog='Movies';`,
             react,
             "live-runtime": runtime,

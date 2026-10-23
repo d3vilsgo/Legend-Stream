@@ -10,12 +10,15 @@ import {
 import { stalkerMovieInput } from "./tmdb/providerInput";
 import type { CatalogPageSort } from "./catalogPaging";
 
-export type V4Movie = {
+export type V4CatalogCard = {
   id: string;
   title: string;
   poster?: string;
+  backdrop?: string;
   input: EnrichmentInput;
   local: LocalMovieInfo;
+};
+export type V4Movie = V4CatalogCard & {
   source:
     | { kind: "paged"; item: XtreamVodItem }
     | { kind: "stalker"; item: StalkerVodItem };

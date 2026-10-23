@@ -310,7 +310,7 @@ jobs:
       - name: Elite V4 production component host acceptance
         run: node artifacts/legendstream-xplayer/tests/eliteV4ProductionHostScenarios.mjs
       - name: Elite V4 source formatting
-        run: pnpm exec prettier --check artifacts/legendstream-xplayer/components/eliteV4 artifacts/legendstream-xplayer/lib/design/eliteV4Theme.ts artifacts/legendstream-xplayer/lib/eliteV4Focus.ts artifacts/legendstream-xplayer/lib/eliteV4HomeModel.ts artifacts/legendstream-xplayer/tests/eliteV4HomeFocusScenarios.ts artifacts/legendstream-xplayer/tests/eliteV4ProductionHostScenarios.mjs
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/components/eliteV4 artifacts/legendstream-xplayer/lib/design/eliteV4Theme.ts artifacts/legendstream-xplayer/lib/eliteV4Focus.ts artifacts/legendstream-xplayer/lib/eliteV4HomeModel.ts artifacts/legendstream-xplayer/tests/eliteV4HomeFocusScenarios.ts artifacts/legendstream-xplayer/tests/eliteV4ProductionHostScenarios.mjs artifacts/legendstream-xplayer/lib/eliteV4Series.ts artifacts/legendstream-xplayer/lib/eliteV4Movies.ts artifacts/legendstream-xplayer/lib/goldenSeriesDetail.ts artifacts/legendstream-xplayer/tests/eliteV4SeriesProductionScenarios.mjs artifacts/legendstream-xplayer/tests/eliteV4MoviesProductionScenarios.mjs artifacts/legendstream-xplayer/tests/eliteV4LiveProductionScenarios.mjs
       - name: Elite V3 Home production formatting
         run: pnpm exec prettier --check artifacts/legendstream-xplayer/components/home/HomeDiscovery.tsx artifacts/legendstream-xplayer/lib/design/eliteV3Tokens.ts artifacts/legendstream-xplayer/tests/u42HomeCollapsibleHostScenarios.mjs artifacts/legendstream-xplayer/scripts/build-home-review.mjs
       - name: Native TV Home helper and test formatting

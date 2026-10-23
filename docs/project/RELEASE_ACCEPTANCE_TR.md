@@ -457,3 +457,10 @@ Yerel üretim testleri: Movies 14/14 (gerçek component render, adapter, grid/fo
 APK ÜRETİMİ YOK: Android APK workflow'una yalnız [skip apk] işaretli branch push'unda build job'u atlayan koşul eklendi; Quality etkilenmez, manuel/tag derlemeleri korunur. Bu görevin commit'leri [skip apk] taşır. Series tamamlanmadan bütünleşik Universal APK başlatılmaz. Önceki APK #530 P2 Movies'i içermez.
 
 Açık sınırlar: Stalker'ın yüklenen alt kümede sıralaması ve totalItems=null terminal UI belirsizliği; gerçek sağlayıcı/cihaz ve Android FocusFinder kabulü NOT TESTED / DEFERRED_RC. Gerçek ekran görüntüsü yok; host geometri testi fiziksel PASS değildir. V4 Series/Continue Watching/Settings ve Stalker Live ayrı sonraki işlerdir; genel parity PARTIAL. P0 kullanıcı kabulü ve tarihsel Native TV Physical FAIL kayıtları korunur.
+
+
+## Elite V4 P3 Series — 23 Ekim 2026
+
+Series yeni üretim host 22/22; Home/Sidebar/Focus 18/18, Live 14/14, Movies 14/14, U4.3 Series 40/40, Home Info 15/15; R17-H4 15/15, R17-E 24/24, R17-F 41/41; TMDB foundation 57/57 ve Movie Info 35/35. TypeScript/format ve final exact-SHA Quality ayrı doğrulanır; başlangıç #1628 yeni HEAD için PASS değildir. Fiziksel kabul DEFERRED_RC; gerçek ekran görüntüsü ve APK yok. P0 kullanıcı kabulü ve tarihsel Native TV Physical FAIL korunur.
+
+Ayrıntı: [Elite V4 P3 Series](../elite/ELITE_V4_P3_SERIES_TR.md).

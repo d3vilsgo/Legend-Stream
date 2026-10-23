@@ -38,6 +38,12 @@ export function pagedSeriesDetail(
     image: local?.cover || item.cover,
     description: local?.plot || item.plot,
     genre: local?.genre || item.genre,
+    rating:
+      local?.rating !== undefined
+        ? String(local.rating)
+        : item.rating !== undefined
+          ? String(item.rating)
+          : undefined,
     year:
       parseInt(
         String(
@@ -58,6 +64,7 @@ export function pagedSeriesDetail(
         episodeNumber: episode.episode_num,
         description: episode.info?.plot,
         duration: episode.info?.duration,
+        image: episode.info?.movie_image,
         progressRef: episodeProgressRef(
           provider,
           String(item.series_id),
@@ -79,6 +86,7 @@ export function stalkerSeriesDetail(
     image: detail?.posterUrl || item.posterUrl,
     description: detail?.description || item.description,
     genre: detail?.genre || item.genre,
+    rating: detail?.rating || item.rating,
     year:
       parseInt(String(detail?.year || item.year || "").slice(0, 4), 10) ||
       undefined,
