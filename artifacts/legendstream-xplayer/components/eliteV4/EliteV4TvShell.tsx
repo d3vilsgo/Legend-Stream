@@ -17,6 +17,7 @@ import {
 } from "@/lib/mediaProgress";
 import type { CatalogPlaybackIdentity } from "@/lib/catalogPageRepository";
 import type { LiveChannelIdentity } from "@/lib/playerLiveQueue";
+import { EliteV4LiveCatalog } from "./EliteV4LiveCatalog";
 import { EliteV4Home } from "./EliteV4Home";
 import { EliteV4Sidebar } from "./EliteV4Sidebar";
 import { EliteV4FocusSurface, useEliteV4Focus } from "./EliteV4FocusSurface";
@@ -35,14 +36,20 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
   const { provider, channels, recordWatched } = usePlayer();
   const { snapshot, hasUsableCache, isSyncing } = useCatalogSync();
   const focus = useEliteV4Focus();
+  const [route, setRoute] = useState<"home" | "live">("home");
   const [playback, setPlayback] = useState<ActivePlayback | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [progress, setProgress] = useState<MediaProgressV2[]>([]);
   const providerIdRef = useRef(provider?.id ?? null);
   const returnFocusIdRef = useRef("hero");
-  useEffect(() => {
-    providerIdRef.current = provider?.id ?? null;
-  }, [provider?.id]);
+  providerIdRef.current = provider?.id ?? null;
+  const requestIdRef = useRef(0);
+  useEffect(
+    () => () => {
+      requestIdRef.current += 1;
+    },
+    [],
+  );
 
   const currentSnapshot =
     provider && snapshot.providerId === provider.id ? snapshot : null;
@@ -95,6 +102,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
   const providerName = provider?.name?.trim() || "İçerik sağlayıcısı";
 
   const openItem = async (item: EliteHomeItem) => {
+    const requestId = ++requestIdRef.current;
     if (item.kind === "series") {
       onReturnToV3();
       return;
@@ -109,7 +117,11 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
           { kind: "movie", item: item.movie },
           provider,
         );
-        if (providerIdRef.current !== ownerId) return;
+        if (
+          providerIdRef.current !== ownerId ||
+          requestIdRef.current !== requestId
+        )
+          return;
         setPlayback({
           url: resolved.url,
           title: item.title,
@@ -123,7 +135,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
         return;
       }
       const channel: Channel | undefined = item.channel;
-      if (!channel) return;
+      if (!channel || channel.providerId !== ownerId) return;
       const url =
         provider.type === "stalker"
           ? channel.streamUrl
@@ -133,7 +145,11 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
                 provider,
               )
             ).url;
-      if (providerIdRef.current !== ownerId) return;
+      if (
+        providerIdRef.current !== ownerId ||
+        requestIdRef.current !== requestId
+      )
+        return;
       setPlayback({
         url,
         title: channel.name,
@@ -146,11 +162,23 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
       });
       void recordWatched(channel.id);
     } catch {
-      if (providerIdRef.current === ownerId)
+      if (
+        providerIdRef.current === ownerId &&
+        requestIdRef.current === requestId
+      )
         setPlaybackError(
           "İçerik başlatılamadı. Sağlayıcı kaynağını kontrol edip yeniden deneyin.",
         );
     }
+  };
+
+  const navigate = (next: "home" | "live") => {
+    requestIdRef.current += 1;
+    setRoute(next);
+    setPlaybackError(null);
+    requestAnimationFrame(() =>
+      focus.focus(next === "live" ? "v4-live-search" : "hero"),
+    );
   };
 
   if (!provider) return null;
@@ -163,7 +191,13 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
         backgroundColor: theme.color.background,
       }}
     >
-      <EliteV4Sidebar onReturnToV3={onReturnToV3} />
+      <EliteV4Sidebar
+        onReturnToV3={onReturnToV3}
+        activeId={`sidebar-${route}`}
+        contentFocusId={route === "live" ? "v4-live-search" : "hero"}
+        liveAvailable={provider.type === "xtream" || provider.type === "m3u"}
+        onNavigate={navigate}
+      />
       <View
         style={{
           flex: 1,
@@ -171,14 +205,30 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
           backgroundColor: theme.color.background,
         }}
       >
-        <EliteV4Home
-          sections={sections}
-          providerName={providerName}
-          providerId={provider.id}
-          providerType={provider.type}
-          loading={isSyncing || (!currentSnapshot?.ready && !hasUsableCache)}
-          onOpen={(item) => void openItem(item)}
-        />
+        {route === "live" ? (
+          <EliteV4LiveCatalog
+            key={provider.id}
+            active={!playback}
+            onBack={() => navigate("home")}
+            onOpen={(channel) =>
+              void openItem({
+                id: `live-${channel.id}`,
+                kind: "live",
+                title: channel.name,
+                channel,
+              })
+            }
+          />
+        ) : (
+          <EliteV4Home
+            sections={sections}
+            providerName={providerName}
+            providerId={provider.id}
+            providerType={provider.type}
+            loading={isSyncing || (!currentSnapshot?.ready && !hasUsableCache)}
+            onOpen={(item) => void openItem(item)}
+          />
+        )}
         {playbackError ? (
           <Text
             accessibilityRole="alert"
@@ -225,6 +275,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
             autoFullscreen
             allowDownload={playback.kind === "movie"}
             onFullscreenExit={() => {
+              requestIdRef.current += 1;
               setPlayback(null);
               requestAnimationFrame(() => {
                 focus.focus(returnFocusIdRef.current);

@@ -452,7 +452,8 @@ try {
   assert.match(shell, /const previewAvailable = Platform\.isTV \|\| tvPreview/);
   assert.match(shell, /provider && previewAvailable && eliteV4Preview/);
   assert.match(shell, /<OptimizedHomeScreenV6 key=\{provider\.id\} \/>/);
-  assert.match(sidebarSource, /right: "hero"/);
+  assert.match(sidebarSource, /contentFocusId = "hero"/);
+  assert.match(sidebarSource, /right: contentFocusId/);
   assert.match(sidebarSource, /next: "sidebar-live"/);
   assert.match(sidebarSource, /previous: "sidebar-home"/);
   assert.match(sidebarSource, /up: entry.previous/);
@@ -871,3 +872,5 @@ try {
 } finally {
   rmSync(out, { recursive: true, force: true });
 }
+
+await import("./eliteV4LiveProductionScenarios.mjs");

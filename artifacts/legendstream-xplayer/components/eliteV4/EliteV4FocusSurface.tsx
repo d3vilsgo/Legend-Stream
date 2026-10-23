@@ -53,6 +53,7 @@ export function EliteV4FocusSurface({
   children,
   initialFocusId = "hero",
 }: React.PropsWithChildren<{ initialFocusId?: string }>) {
+  const preview = useOptionalTVPreviewFocus();
   const [focusedId, setFocusedId] = useState<string | null>(initialFocusId);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [activeRegion, setActiveRegion] = useState<EliteV4Region>("content");
@@ -86,14 +87,21 @@ export function EliteV4FocusSurface({
     setFocusedId(node.id);
     setActiveRegion(node.region);
   }, []);
-  const focus = useCallback((id: string) => {
-    const target = nodes.current.get(id);
-    if (!target?.ref) return false;
-    setFocusedId(id);
-    setActiveRegion(target.node.region);
-    target.ref.focus?.();
-    return true;
-  }, []);
+  const focus = useCallback(
+    (id: string) => {
+      if (preview?.enabled && !Platform.isTV) {
+        void preview.restoreFocus(`elite-v4:${id}`);
+        return true;
+      }
+      const target = nodes.current.get(id);
+      if (!target?.ref) return false;
+      setFocusedId(id);
+      setActiveRegion(target.node.region);
+      target.ref.focus?.();
+      return true;
+    },
+    [preview?.enabled, preview?.restoreFocus],
+  );
   const target = useCallback((id: string, direction: EliteV4Direction) => {
     const node = nodes.current.get(id)?.node;
     const nextId = resolveEliteV4Target(node, direction);

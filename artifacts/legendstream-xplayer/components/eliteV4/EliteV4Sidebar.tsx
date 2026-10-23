@@ -59,7 +59,19 @@ const entries: readonly SidebarEntry[] = [
   },
 ];
 
-export function EliteV4Sidebar({ onReturnToV3 }: { onReturnToV3: () => void }) {
+export function EliteV4Sidebar({
+  onReturnToV3,
+  activeId = "sidebar-home",
+  contentFocusId = "hero",
+  onNavigate,
+  liveAvailable = false,
+}: {
+  onReturnToV3: () => void;
+  activeId?: string;
+  contentFocusId?: string;
+  onNavigate?: (route: "home" | "live") => void;
+  liveAvailable?: boolean;
+}) {
   const { activeRegion } = useEliteV4Focus();
   const expanded = activeRegion === "sidebar";
   const viewport = useWindowDimensions();
@@ -67,57 +79,69 @@ export function EliteV4Sidebar({ onReturnToV3 }: { onReturnToV3: () => void }) {
     ? Math.min(theme.layout.sidebarExpanded, Math.round(viewport.width * 0.3))
     : theme.layout.sidebarCompact;
 
-  const renderEntry = (entry: SidebarEntry) => (
-    <EliteV4FocusButton
-      key={entry.id}
-      focusId={entry.id}
-      region="sidebar"
-      selected={entry.active}
-      neighbors={{
-        right: "hero",
-        ...(entry.previous ? { up: entry.previous } : {}),
-        ...(entry.next ? { down: entry.next } : {}),
-      }}
-      onPress={entry.active ? () => undefined : onReturnToV3}
-      accessibilityLabel={
-        entry.active
-          ? entry.label
-          : `${entry.label}. Mevcut Elite V3 navigasyonunu aç`
-      }
-      style={{
-        minHeight: 48,
-        marginBottom: 5,
-        borderRadius: theme.radius.medium,
-        borderWidth: 1,
-        borderColor: "transparent",
-        backgroundColor: entry.active ? theme.color.accentSoft : "transparent",
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: expanded ? "flex-start" : "center",
-        gap: 13,
-        paddingHorizontal: expanded ? 13 : 0,
-      }}
-    >
-      <Feather
-        name={entry.icon as never}
-        size={19}
-        color={entry.active ? theme.color.accent : theme.color.muted}
-      />
-      {expanded ? (
-        <Text
-          numberOfLines={1}
-          style={{
-            flex: 1,
-            color: entry.active ? theme.color.foreground : theme.color.muted,
-            fontSize: 14,
-            fontWeight: entry.active ? "600" : "400",
-          }}
-        >
-          {entry.label}
-        </Text>
-      ) : null}
-    </EliteV4FocusButton>
-  );
+  const renderEntry = (entry: SidebarEntry) => {
+    const active = entry.id === activeId;
+    const route =
+      entry.id === "sidebar-home"
+        ? "home"
+        : entry.id === "sidebar-live" && liveAvailable
+          ? "live"
+          : null;
+    return (
+      <EliteV4FocusButton
+        key={entry.id}
+        focusId={entry.id}
+        region="sidebar"
+        selected={active}
+        neighbors={{
+          right: contentFocusId,
+          ...(entry.previous ? { up: entry.previous } : {}),
+          ...(entry.next ? { down: entry.next } : {}),
+        }}
+        onPress={() => {
+          if (route && onNavigate) onNavigate(route);
+          else if (!active) onReturnToV3();
+        }}
+        accessibilityLabel={
+          active || route
+            ? entry.label
+            : `${entry.label}. Mevcut Elite V3 navigasyonunu aç`
+        }
+        style={{
+          minHeight: 48,
+          marginBottom: 5,
+          borderRadius: theme.radius.medium,
+          borderWidth: 1,
+          borderColor: "transparent",
+          backgroundColor: active ? theme.color.accentSoft : "transparent",
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: expanded ? "flex-start" : "center",
+          gap: 13,
+          paddingHorizontal: expanded ? 13 : 0,
+        }}
+      >
+        <Feather
+          name={entry.icon as never}
+          size={19}
+          color={active ? theme.color.accent : theme.color.muted}
+        />
+        {expanded ? (
+          <Text
+            numberOfLines={1}
+            style={{
+              flex: 1,
+              color: active ? theme.color.foreground : theme.color.muted,
+              fontSize: 14,
+              fontWeight: active ? "600" : "400",
+            }}
+          >
+            {entry.label}
+          </Text>
+        ) : null}
+      </EliteV4FocusButton>
+    );
+  };
 
   return (
     <View
@@ -157,7 +181,7 @@ export function EliteV4Sidebar({ onReturnToV3 }: { onReturnToV3: () => void }) {
         focusId="sidebar-v3"
         region="sidebar"
         neighbors={{
-          right: "hero",
+          right: contentFocusId,
           up: "sidebar-settings",
           down: "sidebar-home",
         }}
