@@ -494,9 +494,22 @@ try {
       assert.equal(R.resolves.length, before);
     },
   );
-  assert.equal(checks, 13);
+  await check(
+    "offscreen category focus scrolls the actual category strip into view",
+    () => {
+      const tree = view(props, "category-reveal");
+      const strip = nodes(tree).find((node) => node.type === "ScrollView");
+      const scroll = [];
+      strip.props.ref.current = { scrollTo: (entry) => scroll.push(entry) };
+      const category = find(tree, "v4-live-category:news");
+      category.props.onLayout({ nativeEvent: { layout: { x: 640 } } });
+      category.props.onFocused();
+      assert.deepEqual(scroll, [{ x: 634, animated: true }]);
+    },
+  );
+  assert.equal(checks, 14);
   console.log(
-    `Elite V4 Live production host: ${checks}/13 passed; HOST_NOT_PHYSICAL`,
+    `Elite V4 Live production host: ${checks}/14 passed; HOST_NOT_PHYSICAL`,
   );
 } finally {
   delete globalThis.requestAnimationFrame;

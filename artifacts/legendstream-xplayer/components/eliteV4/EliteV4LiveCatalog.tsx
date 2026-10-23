@@ -81,6 +81,8 @@ export function EliteV4LiveView({
   const [clock, setClock] = useState(() => Date.now());
   const list = useRef<FlatList<Channel>>(null);
   const input = useRef<TextInput>(null);
+  const categoryList = useRef<ScrollView>(null);
+  const categoryOffsets = useRef<Record<string, number>>({});
   const focus = useEliteV4Focus();
   const preview = useOptionalTVPreviewFocus();
   const selected = page.items.find((item) => item.id === selectedId) ?? null;
@@ -261,6 +263,7 @@ export function EliteV4LiveView({
         />
       ) : null}
       <ScrollView
+        ref={categoryList}
         horizontal
         showsHorizontalScrollIndicator={false}
         style={{ flexGrow: 0, maxHeight: 64, marginBottom: 12 }}
@@ -271,6 +274,15 @@ export function EliteV4LiveView({
             key={item.id}
             focusId={`v4-live-category:${item.id}`}
             region="content"
+            onLayout={(event) => {
+              categoryOffsets.current[item.id] = event.nativeEvent.layout.x;
+            }}
+            onFocused={() =>
+              categoryList.current?.scrollTo({
+                x: Math.max(0, (categoryOffsets.current[item.id] ?? 0) - 6),
+                animated: true,
+              })
+            }
             selected={category === item.id}
             disabled={!active}
             neighbors={{
