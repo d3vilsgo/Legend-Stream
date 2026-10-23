@@ -55,7 +55,7 @@ const mocks = {
   "@/components/player/VlcPlaybackSurface":
     "export const VlcPlaybackSurface='VLC';",
   "@react-native-async-storage/async-storage":
-    "export default {getItem:async()=>null,setItem:async()=>{}};",
+    "export default {getItem:async key=>globalThis.__visible.preferenceStore?.get(key)??null,setItem:async(key,value)=>{(globalThis.__visible.preferenceStore??=new Map()).set(key,value);}};",
   "@/lib/tvRemoteInspector":
     "export const inspectorAction=()=>{},inspectorRail=()=>{};",
   "@/modules/legendstream-tv-remote":
@@ -65,8 +65,6 @@ const mocks = {
   "@/modules/legendstream-pip":
     "export const getMediaVolume=()=>1,isPipSupported=()=>false,isInPipMode=()=>false,enterPictureInPicture=async()=>false,setMediaVolume=()=>{};",
   "@/lib/downloads": "export const downloadMedia=async()=>{};",
-  "@/lib/playerPreferences":
-    "export const DEFAULT_PLAYER_CHROME_TIMEOUT_SECONDS=5,getPlayerChromeTimeoutSeconds=async()=>5;",
   "@/lib/xtreamCatalog":
     "export const buildVodStreamUrl=()=>'',getEpisodePlaybackQueue=()=>globalThis.__visible.episodeQueue,getVodPlaybackQueue=()=>undefined;",
   "@/lib/catalogPersistence": "export const isCatalogRuntimeSource=()=>false;",
@@ -139,7 +137,7 @@ const test = (name, f) => {
 try {
   await build({
     stdin: {
-      contents: `export {CompatibilityVideoPlayer} from './components/CompatibilityVideoPlayerV2';export {EliteLiveCatalog} from './components/elite/EliteLiveCatalog';export {CategoryPicker} from './components/navigation/CategoryPicker';export {useHomeMovieInfo} from './hooks/useHomeMovieInfo';export {HomeHeroCarousel} from './components/home/HomeDiscovery';export {ResponsiveContentNav} from './components/navigation/ResponsiveContentNav';export {PlayerChrome,PanelContent} from './components/player/PlayerChromeV2';export {PlayerChrome as ProductionPlayerChrome} from './components/player/PlayerChrome';`,
+      contents: `export {setPlayerChromeTimeoutSeconds,setSavedPlayerCodecMode} from './lib/playerPreferences';export {CompatibilityVideoPlayer} from './components/CompatibilityVideoPlayerV2';export {EliteLiveCatalog} from './components/elite/EliteLiveCatalog';export {CategoryPicker} from './components/navigation/CategoryPicker';export {useHomeMovieInfo} from './hooks/useHomeMovieInfo';export {HomeHeroCarousel} from './components/home/HomeDiscovery';export {ResponsiveContentNav} from './components/navigation/ResponsiveContentNav';export {PlayerChrome,PanelContent} from './components/player/PlayerChromeV2';export {PlayerChrome as ProductionPlayerChrome} from './components/player/PlayerChrome';`,
       resolveDir: app,
       loader: "tsx",
     },
@@ -182,6 +180,8 @@ try {
     ProductionPlayerChrome,
     PanelContent,
     CompatibilityVideoPlayer,
+    setPlayerChromeTimeoutSeconds,
+    setSavedPlayerCodecMode,
     EliteLiveCatalog,
     CategoryPicker,
     useHomeMovieInfo,
@@ -787,6 +787,42 @@ try {
       for (const listener of h.appListeners ?? []) listener("background");
       await new Promise((r) => setImmediate(r));
       assert.equal(h.persisted.length, 0);
+    },
+  );
+  await testAsync(
+    "P5 production Player consumes persisted Settings timeout and decoder preference",
+    async () => {
+      h.native = true;
+      await setPlayerChromeTimeoutSeconds(10);
+      await setSavedPlayerCodecMode("software");
+      const original = globalThis.setTimeout,
+        delays = [];
+      globalThis.setTimeout = (fn, delay, ...args) => {
+        delays.push(delay);
+        return original(fn, delay, ...args);
+      };
+      try {
+        const props = {
+          source: "https://example.invalid/settings-film",
+          title: "Film",
+          mediaKind: "movie",
+        };
+        let tree = render(() => CompatibilityVideoPlayer(props));
+        await new Promise((r) => setImmediate(r));
+        tree = render(() => CompatibilityVideoPlayer(props));
+        await new Promise((r) => setImmediate(r));
+        tree = render(() => CompatibilityVideoPlayer(props));
+        assert.equal(
+          nodes(tree).find((n) => n.tag === "VLC").props.codecMode,
+          "software",
+        );
+        assert.ok(
+          delays.includes(10000),
+          "persisted timeout reaches production auto-hide timer",
+        );
+      } finally {
+        globalThis.setTimeout = original;
+      }
     },
   );
   console.log(

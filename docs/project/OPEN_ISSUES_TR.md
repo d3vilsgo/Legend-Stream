@@ -466,3 +466,8 @@ Ayrıntı: [Elite V4 P3 Series](../elite/ELITE_V4_P3_SERIES_TR.md).
 ## Elite V4 P4 — History / Continue Watching / Favorites
 
 Mevcut persistence anahtarları üzerinde provider/account izolasyonu, gerçek Player ilerlemesi, V4 History/Favorites ekranları ve reaktif Home rafı entegre edildi. Yeni depolama sistemi veya backend yoktur. Yerel 208/208 üretim host/servis senaryosu; final SHA Quality kanıtı teslim mesajında doğrulanır. Fiziksel kabul **DEFERRED_RC**; APK bu aşamada üretilmez. P5 Settings ve kalan Stalker Live kapsamı açıktır. Ayrıntı ve sınırlamalar: [P4 raporu](../elite/ELITE_V4_P4_LIBRARY_TR.md).
+
+
+## Elite V4 P5 — Settings / Hesap yönetimi
+
+Mevcut hesap, Player preference, dil, katalog/EPG ve P4 veri sözleşmelerine bağlı V4 Settings entegre edildi. Yeni settings deposu/backend yoktur. Yerel seçili test grubu 354/354; 28 yeni P5 senaryosu. Final exact-SHA Quality kanıtı teslim mesajında doğrulanır. Fiziksel kabul **DEFERRED_RC**; APK üretilmez. Genel cache temizliği, EPG zaman kayması ve global ses/altyazı tercihi mevcut sözleşmede yoktur; sahte kontrol sunulmaz. Kalan Stalker Live ve bütünleşik regresyon ayrı kapanış görevidir. Ayrıntı: [P5 raporu](../elite/ELITE_V4_P5_SETTINGS_TR.md).

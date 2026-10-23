@@ -1,3 +1,4 @@
+import { EliteV4Settings } from "./EliteV4Settings";
 import {
   useMediaLibrary,
   type MediaProgress,
@@ -72,8 +73,9 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
   const { snapshot, hasUsableCache, isSyncing } = useCatalogSync();
   const focus = useEliteV4Focus();
   const [route, setRoute] = useState<
-    "home" | "live" | "movies" | "series" | "history" | "favorites"
+    "home" | "live" | "movies" | "series" | "history" | "favorites" | "settings"
   >("home");
+  const libraryReturnRef = useRef<"home" | "settings">("home");
   const routeRef = useRef(route);
   routeRef.current = route;
   const [playback, setPlayback] = useState<ActivePlayback | null>(null);
@@ -415,8 +417,18 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
   };
 
   const navigate = (
-    next: "home" | "live" | "movies" | "series" | "history" | "favorites",
+    next:
+      | "home"
+      | "live"
+      | "movies"
+      | "series"
+      | "history"
+      | "favorites"
+      | "settings",
+    returnTo: "home" | "settings" = "home",
   ) => {
+    if (next === "history" || next === "favorites")
+      libraryReturnRef.current = returnTo;
     requestIdRef.current += 1;
     libraryAbort.current?.abort();
     libraryLock.current = false;
@@ -427,15 +439,17 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
     setPlaybackError(null);
     requestAnimationFrame(() =>
       focus.focus(
-        next === "history" || next === "favorites"
-          ? `v4-${next}-filter-all`
-          : next === "series"
-            ? "v4-series-hero"
-            : next === "live"
-              ? "v4-live-search"
-              : next === "movies"
-                ? "v4-movies-hero"
-                : "hero",
+        next === "settings"
+          ? "v4-settings-category-accounts"
+          : next === "history" || next === "favorites"
+            ? `v4-${next}-filter-all`
+            : next === "series"
+              ? "v4-series-hero"
+              : next === "live"
+                ? "v4-live-search"
+                : next === "movies"
+                  ? "v4-movies-hero"
+                  : "hero",
       ),
     );
   };
@@ -454,15 +468,17 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
         onReturnToV3={onReturnToV3}
         activeId={`sidebar-${route}`}
         contentFocusId={
-          route === "history" || route === "favorites"
-            ? `v4-${route}-filter-all`
-            : route === "series"
-              ? "v4-series-hero"
-              : route === "live"
-                ? "v4-live-search"
-                : route === "movies"
-                  ? "v4-movies-hero"
-                  : "hero"
+          route === "settings"
+            ? "v4-settings-category-accounts"
+            : route === "history" || route === "favorites"
+              ? `v4-${route}-filter-all`
+              : route === "series"
+                ? "v4-series-hero"
+                : route === "live"
+                  ? "v4-live-search"
+                  : route === "movies"
+                    ? "v4-movies-hero"
+                    : "hero"
         }
         liveAvailable={provider.type === "xtream" || provider.type === "m3u"}
         onNavigate={navigate}
@@ -474,12 +490,18 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
           backgroundColor: theme.color.background,
         }}
       >
-        {route === "history" || route === "favorites" ? (
+        {route === "settings" ? (
+          <EliteV4Settings
+            active={!playback && !detail}
+            onBack={() => focus.focus("sidebar-settings")}
+            onLibrary={(next) => navigate(next, "settings")}
+          />
+        ) : route === "history" || route === "favorites" ? (
           <EliteV4LibraryCatalog
             key={`${provider.id}:${route}`}
             mode={route}
             active={!playback && !detail}
-            onBack={() => navigate("home")}
+            onBack={() => navigate(libraryReturnRef.current)}
             onResume={(entry, origin) => void resume(entry, origin)}
             onDetail={openDetail}
             onLive={(channel, origin) =>

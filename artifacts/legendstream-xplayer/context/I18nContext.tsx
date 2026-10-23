@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getLocales } from "expo-localization";
-import React, { createContext, ReactNode, useContext, useMemo, useState } from "react";
+import React, { createContext, ReactNode, useContext, useMemo, useRef, useState } from "react";
 
 export type AppLanguage = "tr" | "en" | "de" | "fr" | "es" | "it" | "ru";
 
@@ -9,7 +9,7 @@ type Dictionary = Record<string, string>;
 type I18nValue = {
   language: AppLanguage;
   languages: Array<{ code: AppLanguage; label: string }>;
-  setLanguage: (language: AppLanguage) => Promise<void>;
+  setLanguage: (language: AppLanguage, options?: { verified?: boolean }) => Promise<void>;
   t: (key: string, vars?: Record<string, string | number>) => string;
 };
 
@@ -101,13 +101,23 @@ const I18nContext = createContext<I18nValue | null>(null);
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [language, setLanguageState] = useState<AppLanguage>(initialLanguage);
 
+  const revision = useRef(0);
   React.useEffect(() => {
+    const initialRevision=revision.current;
     AsyncStorage.getItem(STORAGE_KEY).then((saved) => {
-      if (saved && supported.has(saved as AppLanguage)) setLanguageState(saved as AppLanguage);
+      if (initialRevision===revision.current && saved && supported.has(saved as AppLanguage)) setLanguageState(saved as AppLanguage);
     }).catch(() => undefined);
   }, []);
 
-  const setLanguage = async (next: AppLanguage) => {
+  const setLanguage = async (next: AppLanguage, options?: { verified?: boolean }) => {
+    const ticket=++revision.current;
+    if (!supported.has(next)) throw new Error("INVALID_LANGUAGE");
+    if (options?.verified) {
+      await AsyncStorage.setItem(STORAGE_KEY, next);
+      if (await AsyncStorage.getItem(STORAGE_KEY) !== next) throw new Error("LANGUAGE_WRITE_FAILED");
+      if(ticket===revision.current)setLanguageState(next);
+      return;
+    }
     setLanguageState(next);
     try { await AsyncStorage.setItem(STORAGE_KEY, next); } catch { /* best effort */ }
   };

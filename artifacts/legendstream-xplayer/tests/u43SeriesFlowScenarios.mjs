@@ -64,7 +64,7 @@ const mocks = {
   "@/components/eliteV4/EliteV4PreviewToggle": `export const EliteV4PreviewToggle='EliteV4Toggle';`,
   "@/context/PlayerContext": `export const usePlayer=()=>({provider:globalThis.__series.shellProvider});`,
   "@/context/UiPresentationContext": `export const UiPresentationProvider='Presentation',useUiPresentation=()=>({tvPreview:false});`,
-  react: `export const useState=v=>globalThis.__series.state(v),useRef=v=>globalThis.__series.ref(v),useEffect=(f,d)=>globalThis.__series.effect(f,d),useMemo=(f,d)=>globalThis.__series.memo(f,d),useCallback=(f,d)=>globalThis.__series.memo(()=>f,d);export default {useState,createElement:(tag,props,...children)=>({tag,props:{...props,children}})};`,
+  react: `export const createContext=value=>({value}),useContext=context=>context.value;export const useState=v=>globalThis.__series.state(v),useRef=v=>globalThis.__series.ref(v),useEffect=(f,d)=>globalThis.__series.effect(f,d),useMemo=(f,d)=>globalThis.__series.memo(f,d),useCallback=(f,d)=>globalThis.__series.memo(()=>f,d);export default {useState,createElement:(tag,props,...children)=>({tag,props:{...props,children}})};`,
   "react-native": `export const ActivityIndicator='Spinner',FlatList='FlatList',Image='Image',Modal='Modal',Text='Text',View='View';export const Platform={get isTV(){return globalThis.__series.native},OS:'android'};export const StyleSheet={create:s=>s};`,
   "react-native-safe-area-context": `export const useSafeAreaInsets=()=>({left:0,right:0,top:0,bottom:0});`,
   "@/context/I18nContext": `export const useI18n=()=>({t:k=>k});`,

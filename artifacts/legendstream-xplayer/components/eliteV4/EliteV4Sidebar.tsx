@@ -77,7 +77,14 @@ export function EliteV4Sidebar({
   activeId?: string;
   contentFocusId?: string;
   onNavigate?: (
-    route: "home" | "live" | "movies" | "series" | "history" | "favorites",
+    route:
+      | "home"
+      | "live"
+      | "movies"
+      | "series"
+      | "history"
+      | "favorites"
+      | "settings",
   ) => void;
   liveAvailable?: boolean;
 }) {
@@ -91,19 +98,21 @@ export function EliteV4Sidebar({
   const renderEntry = (entry: SidebarEntry) => {
     const active = entry.id === activeId;
     const route =
-      entry.id === "sidebar-history" && onNavigate
-        ? "history"
-        : entry.id === "sidebar-favorites" && onNavigate
-          ? "favorites"
-          : entry.id === "sidebar-series" && onNavigate
-            ? "series"
-            : entry.id === "sidebar-movies" && onNavigate
-              ? "movies"
-              : entry.id === "sidebar-home"
-                ? "home"
-                : entry.id === "sidebar-live" && liveAvailable
-                  ? "live"
-                  : null;
+      entry.id === "sidebar-settings" && onNavigate
+        ? "settings"
+        : entry.id === "sidebar-history" && onNavigate
+          ? "history"
+          : entry.id === "sidebar-favorites" && onNavigate
+            ? "favorites"
+            : entry.id === "sidebar-series" && onNavigate
+              ? "series"
+              : entry.id === "sidebar-movies" && onNavigate
+                ? "movies"
+                : entry.id === "sidebar-home"
+                  ? "home"
+                  : entry.id === "sidebar-live" && liveAvailable
+                    ? "live"
+                    : null;
     return (
       <EliteV4FocusButton
         key={entry.id}

@@ -37,6 +37,14 @@ try {
       {
         name: "live-host-boundaries",
         setup(build) {
+          build.onResolve({ filter: /^\.\/EliteV4Settings$/ }, () => ({
+            path: "settings",
+            namespace: "p5-boundary",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "p5-boundary" }, () => ({
+            contents: "export const EliteV4Settings='Settings';",
+            loader: "js",
+          }));
           const mocks = {
             "@/context/MediaLibraryContext": `export const useMediaLibrary=()=>({entries:[],historyEntries:[],loaded:true});`,
             "./EliteV4LibraryCatalog": `export const EliteV4LibraryCatalog='Library';`,

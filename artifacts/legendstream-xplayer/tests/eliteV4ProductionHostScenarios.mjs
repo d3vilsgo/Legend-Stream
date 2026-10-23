@@ -32,7 +32,7 @@ const nativeMock = `
 try {
   await build({
     stdin: {
-      contents: `export {Platform} from 'react-native';export {HostHooks} from 'react';export {HostRuntime} from 'host-runtime';export {ProductShellContent} from './components/ProductShell';export {EliteV4TvShell} from '@/components/eliteV4/EliteV4TvShell';export {EliteV4FocusSurface,EliteV4FocusButton} from './components/eliteV4/EliteV4FocusSurface';export {EliteV4Sidebar} from './components/eliteV4/EliteV4Sidebar';export {EliteV4Hero} from './components/eliteV4/EliteV4Hero';export {EliteV4ContentRail} from './components/eliteV4/EliteV4ContentRail';export {EliteV4Home} from './components/eliteV4/EliteV4Home';export {EliteV4PreviewToggle} from './components/eliteV4/EliteV4PreviewToggle';export {eliteV4Theme} from './lib/design/eliteV4Theme';`,
+      contents: `export {Platform} from 'react-native';export {HostHooks} from 'react';export {HostRuntime} from 'host-runtime';export {ProductShellContent,default as ProductShellRoot} from './components/ProductShell';export {EliteV4TvShell} from '@/components/eliteV4/EliteV4TvShell';export {EliteV4FocusSurface,EliteV4FocusButton} from './components/eliteV4/EliteV4FocusSurface';export {EliteV4Sidebar} from './components/eliteV4/EliteV4Sidebar';export {EliteV4Hero} from './components/eliteV4/EliteV4Hero';export {EliteV4ContentRail} from './components/eliteV4/EliteV4ContentRail';export {EliteV4Home} from './components/eliteV4/EliteV4Home';export {EliteV4PreviewToggle} from './components/eliteV4/EliteV4PreviewToggle';export {eliteV4Theme} from './lib/design/eliteV4Theme';`,
       resolveDir: app,
       loader: "tsx",
     },
@@ -45,6 +45,14 @@ try {
       {
         name: "host-mocks",
         setup(build) {
+          build.onResolve({ filter: /^\.\/EliteV4Settings$/ }, () => ({
+            path: "settings",
+            namespace: "p5-boundary",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "p5-boundary" }, () => ({
+            contents: "export const EliteV4Settings='Settings';",
+            loader: "js",
+          }));
           build.onResolve({ filter: /^react$/ }, () => ({
             path: "react",
             namespace: "host",
@@ -868,7 +876,41 @@ try {
   );
 
   assert.equal(checks, 18);
-  console.log(`Elite V4 production host scenarios: ${checks}/18 passed`);
+  ui.HostHooks.clear();
+  ui.Platform.isTV = true;
+  let root = ui.ProductShellRoot();
+  root.type._context._value = root.props.value;
+  root.props.value.select(true);
+  ui.HostHooks.reset();
+  root = ui.ProductShellRoot();
+  root.type._context._value = root.props.value;
+  ui.HostRuntime.player = { provider: { id: "new-account", type: "m3u" } };
+  ui.HostHooks.reset();
+  root = ui.ProductShellRoot();
+  root.type._context._value = root.props.value;
+  // Model the provider-owned subtree remount while retaining the root selection owner.
+  ui.HostHooks.clear();
+  route = ui.ProductShellContent();
+  assert.ok(
+    findElement(route, (node) => node.type === ui.EliteV4TvShell),
+    "explicit V4 choice survives account focus-scope remount",
+  );
+  const selectedP5Shell = findElement(
+    route,
+    (node) => node.type === ui.EliteV4TvShell,
+  );
+  selectedP5Shell.props.onReturnToV3();
+  assert.equal(
+    root.props.value.selected,
+    true,
+    "selection is owned by the stable root",
+  );
+  root.type._context._value = null;
+  checks += 1;
+  console.log(
+    "PASS P5 production shell retains explicit V4 selection across account scope remount",
+  );
+  console.log(`Elite V4 production host scenarios: ${checks}/${checks} passed`);
 } finally {
   rmSync(out, { recursive: true, force: true });
 }
@@ -881,3 +923,5 @@ await import("./eliteV4SeriesProductionScenarios.mjs");
 
 await import("./eliteV4PersistenceProductionScenarios.mjs");
 await import("./eliteV4LibraryProductionScenarios.mjs");
+
+await import("./eliteV4SettingsProductionScenarios.mjs");

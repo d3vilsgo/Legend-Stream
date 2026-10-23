@@ -42,6 +42,14 @@ try {
       {
         name: "live-host-boundaries",
         setup(build) {
+          build.onResolve({ filter: /^\.\/EliteV4Settings$/ }, () => ({
+            path: "settings",
+            namespace: "p5-boundary",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "p5-boundary" }, () => ({
+            contents: "export const EliteV4Settings='Settings';",
+            loader: "js",
+          }));
           const mocks = {
             "@/hooks/useResolvedLiveIdentityChannels": `import {Runtime} from 'live-runtime';export const useResolvedLiveIdentityChannels=()=>Runtime.player.channels;`,
 
@@ -526,7 +534,8 @@ try {
       );
       find(s, "sidebar-history").props.onPress();
       find(s, "sidebar-favorites").props.onPress();
-      assert.deepEqual(nav, ["history", "favorites"]);
+      find(s, "sidebar-settings").props.onPress();
+      assert.deepEqual(nav, ["history", "favorites", "settings"]);
       assert.equal(
         find(s, "sidebar-favorites").props.neighbors.right,
         "v4-favorites-filter-all",
@@ -863,9 +872,32 @@ try {
       props.active = true;
     },
   );
-  assert.equal(checks, 20);
+  await check(
+    "P5 Settings routes to the existing library and BACK returns to Settings",
+    async () => {
+      let s = shell();
+      nodes(s)
+        .find((n) => n.type === ui.EliteV4Sidebar)
+        .props.onNavigate("settings");
+      s = shell();
+      assert.equal(
+        nodes(s).find((n) => n.type === ui.EliteV4Sidebar).props.contentFocusId,
+        "v4-settings-category-accounts",
+      );
+      nodes(s)
+        .find((n) => n.type === "Settings")
+        .props.onLibrary("favorites");
+      s = shell();
+      nodes(s)
+        .find((n) => n.type === ui.EliteV4LibraryCatalog)
+        .props.onBack();
+      s = shell();
+      assert.ok(nodes(s).find((n) => n.type === "Settings"));
+    },
+  );
+  assert.equal(checks, 21);
   console.log(
-    `Elite V4 library production host: ${checks}/20 passed; HOST_NOT_PHYSICAL`,
+    `Elite V4 library production host: ${checks}/21 passed; HOST_NOT_PHYSICAL`,
   );
 } finally {
   globalThis.fetch = originalFetch;
