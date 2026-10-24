@@ -66,7 +66,7 @@ jobs:
           # Exact path + whole-file digest + complete rule/match multiset; never a directory exemption.
           reviewed_matches = {
               "artifacts/legendstream-xplayer/context/I18nContext.tsx": {
-                  "sha256": "a1bef492512092a11895c682023483a6649d200a90d788cd7b39f70f7f9cbb75",
+                  "sha256": "c0ae70b6aefa8e8f5835066cda168be47387ae2e647074e3c98f35bfdcc0989a",
                   "matches": [
                       [
                           3,
@@ -82,10 +82,6 @@ jobs:
                       ],
                       [
                           3,
-                          "7e832c8c8845b9c21ebfa38b536a540da3492e646e81e85313a41e13bb08eda2"
-                      ],
-                      [
-                          3,
                           "9dc4e77b7d15afec5149f443ef1c29f15a88a0d78ed640766709944a1838afce"
                       ],
                       [
@@ -94,6 +90,15 @@ jobs:
                       ]
                   ],
                   "reason": "translation-labels"
+              },
+              "artifacts/legendstream-xplayer/tests/eliteV4PersistenceProductionScenarios.mjs": {
+                  "sha256": "f0dd1f86ed54fa9fdf2702f17f061bf26b82aed56bac599da2134dbd1100050c",
+                  "matches": [
+                      [3, "1998e4382cfc1d9944dc751f0a916f4c9223605652ba0e1f9a04c753b546dc11"],
+                      [3, "2b1261d5e91656604a32c867cb2e32428343108a4e267c0fc25a837d8c1471bd"],
+                      [6, "39ec76c7a9a9dd7046082ab6ddb0c38f57ab0c4363dfeba2ba49f815ffef54ef"]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
               },
               "artifacts/legendstream-xplayer/tests/catalogDbWriterCoordinationScenarios.ts": {
                   "sha256": "19910eeaeb81cc5f0926504a6031cbea5ec24062ee1ae5af624a5ca1607f94b7",
