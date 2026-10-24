@@ -1,6 +1,9 @@
 name: Workspace Recovery V1
 
 on:
+  push:
+    branches:
+      - integration/legendstream-u1
   workflow_dispatch:
     inputs:
       source_sha:
@@ -18,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      SOURCE_SHA: ${{ inputs.source_sha }}
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
       WORKFLOW_SHA: ${{ github.workflow_sha }}
       RECOVERY_DIR: ${{ github.workspace }}/../workspace-recovery-${{ github.run_id }}
     steps:
