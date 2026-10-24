@@ -619,6 +619,7 @@ export function createStalkerSeriesProductController(session: StalkerIsolatedSes
           // candidate is unsupported or temporarily unavailable.
         }
       }
+      if(signal?.aborted) throw new StalkerPortalError("CANCELLED", "Series detail request cancelled.");
       playbackRefs.clear();
       for (const [key, ref] of normalized.refs) playbackRefs.set(key, ref);
       return normalized.detail;

@@ -104,7 +104,7 @@ async function main() {
   assert.match(surface, /controller\.resolveEpisode\(detail\.seriesId, seasonId, episodeId, request\.abort\.signal\)/);
   assert.match(surface, /if \(!currentRequest\(request\.sequence\) \|\| !ownership\.isCurrent\(ticket\)\) return;[\s\S]*?emitPlayable\(buildStalkerSeriesPlayableIntent/);
   assert.match(surface, /setPlaybackError\(visibleError\(caught, "Bölüm oynatma bağlantısı alınamadı\."\)\)/);
-  assert.match(main, /const openSeriesEpisode = \(intent: StalkerSeriesPlayableIntent\)[\s\S]*?returnTo: "series"[\s\S]*?seriesIdentity: intent\.identity/);
+  assert.match(main, /const openSeriesEpisode = \(intent: StalkerSeriesPlayableIntent, returnTo: StalkerContentView = "series"\)[\s\S]*?returnTo,[\s\S]*?seriesIdentity: intent\.identity/);
   assert.match(main, /presentedView === "series"[\s\S]*?<StalkerSeriesProductSurface provider=\{provider\} onPlayable=\{openSeriesEpisode\}/);
   assert.match(main, /view === "player" && playable[\s\S]*?<NativeVideoPlayer[\s\S]*?mediaKind=\{playable\.kind\}/);
   assert.match(main, /onFullscreenExit=\{\(\) => \{[\s\S]*?setView\(playable\.returnTo\)[\s\S]*?setPlayable\(null\)/);

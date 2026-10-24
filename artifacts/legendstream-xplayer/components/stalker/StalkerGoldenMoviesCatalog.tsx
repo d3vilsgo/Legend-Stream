@@ -1,7 +1,7 @@
 import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
 import { currentMovie, localStalkerMovie } from "@/lib/tmdb/movieInfoModel";
 import { stalkerMovieInput } from "@/lib/tmdb/providerInput";
-import { useNativeTvCatalogGrid } from "@/hooks/useNativeTvCatalogGrid";
+import { useResponsiveCatalogGrid } from "@/hooks/useResponsiveCatalogGrid";
 import { TVPreviewPressable } from "@/components/tvPreview/TVPreviewFocus";
 import { Feather } from "@expo/vector-icons";
 import React, { useEffect, useMemo, useRef, useState } from "react";
@@ -80,8 +80,8 @@ export function StalkerGoldenMoviesCatalog({
     category.id === catalog.selectedCategoryId && category.id !== globalCategoryId,
   )?.title;
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const grid = useNativeTvCatalogGrid<StalkerVodItem>(sortedItems.map(item => `stalker:vod:${item.portalId}`));
-  const columns = Platform.isTV ? grid.columns : width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const grid = useResponsiveCatalogGrid<StalkerVodItem>(sortedItems.map(item => `stalker:vod:${item.portalId}`), JSON.stringify([provider.id, catalog.selectedCategoryId, catalog.search, sort]));
+  const columns = grid.columns;
 
   if (shouldUseWholeCatalogLoadingSkeleton(catalog.loadingInitial, catalog.visibleItems.length, catalog.search)) {
     return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
@@ -177,19 +177,22 @@ function CatalogHeader({ title, detail, search, onSearch, loading, onRefresh, ch
   activeCategoryLabel?: string;
 }) {
   const colors = useColors();
+  const {width,height}=useWindowDimensions();
+  const compact=!Platform.isTV && Math.min(width,height)<600;
   const { t } = useI18n();
   return <View style={s.catalogHeaderRoot}>
-    <View style={s.catalogHead}>
+    <View style={[s.catalogHead,compact && {marginBottom:4}]}>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={Platform.isTV ? 1 : undefined} style={[s.title, { color: colors.foreground }]}>{title}</Text>
+        <Text numberOfLines={1} style={[s.title,compact && {fontSize:18,marginBottom:0}, { color: colors.foreground }]}>{title}</Text>
         <Text style={{ color: colors.mutedForeground }}>{detail}</Text>
       </View>
-      <FocusButton label={loading ? t("loading") : t("refresh")} icon="refresh-cw" variant="ghost" onPress={onRefresh} disabled={loading} />
+      <FocusButton label={compact ? "" : loading ? t("loading") : t("refresh")} accessibilityLabel={t("refresh")} style={compact ? {minWidth:48,minHeight:48,paddingHorizontal:10} : undefined} icon="refresh-cw" variant="ghost" onPress={onRefresh} disabled={loading} />
     </View>
-    <View style={Platform.isTV ? { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12 } : undefined}>
-    <View style={[s.search, Platform.isTV && { flexGrow: 1, flexBasis: 240, minWidth: 180, marginBottom: 0 }, { borderColor: colors.border, backgroundColor: colors.card }]}>
+    <View style={Platform.isTV ? { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12 } : compact ? {flexDirection:"row",flexWrap:"wrap",gap:6,alignItems:"center"} : undefined}>
+    <View style={[s.search,compact && {flexBasis:"100%"}, Platform.isTV && { flexGrow: 1, flexBasis: 240, minWidth: 180, marginBottom: 0 }, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Feather name="search" size={18} color={colors.mutedForeground} />
       <TextInput
+        accessibilityLabel={`${title} arama sorgusu`}
         value={search}
         onChangeText={onSearch}
         placeholder={`${t("search")} ${title.toLowerCase()}`}
@@ -197,11 +200,11 @@ function CatalogHeader({ title, detail, search, onSearch, loading, onRefresh, ch
         style={{ flex: 1, color: colors.foreground, minHeight: 44 }}
       />
     </View>
-    {activeCategoryLabel ? <View style={[s.activeCategoryChip, Platform.isTV && { maxWidth: 240 }, { borderColor: colors.border, backgroundColor: colors.card }]}>
+    {activeCategoryLabel ? <View style={[s.activeCategoryChip,compact && {maxWidth:"45%",flexShrink:1}, Platform.isTV && { maxWidth: 240 }, { borderColor: colors.border, backgroundColor: colors.card }]}>
       <Feather name="tag" size={14} color={colors.primary} />
       <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700", flex: 1 }}>{activeCategoryLabel}</Text>
     </View> : null}
-    <View style={Platform.isTV ? { flexBasis: 200, maxWidth: "100%" } : undefined}>{children}</View>
+    <View style={Platform.isTV ? { flexBasis: 200, maxWidth: "100%" } : compact ? {flex:1,minWidth:120} : undefined}>{children}</View>
     </View>
   </View>;
 }
@@ -336,12 +339,14 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
 
 function GridCard({ focusId, title, image, onPress }: { focusId: string; title: string; image?: string; onPress: () => void }) {
   const colors = useColors();
-  return <TVPreviewPressable focusId={focusId} accessibilityLabel={title} onPress={onPress} style={s.card}>
+  const { fontScale,width,height } = useWindowDimensions();
+  const compact=!Platform.isTV && Math.min(width,height)<600;
+  return <TVPreviewPressable eliteVisual focusId={focusId} accessibilityLabel={title} onPress={onPress} style={s.card}>
     <View style={[s.media, { borderColor: colors.border, backgroundColor: colors.card }]}>
       {image
         ? <Image source={{ uri: image }} style={s.posterBig} resizeMode={Platform.isTV ? "contain" : "cover"} />
         : <View style={[s.posterBig, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}><Feather name="play-circle" size={30} color={colors.primary} /></View>}
-      <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", padding: 9 }}>{title}</Text>
+      <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", fontSize: compact ? 12 : 14, lineHeight: compact ? 16 : 18, minHeight: Math.ceil((compact ? 32 : 36) * fontScale + (compact ? 8 : 18)), padding: compact ? 4 : 9 }}>{title}</Text>
     </View>
   </TVPreviewPressable>;
 }
@@ -359,10 +364,10 @@ const s = StyleSheet.create({
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },
   search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
   activeCategoryChip: { alignSelf: "flex-start", maxWidth: "100%", borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, flexDirection: "row", alignItems: "center", gap: 7 },
-  sortDropdownWrap: { paddingTop: 10, paddingBottom: 10, alignSelf: "stretch" },
-  sortDropdownButton: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
+  sortDropdownWrap: { paddingTop: Platform.isTV ? 10 : 0, paddingBottom: Platform.isTV ? 10 : 0, alignSelf: "stretch" },
+  sortDropdownButton: { minHeight: Platform.isTV ? 42 : 48, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
   sortDropdownMenu: { marginTop: 6, borderWidth: 1, borderRadius: 12, padding: 6, gap: 3 },
-  sortDropdownItem: { minHeight: 42, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 9 },
+  sortDropdownItem: { minHeight: Platform.isTV ? 42 : 48, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 9 },
   gridListContent: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
   card: { padding: 6 },
   media: { borderWidth: 1, borderRadius: 14, overflow: "hidden" },

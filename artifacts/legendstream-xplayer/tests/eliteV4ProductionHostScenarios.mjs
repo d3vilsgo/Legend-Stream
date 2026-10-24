@@ -1,0 +1,929 @@
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const app = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const req = createRequire(join(app, "package.json"));
+const { build } = createRequire(resolve(app, "../api-server/package.json"))(
+  "esbuild",
+);
+const out = mkdtempSync(join(tmpdir(), "elite-v4-host-"));
+let checks = 0;
+const reactMock = `
+  export function createContext(value){const context={_value:value};context.Provider={_context:context};return context;}
+  export function useContext(context){return context._value;}
+  const state=[];let cursor=0;export const HostHooks={reset(){cursor=0;},clear(){state.length=0;cursor=0;}};export function useState(value){const index=cursor++;if(!(index in state))state[index]=typeof value==='function'?value():value;return [state[index],next=>{state[index]=typeof next==='function'?next(state[index]):next}];}
+  let handle=200;export function useRef(value){return {current:value??{handle:handle++}};}
+  export function useMemo(factory){return factory();}
+  export function useCallback(callback){return callback;}
+  export function useEffect(effect){if(effect?.toString().includes("Animated.timing"))effect();}
+  export function createElement(type,props,...children){return {type,props:{...(props??{}),children}};}
+  export default {createElement,Fragment:'Fragment',useContext,useState,useRef,useMemo,useCallback,useEffect};
+`;
+const nativeMock = `
+  export const Pressable='Pressable',Image='Image',ImageBackground='ImageBackground',ScrollView='ScrollView',Text='Text',View='View';export const Platform={get isTV(){return globalThis.__eliteV4PlatformIsTV??false;},set isTV(value){globalThis.__eliteV4PlatformIsTV=value;}};
+  export const Animated={View:'AnimatedView',Value:class{constructor(value){this.value=value;}},timing(value,{toValue}){return{start(){value.value=toValue;}}}};
+  export function useWindowDimensions(){return globalThis.__eliteViewport??{width:1280,height:720,scale:1,fontScale:1};}
+  export function findNodeHandle(ref){return ref?.handle??null;}
+`;
+try {
+  await build({
+    stdin: {
+      contents: `export {Platform} from 'react-native';export {HostHooks} from 'react';export {HostRuntime} from 'host-runtime';export {ProductShellContent,default as ProductShellRoot} from './components/ProductShell';export {EliteV4TvShell} from '@/components/eliteV4/EliteV4TvShell';export {EliteV4FocusSurface,EliteV4FocusButton} from './components/eliteV4/EliteV4FocusSurface';export {EliteV4Sidebar} from './components/eliteV4/EliteV4Sidebar';export {EliteV4Hero} from './components/eliteV4/EliteV4Hero';export {EliteV4ContentRail} from './components/eliteV4/EliteV4ContentRail';export {EliteV4Home} from './components/eliteV4/EliteV4Home';export {EliteV4PreviewToggle} from './components/eliteV4/EliteV4PreviewToggle';export {eliteV4Theme} from './lib/design/eliteV4Theme';`,
+      resolveDir: app,
+      loader: "tsx",
+    },
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    outfile: join(out, "elite-v4.cjs"),
+    logLevel: "silent",
+    plugins: [
+      {
+        name: "host-mocks",
+        setup(build) {
+          build.onResolve({ filter: /^\.\/EliteV4Settings$/ }, () => ({
+            path: "settings",
+            namespace: "p5-boundary",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "p5-boundary" }, () => ({
+            contents: "export const EliteV4Settings='Settings';",
+            loader: "js",
+          }));
+          build.onResolve({ filter: /^react$/ }, () => ({
+            path: "react",
+            namespace: "host",
+          }));
+          build.onResolve({ filter: /^react-native$/ }, () => ({
+            path: "react-native",
+            namespace: "host",
+          }));
+          build.onResolve(
+            { filter: /^@\/components\/tvPreview\/TVPreviewFocus$/ },
+            () => ({
+              path: "tv-preview-focus",
+              namespace: "host",
+            }),
+          );
+          build.onResolve({ filter: /^@expo\/vector-icons$/ }, () => ({
+            path: "icons",
+            namespace: "host",
+          }));
+          build.onResolve({ filter: /^host-runtime$/ }, () => ({
+            path: "host-runtime",
+            namespace: "host",
+          }));
+          build.onResolve(
+            { filter: /^\.\/tmdb\/MovieInfoServiceProvider$/ },
+            () => ({ path: "movie-info-service-provider", namespace: "host" }),
+          );
+          build.onResolve(
+            { filter: /^@\/components\/tvPreview\/TVRemoteInspector$/ },
+            () => ({ path: "tv-remote-inspector", namespace: "host" }),
+          );
+          build.onResolve(
+            { filter: /^@\/components\/OptimizedHomeScreenV6$/ },
+            () => ({ path: "v3-home", namespace: "host" }),
+          );
+          build.onResolve(
+            { filter: /^@\/components\/StalkerMainPage$/ },
+            () => ({ path: "v3-stalker", namespace: "host" }),
+          );
+          build.onResolve({ filter: /^@\/context\/PlayerContext$/ }, () => ({
+            path: "player-context",
+            namespace: "host",
+          }));
+          build.onResolve(
+            { filter: /^@\/context\/UiPresentationContext$/ },
+            () => ({ path: "ui-presentation-context", namespace: "host" }),
+          );
+          build.onResolve({ filter: /^@\/lib\/productContract$/ }, () => ({
+            path: "product-contract",
+            namespace: "host",
+          }));
+          build.onResolve({ filter: /^@\/lib\/productShell$/ }, () => ({
+            path: "product-shell",
+            namespace: "host",
+          }));
+          build.onResolve({ filter: /^@\/lib\/stalkerPlaybackTrace$/ }, () => ({
+            path: "stalker-trace",
+            namespace: "host",
+          }));
+          build.onResolve(
+            { filter: /^@\/components\/eliteV4\/EliteV4TvShell$/ },
+            () => ({ path: "elite-v4-tv-shell", namespace: "host" }),
+          );
+          build.onResolve({ filter: /^expo-linear-gradient$/ }, () => ({
+            path: "gradient",
+            namespace: "host",
+          }));
+          build.onResolve(
+            { filter: /^@\/components\/tmdb\/MovieInfoServiceProvider$/ },
+            () => ({ path: "movie-info-service-provider", namespace: "host" }),
+          );
+          build.onResolve(
+            { filter: /^@\/components\/tmdb\/MovieInfoModal$/ },
+            () => ({ path: "movie-info-modal", namespace: "host" }),
+          );
+          build.onResolve(
+            { filter: /^@\/lib\/tmdb\/movieInfoService$/ },
+            () => ({ path: "movie-info-service", namespace: "host" }),
+          );
+          build.onResolve({ filter: /^@\/lib\/tmdb\/movieInfoModel$/ }, () => ({
+            path: "movie-info-model",
+            namespace: "host",
+          }));
+          build.onLoad({ filter: /.*/, namespace: "host" }, (args) => ({
+            contents:
+              args.path === "react"
+                ? reactMock
+                : args.path === "react-native"
+                  ? nativeMock
+                  : args.path === "host-runtime"
+                    ? `export const HostRuntime={player:{provider:{id:'provider-1',type:'xtream'}},presentation:{tvPreview:true}};`
+                    : args.path === "player-context"
+                      ? `import {HostRuntime} from 'host-runtime'; export function usePlayer(){return HostRuntime.player;}`
+                      : args.path === "ui-presentation-context"
+                        ? `import {HostRuntime} from 'host-runtime'; export function useUiPresentation(){return HostRuntime.presentation;} export function UiPresentationProvider({children}){return children;}`
+                        : args.path === "v3-home"
+                          ? `export default function OptimizedHomeScreenV6(){return null;}`
+                          : args.path === "v3-stalker"
+                            ? `export default function StalkerMainPage(){return null;}`
+                            : args.path === "product-contract"
+                              ? `export function deriveProductCapabilities(){return {};}`
+                              : args.path === "product-shell"
+                                ? `export function selectTransitionalProductSurface(){return 'paged';}`
+                                : args.path === "stalker-trace"
+                                  ? `export function shortSafeId(value){return value??'none';} export function traceStalker(){}`
+                                  : args.path === "tv-remote-inspector"
+                                    ? `export function TVRemoteInspectorOverlay(){return null;} export function TVRemoteInspectorCollector(){return null;}`
+                                    : args.path === "elite-v4-tv-shell"
+                                      ? `import React from 'react'; export function EliteV4TvShell(props){return React.createElement('EliteV4TvShell',props);}`
+                                      : args.path === "tv-preview-focus"
+                                        ? `export function TVPreviewPressable(props){return {type:'TVPreviewPressable',props};} export function useOptionalTVPreviewFocus(){return {enabled:true};} export function TVPreviewControls(){return null;} export function TVPreviewFocusProvider({children}){return children;} export function TVPreviewFocusRegion({children}){return children;}`
+                                        : args.path ===
+                                            "movie-info-service-provider"
+                                          ? `export function useMovieInfoService(){return {};} export function MovieInfoServiceProvider({children}){return children;}`
+                                          : args.path === "movie-info-modal"
+                                            ? `export function MovieInfoModal(props){return {type:'MovieInfoModal',props};}`
+                                            : args.path === "movie-info-service"
+                                              ? `export function beginMovieEnrichment(){return ()=>{};}`
+                                              : args.path === "movie-info-model"
+                                                ? `export function localXtreamMovie(item){return {title:item.name??item.title??''};} export function movieInfoPresentation(local,input){return {title:local.title};} export function pagedMovieInput(){return {};}`
+                                                : `export const ${args.path === "icons" ? "Feather" : "LinearGradient"}='${args.path}';`,
+            loader: "js",
+          }));
+        },
+      },
+    ],
+  });
+
+  const ui = req(join(out, "elite-v4.cjs"));
+  const ctxElement = ui.EliteV4FocusSurface({ children: "body" });
+  const context = ctxElement.props.value;
+  ctxElement.type._context._value = context;
+  const refs = new Map([
+    ["sidebar-home", { handle: 101 }],
+    ["hero", { handle: 102 }],
+    ["rail-0", { handle: 103 }],
+    ["rail-1", { handle: 104 }],
+  ]);
+  const neighbors = {
+    "sidebar-home": { right: "hero" },
+    hero: { left: "sidebar-home", down: "rail-0", right: "rail-0" },
+    "rail-0": { left: "sidebar-home", right: "rail-1", up: "hero" },
+    "rail-1": { left: "rail-0", up: "hero" },
+  };
+  for (const [id, ref] of refs)
+    context.register(
+      {
+        id,
+        region: id.startsWith("sidebar") ? "sidebar" : "content",
+        neighbors: neighbors[id],
+      },
+      ref,
+    );
+
+  const focusButton = (focusId, region, selected = false) =>
+    ui.EliteV4FocusButton({
+      focusId,
+      region,
+      neighbors: neighbors[focusId],
+      onPress: () => {},
+      selected,
+      children: "button",
+    });
+  const sidebarHome = focusButton("sidebar-home", "sidebar", true);
+  const heroFocus = focusButton("hero", "content");
+  const railFocus = focusButton("rail-0", "content");
+  assert.equal(sidebarHome.props.nextFocusRight, 102);
+  assert.equal(heroFocus.props.nextFocusLeft, 101);
+  assert.equal(heroFocus.props.nextFocusDown, 103);
+  assert.equal(railFocus.props.nextFocusUp, 102);
+  checks += 1;
+  console.log(
+    "PASS rendered production focus buttons publish real nextFocus IDs",
+  );
+
+  const homeItem = {
+    id: "movie-501",
+    kind: "movie",
+    title: "Örnek Film",
+    subtitle: "Dram · 2025",
+    image: "https://img.example/backdrop.jpg",
+  };
+  let opened = null;
+  const heroTree = ui.EliteV4Hero({
+    item: homeItem,
+    height: 250,
+    width: 1160,
+    firstRailFocusId: "featured-0",
+    providerId: "provider-1",
+    providerType: "xtream",
+    onOpen: (item) => {
+      opened = item;
+    },
+  });
+  const findFocusButton = (node, id) => {
+    if (!node || typeof node !== "object") return null;
+    if (node.props?.focusId === id) return node;
+    const children = node.props?.children;
+    for (const child of Array.isArray(children) ? children : [children]) {
+      const found = findFocusButton(child, id);
+      if (found) return found;
+    }
+    return null;
+  };
+  const heroButton = findFocusButton(heroTree, "hero");
+  heroButton.props.onPress();
+  assert.equal(opened, homeItem);
+  checks += 1;
+  console.log(
+    "PASS production Home Hero OK invokes the selected provider content action",
+  );
+
+  opened = null;
+  const railTree = ui.EliteV4ContentRail({
+    railId: "featured",
+    title: "Öne Çıkanlar",
+    items: [homeItem],
+    cardWidth: 220,
+    onOpen: (item) => {
+      opened = item;
+    },
+  });
+  const railButton =
+    railTree.props.children[1].props.children.flat(Infinity)[0];
+  railButton.props.onPress();
+  assert.equal(opened, homeItem);
+  assert.equal(railButton.props.focusId, "featured-0");
+  checks += 1;
+  console.log(
+    "PASS production Home rail OK invokes the selected provider content action",
+  );
+
+  const seriesItem = {
+    id: "series-22",
+    kind: "series",
+    title: "Dizi",
+    image: "https://img.example/series.jpg",
+  };
+  const liveItem = {
+    id: "live-trt",
+    kind: "live",
+    title: "TRT Haber",
+    image: "https://img.example/logo.png",
+  };
+  const homeTree = ui.EliteV4Home({
+    sections: {
+      featured: [],
+      continueWatching: [],
+      live: [liveItem],
+      movies: [homeItem],
+      series: [seriesItem],
+    },
+    providerName: "Demo Provider",
+    providerId: "provider-1",
+    providerType: "xtream",
+    loading: false,
+    onOpen: () => {},
+  });
+  const flattenTree = (node, output = []) => {
+    if (Array.isArray(node)) {
+      node.forEach((child) => flattenTree(child, output));
+      return output;
+    }
+    if (!node || typeof node !== "object") return output;
+    if (node.type === ui.EliteV4Hero || node.type === ui.EliteV4ContentRail) {
+      flattenTree(node.type(node.props), output);
+      return output;
+    }
+    output.push(node);
+    flattenTree(node.props?.children, output);
+    return output;
+  };
+  const homeNodes = flattenTree(homeTree);
+  const homeText = homeNodes
+    .filter((node) => node.type === "Text")
+    .map((node) => node.props.children)
+    .flat(Infinity);
+  assert.ok(homeText.includes("Canlı Kanallar"));
+  assert.ok(homeText.includes("Filmler"));
+  assert.ok(homeText.includes("Diziler"));
+  assert.ok(homeNodes.some((node) => node.props?.focusId === "live-0"));
+  assert.ok(homeNodes.some((node) => node.props?.focusId === "movies-0"));
+  assert.ok(homeNodes.some((node) => node.props?.focusId === "series-0"));
+  const renderedHero = homeNodes.find((node) => node.props?.focusId === "hero");
+  assert.equal(renderedHero.props.neighbors.down, "live-0");
+  assert.equal(
+    homeNodes.find((node) => node.props?.focusId === "live-0").props.neighbors
+      .left,
+    "sidebar-home",
+  );
+  checks += 1;
+  console.log(
+    "PASS production EliteV4Home renders typed provider shelves with hidden empty sections",
+  );
+
+  const emptyHomeTree = ui.EliteV4Home({
+    sections: {
+      featured: [],
+      continueWatching: [],
+      live: [],
+      movies: [],
+      series: [],
+    },
+    providerName: "Empty Provider",
+    providerId: "provider-1",
+    providerType: "xtream",
+    loading: false,
+    onOpen: () => {},
+  });
+  const emptyNodes = flattenTree(emptyHomeTree);
+  const emptyTexts = emptyNodes
+    .filter((node) => node.type === "Text")
+    .map((node) => node.props.children)
+    .flat(Infinity);
+  assert.ok(
+    emptyTexts.includes("Bu sağlayıcıda gösterilecek içerik bulunamadı."),
+  );
+  assert.ok(!emptyTexts.includes("Filmler"));
+  assert.ok(
+    emptyNodes.some((node) => node.props?.focusId === "hero"),
+    "empty Hero must retain an explicit Sidebar RIGHT target",
+  );
+  checks += 1;
+  console.log(
+    "PASS empty production Home hides catalog rails and keeps a reachable Hero focus target",
+  );
+
+  context.activeRegion = "content";
+  const compact = ui.EliteV4Sidebar({ onReturnToV3: () => {} });
+  assert.equal(
+    compact.props.style.width,
+    ui.eliteV4Theme.layout.sidebarCompact,
+  );
+  context.activeRegion = "sidebar";
+  const expanded = ui.EliteV4Sidebar({ onReturnToV3: () => {} });
+  assert.equal(
+    expanded.props.style.width,
+    ui.eliteV4Theme.layout.sidebarExpanded,
+  );
+  checks += 1;
+  console.log(
+    "PASS production Sidebar uses compact and expanded region widths",
+  );
+
+  let selected = null;
+  const toggleElement = ui.EliteV4PreviewToggle({
+    enabled: false,
+    onChange: (value) => {
+      selected = value;
+    },
+  });
+  const toggle = toggleElement.type(toggleElement.props);
+  toggle.props.onPress();
+  assert.equal(selected, true);
+  assert.equal(toggle.type, "TVPreviewPressable");
+  assert.equal(toggle.props.focusId, "elite-v4-preview-toggle");
+  checks += 1;
+  console.log(
+    "PASS production preview selector enables V4 and joins TV Preview focus",
+  );
+
+  let pressedV4 = false;
+  const v4ButtonElement = ui.EliteV4FocusButton({
+    focusId: "hero",
+    region: "content",
+    onPress: () => {
+      pressedV4 = true;
+    },
+    children: "Hero",
+  });
+  const v4Button = v4ButtonElement.type(v4ButtonElement.props);
+  assert.equal(v4Button.type, "TVPreviewPressable");
+  assert.equal(v4Button.props.focusId, "elite-v4:hero");
+  v4Button.props.onPress();
+  assert.equal(pressedV4, true);
+  checks += 1;
+  console.log(
+    "PASS production V4 controls expose their targets to virtual D-pad OK",
+  );
+
+  ui.Platform.isTV = true;
+  assert.equal(ui.Platform.isTV, true);
+  const nativeToggleElement = ui.EliteV4PreviewToggle({
+    enabled: false,
+    onChange: () => {},
+  });
+  const nativeToggle = nativeToggleElement;
+  assert.equal(nativeToggle.type, "Pressable");
+  assert.equal(nativeToggle.props.hasTVPreferredFocus, true);
+  ui.Platform.isTV = false;
+  checks += 1;
+  console.log("PASS Native TV V3 entry focuses the V4 selector first");
+
+  const shell = readFileSync(join(app, "components/ProductShell.tsx"), "utf8");
+  const legacyHome = readFileSync(
+    join(app, "components/OptimizedHomeScreenPaged.tsx"),
+    "utf8",
+  );
+  const sidebarSource = readFileSync(
+    join(app, "components/eliteV4/EliteV4Sidebar.tsx"),
+    "utf8",
+  );
+  assert.match(shell, /useState\(false\)/);
+  assert.doesNotMatch(shell, /setEliteV4Preview\(tvPreview\)/);
+  assert.match(shell, /const previewAvailable = Platform\.isTV \|\| tvPreview/);
+  assert.match(shell, /provider && previewAvailable && eliteV4Preview/);
+  assert.match(shell, /<OptimizedHomeScreenV6 key=\{provider\.id\} \/>/);
+  assert.match(sidebarSource, /contentFocusId = "hero"/);
+  assert.match(sidebarSource, /right: contentFocusId/);
+  assert.match(sidebarSource, /next: "sidebar-live"/);
+  assert.match(sidebarSource, /previous: "sidebar-home"/);
+  assert.match(sidebarSource, /up: entry.previous/);
+  assert.match(sidebarSource, /down: entry.next/);
+  assert.match(sidebarSource, /activeRegion === "sidebar"/);
+  assert.match(legacyHome, /export default function OptimizedHomeScreenPaged/);
+  assert.doesNotMatch(
+    shell,
+    /components\/home\/HomeDiscovery|components\/OptimizedHomeScreenPaged/,
+  );
+  checks += 1;
+  console.log(
+    "PASS ProductShell defaults to V3 and routes V4 through separate components",
+  );
+
+  const findElement = (node, predicate) => {
+    if (Array.isArray(node)) {
+      for (const child of node) {
+        const found = findElement(child, predicate);
+        if (found) return found;
+      }
+      return null;
+    }
+    if (!node || typeof node !== "object") return null;
+    if (predicate(node)) return node;
+    return findElement(node.props?.children, predicate);
+  };
+
+  ui.HostHooks.clear();
+  ui.Platform.isTV = false;
+  ui.HostRuntime.player = {
+    provider: { id: "provider-route-test", type: "xtream" },
+  };
+  ui.HostRuntime.presentation = { tvPreview: true };
+  let route = ui.ProductShellContent();
+  assert.equal(
+    findElement(route, (node) => node.type === ui.EliteV4TvShell),
+    null,
+  );
+  const previewToggleElement = findElement(
+    route,
+    (node) => node.type === ui.EliteV4PreviewToggle,
+  );
+  assert.ok(
+    previewToggleElement,
+    "V3 must expose a V4 selector in mobile TV Preview",
+  );
+  const mobileToggle = previewToggleElement.type(previewToggleElement.props);
+  mobileToggle.props.onPress();
+  ui.HostHooks.reset();
+  route = ui.ProductShellContent();
+  const mobileV4Shell = findElement(
+    route,
+    (node) => node.type === ui.EliteV4TvShell,
+  );
+  assert.ok(
+    mobileV4Shell,
+    "selecting V4 must render EliteV4TvShell from ProductShell",
+  );
+  assert.equal(
+    findElement(route, (node) => node.type === ui.EliteV4PreviewToggle)?.props
+      .enabled,
+    true,
+  );
+  mobileV4Shell.props.onReturnToV3();
+  ui.HostHooks.reset();
+  route = ui.ProductShellContent();
+  assert.equal(
+    findElement(route, (node) => node.type === ui.EliteV4TvShell),
+    null,
+  );
+  checks += 1;
+  console.log(
+    "PASS ProductShell route defaults to V3, activates V4, and returns to V3 in TV Preview",
+  );
+
+  ui.HostHooks.clear();
+  ui.Platform.isTV = true;
+  ui.HostRuntime.presentation = { tvPreview: false };
+  route = ui.ProductShellContent();
+  const nativeRouteToggleElement = findElement(
+    route,
+    (node) => node.type === ui.EliteV4PreviewToggle,
+  );
+  assert.ok(
+    nativeRouteToggleElement,
+    "Native TV must expose the V4 selector without TV Preview mode",
+  );
+  const nativeRouteToggle = nativeRouteToggleElement.type(
+    nativeRouteToggleElement.props,
+  );
+  assert.equal(nativeRouteToggle.type, "Pressable");
+  assert.equal(nativeRouteToggle.props.hasTVPreferredFocus, true);
+  nativeRouteToggle.props.onPress();
+  ui.HostHooks.reset();
+  route = ui.ProductShellContent();
+  const nativeV4Shell = findElement(
+    route,
+    (node) => node.type === ui.EliteV4TvShell,
+  );
+  assert.ok(nativeV4Shell, "Native TV V4 selection must render EliteV4TvShell");
+  nativeV4Shell.props.onReturnToV3();
+  ui.HostHooks.reset();
+  assert.equal(
+    findElement(
+      ui.ProductShellContent(),
+      (node) => node.type === ui.EliteV4TvShell,
+    ),
+    null,
+  );
+  ui.Platform.isTV = false;
+  checks += 1;
+  console.log("PASS Native TV selection renders V4 and restores the V3 route");
+
+  // Measured content width must drive Hero geometry when the menu expands.
+  ui.HostHooks.clear();
+  let measuredHome = ui.EliteV4Home({
+    sections: {
+      featured: [homeItem],
+      continueWatching: [],
+      live: [liveItem],
+      movies: [homeItem],
+      series: [],
+    },
+    providerName: "Provider",
+    providerId: "p",
+    providerType: "xtream",
+    loading: false,
+    onOpen() {},
+  });
+  measuredHome.props.onLayout({ nativeEvent: { layout: { width: 820 } } });
+  ui.HostHooks.reset();
+  measuredHome = ui.EliteV4Home({
+    sections: {
+      featured: [homeItem],
+      continueWatching: [],
+      live: [liveItem],
+      movies: [homeItem],
+      series: [],
+    },
+    providerName: "Provider",
+    providerId: "p",
+    providerType: "xtream",
+    loading: false,
+    onOpen() {},
+  });
+  assert.equal(
+    findElement(measuredHome, (node) => node.type === ui.EliteV4Hero).props
+      .width,
+    760,
+  );
+  const measuredRails = measuredHome.props.children
+    .flat(Infinity)
+    .filter((node) => node?.type === ui.EliteV4ContentRail);
+  const liveRail = measuredRails.find((node) => node.props.railId === "live");
+  const movieRail = measuredRails.find(
+    (node) => node.props.railId === "movies",
+  );
+  assert.equal(
+    findElement(
+      liveRail.type(liveRail.props),
+      (node) => node.props?.focusId === "live-0",
+    ).props.neighbors.down,
+    "movies-0",
+  );
+  assert.equal(
+    findElement(
+      movieRail.type(movieRail.props),
+      (node) => node.props?.focusId === "movies-0",
+    ).props.neighbors.up,
+    "live-0",
+  );
+  checks += 1;
+  console.log(
+    "PASS production Home measures the remaining slot and connects adjacent shelves",
+  );
+
+  // Narrow landscape layout and short Hero preserve visible, bounded actions.
+  globalThis.__eliteViewport = { width: 640, height: 360 };
+  context.activeRegion = "sidebar";
+  const narrowSidebar = ui.EliteV4Sidebar({ onReturnToV3() {} });
+  assert.equal(narrowSidebar.props.style.width, 192);
+  assert.equal(narrowSidebar.props.style.flexShrink, 0);
+  assert.equal(narrowSidebar.props.style.overflow, "hidden");
+  assert.equal(narrowSidebar.props.children[0].type, "ScrollView");
+  ui.HostHooks.clear();
+  const shortHero = ui.EliteV4Hero({
+    item: homeItem,
+    height: 196,
+    width: 412,
+    providerId: "p",
+    providerType: "xtream",
+    onOpen() {},
+  });
+  const shortTitle = findElement(
+    shortHero,
+    (node) =>
+      node.type === "Text" && node.props.children?.includes(homeItem.title),
+  );
+  assert.equal(shortTitle.props.numberOfLines, 1);
+  const action = findFocusButton(shortHero, "hero");
+  assert.equal(action.props.style.borderWidth, 1);
+  checks += 1;
+  console.log(
+    "PASS narrow Sidebar reserves width and short Hero bounds title and actions",
+  );
+  delete globalThis.__eliteViewport;
+
+  context.focusedId = "hero";
+  ui.HostHooks.clear();
+  ui.Platform.isTV = true;
+  const refinedNative = ui.EliteV4FocusButton({
+    focusId: "hero",
+    region: "content",
+    children: "Hero",
+    onPress() {},
+  });
+  const nativeStyle = Object.assign(
+    {},
+    ...refinedNative.props.style({ pressed: false }).filter(Boolean),
+  );
+  assert.equal(nativeStyle.borderWidth, 1);
+  assert.equal(nativeStyle.borderColor, ui.eliteV4Theme.color.focus);
+  assert.equal(nativeStyle.transform, undefined);
+  const selectedPrimary = ui.EliteV4FocusButton({
+    focusId: "hero",
+    region: "content",
+    selected: true,
+    style: { backgroundColor: "#70D8D0" },
+    children: "Hero",
+    onPress() {},
+  });
+  assert.equal(
+    Object.assign(
+      {},
+      ...selectedPrimary.props.style({ pressed: false }).filter(Boolean),
+    ).backgroundColor,
+    "#70D8D0",
+  );
+  ui.Platform.isTV = false;
+  const refinedPreview = ui.EliteV4FocusButton({
+    focusId: "hero",
+    region: "content",
+    children: "Hero",
+    onPress() {},
+  });
+  assert.equal(refinedPreview.props.focusVisualStyle.borderWidth, 1);
+  assert.equal(
+    refinedPreview.props.focusVisualStyle.borderColor,
+    nativeStyle.borderColor,
+  );
+  checks += 1;
+  console.log(
+    "PASS V4 Native and Preview request the same thin focus without layout scale",
+  );
+
+  // Compile the actual shared Preview adapter, not a copied styling helper.
+  await build({
+    stdin: {
+      contents: `export {TVPreviewPressable} from './components/tvPreview/TVPreviewFocus'; export {HostContexts,HostHooks} from 'react';`,
+      resolveDir: app,
+      loader: "tsx",
+    },
+    bundle: true,
+    platform: "node",
+    format: "cjs",
+    outfile: join(out, "preview.cjs"),
+    logLevel: "silent",
+    plugins: [
+      {
+        name: "preview-boundaries",
+        setup(build) {
+          build.onResolve(
+            {
+              filter:
+                /^(react$|react-native$|react-native-safe-area-context$|@\/)/,
+            },
+            (args) => ({ path: args.path, namespace: "preview-host" }),
+          );
+          build.onLoad(
+            { filter: /.*/, namespace: "preview-host" },
+            ({ path }) => ({
+              loader: "js",
+              contents:
+                path === "react"
+                  ? reactMock
+                      .replace(
+                        "export function createContext(value){",
+                        "export const HostContexts=[];export function useId(){return 'generated';} export function createContext(value){",
+                      )
+                      .replace(
+                        "return context;}",
+                        "HostContexts.push(context);return context;}",
+                      )
+                  : path === "react-native"
+                    ? nativeMock +
+                      `export const StyleSheet={create:value=>value};`
+                    : path === "react-native-safe-area-context"
+                      ? `export function useSafeAreaInsets(){return {};}`
+                      : path.endsWith("/useColors")
+                        ? `export function useColors(){return {primary:'#00f'};}`
+                        : path.endsWith("/useNativeTvTarget")
+                          ? `export function useNativeTvTarget(){return {focused:false,register(){}};}`
+                          : path.endsWith("/UiPresentationContext")
+                            ? `export function useUiPresentation(){return {tvPreview:true};}`
+                            : path.endsWith("/tvPreviewFocus")
+                              ? `export function createTVPreviewFocusController(){return {};}`
+                              : path.endsWith("/tvRemoteInspector")
+                                ? `export function inspectorAction(){}`
+                                : `export function nativeTvModalShown(){} export function requestTvTargetFocus(){} export function setNativeTvScope(){} export function subscribeNativeTvFocus(){}`,
+            }),
+          );
+        },
+      },
+    ],
+  });
+  const adapter = req(join(out, "preview.cjs"));
+  adapter.HostContexts[0]._value = {
+    enabled: true,
+    focusedId: "elite-v4:hero",
+    nativeScope: "content",
+    register() {},
+    rememberNativeFocus() {},
+  };
+  const customStyle = refinedPreview.props.focusVisualStyle;
+  const actualPreview = adapter.TVPreviewPressable({
+    focusId: "elite-v4:hero",
+    focusVisualStyle: customStyle,
+    style: { backgroundColor: "#70D8D0" },
+    children: "Hero",
+  });
+  const previewStyle = Object.assign(
+    {},
+    ...actualPreview.props.style({ pressed: false }).filter(Boolean),
+  );
+  assert.equal(previewStyle.borderWidth, 1);
+  assert.equal(previewStyle.borderColor, ui.eliteV4Theme.color.focus);
+  assert.equal(
+    previewStyle.backgroundColor,
+    "#70D8D0",
+    "focused primary CTA must retain dark-text contrast",
+  );
+  adapter.HostHooks.clear();
+  adapter.HostContexts[0]._value.focusedId = "v3-button";
+  const actualLegacy = adapter.TVPreviewPressable({
+    focusId: "v3-button",
+    eliteVisual: true,
+    children: "V3",
+  });
+  const legacyStyle = Object.assign(
+    {},
+    ...actualLegacy.props.style({ pressed: false }).filter(Boolean),
+  );
+  assert.equal(legacyStyle.borderWidth, 4);
+  assert.equal(legacyStyle.borderColor, "#ffffff");
+  assert.equal(legacyStyle.backgroundColor, "#1C2530");
+  checks += 1;
+  console.log(
+    "PASS actual Preview adapter applies V4 thin focus and preserves V3 styling and CTA contrast",
+  );
+
+  const verticalScroll = [];
+  measuredHome.props.ref.current = {
+    scrollTo: (entry) => verticalScroll.push(entry),
+  };
+  const revealRail = liveRail.type({
+    ...liveRail.props,
+    items: [liveItem, { ...liveItem, id: "live-2" }],
+  });
+  revealRail.props.onLayout({ nativeEvent: { layout: { y: 620 } } });
+  const railScroll = revealRail.props.children[1];
+  const horizontalScroll = [];
+  railScroll.props.ref.current = {
+    scrollTo: (entry) => horizontalScroll.push(entry),
+  };
+  const secondCard = railScroll.props.children.flat(Infinity)[1];
+  let focused = false;
+  const revealButton = ui.EliteV4FocusButton({
+    ...secondCard.props,
+    onFocused: () => {
+      focused = true;
+      secondCard.props.onFocused();
+    },
+  });
+  revealButton.props.onFocus();
+  assert.equal(focused, true);
+  assert.deepEqual(verticalScroll, [{ y: 608, animated: true }]);
+  assert.deepEqual(horizontalScroll, [
+    { x: liveRail.props.cardWidth + 6, animated: true },
+  ]);
+  const measuredHero = findElement(
+    measuredHome,
+    (node) => node.type === ui.EliteV4Hero,
+  );
+  measuredHero.props.onFocused();
+  assert.deepEqual(verticalScroll.at(-1), { y: 0, animated: true });
+  checks += 1;
+  console.log(
+    "PASS production focus callback reveals its rail/card and returns Hero to the top",
+  );
+
+  assert.equal(shortHero.props.style.minHeight, 196);
+  assert.equal(shortHero.props.style.height, undefined);
+  const heroBody = shortHero.props.children
+    .flat(Infinity)
+    .find((node) => node?.type === "View");
+  assert.equal(heroBody.props.style.position, undefined);
+  assert.equal(heroBody.props.style.justifyContent, "flex-end");
+  checks += 1;
+  console.log(
+    "PASS compact production Hero lets scaled text grow in normal layout flow",
+  );
+
+  assert.equal(checks, 18);
+  ui.HostHooks.clear();
+  ui.Platform.isTV = true;
+  let root = ui.ProductShellRoot();
+  root.type._context._value = root.props.value;
+  root.props.value.select(true);
+  ui.HostHooks.reset();
+  root = ui.ProductShellRoot();
+  root.type._context._value = root.props.value;
+  ui.HostRuntime.player = { provider: { id: "new-account", type: "m3u" } };
+  ui.HostHooks.reset();
+  root = ui.ProductShellRoot();
+  root.type._context._value = root.props.value;
+  // Model the provider-owned subtree remount while retaining the root selection owner.
+  ui.HostHooks.clear();
+  route = ui.ProductShellContent();
+  assert.ok(
+    findElement(route, (node) => node.type === ui.EliteV4TvShell),
+    "explicit V4 choice survives account focus-scope remount",
+  );
+  const selectedP5Shell = findElement(
+    route,
+    (node) => node.type === ui.EliteV4TvShell,
+  );
+  selectedP5Shell.props.onReturnToV3();
+  assert.equal(
+    root.props.value.selected,
+    true,
+    "selection is owned by the stable root",
+  );
+  root.type._context._value = null;
+  checks += 1;
+  console.log(
+    "PASS P5 production shell retains explicit V4 selection across account scope remount",
+  );
+  console.log(`Elite V4 production host scenarios: ${checks}/${checks} passed`);
+} finally {
+  rmSync(out, { recursive: true, force: true });
+}
+
+await import("./eliteV4LiveProductionScenarios.mjs");
+
+await import("./eliteV4MoviesProductionScenarios.mjs");
+
+await import("./eliteV4SeriesProductionScenarios.mjs");
+
+await import("./eliteV4PersistenceProductionScenarios.mjs");
+await import("./eliteV4LibraryProductionScenarios.mjs");
+
+await import("./eliteV4SettingsProductionScenarios.mjs");
+
+await import("./eliteV4StalkerRuntimeScenarios.mjs");

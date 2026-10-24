@@ -128,7 +128,7 @@ async function main() {
   assert.doesNotMatch(surfaceSource, /NativeVideoPlayer|CompatibilityVideoPlayer/);
   assert.match(surfaceSource, /emitPlayable\(buildStalkerSeriesPlayableIntent/);
   assert.match(stalkerMainSource, /<StalkerSeriesProductSurface provider=\{provider\} onPlayable=\{openSeriesEpisode\}/);
-  assert.match(stalkerMainSource, /returnTo: "series"/);
+  assert.match(stalkerMainSource, /returnTo: StalkerContentView = "series"/);
   assert.match(surfaceSource, /readCurrentStalkerProductSession\(provider\)/);
   assert.doesNotMatch(surfaceSource, /readLatestIsolatedStalkerSessionForProbe|latestIsolatedStalkerSessionForProbe/);
 

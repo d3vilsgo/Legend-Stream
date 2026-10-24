@@ -11,6 +11,8 @@ export type StalkerHomeMoviePreview = {
   category?: string;
   year?: string;
   rating?: string;
+  lookupCategoryId?: string;
+  lookupPage?: number;
 };
 
 export type StalkerHomeSeriesPreview = StalkerHomeMoviePreview;
@@ -28,7 +30,7 @@ type SummaryListener = (summary: StalkerHomeSummary) => void;
 const STORAGE_PREFIX = "@legendstream/stalker-home-summary-v1:";
 const listeners = new Map<string, Set<SummaryListener>>();
 const writeQueues = new Map<string, Promise<void>>();
-const SAFE_PREVIEW_KEYS = new Set(["id", "title", "image", "category", "year", "rating"]);
+const SAFE_PREVIEW_KEYS = new Set(["id", "title", "image", "category", "year", "rating", "lookupCategoryId", "lookupPage"]);
 
 export function emptyStalkerHomeSummary(providerId: string): StalkerHomeSummary {
   return { schemaVersion: 1, providerId, movies: [], series: [] };
@@ -51,6 +53,8 @@ function parsePreview(value: unknown): StalkerHomeMoviePreview | null {
     category: safeText(raw.category, 256),
     year: safeText(raw.year, 32),
     rating: safeText(raw.rating, 32),
+    ...(safeText(raw.lookupCategoryId, 256) && Number.isSafeInteger(raw.lookupPage) && Number(raw.lookupPage) >= 1 && Number(raw.lookupPage) <= 10_000
+      ? { lookupCategoryId: safeText(raw.lookupCategoryId, 256), lookupPage: Number(raw.lookupPage) } : {}),
   };
 }
 
@@ -144,8 +148,12 @@ export function writeStalkerMovieHomePreview(
   providerId: string,
   items: readonly StalkerVodItem[],
   storage: Storage = AsyncStorage,
+  locator?: { categoryId: string; page: number },
 ) {
-  return writePreview(providerId, "movies", items.map(moviePreview), storage);
+  return writePreview(providerId, "movies", items.map(item => ({
+    ...moviePreview(item),
+    ...(locator ? { lookupCategoryId: locator.categoryId, lookupPage: locator.page } : {}),
+  })), storage);
 }
 
 export function writeStalkerSeriesHomePreview(

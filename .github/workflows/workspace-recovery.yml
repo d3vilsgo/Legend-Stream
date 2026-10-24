@@ -1,0 +1,1030 @@
+name: Workspace Recovery V1
+
+on:
+  push:
+    branches:
+      - integration/legendstream-u1
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Full 40-character application source commit SHA"
+        required: true
+        default: "4281ce70473fbc20db550a69b35974c30495af68"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  recover:
+    if: github.ref == 'refs/heads/integration/legendstream-u1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+      WORKFLOW_SHA: ${{ github.workflow_sha }}
+      RECOVERY_DIR: ${{ github.workspace }}/../workspace-recovery-${{ github.run_id }}
+    steps:
+      - name: Validate requested commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          mkdir -p "$RECOVERY_DIR/source" "$RECOVERY_DIR/dependencies"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          lfs: false
+          submodules: false
+      - name: Verify and package exact source snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, re, subprocess, tarfile
+          def git(*args):
+              return subprocess.check_output(['git', *args])
+          expected = os.environ['SOURCE_SHA']
+          assert git('rev-parse', 'HEAD').decode().strip() == expected, 'Wrong checkout'
+          assert not git('status', '--porcelain'), 'Checkout is dirty'
+          output = pathlib.Path(os.environ['RECOVERY_DIR']) / 'source'
+          files = []
+          sensitive = []
+          # Conservative fail-closed policy: never redact or omit a tracked blob silently.
+          secret_patterns = [
+              rb'-----BEGIN (?:[A-Z ]*PRIVATE KEY|CERTIFICATE)-----',
+              rb'(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})',
+              rb'AKIA[0-9A-Z]{16}',
+              rb'''(?i)(?:password|passwd|secret|api[_-]?key|auth[_-]?token)\s*[:=]\s*["'][^"'\r\n]{8,}["']''',
+              rb'https?://[^\s/]+:[^\s/@]+@',
+              rb'https?://[^\s]+[?&](?:password|token|access_token|api_key)=[^\s&]+',
+              rb'https?://[^\s]+/(?:live|movie|series)/[^/\s]+/[^/\s]+/',
+          ]
+          # Reviewed at source commit 4281ce70473fbc20db550a69b35974c30495af68.
+          # Exact path + whole-file digest + complete rule/match multiset; never a directory exemption.
+          reviewed_matches = {
+              "artifacts/legendstream-xplayer/context/I18nContext.tsx": {
+                  "sha256": "c0ae70b6aefa8e8f5835066cda168be47387ae2e647074e3c98f35bfdcc0989a",
+                  "matches": [
+                      [
+                          3,
+                          "32b211e09f18dc801e4109b06b85c8bdf34af85b2f7263407c27ecc27316a57c"
+                      ],
+                      [
+                          3,
+                          "32b211e09f18dc801e4109b06b85c8bdf34af85b2f7263407c27ecc27316a57c"
+                      ],
+                      [
+                          3,
+                          "3c402d36b06470aceda8f0112cc0b925223ab7a302bb293dcd5e56696fbfb0fe"
+                      ],
+                      [
+                          3,
+                          "7e832c8c8845b9c21ebfa38b536a540da3492e646e81e85313a41e13bb08eda2"
+                      ],
+                      [
+                          3,
+                          "9dc4e77b7d15afec5149f443ef1c29f15a88a0d78ed640766709944a1838afce"
+                      ],
+                      [
+                          3,
+                          "a1cc87948deb1db4d00dffce5ef62a682f7482cedac7fa87bca9cd1efa323126"
+                      ]
+                  ],
+                  "reason": "translation-labels"
+              },
+              "artifacts/legendstream-xplayer/tests/eliteV4PersistenceProductionScenarios.mjs": {
+                  "sha256": "f0dd1f86ed54fa9fdf2702f17f061bf26b82aed56bac599da2134dbd1100050c",
+                  "matches": [
+                      [3, "1998e4382cfc1d9944dc751f0a916f4c9223605652ba0e1f9a04c753b546dc11"],
+                      [3, "2b1261d5e91656604a32c867cb2e32428343108a4e267c0fc25a837d8c1471bd"],
+                      [6, "39ec76c7a9a9dd7046082ab6ddb0c38f57ab0c4363dfeba2ba49f815ffef54ef"]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/catalogDbWriterCoordinationScenarios.ts": {
+                  "sha256": "19910eeaeb81cc5f0926504a6031cbea5ec24062ee1ae5af624a5ca1607f94b7",
+                  "matches": [
+                      [
+                          5,
+                          "2aa5d763be54b68afcad7da25d6866cf8eb7cc1465f1ace577a9b136e6e012aa"
+                      ],
+                      [
+                          6,
+                          "45b1e7cda84cd218051affcd8db29aa8d25515031347f617df3359a6311fb548"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/catalogParityScenarios.ts": {
+                  "sha256": "bdde6a4af84b14f44bd48c04e739496fe665161bec93def88d2367354fd61969",
+                  "matches": [
+                      [
+                          5,
+                          "e0878fc062da4a6f93f9f6181ff2de10ee0ef7701cec1b7ef4ff60363bdab97b"
+                      ],
+                      [
+                          5,
+                          "e0878fc062da4a6f93f9f6181ff2de10ee0ef7701cec1b7ef4ff60363bdab97b"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/catalogPersistenceScenarios.ts": {
+                  "sha256": "b53b097bffbf5f5264799ad3338c94e213549edd76cee8f8f397738fcd6ee508",
+                  "matches": [
+                      [
+                          3,
+                          "97ebf5920f937cf044e4a9d22129661760df30751e0072b150b7ad411aa9aa4c"
+                      ],
+                      [
+                          3,
+                          "a2c944e26811d610fd979c02780ef785bd13648b6386387c4c650c6726997f6c"
+                      ],
+                      [
+                          5,
+                          "9c69a1ba32e5cd3ee52f0b1dcd29f2a1db1623b4b21567c2bc8677fda9328bd1"
+                      ],
+                      [
+                          5,
+                          "f6cba432226417d9394e4d79b3ea590722ede17d954b0e2d359e5740c079d6f4"
+                      ],
+                      [
+                          6,
+                          "0739d98e2b15cf79325d6a2337af839c4bfe6cb68451a1e5178150bd65de0f0c"
+                      ],
+                      [
+                          6,
+                          "1bc628083af35c3f9da6842720e59d43833baa8a09b7be031c88b3c31926d5fa"
+                      ],
+                      [
+                          6,
+                          "58f2e5edf79803b40eb1aa39270aa1d8b3043541e8fe296693cca91db42afa7a"
+                      ],
+                      [
+                          6,
+                          "db64518e444d8f4dc8a0c2de8894fa7dfdccf252596a4191a9057b714af4b946"
+                      ],
+                      [
+                          6,
+                          "db64518e444d8f4dc8a0c2de8894fa7dfdccf252596a4191a9057b714af4b946"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/catalogWriteBenchmarkRunnerScenarios.ts": {
+                  "sha256": "4967a52e2ca5d880df8ccbae07ff58504188f8560e926fef6559d013be567797",
+                  "matches": [
+                      [
+                          5,
+                          "7a96d0c25e04d5fda41eb1321fdc45ee87619f834dd2b242b60433a9b44d830b"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/credentialStorageScenarios.ts": {
+                  "sha256": "269da2c64b094745c9a6541848a424c17755dfd27ec38090a3002778c1f18e1a",
+                  "matches": [
+                      [
+                          3,
+                          "5b46f1f39e3a2575a72f8bea74f43de5fccc5a24ab55b0bc4179c01308b188e3"
+                      ],
+                      [
+                          5,
+                          "214c4ac5cf33198bd681333b9a46d032c3d4e6c393542ba274843633189ae9e1"
+                      ],
+                      [
+                          5,
+                          "be25adcbce244344943484ab8eb73ec031bca080d2a5b696c06513bbd77ae41d"
+                      ],
+                      [
+                          6,
+                          "f9cbc2fa6175907fe80177926aa63f5b1d985dde047551a1fe523ab45b73fe98"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/logRedactionScenarios.ts": {
+                  "sha256": "fb5ae51ab4638b42957aeb0ece033492826cac3bcc21b8ed5f6cba2e783b3371",
+                  "matches": [
+                      [
+                          3,
+                          "cffad8e47fbff38bd9b21f17b3056c0a03dfe539c0a913d93d5882750ebbbfa8"
+                      ],
+                      [
+                          5,
+                          "403192f39cbf5ed4d15d6be66e9a60b315f550276a017e2500a1d171302e77e4"
+                      ],
+                      [
+                          5,
+                          "927d8c2ab9b0238f784192aa9292592e78e8e0175343d082c43d0eaf92dd7c4c"
+                      ],
+                      [
+                          5,
+                          "aa0010250f8b9fa3066530adc5e20883eba41df84261deecd17e3d1f9e9eac61"
+                      ],
+                      [
+                          5,
+                          "bdd6c8f93a26f38dc33a9b6323c49319e347c6b94df5da4044303067ec361f65"
+                      ],
+                      [
+                          6,
+                          "272629418b42c2ddcde4749e41e647fba94828578d1eef5ac3bab731bcda13c3"
+                      ],
+                      [
+                          6,
+                          "3a3486fb04415973804388ffa331fcddc4e93316b193cc7de87bf014f2014e33"
+                      ],
+                      [
+                          6,
+                          "797255449501c82bcbd1195be8cfbd3e5c30fe1b8889dab8925396dfb7944669"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/m3uClassificationScenarios.ts": {
+                  "sha256": "d9f09e44409e6698d3bda8732ba81472800635f0bffcc0c43b47f5baeec66ac8",
+                  "matches": [
+                      [
+                          6,
+                          "3ca56762076e75cd69236f21683f6ade4aca0f477c696559394dfe881d613ba4"
+                      ],
+                      [
+                          6,
+                          "3ca56762076e75cd69236f21683f6ade4aca0f477c696559394dfe881d613ba4"
+                      ],
+                      [
+                          6,
+                          "a8ff30646d29003b6333ef9e2b3bf6024d4205ba115a82c4cd5ad34962420c0a"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/m3uDiagnosticsK4Scenarios.ts": {
+                  "sha256": "7ede6d7577c7ace12ba240fa7e96ded3ed6cbde22b0e55fef9713bd5dd3997f4",
+                  "matches": [
+                      [
+                          3,
+                          "d244434c3953b5b678573c45994e02de9af56694502656e5d0e88674779522ff"
+                      ],
+                      [
+                          5,
+                          "3ea66994cea186875b2b1b8e102539106c799db9f0818a917fcdd540e93d1bfb"
+                      ],
+                      [
+                          5,
+                          "74e3acf0173249a1fb2eb7c307b8ed74972eb4d7a2abc21d9ab88eaa7445c4f6"
+                      ],
+                      [
+                          6,
+                          "870589a7238cc9cabd5485b3f5a324c0f8abc9c289eea3515e45da5c4d6e3caa"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/m3uDiagnosticsScenarios.ts": {
+                  "sha256": "d942f18c56f2980b60b78607920aa737b78f2169c7c56df531089864c20b8b54",
+                  "matches": [
+                      [
+                          5,
+                          "1716e5cac6bb5e957971c2dee36f98a6b037a351e09a7ff4dd7b1de98bec72e6"
+                      ],
+                      [
+                          5,
+                          "36f29af21c8226e64d17621389aea4f021723e3d6c2e85152f0b27f017b1b0f0"
+                      ],
+                      [
+                          5,
+                          "a51b196a5e51439c84846dc3c301981acaf40a434570f3da91b757b020f1de45"
+                      ],
+                      [
+                          5,
+                          "b22ea892a57c47689e0755247db3322ec31654e4ac92f70007f954531c1c790c"
+                      ],
+                      [
+                          5,
+                          "b22ea892a57c47689e0755247db3322ec31654e4ac92f70007f954531c1c790c"
+                      ],
+                      [
+                          5,
+                          "b22ea892a57c47689e0755247db3322ec31654e4ac92f70007f954531c1c790c"
+                      ],
+                      [
+                          5,
+                          "f5bcf968907699c13553e9549eadcb609ce7f3a105e4be73457133c2ad57776a"
+                      ],
+                      [
+                          6,
+                          "18ed235a89b0f501de3b4098892364ea72f4cea45032a9c4cb371d58f08a2e5f"
+                      ],
+                      [
+                          6,
+                          "1be90f29de1a828decfe46d19a488179455aba54ad424a3ecb7af2e1237eb4ab"
+                      ],
+                      [
+                          6,
+                          "5b2d588a6913be78853d6700190afc57462022ec06f520a1154f0d05b5df0146"
+                      ],
+                      [
+                          6,
+                          "729e3752927dd312cf9aecf32cebff7560cf03371e82c8be748c066b9ced61b2"
+                      ],
+                      [
+                          6,
+                          "8b08fc15fd7cfa0ce1f21c98042281f750754656e1a5fe3fbed0be6628cd9353"
+                      ],
+                      [
+                          6,
+                          "92664c085b66a3d598e97cc9d31579ba3ce2c456422b8feef9a708e84bbd8370"
+                      ],
+                      [
+                          6,
+                          "b35efba9c29c4fe2fcd76262a027d21fbed65b8731a648483b1e72cc968ff1af"
+                      ],
+                      [
+                          6,
+                          "cfacd7dc8c12b354073ebad83a848377025d4d3ee7847e0460bcdac5f65b043d"
+                      ],
+                      [
+                          6,
+                          "cfacd7dc8c12b354073ebad83a848377025d4d3ee7847e0460bcdac5f65b043d"
+                      ],
+                      [
+                          6,
+                          "cfacd7dc8c12b354073ebad83a848377025d4d3ee7847e0460bcdac5f65b043d"
+                      ],
+                      [
+                          6,
+                          "de20de5c458eaec0ed68ff5a9566cb681cd350fb4efdbbedb6595fab3b20c09c"
+                      ],
+                      [
+                          6,
+                          "f240a1e12527917714811b5b6e20a2a29ffa5b05ea60854df20a757f1a3f53fa"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/m3uHydrationYieldScenarios.ts": {
+                  "sha256": "a5302b6c679bf0411112784619dce7a4e75436b7596a3845035dfcdadc6425b9",
+                  "matches": [
+                      [
+                          5,
+                          "5d427bc1efd829bc376722a4e64fccc8568b98641d8a8ba53c6e6989d9952b1a"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/m3uPlaybackRefScenarios.ts": {
+                  "sha256": "a3fe30fb95e3eda36f9637af936efba8156d99213a8b0cf94a4a37db487cb1ad",
+                  "matches": [
+                      [
+                          5,
+                          "03b24144b50ca0a8b2b4ec9bc01ab570d1f029a6d289098b2a25d0b248244736"
+                      ],
+                      [
+                          5,
+                          "1716e5cac6bb5e957971c2dee36f98a6b037a351e09a7ff4dd7b1de98bec72e6"
+                      ],
+                      [
+                          5,
+                          "d18399af0aa89bf4f0f1a4b2f3d7b929002ee5eb6e55c05e2b47285bbb6ed892"
+                      ],
+                      [
+                          6,
+                          "cfacd7dc8c12b354073ebad83a848377025d4d3ee7847e0460bcdac5f65b043d"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/m3uTransportRoutingScenarios.ts": {
+                  "sha256": "b9e970d2d4bf3d9d65db23d80569987189289ca8a9a9886c3bde3655964add34",
+                  "matches": [
+                      [
+                          3,
+                          "0f03d7b3dd2d77476628477bb6f8e0c50910d74d42de47e303c3a3e09842c432"
+                      ],
+                      [
+                          3,
+                          "96a3e09af37a93a96a65197d1e51f238becd3eeeb9c3f9b587c0c9f8140cc9ac"
+                      ],
+                      [
+                          3,
+                          "b31c438fd1bafeae2e0f673d507066f225d890b76d7148b0f3d985ff364d8b3f"
+                      ],
+                      [
+                          3,
+                          "b31c438fd1bafeae2e0f673d507066f225d890b76d7148b0f3d985ff364d8b3f"
+                      ],
+                      [
+                          5,
+                          "13ad20cd39a76dc6dd930276a51d6d703573e41beefdb8a8efc5542568573738"
+                      ],
+                      [
+                          5,
+                          "5d427bc1efd829bc376722a4e64fccc8568b98641d8a8ba53c6e6989d9952b1a"
+                      ],
+                      [
+                          5,
+                          "5d427bc1efd829bc376722a4e64fccc8568b98641d8a8ba53c6e6989d9952b1a"
+                      ],
+                      [
+                          5,
+                          "5d427bc1efd829bc376722a4e64fccc8568b98641d8a8ba53c6e6989d9952b1a"
+                      ],
+                      [
+                          5,
+                          "777261df96cac5379ce662595798bcd34d855811e52928fdceb51272b7395d8e"
+                      ],
+                      [
+                          5,
+                          "d5625636f818e9c81deaa02d609cbdcacbf7b8e6937cb3cc0809524072dbbfad"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/mediaProgressScenarios.ts": {
+                  "sha256": "bffbf74326d08c45b72b91ceeb8a27e71fce6ce41f873128e6c3685294e21435",
+                  "matches": [
+                      [
+                          3,
+                          "0149bb2269978dd6167623ee04b0065f31de5eec4e24364ddf7f0c2b1ec777f9"
+                      ],
+                      [
+                          3,
+                          "63c9722e355e6d7faa3221b6576e30a0c43485e84090844539fdbcb4efcc26d8"
+                      ],
+                      [
+                          3,
+                          "89c96fa9242685817e30d6ffc74ef3a751500d101a8c9d4f32cc53a2439c1251"
+                      ],
+                      [
+                          3,
+                          "ccad8f10d6c66b337b75e1885710f58782159eb4e5d45e54a57a2b436b143d57"
+                      ],
+                      [
+                          5,
+                          "3eaa897f0fab7dfa880b8ae3ba42e63b4b0bf7ab7d8998d4a991498e60823e06"
+                      ],
+                      [
+                          5,
+                          "71c43a24a5ec29b8cea1802a6eff0e0e265cbde4e0a31ecd2dda6864a0bee49a"
+                      ],
+                      [
+                          6,
+                          "0052c66f149a12690e2039f1a80d09f04981fadd87f221a8c9194e197e289f44"
+                      ],
+                      [
+                          6,
+                          "0052c66f149a12690e2039f1a80d09f04981fadd87f221a8c9194e197e289f44"
+                      ],
+                      [
+                          6,
+                          "138e3061a4ae10a43ef3a048c5a30cfc7a29c9598bdcaf9cfb3f33feeef27a64"
+                      ],
+                      [
+                          6,
+                          "25de83df3537dbbd4933fd26646790e13a0f29af42156f8ae995e6b7abba83dd"
+                      ],
+                      [
+                          6,
+                          "2b8fba4eae0ac547f6b070e2fb55ff96c99f35c99c21dfeb2639843ae25939fa"
+                      ],
+                      [
+                          6,
+                          "2c82790807df258247eb20c4b2465ac513693a23c272614857a832d62cbe1478"
+                      ],
+                      [
+                          6,
+                          "6638e01f07cdfe67cc4585fddaeff59f84ab9ab1e9309024a6f25026bac40ea6"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/performanceDiagnosticsScenarios.ts": {
+                  "sha256": "90dafca66814166adcc28b6c2ea2c7d58afa29ccb743a8abb673b7a748846022",
+                  "matches": [
+                      [
+                          4,
+                          "093866188144b0216fb125431572e8ac2df8980dfeeb6ebeb3d9f3987d1e4c1d"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/providerBackupScenarios.ts": {
+                  "sha256": "6a7e9749a65930444c3702fd955c84be7f7dfde931c7c8bdcf72565e91af5713",
+                  "matches": [
+                      [
+                          3,
+                          "2f2c5c969066733162515728e140cd66cd7e01ac983cb25465ff0f96f456c648"
+                      ],
+                      [
+                          3,
+                          "7c975d19c88bd02dfa585a8976b6478032dc7d2ed237516559738bc16404232d"
+                      ],
+                      [
+                          3,
+                          "9892b6d95a5f440da845a22a922c66b5bfad35abac4b436d0ca2487021015fc8"
+                      ],
+                      [
+                          3,
+                          "ede5631648474268474a840395a5cd5e0386e37687953d57b4b89199e5d8042d"
+                      ],
+                      [
+                          5,
+                          "2f95a03d9d8cada042fbe565a1ded7a375b0ae7e832b1a8cf3b35c6db172d9cb"
+                      ],
+                      [
+                          5,
+                          "44c27747dca518b923ce74ae3b6707c8c672751c6b98b202e1179d8bcb480070"
+                      ],
+                      [
+                          5,
+                          "90823a34c1015019755c3276e69e4f31458cd603bee0761325d2e1c313d0e73f"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/providerSwitchScenarios.ts": {
+                  "sha256": "6385d901e11e8b4ef013bea6acefb42e3ad7b723cd745203396552c3b9e1771d",
+                  "matches": [
+                      [
+                          5,
+                          "2aa5d763be54b68afcad7da25d6866cf8eb7cc1465f1ace577a9b136e6e012aa"
+                      ],
+                      [
+                          5,
+                          "2aa5d763be54b68afcad7da25d6866cf8eb7cc1465f1ace577a9b136e6e012aa"
+                      ],
+                      [
+                          5,
+                          "2aa5d763be54b68afcad7da25d6866cf8eb7cc1465f1ace577a9b136e6e012aa"
+                      ],
+                      [
+                          5,
+                          "2aa5d763be54b68afcad7da25d6866cf8eb7cc1465f1ace577a9b136e6e012aa"
+                      ],
+                      [
+                          5,
+                          "64e856630bec39514505e681f81445f68510e9df59320a95496aec4efcc0ccd6"
+                      ],
+                      [
+                          5,
+                          "b0299f42ba9422be76b70788f372daa79baa2ef6c0b66a91b864a8bdd46be6c6"
+                      ],
+                      [
+                          6,
+                          "45b1e7cda84cd218051affcd8db29aa8d25515031347f617df3359a6311fb548"
+                      ],
+                      [
+                          6,
+                          "45b1e7cda84cd218051affcd8db29aa8d25515031347f617df3359a6311fb548"
+                      ],
+                      [
+                          6,
+                          "45b1e7cda84cd218051affcd8db29aa8d25515031347f617df3359a6311fb548"
+                      ],
+                      [
+                          6,
+                          "839b52313b036ac897fc97acbcde410a5e2dd8f7b6ed2371d77063bb88320c48"
+                      ],
+                      [
+                          6,
+                          "a11cf6aacdb75554ec051413eed9d24bc9d1dcd71c2c5a348de61f83509fa0a7"
+                      ],
+                      [
+                          6,
+                          "a11cf6aacdb75554ec051413eed9d24bc9d1dcd71c2c5a348de61f83509fa0a7"
+                      ],
+                      [
+                          6,
+                          "da3e60bfa31a3461edb42803f0124e4baa4bb1a3639039e5ecf4afe770f1b272"
+                      ],
+                      [
+                          6,
+                          "dce1cec5736cdf8942ffdbd25b1b25dfac2cf618dc902bc1f2cd787f601fcbfd"
+                      ],
+                      [
+                          6,
+                          "dce1cec5736cdf8942ffdbd25b1b25dfac2cf618dc902bc1f2cd787f601fcbfd"
+                      ],
+                      [
+                          6,
+                          "dce1cec5736cdf8942ffdbd25b1b25dfac2cf618dc902bc1f2cd787f601fcbfd"
+                      ],
+                      [
+                          6,
+                          "dce1cec5736cdf8942ffdbd25b1b25dfac2cf618dc902bc1f2cd787f601fcbfd"
+                      ],
+                      [
+                          6,
+                          "dce1cec5736cdf8942ffdbd25b1b25dfac2cf618dc902bc1f2cd787f601fcbfd"
+                      ],
+                      [
+                          6,
+                          "dce1cec5736cdf8942ffdbd25b1b25dfac2cf618dc902bc1f2cd787f601fcbfd"
+                      ],
+                      [
+                          6,
+                          "dce1cec5736cdf8942ffdbd25b1b25dfac2cf618dc902bc1f2cd787f601fcbfd"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/r18C2StalkerTraceScenarios.ts": {
+                  "sha256": "3d87298a578b133abc904f113cf6ad5788049537b776bf7421b47c745a883832",
+                  "matches": [
+                      [
+                          3,
+                          "4fcef570031bee5ab936bd847685cfcadbe9af6d694ede4899fea6080cb7a2c0"
+                      ],
+                      [
+                          4,
+                          "a28b8176f57374f4f478f28ad1530d57fff8e37cdb58a74e5146350154124e29"
+                      ],
+                      [
+                          4,
+                          "f8c7f2987069485166a19282090fd6bfda8b12c5ccf46c99846068ed92369f32"
+                      ],
+                      [
+                          5,
+                          "b5eb9262daee80adddea296edea2b9fe4059527272af3f947d5c3b02b38b5a6e"
+                      ],
+                      [
+                          5,
+                          "c65a2f9e318323c0bd58c17eb0bd49c112053a148974f11adf1bb6034b3831f2"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/sqliteDiagnosticsFreshnessScenarios.ts": {
+                  "sha256": "d33e1b63cfd7069ba6a472bd5d4dc37754a0a15d9e338c1d2de8d5473c8b4fad",
+                  "matches": [
+                      [
+                          5,
+                          "2193a6b17caa26100d9bb99de21cf77bdd72804a3f29fe096a80b60b2774318c"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/stalkerEpgProbeScenarios.ts": {
+                  "sha256": "f42a1d23142fd31c5ea37e9ae538b72cab6a9372d79b0dc42a0893cf6476d830",
+                  "matches": [
+                      [
+                          5,
+                          "6f965e0ed708422bff1bb65c1bb32ea636c27575e8e3b8452bd60d53d0102ff8"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/stalkerR16D5EmbeddedHierarchyScenarios.ts": {
+                  "sha256": "65eae2769f40922a532986268817c3248dd7fafe762eb6f2b549ccc0dc73f1ef",
+                  "matches": [
+                      [
+                          3,
+                          "26d6fb56b821e5554e7496f08fc51a911d77102da0e805e078c5004cd1b96c7e"
+                      ],
+                      [
+                          3,
+                          "d48db58a3a248a3908f31ff0d08c7c9ea950c4ad3029b5c1412de8dbade8f2c3"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/stalkerR16D7ProductSeriesScenarios.ts": {
+                  "sha256": "9f25c6c8ba0312152c7ba3a5a702ee63fe6f5244306bc2c7e8ebcc9240b6930a",
+                  "matches": [
+                      [
+                          5,
+                          "c5ef9fdd5b390d4630512166bbc8a6a099e0eae117cd606d557fa3ed32d0374f"
+                      ],
+                      [
+                          5,
+                          "c5ef9fdd5b390d4630512166bbc8a6a099e0eae117cd606d557fa3ed32d0374f"
+                      ],
+                      [
+                          5,
+                          "c5ef9fdd5b390d4630512166bbc8a6a099e0eae117cd606d557fa3ed32d0374f"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/stalkerR16D8BPSeriesPaginationProbeScenarios.ts": {
+                  "sha256": "5a2bea17836cbe0ef89837f0b980ca0d80391a9fd55bf54fa290fd8dba3eb5a3",
+                  "matches": [
+                      [
+                          5,
+                          "9faeac702c4b440e71919b6cf525661ee5c8a992e6a90f0d387324c80baf6485"
+                      ],
+                      [
+                          5,
+                          "b33e818ddef37fbd62be4169cd893c04477be624a97b7ac425cc8f388c89a953"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/stalkerR16D8SeriesProductParityScenarios.ts": {
+                  "sha256": "4a28d8849698eadc9c9fd4844c90864e4f5971d2b4f4984ad7c886bbce9c589a",
+                  "matches": [
+                      [
+                          5,
+                          "c5ef9fdd5b390d4630512166bbc8a6a099e0eae117cd606d557fa3ed32d0374f"
+                      ],
+                      [
+                          5,
+                          "c5ef9fdd5b390d4630512166bbc8a6a099e0eae117cd606d557fa3ed32d0374f"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/stalkerR16DSeriesProbeScenarios.ts": {
+                  "sha256": "d7d50891d984525afb4590cbcdb4c1dd3efadb6034fc0701fc43fd7888106f38",
+                  "matches": [
+                      [
+                          3,
+                          "26d6fb56b821e5554e7496f08fc51a911d77102da0e805e078c5004cd1b96c7e"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/tmdbFoundationScenarios.ts": {
+                  "sha256": "7777c82f08bfbf1b548ceb3bf7df616a5dffbafa86af2617d7580d15bafd9b4c",
+                  "matches": [
+                      [
+                          4,
+                          "093866188144b0216fb125431572e8ac2df8980dfeeb6ebeb3d9f3987d1e4c1d"
+                      ],
+                      [
+                          5,
+                          "5bf5286fb212efb1e8879b2e65256fb78cdfe8a55dc2b1549c0fdd33fbba0894"
+                      ],
+                      [
+                          5,
+                          "ce5a363f6429e8d995dd4780acf3f1974ae103242063124887f2cf725d1eee16"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/tmdbMovieInfoScenarios.ts": {
+                  "sha256": "c9c98906b8cf181498e01840d070bca6105df7998addb618bd398577031b17b7",
+                  "matches": [
+                      [
+                          4,
+                          "ec25b8fa54a9d7a878a86e6f38233af24d5d27d184b396136d6d7f0251d33c19"
+                      ],
+                      [
+                          5,
+                          "81374e2675ee40e46d2c79d6edc656050cd272eac7e5f7752363960c1d595e58"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/tmdbSecureProxyScenarios.ts": {
+                  "sha256": "7f41fa51b1bc86433cb624ff93adc59f9d41a7930a9ae722ccacbd53421f23cc",
+                  "matches": [
+                      [
+                          3,
+                          "27183625b6b260290ff5bb0b04e6232f7b59e8b5e9ca445b25818df696f61a84"
+                      ],
+                      [
+                          4,
+                          "fbddae166ead16d1dd67736b19403ab1ac0095e344f663573848af911a7ce273"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/tvRemoteInspectorScenarios.ts": {
+                  "sha256": "f7cdbc443690095eefe58b52e1499ad914d9cef9dc385274e0a5baa2121e47fb",
+                  "matches": [
+                      [
+                          4,
+                          "093866188144b0216fb125431572e8ac2df8980dfeeb6ebeb3d9f3987d1e4c1d"
+                      ],
+                      [
+                          4,
+                          "7235354e4158d69c5cc74d97450e772537050f387a4548691762406aa8941cd5"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/u3CatalogSqliteScenarios.mjs": {
+                  "sha256": "453271d3fb9b78325a9c17c8f9c365fb9dee2b90002fced8e82d0398b8731d00",
+                  "matches": [
+                      [
+                          5,
+                          "2db764507eca6fea0303d93e145139625ecd2f4dc8e32bd07d6b7426916a6fa7"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/u3PerformanceScenarios.ts": {
+                  "sha256": "822227914256cd08b5e8f039d932e4752ff0aaed529d8e574a96c725a28ba649",
+                  "matches": [
+                      [
+                          4,
+                          "093866188144b0216fb125431572e8ac2df8980dfeeb6ebeb3d9f3987d1e4c1d"
+                      ],
+                      [
+                          5,
+                          "b4250e3c6ac6e48f3330fc1735e1cdbd3ee431b30e86d4a397bfc43cb6e71ad3"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              },
+              "artifacts/legendstream-xplayer/tests/u42StalkerHomeMovieScenarios.ts": {
+                  "sha256": "3b63fb5a6107bef69b3390bb82bce48774b5d1a847d933bdebd519615e043b36",
+                  "matches": [
+                      [
+                          4,
+                          "093866188144b0216fb125431572e8ac2df8980dfeeb6ebeb3d9f3987d1e4c1d"
+                      ],
+                      [
+                          5,
+                          "f62d3e53fbba6a07f2d37276621ce7d2bd3d6749417b09b35751eeaf0ac5e221"
+                      ]
+                  ],
+                  "reason": "reviewed-synthetic-test-fixtures"
+              }
+          }
+          for record in git('ls-tree', '-rz', '--full-tree', 'HEAD').split(b'\0'):
+              if not record:
+                  continue
+              metadata, rawpath = record.split(b'\t', 1)
+              mode, kind, oid = metadata.decode().split()
+              name = rawpath.decode('utf-8')
+              path = pathlib.PurePosixPath(name)
+              assert not path.is_absolute() and '..' not in path.parts, 'Unsafe Git path'
+              # Reject unsupported objects rather than claim complete recovery.
+              assert mode in ('100644', '100755') and kind == 'blob', 'Unsupported symlink/submodule: ' + name
+              disk = pathlib.Path(name)
+              assert disk.is_file() and not disk.is_symlink(), 'Invalid checkout entry: ' + name
+              assert bool(disk.stat().st_mode & 0o111) == (mode == '100755'), 'Mode mismatch: ' + name
+              data = disk.read_bytes()
+              header = ('blob ' + str(len(data)) + '\0').encode()
+              assert hashlib.sha1(header + data).hexdigest() == oid, 'Git blob mismatch: ' + name
+              if data.startswith(b'version https://git-lfs.github.com/spec/v1'):
+                  raise SystemExit('LFS pointer requires verified hydration: ' + name)
+              basename = path.name.lower()
+              hits = sorted([rule, hashlib.sha256(match.group()).hexdigest()]
+                            for rule, pattern in enumerate(secret_patterns)
+                            for match in re.finditer(pattern, data))
+              review = reviewed_matches.get(name)
+              reviewed = bool(review and hashlib.sha256(data).hexdigest() == review['sha256']
+                              and hits == review['matches'] and all(rule >= 3 for rule, _ in hits))
+              if (basename == '.env' or basename.startswith('.env.') or
+                  basename.endswith(('.jks', '.keystore', '.p12', '.pfx', '.pem', '.key', '.crt', '.cer')) or
+                  basename in ('.npmrc', '.yarnrc') and re.search(rb'(?i)(_auth|password|token)\s*=', data) or
+                  (hits and not reviewed)):
+                  sensitive.append(name)
+              files.append({'path': name, 'git_mode': mode, 'git_blob_sha': oid,
+                            'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()})
+          if sensitive:
+              # Names only; never print suspected values.
+              raise SystemExit('Sensitive-content review required; no upload: ' + ', '.join(sensitive))
+          manifest = {'format': 1, 'kind': 'tracked-source-snapshot-not-git-clone',
+                      'source_commit_sha': expected, 'workflow_commit_sha': os.environ['WORKFLOW_SHA'],
+                      'tree_sha': git('rev-parse', 'HEAD^{tree}').decode().strip(),
+                      'commit_object': git('cat-file', '-p', 'HEAD').decode(),
+                      'git_metadata_included': False, 'symlinks': 'none', 'submodules': 'none',
+                      'lfs_pointers': 'none', 'sensitive_scan': 'passed-conservative-pattern-gate',
+                      'reviewed_exceptions': {name: {'sha256': item['sha256'], 'reason': item['reason'],
+                                                   'match_count': len(item['matches'])}
+                                              for name, item in reviewed_matches.items()},
+                      'files': files}
+          (output / 'source-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          with tarfile.open(output / 'source.tar.gz', 'w:gz', dereference=False) as archive:
+              for entry in files:
+                  archive.add(entry['path'], arcname=entry['path'], recursive=False)
+          PY
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install locked dependencies into isolated store
+        shell: bash
+        run: |
+          set -euo pipefail
+          pnpm install --frozen-lockfile --store-dir "$RECOVERY_DIR/store"
+          git diff --exit-code -- pnpm-lock.yaml
+          pnpm store path --store-dir "$RECOVERY_DIR/store"
+          node --version
+          pnpm --version
+      - name: Verify offline store in a clean workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RECOVERY_DIR/offline"
+          tar -xzf "$RECOVERY_DIR/source/source.tar.gz" -C "$RECOVERY_DIR/offline"
+          cd "$RECOVERY_DIR/offline"
+          pnpm install --offline --frozen-lockfile --store-dir "$RECOVERY_DIR/store"
+          cmp pnpm-lock.yaml "$GITHUB_WORKSPACE/pnpm-lock.yaml"
+          pnpm exec prettier --check artifacts/legendstream-xplayer/components/home/HomeDiscovery.tsx artifacts/legendstream-xplayer/lib/design/eliteV3Tokens.ts artifacts/legendstream-xplayer/tests/u42HomeCollapsibleHostScenarios.mjs artifacts/legendstream-xplayer/scripts/build-home-review.mjs
+          pnpm run typecheck
+          node artifacts/legendstream-xplayer/tests/u42HomeCollapsibleHostScenarios.mjs
+      - name: Package store and matching Linux toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RECOVERY_DIR/toolchain/bin" "$RECOVERY_DIR/toolchain/pnpm"
+          cp "$(command -v node)" "$RECOVERY_DIR/toolchain/bin/node"
+          PNPM_VERSION="$(pnpm --version)"
+          npm pack "pnpm@$PNPM_VERSION" --pack-destination "$RECOVERY_DIR/toolchain/pnpm" --ignore-scripts >/dev/null
+          tar -xzf "$RECOVERY_DIR/toolchain/pnpm/pnpm-$PNPM_VERSION.tgz" -C "$RECOVERY_DIR/toolchain/pnpm"
+          rm "$RECOVERY_DIR/toolchain/pnpm/pnpm-$PNPM_VERSION.tgz"
+          printf '%s\n' '#!/bin/sh' 'exec node "$(dirname "$0")/../pnpm/package/bin/pnpm.cjs" "$@"' > "$RECOVERY_DIR/toolchain/bin/pnpm"
+          chmod +x "$RECOVERY_DIR/toolchain/bin/pnpm"
+          test "$("$RECOVERY_DIR/toolchain/bin/node" "$RECOVERY_DIR/toolchain/pnpm/package/bin/pnpm.cjs" --version)" = "$PNPM_VERSION"
+          export PNPM_VERSION
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, platform, subprocess, tarfile
+          root = pathlib.Path(os.environ['RECOVERY_DIR'])
+          # pnpm 10 registerProject stores runner-specific GC registry links, not package bytes.
+          # Only unlink exact known project registrations; never follow/copy their targets.
+          registry = root / 'store/v10/projects'
+          omitted_registry_links = []
+          if registry.exists() or registry.is_symlink():
+              assert registry.is_dir() and not registry.is_symlink(), 'Invalid project registry'
+              assert registry.resolve() == root.resolve() / 'store/v10/projects', 'Redirected registry parent'
+              allowed_projects = {pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve(),
+                                  (root / 'offline').resolve()}
+              for link in sorted(registry.iterdir()):
+                  assert link.is_symlink(), 'Unexpected project registry entry: ' + link.name
+                  raw_target = os.readlink(link)
+                  assert not os.path.isabs(raw_target), 'Absolute project registry target'
+                  target = (link.parent / raw_target).resolve(strict=True)
+                  assert target in allowed_projects and target.is_dir(), 'Unknown project registry target'
+                  assert raw_target == os.path.relpath(target, link.parent), 'Noncanonical project registry target'
+                  assert link.name == hashlib.sha256(str(target).encode()).hexdigest()[:32], 'Project registry hash mismatch'
+                  omitted_registry_links.append({'path': str(link.relative_to(root)),
+                                                 'target': raw_target, 'resolved_target': str(target),
+                                                 'reason': 'regenerable-pnpm-project-registration'})
+              # Validate every entry before removing any; unlink only the directory entry.
+              for item in omitted_registry_links:
+                  (root / item['path']).unlink()
+          records = []
+          for directory in ('store', 'toolchain'):
+              for p in sorted((root / directory).rglob('*')):
+                  assert not p.is_symlink(), 'Nonportable symlink: ' + str(p.relative_to(root))
+                  if p.is_file():
+                      records.append({'path': str(p.relative_to(root)), 'size': p.stat().st_size,
+                                      'mode': oct(p.stat().st_mode & 0o777),
+                                      'sha256': hashlib.sha256(p.read_bytes()).hexdigest()})
+          manifest = {'format': 1, 'source_commit_sha': os.environ['SOURCE_SHA'],
+                      'workflow_commit_sha': os.environ['WORKFLOW_SHA'],
+                      'node': subprocess.check_output(['node', '--version']).decode().strip(),
+                      'pnpm': os.environ['PNPM_VERSION'], 'platform': platform.platform(),
+                      'architecture': platform.machine(), 'libc': platform.libc_ver(),
+                      'lockfile_sha256': hashlib.sha256(pathlib.Path('pnpm-lock.yaml').read_bytes()).hexdigest(),
+                      'offline_runner_install': 'passed', 'node_modules_included': False,
+                      'omitted_registry_links': omitted_registry_links,
+                      'portability': 'Linux matching architecture/libc only; Work offline verification still required',
+                      'files': records}
+          (root / 'dependencies/dependency-manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+          with tarfile.open(root / 'dependencies/dependencies.tar.gz', 'w:gz', dereference=False) as archive:
+              for directory in ('store', 'toolchain'):
+                  archive.add(root / directory, arcname=directory)
+          PY
+      - name: Verify packaged store without runner registrations
+        shell: bash
+        run: |
+          set -euo pipefail
+          PROBE="$RECOVERY_DIR/transfer-probe"
+          mkdir -p "$PROBE/dependencies" "$PROBE/workspace"
+          tar -xzf "$RECOVERY_DIR/dependencies/dependencies.tar.gz" -C "$PROBE/dependencies"
+          tar -xzf "$RECOVERY_DIR/source/source.tar.gz" -C "$PROBE/workspace"
+          export PATH="$PROBE/dependencies/toolchain/bin:$PATH"
+          cd "$PROBE/workspace"
+          pnpm install --offline --frozen-lockfile --store-dir "$PROBE/dependencies/store"
+          cmp pnpm-lock.yaml "$GITHUB_WORKSPACE/pnpm-lock.yaml"
+          node artifacts/legendstream-xplayer/tests/u42HomeCollapsibleHostScenarios.mjs
+      - name: Hash payloads
+        id: package_paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          for directory in source dependencies; do
+            cd "$RECOVERY_DIR/$directory"
+            sha256sum *.tar.gz *manifest.json > SHA256SUMS
+          done
+          printf 'source=%s\ndependencies=%s\n' "$(realpath "$RECOVERY_DIR/source")" "$(realpath "$RECOVERY_DIR/dependencies")" >> "$GITHUB_OUTPUT"
+          printf 'source_commit_sha=%s\nworkflow_commit_sha=%s\n' "$SOURCE_SHA" "$WORKFLOW_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload source snapshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-recovery-source-${{ inputs.source_sha }}
+          path: ${{ steps.package_paths.outputs.source }}
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0
+      - name: Upload dependency store
+        uses: actions/upload-artifact@v4
+        with:
+          name: workspace-recovery-dependencies-${{ inputs.source_sha }}
+          path: ${{ steps.package_paths.outputs.dependencies }}
+          retention-days: 1
+          if-no-files-found: error
+          compression-level: 0

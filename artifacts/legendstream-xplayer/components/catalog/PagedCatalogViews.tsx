@@ -1,8 +1,13 @@
+import { filterCategoryOptions } from "@/lib/categoryPresentation";
+import { SeriesInfoModal } from "@/components/series/SeriesInfoModal";
+import { pagedSeriesDetail } from "@/lib/seriesInfo";
+import { beginPerformanceMeasurement, finishPerformanceMeasurement } from "@/lib/performanceDiagnostics";
 import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
 import { currentMovie, pagedMovieInput, localXtreamMovie } from "@/lib/tmdb/movieInfoModel";
 import { EliteLiveCatalog } from "@/components/elite/EliteLiveCatalog";
+import { eliteV3 } from "@/lib/design/eliteV3Tokens";
 import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
-import { useNativeTvCatalogGrid } from "@/hooks/useNativeTvCatalogGrid";
+import { useResponsiveCatalogGrid } from "@/hooks/useResponsiveCatalogGrid";
 import {TVRemoteInspectorOverlay} from "@/components/tvPreview/TVRemoteInspector";
 import { Feather } from "@expo/vector-icons";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -52,10 +57,6 @@ import {
 import type { CatalogPageProviderType, CatalogPageSort } from "@/lib/catalogPaging";
 import type { Channel } from "@/lib/iptv";
 import {
-  goldenSeriesBackTarget,
-  initialGoldenSeriesSeasonId,
-  orderGoldenSeriesSeasons,
-  selectedGoldenSeriesSeason,
   type GoldenSeriesCardModel,
   type GoldenSeriesDetailModel,
   type GoldenSeriesEpisodeModel,
@@ -104,13 +105,16 @@ function useCategories(providerId: string, kind: "live" | "vod" | "series", diag
   const generationRef = useRef(0);
   const reload = () => {
     const generation = ++generationRef.current;
+    const measurement = beginPerformanceMeasurement("FIRST_CATEGORY");
     void getCachedCatalogCategories(providerId, kind, diagnosticM3U)
       .then((next) => {
         if (generationRef.current === generation) {
           setResult({ providerId, categories: next });
-        }
+          finishPerformanceMeasurement(measurement);
+        } else finishPerformanceMeasurement(measurement, "CANCELLED");
       })
       .catch(() => {
+        finishPerformanceMeasurement(measurement, generationRef.current === generation ? "ERROR" : "CANCELLED");
         if (generationRef.current === generation) {
           setResult({ providerId, categories: [] });
         }
@@ -253,41 +257,171 @@ function CatalogHeader({
   onCategories?: () => void;
 }) {
   const colors = useColors();
+  const viewport = useWindowDimensions();
+  const compact =
+    !Platform.isTV && Math.min(viewport.width, viewport.height) < 600;
   const { t } = useI18n();
-  return <View style={s.catalogHeaderRoot}>
-    <View style={s.catalogHead}>
-      <View style={{ flex: 1, minWidth: 0 }}>
-        <Text numberOfLines={Platform.isTV ? 1 : undefined} style={[s.title, { color: colors.foreground }]}>{title}</Text>
-        <Text style={{ color: colors.mutedForeground }}>{detail}</Text>
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchInputRef = useRef<TextInput>(null);
+  useEffect(() => {
+    if (searchOpen && searchEnabled) searchInputRef.current?.focus();
+    else searchInputRef.current?.blur();
+  }, [searchOpen, searchEnabled]);
+  return (
+    <View style={s.catalogHeaderRoot}>
+      <View style={[s.catalogHead, compact && { marginBottom: 4 }]}>
+        <View style={{ flex: 1, minWidth: 0 }}>
+          <Text
+            numberOfLines={1}
+            style={[
+              s.title,
+              compact && { fontSize: 18, marginBottom: 0 },
+              { color: colors.foreground },
+            ]}
+          >
+            {title}
+          </Text>
+          <Text style={{ color: colors.mutedForeground }}>{detail}</Text>
+        </View>
+        <FocusButton
+          label={compact ? "" : loading ? t("loading") : t("refresh")}
+          accessibilityLabel={loading ? t("loading") : t("refresh")}
+          style={
+            compact
+              ? { minWidth: 48, minHeight: 48, paddingHorizontal: 10 }
+              : undefined
+          }
+          icon="refresh-cw"
+          variant="ghost"
+          onPress={onRefresh}
+          disabled={loading}
+        />
       </View>
-      <FocusButton
-        label={loading ? t("loading") : t("refresh")}
-        icon="refresh-cw"
-        variant="ghost"
-        onPress={onRefresh}
-        disabled={loading}
-      />
+      <View
+        style={
+          Platform.isTV
+            ? {
+                flexDirection: "row",
+                flexWrap: "wrap",
+                alignItems: "center",
+                gap: 12,
+              }
+            : compact
+              ? {
+                  flexDirection: "row",
+                  flexWrap: "wrap",
+                  alignItems: "center",
+                  gap: 6,
+                }
+              : undefined
+        }
+      >
+        <TVPreviewPressable
+          focusId="catalog:search-toggle"
+          accessibilityRole="button"
+          accessibilityLabel={searchOpen ? "Aramayı kapat" : `${title} ara`}
+          accessibilityState={{ expanded: searchOpen }}
+          onPress={() => setSearchOpen((value) => !value)}
+          style={[
+            s.sortDropdownButton,
+            compact && { minHeight: 48, minWidth: 48 },
+            { borderColor: colors.border, backgroundColor: colors.card },
+          ]}
+        >
+          <Feather
+            name={searchOpen ? "x" : "search"}
+            size={18}
+            color={colors.foreground}
+          />
+          {!compact && (
+            <Text style={{ color: colors.foreground, fontWeight: "700" }}>
+              {searchOpen ? "Aramayı kapat" : "Ara"}
+            </Text>
+          )}
+        </TVPreviewPressable>
+        {searchOpen ? (
+          <View
+            style={[
+              s.search,
+              compact && { flexBasis: "100%" },
+              Platform.isTV && {
+                flexGrow: 1,
+                flexBasis: 240,
+                minWidth: 180,
+                marginBottom: 0,
+              },
+              { borderColor: colors.border, backgroundColor: colors.card },
+            ]}
+          >
+            <Feather name="search" size={18} color={colors.mutedForeground} />
+            <TextInput
+              ref={searchInputRef}
+              accessibilityLabel={`${title} arama sorgusu`}
+              returnKeyType="search"
+              value={search}
+              onChangeText={onSearch}
+              editable={searchEnabled}
+              placeholder={`${t("search")} ${title.toLowerCase()}`}
+              placeholderTextColor={colors.mutedForeground}
+              style={{
+                flex: 1,
+                color: colors.foreground,
+                minHeight: 44,
+                opacity: searchEnabled ? 1 : 0.55,
+              }}
+            />
+          </View>
+        ) : null}
+        {activeCategoryLabel ? (
+          <View
+            style={[
+              s.activeCategoryChip,
+              compact && { flexShrink: 1, maxWidth: "45%" },
+              Platform.isTV && { maxWidth: 240 },
+              { borderColor: colors.border, backgroundColor: colors.card },
+            ]}
+          >
+            <Feather name="tag" size={14} color={colors.primary} />
+            <Text
+              numberOfLines={1}
+              style={{ color: colors.foreground, fontWeight: "700", flex: 1 }}
+            >
+              {activeCategoryLabel}
+            </Text>
+          </View>
+        ) : null}
+        {Platform.isTV && onCategories ? (
+          <TVPreviewPressable
+            focusId="catalog:categories"
+            accessibilityRole="button"
+            accessibilityLabel="Kategoriler"
+            onPress={onCategories}
+            style={[
+              s.sortDropdownButton,
+              compact && { minHeight: 48, minWidth: 48 },
+              { borderColor: colors.border, backgroundColor: colors.card },
+            ]}
+          >
+            <Feather name="grid" size={22} color={colors.foreground} />
+            <Text style={{ color: colors.foreground, fontSize: 18 }}>
+              Kategoriler
+            </Text>
+          </TVPreviewPressable>
+        ) : null}
+        <View
+          style={
+            Platform.isTV
+              ? { flexBasis: 200, flexGrow: 0, minWidth: 0, maxWidth: "100%" }
+              : compact
+                ? { flex: 1, minWidth: 120 }
+                : undefined
+          }
+        >
+          {children}
+        </View>
+      </View>
     </View>
-    <View style={Platform.isTV ? { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 12 } : undefined}>
-    <View style={[s.search, Platform.isTV && { flexGrow: 1, flexBasis: 240, minWidth: 180, marginBottom: 0 }, { borderColor: colors.border, backgroundColor: colors.card }]}>
-      <Feather name="search" size={18} color={colors.mutedForeground} />
-      <TextInput
-        value={search}
-        onChangeText={onSearch}
-        editable={searchEnabled}
-        placeholder={`${t("search")} ${title.toLowerCase()}`}
-        placeholderTextColor={colors.mutedForeground}
-        style={{ flex: 1, color: colors.foreground, minHeight: 44, opacity: searchEnabled ? 1 : 0.55 }}
-      />
-    </View>
-    {activeCategoryLabel ? <View style={[s.activeCategoryChip, Platform.isTV && { maxWidth: 240 }, { borderColor: colors.border, backgroundColor: colors.card }]}>
-      <Feather name="tag" size={14} color={colors.primary} />
-      <Text numberOfLines={1} style={{ color: colors.foreground, fontWeight: "700", flex: 1 }}>{activeCategoryLabel}</Text>
-    </View> : null}
-    {Platform.isTV && onCategories ? <TVPreviewPressable focusId="catalog:categories" accessibilityRole="button" accessibilityLabel="Kategoriler" onPress={onCategories} style={[s.sortDropdownButton, { borderColor: colors.border, backgroundColor: colors.card }]}><Feather name="grid" size={22} color={colors.foreground} /><Text style={{ color: colors.foreground, fontSize: 18 }}>Kategoriler</Text></TVPreviewPressable> : null}
-    <View style={Platform.isTV ? { flexBasis: 200, flexGrow: 0, minWidth: 0, maxWidth: "100%" } : undefined}>{children}</View>
-    </View>
-  </View>;
+  );
 }
 
 function SortControl({
@@ -376,7 +510,10 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const drawerWidth = Math.min(width * 0.78, 560);
+  const [categoryQuery,setCategoryQuery]=useState("");
+  const filteredItems=useMemo(()=>filterCategoryOptions(items,categoryQuery),[items,categoryQuery]);
+  const mobileSheet=!Platform.isTV;
+  const drawerWidth = mobileSheet ? width : Math.min(width * 0.78, 560);
   const translateX = useRef(new Animated.Value(-drawerWidth)).current;
   const closingRef = useRef(false);
   const focus = useTVPreviewFocus();
@@ -384,6 +521,7 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
   useEffect(() => {
     if (!visible) return;
     closingRef.current = false;
+    setCategoryQuery("");
     translateX.setValue(-drawerWidth);
     Animated.timing(translateX, { toValue: 0, duration: 190, useNativeDriver: true }).start();
   }, [drawerWidth, translateX, visible]);
@@ -417,7 +555,7 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
   );
 
   return <Modal visible={visible} transparent statusBarTranslucent animationType="fade" onRequestClose={closeAnimated}>
-    <View style={s.drawerBackdrop}>
+    <View style={[s.drawerBackdrop, mobileSheet && {justifyContent:"flex-end",flexDirection:"column"} ]}>
       <Animated.View
         style={[
           s.drawerPanel,
@@ -427,7 +565,8 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
             paddingBottom: Math.max(insets.bottom, 16),
             backgroundColor: colors.background,
             borderColor: colors.border,
-            transform: [{ translateX }],
+            transform: mobileSheet ? [] : [{ translateX }],
+            ...(mobileSheet ? {borderTopLeftRadius:24,borderTopRightRadius:24,maxHeight:"78%" as const,width:"100%" as const} : {}),
           },
         ]}
       >
@@ -437,10 +576,12 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
             <Feather name="x" size={22} color={colors.mutedForeground} />
           </TVPreviewPressable>
         </View>
+        <TextInput accessibilityLabel="Kategori ara" placeholder="Kategori ara…" placeholderTextColor={colors.mutedForeground} value={categoryQuery} onChangeText={setCategoryQuery} style={{marginHorizontal:18,marginBottom:12,minHeight:48,padding:14,borderRadius:14,borderWidth:1,borderColor:colors.border,color:colors.foreground}} />
         <FlatList
+          ListEmptyComponent={<Text style={{color:colors.mutedForeground,padding:20}}>Kategori bulunamadı</Text>}
           style={s.drawerScroll}
           contentContainerStyle={s.drawerList}
-          data={items}
+          data={filteredItems}
           keyExtractor={(item) => item.id}
           renderItem={({ item }) => {
             const active = selected === item.id;
@@ -472,7 +613,7 @@ function CategoryDrawer({ visible, items, selected, onSelect, onClose }: {
           windowSize={7}
         />
       </Animated.View>
-      <Pressable focusable={!Platform.isTV} style={s.drawerDismiss} onPress={closeAnimated} />
+      <Pressable focusable={!Platform.isTV} style={[s.drawerDismiss, mobileSheet && {position:"absolute",top:0,left:0,right:0,height:"22%"}]} onPress={closeAnimated} />
     </View>
     <TVRemoteInspectorOverlay />
   </Modal>;
@@ -509,18 +650,80 @@ function Poster({ uri, title }: { uri?: string; title: string }) {
       </View>;
 }
 
-function GridCard({ focusId, title, image, onPress }: { focusId: string; title: string; image?: string; onPress: () => void }) {
+function GridCard({
+  focusId,
+  title,
+  image,
+  cardWidth,
+  onPress,
+}: {
+  focusId: string;
+  title: string;
+  image?: string;
+  cardWidth: number;
+  onPress: () => void;
+}) {
   const colors = useColors();
-  return <TVPreviewPressable focusId={focusId} accessibilityRole="button" accessibilityLabel={title} onPress={onPress} style={s.card}>
-    <View style={[s.media, { borderColor: colors.border, backgroundColor: colors.card }]}> 
-      {image
-        ? <Image source={{ uri: image }} style={s.posterBig} resizeMode={Platform.isTV ? "contain" : "cover"} />
-        : <View style={[s.posterBig, { backgroundColor: colors.muted, alignItems: "center", justifyContent: "center" }]}>
+  const { fontScale, width, height } = useWindowDimensions();
+  const compact = !Platform.isTV && Math.min(width, height) < 600;
+  const titleFont = Math.max(
+    12,
+    Math.min(compact ? 14 : 17, Math.round(cardWidth / 12)),
+  );
+  const titleLine = Math.ceil(titleFont * 1.3);
+  return (
+    <TVPreviewPressable
+      eliteVisual
+      focusId={focusId}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      onPress={onPress}
+      style={s.card}
+    >
+      <View
+        style={[
+          s.media,
+          { borderColor: colors.border, backgroundColor: colors.card },
+        ]}
+      >
+        {image ? (
+          <Image
+            source={{ uri: image }}
+            style={s.posterBig}
+            resizeMode={Platform.isTV ? "contain" : "cover"}
+          />
+        ) : (
+          <View
+            style={[
+              s.posterBig,
+              {
+                backgroundColor: colors.muted,
+                alignItems: "center",
+                justifyContent: "center",
+              },
+            ]}
+          >
             <Feather name="play-circle" size={30} color={colors.primary} />
-          </View>}
-      <Text numberOfLines={2} style={{ color: colors.foreground, fontWeight: "700", padding: 9 }}>{title}</Text>
-    </View>
-  </TVPreviewPressable>;
+          </View>
+        )}
+        <Text
+          numberOfLines={2}
+          style={{
+            color: colors.foreground,
+            fontWeight: "700",
+            fontSize: titleFont,
+            lineHeight: titleLine,
+            minHeight: Math.ceil(
+              titleLine * 2 * fontScale + (compact ? 8 : 18),
+            ),
+            padding: compact ? 4 : cardWidth < 130 ? 6 : 9,
+          }}
+        >
+          {title}
+        </Text>
+      </View>
+    </TVPreviewPressable>
+  );
 }
 
 export function PagedLiveCatalog({
@@ -640,12 +843,12 @@ export function PagedLiveCatalog({
   }, [epgSeedKey, provider.id]);
   const initialEmpty = shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search);
   if (stalkerLive && !categoriesReady) return <CatalogLoadingSkeleton text={t("loading")} />;
-  if (initialEmpty) return <CatalogLoadingSkeleton text={t("loading")} />;
+  if (initialEmpty && !Platform.isTV) return <CatalogLoadingSkeleton text={t("loading")} />;
 
   if (Platform.isTV) return <EliteLiveCatalog
-    key={provider.id} idPrefix="live" categories={drawerItems} category={category} onCategory={setCategory}
+    key={provider.id} idPrefix="live" catalogRevision={catalogRevision} categories={drawerItems} category={category} onCategory={setCategory}
     channels={page.items} epgByChannel={epgByChannel} clock={epgClock} favorites={favorites}
-    loading={refreshing || page.loadingInitial} loadingMore={page.loadingMore}
+    loading={refreshing || page.loadingInitial} loadingMore={page.loadingMore} error={page.error}
     search={search} onSearch={setSearch} onLoadMore={page.loadMore}
     onRefresh={() => { void Promise.resolve(onRefresh()).finally(() => { reloadCategories(); page.reload(); }); }}
     onOpen={channel => { if(provider.type === "m3u") recordM3ULivePress(); onOpen(channel); }} onFavorite={onFavorite}
@@ -778,7 +981,15 @@ export function PagedMoviesCatalog({
   const { t } = useI18n();
   const { width } = useWindowDimensions();
   const { tvPreview } = useUiPresentation();
-  const [infoMovie, setInfoMovie] = useState<XtreamVodItem | null>(null);
+  const [infoSelection, setInfoSelection] = useState<{
+    providerId: string;
+    item: XtreamVodItem;
+  } | null>(null);
+  const infoScope = JSON.stringify([provider.id, catalogRevision ?? null]);
+  const currentInfoScope = useRef(infoScope);
+  currentInfoScope.current = infoScope;
+  const setInfoMovie = (item: XtreamVodItem | null) =>
+    setInfoSelection(item ? { providerId: provider.id, item } : null);
   const [search, setSearch] = useState("");
   const [drawerOpen, setDrawerOpen] = useState(false);
   const { categories, ready: categoriesReady, reload: reloadCategories } = useCategories(provider.id, "vod", provider.type === "m3u");
@@ -796,14 +1007,22 @@ export function PagedMoviesCatalog({
     enabled: providerType !== null,
     snapshotCount: allOnlySnapshotCount(category, search, snapshotCount),
   });
+  // Keep the same media identity after a catalog revision, but always bind
+  // the open Info action to the refreshed item's production callback.
+  // Provider identity is part of the selection contract.
+  const infoMovie = infoSelection?.providerId === provider.id
+    ? currentMovie(page.items, String(infoSelection.item.stream_id), item => String(item.stream_id))
+    : null;
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const grid = useNativeTvCatalogGrid<(typeof page.items)[number]>(page.items.map(item => `vod:${item.stream_id}`));
-  const columns = Platform.isTV ? grid.columns : tvPreview
-    ? width >= 1600 ? 7 : width >= 1200 ? 6 : width >= 800 ? 5 : 4
-    : width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
+  const grid = useResponsiveCatalogGrid<(typeof page.items)[number]>(page.items.map(item => `vod:${item.stream_id}`), JSON.stringify([provider.id, category, search, effectiveSort]));
+  const columns = grid.columns;
 
-  useEffect(() => { if(infoMovie && !currentMovie(page.items,String(infoMovie.stream_id),item=>String(item.stream_id))) setInfoMovie(null); },[page.items,infoMovie]);
+  useEffect(() => {
+    if (infoSelection && (infoSelection.providerId !== provider.id ||
+      (!page.loadingInitial && !currentMovie(page.items, String(infoSelection.item.stream_id), item => String(item.stream_id)))))
+      setInfoSelection(null);
+  }, [infoSelection, provider.id, page.loadingInitial, page.items]);
   useEffect(() => onDrawerVisibilityChange(drawerOpen || infoMovie !== null), [drawerOpen, infoMovie, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
   if (shouldUseWholeCatalogLoadingSkeleton(page.loadingInitial, page.items.length, search)) return <CatalogLoadingSkeleton text={t("loadingMovies")} />;
@@ -840,7 +1059,7 @@ export function PagedMoviesCatalog({
       onEndReached={page.loadMore}
       onEndReachedThreshold={0.55}
       renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
-        <GridCard focusId={`vod:${item.stream_id}`} title={item.name} image={item.stream_icon} onPress={() => setInfoMovie(item)} />
+        <GridCard focusId={`vod:${item.stream_id}`} title={item.name} image={item.stream_icon} cardWidth={grid.cardWidth} onPress={() => setInfoMovie(item)} />
       </View>}
       initialNumToRender={Math.max(8, columns * 3)}
       maxToRenderPerBatch={Math.max(8, columns * 3)}
@@ -852,13 +1071,14 @@ export function PagedMoviesCatalog({
     {infoMovie ? <MovieInfoModal
       key={`${provider.id}:${infoMovie.stream_id}`}
       input={pagedMovieInput(provider.id,provider.type === "m3u" ? "m3u" : "xtream",String(catalogRevision ?? "catalog"),infoMovie)}
-      local={localXtreamMovie(infoMovie)} onClose={() => setInfoMovie(null)} onPlay={() => { const current=currentMovie(page.items,String(infoMovie.stream_id),item=>String(item.stream_id)); if(current) onOpen(current); }}
+      local={localXtreamMovie(infoMovie)} onClose={() => { if (currentInfoScope.current === infoScope) setInfoMovie(null); }} onPlay={() => { if (currentInfoScope.current !== infoScope) return; const current=currentMovie(page.items,String(infoMovie.stream_id),item=>String(item.stream_id)); if(current) onOpen(current); }}
     /> : null}
     <CategoryDrawer visible={drawerOpen} items={drawerItems} selected={category} onClose={() => setDrawerOpen(false)} onSelect={setCategory} />
   </View>;
 }
 
 export function GoldenSeriesCatalog({
+  providerId,
   categories,
   selectedCategory,
   onSelectCategory,
@@ -886,7 +1106,11 @@ export function GoldenSeriesCatalog({
   onEpisode,
   onDrawerVisibilityChange,
   activeCategoryLabel,
+  detailSuspended = false,
+  detailOnly = false,
+  playbackBusy = false,
 }: {
+  providerId: string;
   categories: CategoryOption[];
   selectedCategory: string;
   onSelectCategory: (id: string) => void;
@@ -914,6 +1138,9 @@ export function GoldenSeriesCatalog({
   onEpisode: (seasonId: string, episodeId: string) => void;
   onDrawerVisibilityChange: (visible: boolean) => void;
   activeCategoryLabel?: string;
+  detailSuspended?: boolean;
+  detailOnly?: boolean;
+  playbackBusy?: boolean;
 }) {
   const colors = useColors();
   const { t } = useI18n();
@@ -921,119 +1148,15 @@ export function GoldenSeriesCatalog({
   const { tvPreview } = useUiPresentation();
   const { registerBackAction } = useTVPreviewFocus();
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [selectedSeasonId, setSelectedSeasonId] = useState<string | null>(null);
   const drawerSwipe = useCategoryDrawerSwipe(() => setDrawerOpen(true), drawerOpen);
-  const grid = useNativeTvCatalogGrid<(typeof items)[number]>(items.map(item => `series:${item.id}`));
-  const columns = Platform.isTV ? grid.columns : tvPreview
-    ? width >= 1600 ? 7 : width >= 1200 ? 6 : width >= 800 ? 5 : 4
-    : width >= 900 ? 5 : width >= 650 ? 4 : width >= 420 ? 3 : 2;
-  const orderedSeasons = useMemo(
-    () => orderGoldenSeriesSeasons(detail?.seasons ?? []),
-    [detail],
-  );
-  const selectedSeason = useMemo(
-    () => selectedGoldenSeriesSeason(orderedSeasons, selectedSeasonId),
-    [orderedSeasons, selectedSeasonId],
-  );
-  const leaveDetailLevel = () => {
-    if (goldenSeriesBackTarget(selectedSeasonId, orderedSeasons.length) === "seasons") setSelectedSeasonId(null);
-    else onBack();
-  };
-
-  useEffect(() => onDrawerVisibilityChange(drawerOpen), [drawerOpen, onDrawerVisibilityChange]);
+  const grid = useResponsiveCatalogGrid<(typeof items)[number]>(items.map(item => `series:${item.id}`), JSON.stringify([providerId, selectedCategory, search, sortMode]));
+  const columns = grid.columns;
+  useEffect(() => onDrawerVisibilityChange(drawerOpen || Boolean(detail)), [drawerOpen, detail, onDrawerVisibilityChange]);
   useEffect(() => () => onDrawerVisibilityChange(false), [onDrawerVisibilityChange]);
-  useEffect(() => {
-    setSelectedSeasonId(initialGoldenSeriesSeasonId(orderedSeasons));
-  }, [detail?.id, orderedSeasons.length]);
-  useEffect(() => {
-    if (!detail && !detailLoading) return;
-    return registerBackAction(leaveDetailLevel);
-  }, [detail, detailLoading, leaveDetailLevel, registerBackAction]);
 
-  if (detail || detailLoading) {
-    const seasonSelector = <FlatList
-      horizontal
-      data={orderedSeasons}
-      keyExtractor={(season) => season.id}
-      extraData={selectedSeasonId}
-      contentContainerStyle={s.seasonSelectorContent}
-      showsHorizontalScrollIndicator={false}
-      initialNumToRender={8}
-      maxToRenderPerBatch={8}
-      windowSize={5}
-      renderItem={({ item: season }) => {
-        const selected = season.id === selectedSeasonId;
-        return <TVPreviewPressable
-          focusId={`season:${season.id}`}
-          accessibilityRole="button"
-          accessibilityLabel={season.label}
-          onPress={() => setSelectedSeasonId(season.id)}
-          style={[
-            s.seasonChip,
-            {
-              borderColor: selected ? colors.primary : colors.border,
-              backgroundColor: selected ? colors.primary : colors.card,
-            },
-          ]}
-        >
-          <Text style={{ color: selected ? colors.primaryForeground : colors.foreground, fontWeight: "800" }}>
-            {season.label}
-          </Text>
-        </TVPreviewPressable>;
-      }}
-    />;
-    const detailHeader = <View>
-      <FocusButton focusId="series-detail:back" hasTVPreferredFocus={Platform.isTV} label={t("back")} icon="arrow-left" variant="ghost" onPress={leaveDetailLevel} />
-      <Text style={[s.title, { color: colors.foreground, marginTop: 14 }]}>{detail?.title ?? t("series")}</Text>
-      {error ? <CatalogErrorState message={error} onRetry={onRetry} /> : null}
-      {orderedSeasons.length ? <>
-        <Text style={[s.section, { color: colors.foreground, marginTop: 12 }]}>{t("season")}</Text>
-        {seasonSelector}
-      </> : null}
-    </View>;
-
-    if (detailLoading) return <View style={s.seriesDetail}>
-      {detailHeader}
-      <CatalogLoadingSkeleton text={t("loadingEpisodes")} />
-    </View>;
-
-    if (!orderedSeasons.length) return <View style={s.seriesDetail}>
-      {detailHeader}
-      <Text style={[s.seriesDetailMessage, { color: colors.mutedForeground }]}>{t("noEpisodes")}</Text>
-    </View>;
-
-    if (!selectedSeason) return <View style={s.seriesDetail}>
-      {detailHeader}
-      <Text style={[s.seriesDetailMessage, { color: colors.mutedForeground }]}>{t("selectSeason")}</Text>
-    </View>;
-
-    return <FlatList
-      style={s.seriesDetailList}
-      contentContainerStyle={s.seriesEpisodeListContent}
-      data={selectedSeason.episodes}
-      keyExtractor={(episode) => episode.id}
-      ListHeaderComponent={detailHeader}
-      ListEmptyComponent={<Text style={[s.seriesDetailMessage, { color: colors.mutedForeground }]}>{t("seasonHasNoEpisodes")}</Text>}
-      renderItem={({ item: episode }) => <TVPreviewPressable
-        focusId={`episode:${episode.id}`}
-        accessibilityRole="button"
-        accessibilityLabel={episode.title}
-        onPress={() => onEpisode(selectedSeason.id, episode.id)}
-        style={[s.episode, { borderColor: colors.border, backgroundColor: colors.card }]}
-      >
-        <Text style={{ color: colors.foreground, flex: 1 }}>{episode.title}</Text>
-        <Feather name="play-circle" size={24} color={colors.primary} />
-      </TVPreviewPressable>}
-      initialNumToRender={8}
-      maxToRenderPerBatch={10}
-      windowSize={7}
-      removeClippedSubviews={!Platform.isTV && Platform.OS !== "web"}
-      keyboardShouldPersistTaps="handled"
-      showsVerticalScrollIndicator
-    />;
-  }
-
-  if (shouldUseWholeCatalogLoadingSkeleton(loadingInitial, items.length, search)) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
+  const seriesModal = detail ? <SeriesInfoModal key={detail.id} providerId={providerId} detail={detail} loading={detailLoading} error={error} busy={playbackBusy} visible={!detailSuspended} onClose={onBack} onRetry={onRetry} onEpisode={onEpisode}/> : null;
+  if(detailOnly) return seriesModal;
+  if (!detail && shouldUseWholeCatalogLoadingSkeleton(loadingInitial, items.length, search)) return <CatalogLoadingSkeleton text={t("loadingSeries")} />;
 
   return <View style={{ flex: 1, minHeight: 0 }} {...drawerSwipe.panHandlers}>
     <FlatList
@@ -1067,7 +1190,7 @@ export function GoldenSeriesCatalog({
       onEndReached={onLoadMore}
       onEndReachedThreshold={0.55}
       renderItem={({ item }) => <View style={{ width: `${100 / columns}%` }}>
-        <GridCard focusId={`series:${item.id}`} title={item.title} image={item.image} onPress={() => onOpen(item.id)} />
+        <GridCard focusId={`series:${item.id}`} title={item.title} image={item.image} cardWidth={grid.cardWidth} onPress={() => onOpen(item.id)} />
       </View>}
       initialNumToRender={Math.max(8, columns * 3)}
       maxToRenderPerBatch={Math.max(8, columns * 3)}
@@ -1076,6 +1199,7 @@ export function GoldenSeriesCatalog({
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
     />
+    {seriesModal}
     <CategoryDrawer visible={drawerOpen} items={categories} selected={selectedCategory} onClose={() => setDrawerOpen(false)} onSelect={onSelectCategory} />
   </View>;
 }
@@ -1103,6 +1227,11 @@ export function PagedSeriesCatalog({
   onBack,
   onEpisode,
   onDrawerVisibilityChange,
+  detailSuspended = false,
+  detailLoading,
+  detailError,
+  onRetryDetail,
+  playbackBusy = false,
 }: {
   provider: ProviderConfig;
   snapshotCount: SnapshotCount;
@@ -1115,7 +1244,12 @@ export function PagedSeriesCatalog({
   info: XtreamSeriesInfo | null;
   onOpen: (item: XtreamSeriesItem) => void;
   onBack: () => void;
-  onEpisode: (episode: XtreamEpisode) => void;
+  onEpisode: (episode: XtreamEpisode, seasonId: string) => void;
+  detailSuspended?: boolean;
+  detailLoading?: boolean;
+  detailError?: string | null;
+  onRetryDetail?: () => void;
+  playbackBusy?: boolean;
   onDrawerVisibilityChange: (visible: boolean) => void;
 }) {
   const { t } = useI18n();
@@ -1132,27 +1266,14 @@ export function PagedSeriesCatalog({
     catalogRevision,
     search,
     sort: effectiveSort,
-    enabled: providerType !== null && selected === null,
+    enabled: providerType !== null,
     snapshotCount: allOnlySnapshotCount(category, search, snapshotCount),
   });
   const drawerItems = useMemo(() => categoryOptions(categories, t("all")), [categories, t]);
-  const detail = selected ? {
-    id: `${provider.id}:${String(selected.series_id)}`,
-    title: selected.name,
-    seasons: Object.entries(info?.episodes || {}).map(([season, episodes]) => ({
-      id: season,
-      label: `${t("season")} ${season}`,
-      seasonNumber: /^\\d+$/.test(season.trim()) ? Number(season) : undefined,
-      episodes: episodes.map((episode) => ({
-        id: String(episode.id),
-        title: episode.title || `${t("episode")} ${episode.episode_num ?? ""}`,
-        seasonId: season,
-        episodeNumber: episode.episode_num,
-      })),
-    })),
-  } : null;
+  const detail = selected ? pagedSeriesDetail(provider.id, provider.type === "m3u" ? "m3u" : "xtream", selected, info) : null;
 
   return <GoldenSeriesCatalog
+    providerId={provider.id}
     categories={drawerItems}
     selectedCategory={category}
     onSelectCategory={setCategory}
@@ -1175,12 +1296,14 @@ export function PagedSeriesCatalog({
     loadingMore={page.loadingMore}
     onLoadMore={page.loadMore}
     detail={detail}
-    detailLoading={Boolean(selected && !info)}
+    detailLoading={detailLoading ?? Boolean(selected && !info)}
+    detailSuspended={detailSuspended} playbackBusy={playbackBusy}
+    error={detailError} onRetry={onRetryDetail}
     onOpen={(id) => { const item = page.items.find((candidate) => String(candidate.series_id) === id); if (item) onOpen(item); }}
     onBack={onBack}
     onEpisode={(seasonId, episodeId) => {
       const episode = info?.episodes?.[seasonId]?.find((candidate) => String(candidate.id) === episodeId);
-      if (episode) onEpisode(episode);
+      if (episode) onEpisode(episode, seasonId);
     }}
     onDrawerVisibilityChange={onDrawerVisibilityChange}
   />;
@@ -1194,12 +1317,12 @@ const s = StyleSheet.create({
   section: { fontSize: 20, fontWeight: "800" },
   search: { borderWidth: 1, borderRadius: 12, flexDirection: "row", alignItems: "center", gap: 8, paddingHorizontal: 12 },
   activeCategoryChip: { alignSelf: "flex-start", maxWidth: "100%", borderWidth: 1, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, flexDirection: "row", alignItems: "center", gap: 7 },
-  sortDropdownWrap: { paddingTop: 10, paddingBottom: 10, alignSelf: "stretch" },
-  sortDropdownButton: { minHeight: 42, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
+  sortDropdownWrap: { paddingTop: Platform.isTV ? 10 : 0, paddingBottom: Platform.isTV ? 10 : 0, alignSelf: "stretch" },
+  sortDropdownButton: { minHeight: Platform.isTV ? 42 : 48, borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, flexDirection: "row", alignItems: "center", gap: 8 },
   sortDropdownMenu: { marginTop: 6, borderWidth: 1, borderRadius: 12, padding: 6, gap: 3 },
-  sortDropdownItem: { minHeight: 42, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 9 },
+  sortDropdownItem: { minHeight: Platform.isTV ? 42 : 48, borderWidth: 1, borderRadius: 10, paddingHorizontal: 10, flexDirection: "row", alignItems: "center", gap: 9 },
   liveListContent: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center", gap: 8 },
-  gridListContent: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
+  gridListContent: { padding: eliteV3.space.md, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
   liveRow: { borderWidth: 1, borderRadius: 14, padding: 8, flexDirection: "row", alignItems: "center", gap: 8, marginBottom: 8 },
   liveMain: { flex: 1, flexDirection: "row", alignItems: "center", gap: 10 },
   liveProgram: { fontSize: 12.5, marginTop: 3 },
@@ -1208,7 +1331,7 @@ const s = StyleSheet.create({
   logo: { width: 50, height: 50, borderRadius: 10 },
   iconButton: { padding: 10 },
   card: { padding: 6 },
-  media: { borderWidth: 1, borderRadius: 14, overflow: "hidden" },
+  media: { borderWidth: 1, borderRadius: eliteV3.radius.card, overflow: "hidden" },
   posterBig: { width: "100%", aspectRatio: 2 / 3 },
   pageFooter: { height: 64, alignItems: "center", justifyContent: "center" },
   pageFooterSpacer: { height: 20 },

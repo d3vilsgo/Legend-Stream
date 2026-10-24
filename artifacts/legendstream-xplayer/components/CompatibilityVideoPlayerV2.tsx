@@ -1,3 +1,4 @@
+import type { EpisodeProgressContext } from "@/lib/mediaProgress";
 import { inspectorAction } from "@/lib/tvRemoteInspector";
 import { persistBeforePlayerExit } from "@/lib/playerExitPersistence";
 import { configureTvRemote, subscribeTvRemote } from "@/modules/legendstream-tv-remote";
@@ -39,6 +40,7 @@ import {
 } from "@/lib/playerLiveQueue";
 import { registerEpgChannels } from "@/lib/epgRuntime";
 import { classifyPlaybackSource, classifyStalkerTraceError, describePlaybackSourceSafely, fingerprintPlaybackSource, getActiveStalkerTraceId, traceStalker } from "@/lib/stalkerPlaybackTrace";
+import { beginPlaybackAttempt, getActivePlaybackAttemptId, markPlaybackEvent, type ProviderKind } from "@/lib/performanceDiagnostics";
 import type { Channel } from "@/lib/iptv";
 import { usePlayerOrientation } from "@/hooks/usePlayerOrientation";
 import {
@@ -98,6 +100,7 @@ type PlaybackSnapshot = {
   position: number;
   duration: number;
   progressRef?: MediaPlaybackRef;
+  episodeContext?: EpisodeProgressContext;
 };
 
 export function CompatibilityVideoPlayer({
@@ -108,6 +111,7 @@ export function CompatibilityVideoPlayer({
   liveIdentity,
   vodIdentity,
   progressRef,
+  episodeContext,
   autoFullscreen = true,
   onFullscreenExit,
   allowDownload = false,
@@ -119,6 +123,7 @@ export function CompatibilityVideoPlayer({
   liveIdentity?: LiveChannelIdentity;
   vodIdentity?: CatalogPlaybackIdentity;
   progressRef?: MediaPlaybackRef;
+  episodeContext?: EpisodeProgressContext;
   autoFullscreen?: boolean;
   onFullscreenExit?: () => void;
   allowDownload?: boolean;
@@ -128,13 +133,15 @@ export function CompatibilityVideoPlayer({
   useEffect(() => {
     if (Platform.isTV) return pushScope?.("player");
   }, [pushScope]);
-  const { getProgress, saveProgress } = useMediaLibrary();
+  const { getProgress, saveProgress, beginProgressSession } = useMediaLibrary();
   const {
     provider,
     channels,
     epg,
     isEpgLoading,
     recordWatched,
+    favorites,
+    toggleFavorite,
   } = usePlayer();
   const initialKind = mediaKind ?? inferMediaKind(source);
   const m3uLiveDiagnostic = provider?.type === "m3u" && initialKind === "live";
@@ -158,6 +165,7 @@ export function CompatibilityVideoPlayer({
     position: 0,
     duration: 0,
     progressRef,
+    episodeContext,
   });
 
   const [currentSource, setCurrentSource] = useState(source);
@@ -182,6 +190,7 @@ export function CompatibilityVideoPlayer({
   const [controlsVisible, setControlsVisible] = useState(true);
   const [infoVisible, setInfoVisible] = useState(true);
   const [panel, setPanel] = useState<PlayerPanel>(null);
+  const [drawerLayer, setDrawerLayer] = useState<"channels" | "categories">("channels");
   useEffect(()=>{if(Platform.isTV)inspectorAction(controlsVisible?"controls-shown":"controls-hidden");},[controlsVisible]);
   useEffect(()=>{if(Platform.isTV)inspectorAction(panel?"panel-open":"panel-closed");},[panel]);
   useEffect(()=>{if(!Platform.isTV)return;inspectorAction("player-mounted");return ()=>inspectorAction("player-unmounted");},[]);
@@ -199,7 +208,20 @@ export function CompatibilityVideoPlayer({
   const [textTrack, setTextTrack] = useState<number | undefined>(undefined);
   const [downloadState, setDownloadState] = useState<PlayerDownloadState>("idle");
   const [downloadProgress, setDownloadProgress] = useState(0);
+  const [retryRevision, setRetryRevision] = useState(0);
+  const retryLock = useRef(false);
+  const channelSelectionGeneration = useRef(0);
+  const playbackOwner = useRef<object>({});
+  const surfaceSequence = useRef(0);
+  const surfaceOwner = useMemo(() => ({ id: ++surfaceSequence.current }), [currentSource, retryRevision, codecMode, provider?.id]);
+  playbackOwner.current = surfaceOwner;
+  const progressSession=useMemo(()=>beginProgressSession?.(currentSource,playbackRef.current.progressRef)??null,[beginProgressSession,currentSource,source,progressRef,provider?.id]);
+  const progressSessionRef=useRef(progressSession);progressSessionRef.current=progressSession;
+  useEffect(() => () => { if (playbackOwner.current === surfaceOwner) playbackOwner.current = {}; }, [surfaceOwner]);
+  const errorRef = useRef<string | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
+  errorRef.current = errorText;
+  useEffect(() => { if (errorText) retryLock.current = false; }, [errorText]);
   const [startupPending, setStartupPending] = useState(true);
   const [pipSupported, setPipSupported] = useState(false);
   const [pipActive, setPipActive] = useState(false);
@@ -274,6 +296,7 @@ export function CompatibilityVideoPlayer({
   useEffect(() => {
     let cancelled = false;
     if (!isCatalogRuntimeSource(currentSource)) {
+      setErrorText(null);
       setResolvedSource(currentSource);
       return () => { cancelled = true; };
     }
@@ -301,6 +324,7 @@ export function CompatibilityVideoPlayer({
     };
   }, [
     currentSource,
+    retryRevision,
     provider?.id,
     provider?.type,
     provider?.url,
@@ -330,7 +354,17 @@ export function CompatibilityVideoPlayer({
     revealMediaInfo();
   }, [clearControlsTimer, clearInfoTimer, controlsVisible, panel, revealControls, revealMediaInfo]);
 
+  const dismissLiveDrawer = useCallback(() => {
+    clearControlsTimer();
+    clearInfoTimer();
+    setPanel(null);
+    setDrawerLayer("channels");
+    setControlsVisible(false);
+    setInfoVisible(false);
+  }, [clearControlsTimer, clearInfoTimer]);
+
   const togglePanel = useCallback((next: Exclude<PlayerPanel, null>) => {
+    if (next === "content") setDrawerLayer("channels");
     setPanel((current) => current === next ? null : next);
     revealControls(true);
     revealMediaInfo();
@@ -378,6 +412,8 @@ export function CompatibilityVideoPlayer({
       position: snapshot.position,
       duration: snapshot.duration,
       playbackRef: snapshot.progressRef,
+      episodeContext: snapshot.episodeContext,
+      session: progressSessionRef.current,
     });
   }, [saveProgress]);
 
@@ -388,6 +424,10 @@ export function CompatibilityVideoPlayer({
       void persistProgress();
     };
   }, [persistProgress]);
+  useEffect(()=>{
+    const sub=AppState.addEventListener("change",state=>{if(state!=="active")void persistProgress();});
+    return()=>sub.remove();
+  },[persistProgress]);
 
   useEffect(() => {
     let cancelled = false;
@@ -483,6 +523,9 @@ export function CompatibilityVideoPlayer({
         subtitle: channel.category,
         source: channel.streamUrl,
         isLive: true,
+        logoUrl: channel.logoUrl,
+        nowPlaying: channel.nowPlaying,
+        isFavorite: favorites.includes(channel.id),
       }));
     }
     if (currentKind === "episode" && episodeQueue) {
@@ -521,7 +564,7 @@ export function CompatibilityVideoPlayer({
       }));
     }
     return [];
-  }, [cachedVodItems, currentKind, episodeQueue, legacyVodQueue, liveQueue, provider]);
+  }, [cachedVodItems, currentKind, episodeQueue, favorites, legacyVodQueue, liveQueue, provider]);
 
   const currentIndex = useMemo(
     () => currentKind === "live"
@@ -534,16 +577,24 @@ export function CompatibilityVideoPlayer({
   const canNavigate = selectableItems.length > 1 && currentIndex >= 0;
 
   const switchTo = useCallback(async (item: PlayerSelectableItem, reason = "explicit-selection") => {
+    const requestGeneration = ++channelSelectionGeneration.current;
+    beginPlaybackAttempt((provider?.type ?? "unknown") as ProviderKind, item.isLive);
     const traceId = getActiveStalkerTraceId();
     if (traceId) traceStalker("PLAYER_SOURCE_TRANSITION", { traceId, kind: item.isLive ? "live" : inferMediaKind(item.source), previousFingerprint: fingerprintPlaybackSource(effectiveUri || currentSource), nextFingerprint: fingerprintPlaybackSource(item.source), previousItemId: tracedItemId.current ?? undefined, nextItemId: item.id, reason });
     tracedItemId.current = item.id;
     await persistProgress();
+    if (requestGeneration !== channelSelectionGeneration.current || exitStarted.current) return;
     const kind: PlayerMediaKind = item.isLive ? "live" : inferMediaKind(item.source);
+    const previous=playbackRef.current;
+    const episode=episodeQueue?.items.find(value=>value.id===item.id&&value.url===item.source);
+    const nextRef:MediaPlaybackRef|undefined=kind==="episode"&&episode&&provider ? provider.type==="m3u"?{type:"m3u-episode",itemId:item.id}:provider.type==="xtream"?{type:"xtream-episode",episodeId:item.id,containerExtension:(item.source.match(/\.([a-zA-Z0-9]{1,10})(?:[?#]|$)/)?.[1]||"mp4"),sourceMode:previous.progressRef?.type==="xtream-episode"?previous.progressRef.sourceMode:"canonical",...(previous.episodeContext?.seriesId?{seriesId:previous.episodeContext.seriesId}:{})}:undefined:undefined;
     playbackRef.current = {
       source: item.source,
       title: item.title,
-      subtitle: item.subtitle,
+      subtitle: kind==="episode" && previous.episodeContext ? previous.subtitle : item.subtitle,
       kind,
+      progressRef:nextRef,
+      episodeContext: episode&&previous.episodeContext?{seriesId:previous.episodeContext.seriesId,seasonId:episode.season,episodeNumber:episode.episodeNumber}:undefined,
       position: 0,
       duration: 0,
     };
@@ -574,10 +625,9 @@ export function CompatibilityVideoPlayer({
     setTextTrack(undefined);
     setStartupPending(true);
     resumedSource.current = null;
-    if (item.isLive) void recordWatched(item.id);
     revealControls();
     revealMediaInfo();
-  }, [currentSource, effectiveUri, persistProgress, provider, recordWatched, revealControls, revealMediaInfo]);
+  }, [currentSource, effectiveUri, episodeQueue, persistProgress, provider, revealControls, revealMediaInfo]);
 
   const moveRelative = useCallback((delta: number) => {
     if (!canNavigate) return;
@@ -586,9 +636,12 @@ export function CompatibilityVideoPlayer({
     void switchTo(selectableItems[next], "relative-navigation");
   }, [canNavigate, currentIndex, selectableItems, switchTo]);
 
+  const performanceAttempt = useMemo(() => getActivePlaybackAttemptId(), [effectiveUri]);
   const exitPlayer = useCallback(async () => {
     if (exitStarted.current) return;
     exitStarted.current = true;
+    channelSelectionGeneration.current += 1;
+    markPlaybackEvent("PLAYER_EXIT", performanceAttempt);
     orientation.beginExit();
     clearControlsTimer();
     clearInfoTimer();
@@ -597,7 +650,7 @@ export function CompatibilityVideoPlayer({
       onFullscreenExit?.();
       orientation.releaseWhenLayoutReady();
     }
-  }, [clearControlsTimer, clearInfoTimer, onFullscreenExit, orientation, persistProgress]);
+  }, [performanceAttempt, clearControlsTimer, clearInfoTimer, onFullscreenExit, orientation, persistProgress]);
 
   useEffect(() => claimPlayerBack(), []);
   useEffect(() => {
@@ -607,6 +660,8 @@ export function CompatibilityVideoPlayer({
   },[]);
   useEffect(() => {
     const handleBack = () => {
+      if (errorRef.current) { void exitPlayer(); return true; }
+      if (currentKind === "live" && panel === "content" && drawerLayer === "categories") { setDrawerLayer("channels"); return true; }
       const target = advancePlayerBack(backSnapshot.current,Platform.isTV);
       if(Platform.isTV) inspectorAction(target === "panel" ? "back-panel" : target === "controls" ? "back-controls" : "back-exit");
       if (target === "controls") {
@@ -625,7 +680,7 @@ export function CompatibilityVideoPlayer({
     const back = BackHandler.addEventListener("hardwareBackPress", handleBack);
     const native = Platform.isTV ? subscribeTvRemote(({key}) => {if(key==="back") handleBack();}) : undefined;
     return () => {back.remove();native?.remove();};
-  }, [exitPlayer, panel, revealControls, controlsVisible, clearControlsTimer, clearInfoTimer]);
+  }, [exitPlayer, panel, drawerLayer, currentKind, revealControls, controlsVisible, clearControlsTimer, clearInfoTimer]);
 
   const seekToRatio = useCallback((ratio: number) => {
     if (currentKind === "live") return;
@@ -752,10 +807,17 @@ export function CompatibilityVideoPlayer({
     if (normalizedDuration > 0) setDuration(normalizedDuration);
   }, []);
 
+  const successfulLiveHistory = useRef<number | null>(null);
   const handlePlaying = useCallback(() => {
     setStartupPending(false);
     setPaused(false);
-  }, []);
+    if (currentKind === "live" && currentLiveIdentity &&
+      provider?.id === currentLiveIdentity.providerId &&
+      successfulLiveHistory.current !== surfaceOwner.id) {
+      successfulLiveHistory.current = surfaceOwner.id;
+      void recordWatched(currentLiveIdentity.channelId);
+    }
+  }, [currentKind, currentLiveIdentity, provider?.id, recordWatched, surfaceOwner]);
 
   const handlePaused = useCallback(() => {
     setPaused(true);
@@ -764,21 +826,18 @@ export function CompatibilityVideoPlayer({
   const handleError = useCallback(() => {
     setStartupPending(false);
     setErrorText(
-      codecMode === "auto"
-        ? "Oynatma başarısız. AUTO modu hem donanım hem yazılım çözümlemeyi denedi."
-        : codecMode === "hardware"
-          ? "Donanımsal çözümleme başarısız. AUTO veya SW codec modunu deneyin."
-          : "Yazılımsal çözümleme ile bu medya oynatılamadı.",
+      "Yayın oynatılamadı. Ağ, kaynak veya medya çözümleme aşaması başarısız olabilir. Yeniden deneyin veya kataloğa dönün.",
     );
     revealControls(true);
     revealMediaInfo();
   }, [codecMode, revealControls, revealMediaInfo]);
 
   const handleEnd = useCallback(() => {
+    if(playbackRef.current.duration>0){playbackRef.current.position=playbackRef.current.duration;void persistProgress();}
     if (currentKind === "episode" && currentIndex >= 0 && currentIndex < selectableItems.length - 1) {
       moveRelative(1);
     }
-  }, [currentIndex, currentKind, moveRelative, selectableItems.length]);
+  }, [currentIndex, currentKind, moveRelative, selectableItems.length,persistProgress]);
 
   const enterPip = useCallback(async () => {
     if (!pipSupported) return;
@@ -798,14 +857,16 @@ export function CompatibilityVideoPlayer({
 
   useEffect(() => {
     const traceId = getActiveStalkerTraceId();
-    if (!traceId || !effectiveUri) return;
+    if (!effectiveUri) return;
+    markPlaybackEvent("SOURCE_SET", performanceAttempt);
+    if (!traceId) return;
     const metadata = describePlaybackSourceSafely(effectiveUri);
     const previousFingerprint = tracedSourceFingerprint.current;
     if (previousFingerprint && previousFingerprint !== metadata.sourceFingerprint) traceStalker("PLAYER_SOURCE_TRANSITION", { traceId, kind: currentKind, previousFingerprint, nextFingerprint: metadata.sourceFingerprint, previousItemId: tracedItemId.current ?? undefined, nextItemId: currentLiveIdentity?.channelId ?? currentVodIdentity?.itemId ?? (progressRef?.type === "stalker-episode" ? progressRef.episodeId : undefined), reason: "effective-source-change" });
     tracedSourceFingerprint.current = metadata.sourceFingerprint;
     traceStalker("PLAYER_MOUNT", { traceId, sourceKind: classifyPlaybackSource(effectiveUri), resolved: true });
     traceStalker("VLC_SOURCE_SET", { traceId, kind: currentKind, ...metadata });
-  }, [currentKind, currentLiveIdentity?.channelId, currentVodIdentity?.itemId, effectiveUri, progressRef]);
+  }, [performanceAttempt, currentKind, currentLiveIdentity?.channelId, currentVodIdentity?.itemId, effectiveUri, progressRef]);
 
   if (!orientation.ready || orientation.exiting) {
     return (
@@ -820,6 +881,7 @@ export function CompatibilityVideoPlayer({
   return (
     <View style={styles.root}>
       {effectiveUri ? <VlcPlaybackSurface
+        key={surfaceOwner.id}
         ref={vlcRef}
         uri={effectiveUri}
         paused={paused}
@@ -827,12 +889,12 @@ export function CompatibilityVideoPlayer({
         codecMode={codecMode}
         audioTrack={audioTrack}
         textTrack={textTrack}
-        onLoad={handleLoad}
-        onProgress={handleProgress}
-        onPlaying={handlePlaying}
-        onPaused={handlePaused}
-        onEnd={handleEnd}
-        onError={handleError}
+        onLoad={(...args) => { if (!exitStarted.current && playbackOwner.current === surfaceOwner) handleLoad(...args); }}
+        onProgress={(...args) => { if (!exitStarted.current && playbackOwner.current === surfaceOwner) handleProgress(...args); }}
+        onPlaying={(...args) => { if (!exitStarted.current && playbackOwner.current === surfaceOwner) handlePlaying(...args); }}
+        onPaused={(...args) => { if (!exitStarted.current && playbackOwner.current === surfaceOwner) handlePaused(...args); }}
+        onEnd={(...args) => { if (!exitStarted.current && playbackOwner.current === surfaceOwner) handleEnd(...args); }}
+        onError={(...args) => { if (!exitStarted.current && playbackOwner.current === surfaceOwner) handleError(...args); }}
         diagnosticM3ULive={m3uLiveDiagnostic}
         diagnosticM3UUriMetadata={m3uUriMetadata}
       /> : null}
@@ -846,6 +908,10 @@ export function CompatibilityVideoPlayer({
           epgNow={currentEpg.now}
           epgNext={currentEpg.next}
           epgLoading={currentKind === "live" && isEpgLoading}
+          drawerLayer={drawerLayer}
+          onDrawerLayerChange={setDrawerLayer}
+          onDismissLiveDrawer={dismissLiveDrawer}
+          onToggleFavorite={currentKind === "live" ? (item) => { void toggleFavorite(item.id); } : undefined}
           mediaKind={currentKind}
           codecMode={codecMode}
           fitMode={fit}
@@ -869,6 +935,14 @@ export function CompatibilityVideoPlayer({
           pipSupported={pipSupported}
           onBackgroundPress={onBackgroundPress}
           onExit={() => void exitPlayer()}
+          onRetry={() => {
+            if (!errorRef.current || retryLock.current) return;
+            retryLock.current = true;
+            playbackOwner.current = {};
+            errorRef.current = null;
+            setErrorText(null); setResolvedSource(null); setPanel(null); setPaused(false); setStartupPending(true);
+            setRetryRevision(value => value + 1); revealControls(true);
+          }}
           onTogglePause={() => {
             setPaused((value) => !value);
             revealControls();

@@ -1,3 +1,9 @@
+import { BuildIdentity } from "@/components/BuildIdentity";
+import type { StalkerSeriesProductItem } from "@/lib/stalkerSeriesProduct";
+import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
+import { useStalkerHomeMovieInfo } from "@/hooks/useStalkerHomeMovieInfo";
+import { beginPlaybackAttempt } from "@/lib/performanceDiagnostics";
+import { CatalogRefreshSettings } from "@/components/CatalogRefreshSettings";
 import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
 import { TVRemoteInspectorSetting } from "@/components/tvPreview/TVRemoteInspector";
 import { tvInspector } from "@/lib/tvRemoteInspector";
@@ -168,12 +174,16 @@ export default function StalkerMainPage() {
     return () => traceStalker("STALKER_RUNTIME_OWNER_UNMOUNT", { providerShortId: shortSafeId(provider.id), mountGeneration });
   }, [provider?.id, provider?.type]);
 
+  const homeSeriesSequence = useRef(0);
+  const [homeSeriesInfo,setHomeSeriesInfo] = useState<{providerId:string;item:StalkerSeriesProductItem;request:number}|null>(null);
+  useEffect(()=>setHomeSeriesInfo(null),[provider?.id,provider?.url,provider?.mac]);
   const [view, setView] = useState<StalkerViewName>("home");
   useEffect(() => { tvInspector.observeScreen(view); }, [view]);
   const { setBackAction } = useTVPreviewFocus();
   const [playable, setPlayable] = useState<Playable | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
+  const [homeViewportHeight, setHomeViewportHeight] = useState<number | undefined>(undefined);
   const [switchingProviderId, setSwitchingProviderId] = useState<string | null>(null);
   const switchingProviderRef = useRef<string | null>(null);
   const historyPlaybackAbortRef = useRef<AbortController | null>(null);
@@ -192,6 +202,13 @@ export default function StalkerMainPage() {
   const liveCatalog = useStalkerLiveCatalogSync(provider);
   const productCounts = useStalkerProductCounts(provider?.type === "stalker" ? provider.id : undefined);
   const homeSummary = useStalkerHomeSummary(provider?.type === "stalker" ? provider.id : undefined);
+  const homeMovieInfo = useStalkerHomeMovieInfo({
+    provider: provider && isStalkerProductProvider(provider) ? provider : null,
+    previews: homeSummary.moviePreviews,
+    enabled: view === "home" && !switchingProviderId,
+    onPlayable: movie => openMovie(movie, "home"),
+    onError: setCatalogError,
+  });
 
   const playerLiveChannels = useMemo(
     () => provider
@@ -239,7 +256,7 @@ export default function StalkerMainPage() {
     setView("player");
   };
 
-  const openLive = (channel: Channel) => {
+  const openLive = (channel: Channel, returnTo: StalkerContentView = "live") => {
     const traceId = beginStalkerPlaybackTrace();
     traceStalker("STALKER_LIVE_TAP", { traceId, providerShortId: shortSafeId(provider.id), channelId: channel.id, sourceKind: classifyPlaybackSource(channel.streamUrl) });
     if (!channel.streamUrl) {
@@ -251,13 +268,14 @@ export default function StalkerMainPage() {
       subtitle: channel.category,
       url: channel.streamUrl,
       kind: "live",
-      returnTo: "live",
+      returnTo,
       liveIdentity: { providerId: channel.providerId, channelId: channel.id },
     });
     void recordWatched(channel.id);
   };
 
   const openDownload = (item: DownloadedMedia) => {
+    beginPlaybackAttempt("unknown");
     openResolvedPlayable({
       title: item.title,
       subtitle: item.subtitle,
@@ -267,13 +285,13 @@ export default function StalkerMainPage() {
     });
   };
 
-  const openMovie = (movie: StalkerMoviePlayable) => {
+  const openMovie = (movie: StalkerMoviePlayable, returnTo: StalkerContentView = "movies") => {
     openResolvedPlayable({
       title: movie.title,
       subtitle: movie.subtitle,
       url: movie.url,
       kind: "movie",
-      returnTo: "movies",
+      returnTo,
       vodIdentity: { providerId: provider.id, itemId: movie.itemId },
       progressRef: {
         type: "stalker-vod",
@@ -283,7 +301,7 @@ export default function StalkerMainPage() {
     });
   };
 
-  const openSeriesEpisode = (intent: StalkerSeriesPlayableIntent) => {
+  const openSeriesEpisode = (intent: StalkerSeriesPlayableIntent, returnTo: StalkerContentView = "series") => {
     if (intent.identity.providerId !== provider.id) {
       setCatalogError("Bölüm artık etkin sağlayıcıya ait değil.");
       return;
@@ -293,7 +311,7 @@ export default function StalkerMainPage() {
       subtitle: intent.subtitle,
       url: intent.url,
       kind: intent.kind,
-      returnTo: "series",
+      returnTo,
       seriesIdentity: intent.identity,
       progressRef: {
         type: "stalker-episode",
@@ -304,7 +322,8 @@ export default function StalkerMainPage() {
     });
   };
 
-  const openProgress = async (item: MediaProgress) => {
+  const openProgress = async (item: MediaProgress, returnTo: StalkerContentView = "history") => {
+    beginStalkerPlaybackTrace();
     historyPlaybackAbortRef.current?.abort();
     const sequence = ++historyPlaybackSequenceRef.current;
     if (item.playbackRef.type === "stalker-episode") {
@@ -329,7 +348,7 @@ export default function StalkerMainPage() {
           subtitle: intent.subtitle,
           url: intent.url,
           kind: intent.kind,
-          returnTo: "history",
+          returnTo,
           seriesIdentity: intent.identity,
           progressRef: item.playbackRef,
         });
@@ -360,7 +379,7 @@ export default function StalkerMainPage() {
           subtitle: item.subtitle,
           url,
           kind: "movie",
-          returnTo: "history",
+          returnTo,
           vodIdentity: { providerId: provider.id, itemId: item.playbackRef.itemId },
           progressRef: item.playbackRef,
         });
@@ -377,7 +396,7 @@ export default function StalkerMainPage() {
       subtitle: item.subtitle,
       url: item.source,
       kind: item.kind,
-      returnTo: "history",
+      returnTo,
     });
   };
 
@@ -450,7 +469,7 @@ export default function StalkerMainPage() {
         {
           backgroundColor: colors.background,
           paddingTop: top,
-          paddingBottom: Math.max(insets.bottom, 10),
+          paddingBottom: Platform.isTV ? Math.max(insets.bottom, 10) : 0,
         },
       ]}
     >
@@ -511,7 +530,7 @@ export default function StalkerMainPage() {
 
       {presentedView === "series" ? (
         <StalkerProductErrorBoundary product="series" providerId={provider.id} onBack={() => navigate("home")}>
-          <StalkerSeriesProductSurface provider={provider} onPlayable={openSeriesEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} />
+          <StalkerSeriesProductSurface provider={provider} onPlayable={openSeriesEpisode} detailSuspended={view === "player"} onDrawerVisibilityChange={setCatalogDrawerOpen} />
         </StalkerProductErrorBoundary>
       ) : null}
 
@@ -528,14 +547,17 @@ export default function StalkerMainPage() {
 
       {presentedView !== "live" && presentedView !== "movies" && presentedView !== "series" && presentedView !== "history" ? (
         <ScrollView
+          onLayout={event => setHomeViewportHeight(event.nativeEvent.layout.height)}
           style={{ flex: 1, minHeight: 0 }}
           contentContainerStyle={[s.content, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
-          scrollEnabled={!catalogDrawerOpen}
+          scrollEnabled={!catalogDrawerOpen && !homeMovieInfo.state && !homeSeriesInfo && view !== "player"}
         >
           {presentedView === "home" ? (
             <HomeDiscovery
+              interactionBlocked={Boolean(homeMovieInfo.state) || Boolean(homeSeriesInfo) || view === "player"}
+              tvViewportHeight={homeViewportHeight}
               provider={provider}
               live={liveCatalog.countKnown ? liveCatalog.totalCount : null}
               vod={productCounts.vod}
@@ -544,6 +566,8 @@ export default function StalkerMainPage() {
               seriesCategories={0}
               catalogLoading={liveCatalog.syncing && !liveCatalog.countKnown}
               channels={liveCatalog.channels}
+              epgByChannel={epgByChannel}
+              epgLoading={isEpgLoading}
               history={history}
               movies={homeSummary.movies}
               seriesItems={homeSummary.series}
@@ -551,10 +575,13 @@ export default function StalkerMainPage() {
               newMovies={[]}
               newSeries={[]}
               onNavigate={navigate}
-              onOpenLive={openLive}
-              onOpenMovie={() => navigate("movies")}
-              onOpenSeries={() => navigate("series")}
-              onOpenMedia={openProgress}
+              onOpenLive={channel => openLive(channel, "home")}
+              onOpenMovie={item => homeMovieInfo.select(String(item.stream_id))}
+              onOpenSeries={item => {
+                if(!homeSummary.series.some(row=>String(row.series_id)===String(item.series_id)))return;
+                setHomeSeriesInfo({providerId:provider.id,request:++homeSeriesSequence.current,item:{id:String(item.series_id),title:item.name,posterUrl:item.cover,description:item.plot,genre:item.genre}});
+              }}
+              onOpenMedia={item => openProgress(item, "home")}
               onRemoveLive={(id) => void removeWatched(id)}
             />
           ) : null}
@@ -573,7 +600,15 @@ export default function StalkerMainPage() {
         </ScrollView>
       ) : null}
 
+      {homeSeriesInfo?.providerId === provider.id && presentedView === "home" ? <StalkerProductErrorBoundary product="series" providerId={provider.id} onBack={()=>setHomeSeriesInfo(null)}><StalkerSeriesProductSurface key={`${provider.id}:${homeSeriesInfo.request}`} provider={provider} initialSeries={homeSeriesInfo.item} onDetailClose={()=>setHomeSeriesInfo(current=>current?.request === homeSeriesInfo.request ? null : current)} onPlayable={intent=>openSeriesEpisode(intent,"home")} detailSuspended={view === "player"}/></StalkerProductErrorBoundary> : null}
+      {homeMovieInfo.state && homeMovieInfo.input && homeMovieInfo.local ? <MovieInfoModal
+        key={`${provider.id}:${homeMovieInfo.state.preview.id}`}
+        input={homeMovieInfo.input} local={homeMovieInfo.local}
+        onClose={homeMovieInfo.close} onPlay={homeMovieInfo.play}
+        closeOnPlay={false} playback={homeMovieInfo.state}
+      /> : null}
       </NativeTVFocusScope>
+    {view !== "player" ? <ResponsiveContentNav placement="bottom" items={nav} activeKey={presentedView} onSelect={navigate} /> : null}
       {view === "player" && playable ? (
         <View style={s.fullPlayer}>
           <NativeVideoPlayer
@@ -677,6 +712,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onSwitch, on
   return (
     <View>
       <Text style={[s.title, { color: colors.foreground }]}>{t("settings")}</Text>
+      <BuildIdentity />
       <TVPreviewSetting />
       <TVRemoteInspectorSetting />
       <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}>
@@ -704,6 +740,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onSwitch, on
           ))}
         </ScrollView>
       </View>
+      <CatalogRefreshSettings />
       <PlayerChromeTimeoutSetting />
       <ProviderBackupPanel />
       <CredentialDiagnosticsPanel />
@@ -755,7 +792,7 @@ const s = StyleSheet.create({
   content: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
   header: { borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingBottom: 8 },
   homeHeaderPremium: { paddingHorizontal: 18, paddingTop: 6, paddingBottom: 10 },
-  headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 48 },
+  headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 48, gap: 8 },
   brand: { fontSize: 18, fontWeight: "900", letterSpacing: 1 },
   error: { margin: 12, borderWidth: 1, borderRadius: 12, padding: 10, flexDirection: "row", gap: 8, alignItems: "center" },
   title: { fontSize: 28, fontWeight: "800", marginBottom: 6 },

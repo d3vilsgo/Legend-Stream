@@ -15,7 +15,6 @@ import {
 } from "./catalogRuntime";
 import {
   hydrateM3UProviderCache,
-  markM3UCacheActivation,
 } from "./m3uCatalogCache";
 import { beginM3UProviderSwitchMeasurement } from "./m3uSwitchMetrics";
 import { primeProviderSwitchSnapshot } from "./providerSwitchUx";
@@ -77,7 +76,6 @@ export async function prepareProviderSwitchCache(
       newSeries: cached.newSeries,
     };
     primeProviderSwitchSnapshot(provider.id, snapshot);
-    markM3UCacheActivation(provider.id);
     return {
       snapshot,
       live: cached.live,

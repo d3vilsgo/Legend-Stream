@@ -18,16 +18,18 @@ type FocusModule = {
   unregisterTarget: (tag: number) => Promise<boolean>;
   requestTargetFocus: (tag: number) => Promise<boolean>;
   setScope: (scope: string) => Promise<boolean>;
+  modalShown: (scope: string) => Promise<boolean>;
   addListener: (name: "onNativeFocus", listener: (event: NativeFocusEvent) => void) => { remove: () => void };
 };
 const focusNative = native as (RemoteModule & FocusModule) | null;
 export const registerTvTarget = (tag: number, id: string, scope: string, region: string, preferred: boolean) => focusNative?.registerTarget(tag,id,scope,region,preferred).catch(() => false);
 export const unregisterTvTarget = (tag: number) => focusNative?.unregisterTarget(tag).catch(() => false);
 export const requestTvTargetFocus = (tag: number) => focusNative?.requestTargetFocus(tag).catch(() => false);
+export const nativeTvModalShown = (scope: string) => focusNative?.modalShown(scope).catch(() => false);
 export const setNativeTvScope = (scope: string) => focusNative?.setScope(scope).catch(() => false);
 export const subscribeNativeTvFocus = (listener: (event: NativeFocusEvent) => void) => focusNative?.addListener("onNativeFocus",listener);
 
-export type InspectorNativeEvent = {delivery?:string;timeMs?:number;inputAgeMs?:number;beforeFocus?:string;cause?:string;withoutInput?:boolean;kind: string; sequence: number; key: string; phase: string; handled: boolean; focus: string; scope: string; context: string};
+export type InspectorNativeEvent = {dispatchDurationMs?:number;dispatchOwner?:string;expectedFocus?:string;moveOutcome?:string;expectedVisible?:boolean;focusTop?:number;delivery?:string;timeMs?:number;inputAgeMs?:number;beforeFocus?:string;cause?:string;withoutInput?:boolean;kind: string; sequence: number; key: string; phase: string; handled: boolean; focus: string; scope: string; context: string};
 const inspectorNative = native as unknown as {setInspector:(enabled:boolean)=>Promise<boolean>;addListener:(name:"onInspector",listener:(event:InspectorNativeEvent)=>void)=>{remove:()=>void}} | null;
 export const setNativeInspector = (enabled:boolean) => inspectorNative?.setInspector(enabled).catch(()=>false);
 export const subscribeNativeInspector = (listener:(event:InspectorNativeEvent)=>void) => inspectorNative?.addListener("onInspector",listener);

@@ -92,7 +92,7 @@ export function useStalkerMoviesCatalog({
       }
       const previewCategory = categories[0] ?? category;
       if (page === 1 && (isStalkerVodGlobalCategory(category) || previewCategory.id === category.id)) {
-        void writeStalkerMovieHomePreview(provider.id, result.items).catch(() => undefined);
+        void writeStalkerMovieHomePreview(provider.id, result.items, undefined, { categoryId: category.id, page: result.currentPage }).catch(() => undefined);
       }
     } catch (caught) {
       if (abort.signal.aborted || sequence !== pageSequenceRef.current || !sessionStillCurrent()) return;

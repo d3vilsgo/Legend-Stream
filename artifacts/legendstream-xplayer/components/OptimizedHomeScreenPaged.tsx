@@ -1,3 +1,9 @@
+import { BuildIdentity } from "@/components/BuildIdentity";
+import { usePagedSeriesInfo } from "@/hooks/usePagedSeriesInfo";
+import { SeriesInfoModal } from "@/components/series/SeriesInfoModal";
+import type { MediaPlaybackRef } from "@/lib/mediaProgress";
+import { useHomeMovieInfo } from "@/hooks/useHomeMovieInfo";
+import { MovieInfoModal } from "@/components/tmdb/MovieInfoModal";
 import { useNativeTvLayout } from "@/hooks/useNativeTvLayout";
 import { TVRemoteInspectorSetting } from "@/components/tvPreview/TVRemoteInspector";
 import { tvInspector } from "@/lib/tvRemoteInspector";
@@ -63,7 +69,6 @@ import {
 import type { LiveChannelIdentity } from "@/lib/playerLiveQueue";
 import {
   getCachedCatalogCategoryMetadata,
-  loadM3USeriesInfoFromCache,
   type CatalogPlaybackIdentity,
   type CatalogCategoryMetadata,
 } from "@/lib/catalogPageRepository";
@@ -76,6 +81,8 @@ import {
 } from "@/lib/providerSwitchUx";
 import { redactSensitiveText, safeLog } from "@/lib/safeLog";
 import { resolveCatalogPlaybackSource } from "@/lib/catalogRuntime";
+import { CatalogRefreshSettings } from "@/components/CatalogRefreshSettings";
+import { beginPlaybackAttempt, type ProviderKind } from "@/lib/performanceDiagnostics";
 import {
   recordM3UBusyState as recordM3UBusyDiagnosticState,
   recordM3UHeartbeat,
@@ -90,11 +97,7 @@ import {
 } from "@/lib/m3uInAppDiagnostics";
 import type { StalkerProductProviderIdentity } from "@/lib/stalkerProductSession";
 import {
-  getSeriesInfo,
-  registerLocalEpisodeQueue,
-  type XtreamCredentials,
   type XtreamEpisode,
-  type XtreamSeriesInfo,
   type XtreamSeriesItem,
   type XtreamVodItem,
 } from "@/lib/xtreamCatalog";
@@ -110,6 +113,7 @@ type Playable = {
   returnTo: ContentView;
   liveIdentity?: LiveChannelIdentity;
   vodIdentity?: CatalogPlaybackIdentity;
+  progressRef?: MediaPlaybackRef;
 };
 
 const CATALOG_SORT_KEY = "@legendstream/catalog-sort-v1";
@@ -139,10 +143,10 @@ export default function OptimizedHomeScreenPaged() {
   const { t } = useI18n();
   const {
     provider, providers, channels, epgByChannel, favorites, history, isHydrating, isLoading, isEpgLoading,
-    error, scopedError, m3uCatalogCommit, connectProvider, cancelProviderConnect, refreshProvider, recoverLegacyCatalogFallback, toggleFavorite, recordWatched,
+    error, scopedError, m3uCatalogCommit, connectProvider, cancelProviderConnect, recoverLegacyCatalogFallback, toggleFavorite, recordWatched,
     removeWatched, resolveProviderForSwitch, setActiveProvider, removeProvider, disconnectProvider, clearError, clearScopedError,
   } = usePlayer();
-  const { snapshot, hasUsableCache, isSyncing, isRefreshing, refreshSnapshot, refreshCatalog } = useCatalogSync();
+  const { snapshot, hasUsableCache, isSyncing, isRefreshing, refreshSnapshot, refreshCatalog, lastSuccessfulAt, syncState } = useCatalogSync();
   useCredentialDiagnosticsStartup();
 
   const [view, setView] = useState<ViewName>("home");
@@ -152,15 +156,21 @@ export default function OptimizedHomeScreenPaged() {
   const [playable, setPlayable] = useState<Playable | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [catalogSort, setCatalogSort] = useState<CatalogSortMode>("default");
-  const [selectedSeries, setSelectedSeries] = useState<XtreamSeriesItem | null>(null);
-  const [seriesInfo, setSeriesInfo] = useState<XtreamSeriesInfo | null>(null);
   const [catalogDrawerOpen, setCatalogDrawerOpen] = useState(false);
+  const [homeViewportHeight, setHomeViewportHeight] = useState<number | undefined>(undefined);
   const [categoryMetadataRefresh, setCategoryMetadataRefresh] = useState(0);
   const [categoryMetadata, setCategoryMetadata] = useState<(CatalogCategoryMetadata & { providerId: string }) | null>(null);
   const [switchingProviderId, setSwitchingProviderId] = useState<string | null>(null);
   const switchingProviderRef = useRef<string | null>(null);
   const activeProviderIdRef = useRef<string | null>(provider?.id ?? null);
-  const seriesRequestGenerationRef = useRef(0);
+  const pagedSeries = usePagedSeriesInfo({provider:provider ?? null,
+    enabled: !adding && !editingProviderId && !switchingProviderId && (view === "home" || view === "series" || view === "player" && playable?.kind === "episode"),
+    playing: view === "player",
+    recover: async error => { const ok = provider ? await recoverLegacyCatalogFallback(provider.id,error) : false; if(ok)setView("home"); return ok; },
+    onPlayable: next => { setPlayable({...next,kind:"episode",returnTo:next.origin}); setView("player"); },
+  });
+  const selectedSeries = pagedSeries.state?.item ?? null;
+  const seriesInfo = pagedSeries.state?.info ?? null;
 
   useEffect(() => {
     if (!Platform.isTV) return;
@@ -186,9 +196,6 @@ export default function OptimizedHomeScreenPaged() {
 
   React.useEffect(() => {
     activeProviderIdRef.current = provider?.id ?? null;
-    seriesRequestGenerationRef.current += 1;
-    setSelectedSeries(null);
-    setSeriesInfo(null);
     setCatalogError(null);
     setCatalogDrawerOpen(false);
   }, [provider?.id]);
@@ -213,11 +220,6 @@ export default function OptimizedHomeScreenPaged() {
     void AsyncStorage.setItem(CATALOG_SORT_KEY, mode).catch(() => undefined);
   };
 
-  const credentials = useMemo<XtreamCredentials | null>(() => {
-    if (!provider || provider.type !== "xtream" || !provider.username || !provider.password) return null;
-    return { baseUrl: provider.url || provider.playlistUrl, username: provider.username, password: provider.password };
-  }, [provider]);
-
   const playerLiveChannels = useMemo(() => provider ? channels.filter((channel) => channel.providerId === provider.id && (channel.contentType ?? "live") === "live") : [], [channels, provider]);
   const homeIdentityIds = useMemo(() => homeLiveIdentityPreviewIds(history), [history]);
   const homeIdentityFallbackChannels = provider?.type === "stalker" ? EMPTY_LIVE_CHANNELS : playerLiveChannels;
@@ -236,6 +238,14 @@ export default function OptimizedHomeScreenPaged() {
   }, [homeChannels, resolvedHomeIdentityChannels]);
   const homeMovies = provider?.type === "stalker" ? [] : activeSnapshot?.movies ?? [];
   const homeSeries = provider?.type === "stalker" ? [] : activeSnapshot?.series ?? [];
+  const homeMovieInfo = useHomeMovieInfo({
+    providerId: provider?.id,
+    providerType: provider?.type,
+    revision: String(lastSuccessfulAt ?? 0) + ":" + String(m3uCatalogCommit?.sequence ?? 0),
+    items: [...homeMovies, ...(activeSnapshot?.newMovies ?? [])],
+    enabled: view === "home" && !adding && !editingProviderId && !switchingProviderId,
+    onPlay: item => openMovie(item, "home"),
+  });
 
   const m3uCatalogRevision =
     provider?.type === "m3u" &&
@@ -249,9 +259,9 @@ export default function OptimizedHomeScreenPaged() {
   const refreshPagedCatalog = async () => {
     if (!provider) return;
     try {
-      if (provider.type === "xtream") await refreshCatalog();
-      else if (provider.type === "m3u") { await refreshProvider(); await yieldToUi(); await refreshSnapshot(); }
-      else if (provider.type === "stalker") await refreshProvider();
+      await refreshCatalog();
+      await yieldToUi();
+      await refreshSnapshot();
     } finally { setCategoryMetadataRefresh((value) => value + 1); }
   };
 
@@ -262,7 +272,7 @@ export default function OptimizedHomeScreenPaged() {
     if (target.needsCredentials) { setAdding(false); setEditingProviderId(id); return; }
     const gate = tryBeginProviderSwitch(switchingProviderRef.current, id);
     if (!gate.started) return;
-    seriesRequestGenerationRef.current += 1;
+    pagedSeries.close();
     switchingProviderRef.current = id;
     setSwitchingProviderId(id);
     clearError();
@@ -328,16 +338,14 @@ export default function OptimizedHomeScreenPaged() {
     if (target !== "live") clearScopedError("live-history");
     logM3UNavigate(target);
     setView(target);
-    if (target !== "series") { seriesRequestGenerationRef.current += 1; setSelectedSeries(null); setSeriesInfo(null); }
+    if (target !== "series") pagedSeries.close();
   };
 
   const { setBackAction } = useTVPreviewFocus();
   useEffect(() => {
     setBackAction(() => {
       if (view === "series" && selectedSeries) {
-        seriesRequestGenerationRef.current += 1;
-        setSelectedSeries(null);
-        setSeriesInfo(null);
+        pagedSeries.close();
       } else if (view !== "home") navigate("home");
     });
     return () => setBackAction(null);
@@ -399,12 +407,13 @@ export default function OptimizedHomeScreenPaged() {
     }} />;
   }
 
-  const openLive = (channel: Channel) => {
+  const openLive = (channel: Channel, returnTo: ContentView = "live") => {
+    beginPlaybackAttempt(provider.type as ProviderKind);
     if (m3uDiagnosticEnabled) recordM3UOpenLiveEnter();
 
     if (provider.type === "stalker") {
       if (!channel.streamUrl) { setCatalogError("Playback source could not be resolved."); return; }
-      setPlayable({ title: channel.name, subtitle: channel.category, url: channel.streamUrl, kind: "live", returnTo: "live", liveIdentity: { providerId: channel.providerId, channelId: channel.id } });
+      setPlayable({ title: channel.name, subtitle: channel.category, url: channel.streamUrl, kind: "live", returnTo, liveIdentity: { providerId: channel.providerId, channelId: channel.id } });
       void recordWatched(channel.id);
       setView("player");
       return;
@@ -414,7 +423,7 @@ export default function OptimizedHomeScreenPaged() {
     void resolveCatalogPlaybackSource({ kind: "live", item: channel }, provider)
       .then(({ url }) => {
         if (activeProviderIdRef.current !== requestProviderId) return;
-        setPlayable({ title: channel.name, subtitle: channel.category, url, kind: "live", returnTo: "live", liveIdentity: { providerId: channel.providerId, channelId: channel.id } });
+        setPlayable({ title: channel.name, subtitle: channel.category, url, kind: "live", returnTo, liveIdentity: { providerId: channel.providerId, channelId: channel.id } });
         if (m3uDiagnosticEnabled) recordM3UOpenLiveSetPlayable();
         void recordWatched(channel.id);
         setView("player");
@@ -425,12 +434,13 @@ export default function OptimizedHomeScreenPaged() {
       });
   };
 
-  const openMovie = (item: XtreamVodItem) => {
+  const openMovie = (item: XtreamVodItem, returnTo: ContentView = "movies") => {
+    beginPlaybackAttempt(provider.type as ProviderKind);
     const requestProviderId = provider.id;
-    void resolveCatalogPlaybackSource({ kind: "movie", item }, provider)
+    return resolveCatalogPlaybackSource({ kind: "movie", item }, provider)
       .then(({ url }) => {
         if (activeProviderIdRef.current !== requestProviderId) return;
-        setPlayable({ title: item.name, subtitle: item.genre || t("movies"), url, kind: "movie", returnTo: "movies", vodIdentity: { providerId: provider.id, itemId: String(item.stream_id) } });
+        setPlayable({ title: item.name, subtitle: item.genre || t("movies"), url, kind: "movie", returnTo, vodIdentity: { providerId: provider.id, itemId: String(item.stream_id) } });
         setView("player");
       })
       .catch(() => {
@@ -438,49 +448,14 @@ export default function OptimizedHomeScreenPaged() {
       });
   };
 
-  const isCurrentSeriesRequest = (providerId: string, generation: number) => activeProviderIdRef.current === providerId && seriesRequestGenerationRef.current === generation;
-  const openSeries = async (item: XtreamSeriesItem) => {
-    const requestProviderId = provider.id;
-    const requestGeneration = ++seriesRequestGenerationRef.current;
-    setSelectedSeries(item); setSeriesInfo(null); setCatalogError(null);
-    try {
-      if (provider.type === "m3u") {
-        const info = await loadM3USeriesInfoFromCache(provider, item.series_id);
-        if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return;
-        if (!info) { setCatalogError(t("loadingEpisodes")); return; }
-        registerLocalEpisodeQueue(info); setSeriesInfo(info); return;
-      }
-      if (!credentials) return;
-      const info = await getSeriesInfo(credentials, item.series_id);
-      if (isCurrentSeriesRequest(requestProviderId, requestGeneration)) setSeriesInfo(info);
-    } catch (caught) {
-      if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return;
-      if (await recoverLegacyCatalogFallback(requestProviderId, caught)) { if (!isCurrentSeriesRequest(requestProviderId, requestGeneration)) return; setSelectedSeries(null); setSeriesInfo(null); setView("home"); return; }
-      setCatalogError(caught instanceof Error ? caught.message : t("loadingEpisodes"));
-    }
-  };
-
-  const playEpisode = (episode: XtreamEpisode) => {
-    if (!selectedSeries) return;
-    const requestProviderId = provider.id;
-    const title = episode.title || selectedSeries.name;
-    const subtitle = selectedSeries.name;
-    void resolveCatalogPlaybackSource({ kind: "episode", item: episode }, provider)
-      .then(({ url }) => {
-        if (activeProviderIdRef.current !== requestProviderId) return;
-        setPlayable({ title, subtitle, url, kind: "episode", returnTo: "series" });
-        setView("player");
-      })
-      .catch(() => {
-        if (activeProviderIdRef.current === requestProviderId) setCatalogError("Playback source could not be resolved.");
-      });
-  };
-  const openDownload = (item: DownloadedMedia) => { setPlayable({ title: item.title, subtitle: item.subtitle, url: item.uri, kind: "download", returnTo: "downloads" }); setView("player"); };
-  const openProgress = (item: MediaProgress) => { setPlayable({ title: item.title, subtitle: item.subtitle, url: item.source, kind: item.kind, returnTo: "history" }); setView("player"); };
+  const openSeries = (item: XtreamSeriesItem) => pagedSeries.open(item, "series");
+  const playEpisode = (episode: XtreamEpisode, seasonId: string) => pagedSeries.play(seasonId, String(episode.id));
+  const openDownload = (item: DownloadedMedia) => { beginPlaybackAttempt("unknown"); setPlayable({ title: item.title, subtitle: item.subtitle, url: item.uri, kind: "download", returnTo: "downloads" }); setView("player"); };
+  const openProgress = (item: MediaProgress, returnTo: ContentView = "history") => { beginPlaybackAttempt(provider.type as ProviderKind); setPlayable({ title: item.title, subtitle: item.subtitle, url: item.source, kind: item.kind, returnTo }); setView("player"); };
 
   const presentedView = view === "player" ? playable?.returnTo ?? "home" : view;
-  if (!Platform.isTV && view === "player") return <View style={s.fullPlayer}>
-    {playable ? <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => setView(playable.returnTo)} /> : null}
+  if (!Platform.isTV && view === "player" && !pagedSeries.state) return <View style={s.fullPlayer}>
+    {playable ? <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} progressRef={playable.progressRef} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => setView(playable.returnTo)} /> : null}
   </View>;
 
   const nav: ResponsiveContentNavItem<ContentView>[] = [
@@ -498,27 +473,33 @@ export default function OptimizedHomeScreenPaged() {
     ? t(scopedError.messageKey)
     : null;
 
+  const seriesDetailSuspended = view === "player";
   const renderCatalog = (view: ContentView) => (
+    <>
     <NativeTVFocusScope>
+    {Platform.isTV ? <ResponsiveContentNav items={nav} activeKey={view} onSelect={navigate} /> : null}
+    <View style={{ flex: 1, minHeight: 0, paddingLeft: Platform.isTV ? tvLayout.left + Math.max(64, Math.min(84, tvLayout.target + 12)) + 12 : 0 }}>
     <View style={[s.header, { borderColor: colors.border }, view === "home" ? s.homeHeaderPremium : null]}>
       <View style={s.headerTop}><Text style={[s.brand, { color: colors.foreground }]}>LEGEND<Text style={{ color: colors.primary }}>STREAM</Text></Text><ProviderSubscriptionChip provider={provider} /></View>
-      <ResponsiveContentNav items={nav} activeKey={view} onSelect={navigate} />
+      {!Platform.isTV ? <ResponsiveContentNav items={nav} activeKey={view} onSelect={navigate} /> : null}
     </View>
     {error || catalogError || visibleScopedError ? <View style={[s.error, { borderColor: colors.destructive, backgroundColor: colors.card }]}><Text style={{ color: colors.destructive, flex: 1 }}>{visibleErrorText(error || catalogError || visibleScopedError)}</Text><Pressable onPress={() => { clearError(); clearScopedError(); setCatalogError(null); }}><Feather name="x" size={20} color={colors.mutedForeground} /></Pressable></View> : null}
 
-    {view === "live" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedLiveCatalog provider={provider} snapshotCount={liveCount} catalogRevision={m3uCatalogRevision} hasMeaningfulM3ULiveGroups={categoryMetadata?.providerId === provider.id ? categoryMetadata.hasMeaningfulM3ULiveGroups : null} epgByChannel={epgByChannel} favorites={favorites} epgLoading={isEpgLoading} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
+    {view === "live" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedLiveCatalog provider={provider} snapshotCount={liveCount} catalogRevision={Math.max(m3uCatalogRevision, snapshot.providerId === provider.id ? Math.max(lastSuccessfulAt ?? 0, syncState?.phase === "ready" || syncState?.phase === "error" || syncState?.phase === "cancelled" ? syncState.updatedAt : 0) : 0)} hasMeaningfulM3ULiveGroups={categoryMetadata?.providerId === provider.id ? categoryMetadata.hasMeaningfulM3ULiveGroups : null} epgByChannel={epgByChannel} favorites={favorites} epgLoading={isEpgLoading} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
     {view === "live" && provider.type === "stalker" ? <StalkerLiveCatalog providerId={provider.id} channels={playerLiveChannels} epgByChannel={epgByChannel} favorites={favorites} epgLoading={isEpgLoading} refreshing={isLoading} onRefresh={refreshPagedCatalog} onOpen={openLive} onFavorite={(id) => void toggleFavorite(id)} /> : null}
 
-    {view === "movies" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedMoviesCatalog provider={provider} snapshotCount={vodCount} catalogRevision={m3uCatalogRevision} sortMode={catalogSort} onSort={changeCatalogSort} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} onOpen={openMovie} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
+    {view === "movies" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedMoviesCatalog provider={provider} snapshotCount={vodCount} catalogRevision={Math.max(m3uCatalogRevision, snapshot.providerId === provider.id ? Math.max(lastSuccessfulAt ?? 0, syncState?.phase === "ready" || syncState?.phase === "error" || syncState?.phase === "cancelled" ? syncState.updatedAt : 0) : 0)} sortMode={catalogSort} onSort={changeCatalogSort} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} onOpen={openMovie} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
     {view === "movies" && provider.type === "stalker" && isStalkerProductProvider(provider) ? <StalkerProductErrorBoundary product="movies" providerId={provider.id} onBack={() => setView("home")}><StalkerVodSurface provider={provider} onBack={() => setView("home")} /></StalkerProductErrorBoundary> : null}
 
-    {view === "series" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedSeriesCatalog provider={provider} snapshotCount={seriesCount} catalogRevision={m3uCatalogRevision} sortMode={catalogSort} onSort={changeCatalogSort} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} selected={selectedSeries} info={seriesInfo} onOpen={(item) => void openSeries(item)} onBack={() => { seriesRequestGenerationRef.current += 1; setSelectedSeries(null); setSeriesInfo(null); }} onEpisode={playEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
+    {view === "series" && (provider.type === "m3u" || provider.type === "xtream") ? <PagedSeriesCatalog provider={provider} snapshotCount={seriesCount} catalogRevision={Math.max(m3uCatalogRevision, snapshot.providerId === provider.id ? Math.max(lastSuccessfulAt ?? 0, syncState?.phase === "ready" || syncState?.phase === "error" || syncState?.phase === "cancelled" ? syncState.updatedAt : 0) : 0)} sortMode={catalogSort} onSort={changeCatalogSort} refreshing={isLoading || isRefreshing || isSyncing} onRefresh={refreshPagedCatalog} selected={selectedSeries} info={seriesInfo} onOpen={(item) => void openSeries(item)} onBack={pagedSeries.close} detailSuspended={seriesDetailSuspended} detailLoading={pagedSeries.state?.loading} detailError={pagedSeries.state?.error} onRetryDetail={pagedSeries.retry} playbackBusy={pagedSeries.state?.busy} onEpisode={playEpisode} onDrawerVisibilityChange={setCatalogDrawerOpen} /> : null}
     {view === "series" && provider.type === "stalker" && isStalkerProductProvider(provider) ? <StalkerProductErrorBoundary product="series" providerId={provider.id} onBack={() => setView("home")}><StalkerSeriesProductSurface provider={provider} /></StalkerProductErrorBoundary> : null}
 
     {view === "history" ? <HistoryView providerId={provider.id} channels={resolvedFullHistoryIdentityChannels} favorites={favorites} history={history} onOpen={openLive} onOpenMedia={openProgress} /> : null}
 
-    {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? <ScrollView style={{ flex: 1, minHeight: 0 }} contentContainerStyle={[s.content, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEnabled={!catalogDrawerOpen}>
+    {view !== "live" && view !== "movies" && view !== "series" && view !== "history" ? <ScrollView onLayout={event => setHomeViewportHeight(event.nativeEvent.layout.height)} style={{ flex: 1, minHeight: 0 }} contentContainerStyle={[s.content, Platform.isTV && { paddingLeft: tvLayout.left, paddingRight: tvLayout.right, paddingBottom: tvLayout.bottom }]} keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} scrollEnabled={!catalogDrawerOpen && !homeMovieInfo.movie && !pagedSeries.state}>
       {view === "home" ? <HomeDiscovery
+        interactionBlocked={Boolean(pagedSeries.state) || Boolean(homeMovieInfo.movie) || seriesDetailSuspended}
+        tvViewportHeight={homeViewportHeight}
         provider={provider}
         live={provider.type === "stalker" ? homeLiveSource.totalCount : countKnown ? snapshot.counts.live : null}
         vod={vodCount.totalCount}
@@ -527,6 +508,8 @@ export default function OptimizedHomeScreenPaged() {
         seriesCategories={provider.type === "stalker" ? 0 : categoryMetadata?.providerId === provider.id ? categoryMetadata.seriesCategories : 0}
         catalogLoading={provider.type === "stalker" ? false : isSyncing}
         channels={homeIdentityChannels}
+        epgByChannel={epgByChannel}
+        epgLoading={isEpgLoading}
         history={history}
         movies={homeMovies}
         seriesItems={homeSeries}
@@ -534,23 +517,35 @@ export default function OptimizedHomeScreenPaged() {
         newMovies={provider.type === "stalker" ? [] : activeSnapshot?.newMovies ?? []}
         newSeries={provider.type === "stalker" ? [] : activeSnapshot?.newSeries ?? []}
         onNavigate={navigate}
-        onOpenLive={openLive}
-        onOpenMovie={openMovie}
-        onOpenSeries={(item) => void openSeries(item)}
-        onOpenMedia={openProgress}
+        onOpenLive={(channel) => openLive(channel, "home")}
+        onOpenMovie={homeMovieInfo.select}
+        onWatchMovie={homeMovieInfo.watch}
+        onOpenSeries={item => pagedSeries.open(item, "home")}
+        onOpenMedia={(item) => openProgress(item, "home")}
         onRemoveLive={(id) => void removeWatched(id)}
       /> : null}
       {view === "downloads" ? <DownloadsView onOpen={openDownload} /> : null}
       {view === "settings" ? <Settings provider={provider} providers={providers} busy={providerSwitchBusy} switchingProviderId={switchingProviderId} onEdit={() => setEditingProviderId(provider.id)} onAdd={() => setAdding(true)} onSwitch={(id) => void switchProvider(id)} onDisconnect={() => void disconnectProvider()} onRemove={(id) => void removeProvider(id)} /> : null}
     </ScrollView> : null}
 
+    {pagedSeries.state?.origin === "home" && pagedSeries.model ? <SeriesInfoModal key={pagedSeries.model.id} providerId={provider.id} detail={pagedSeries.model} loading={pagedSeries.state.loading} error={pagedSeries.state.error} busy={pagedSeries.state.busy} visible={!seriesDetailSuspended} onClose={pagedSeries.close} onRetry={pagedSeries.retry} onEpisode={pagedSeries.play}/> : null}
+    {homeMovieInfo.movie && homeMovieInfo.input && homeMovieInfo.local ? <MovieInfoModal
+      key={`${provider.id}:${homeMovieInfo.movie.stream_id}`}
+      input={homeMovieInfo.input}
+      local={homeMovieInfo.local}
+      onClose={homeMovieInfo.close}
+      onPlay={homeMovieInfo.play}
+    /> : null}
+    </View>
     </NativeTVFocusScope>
+    {!seriesDetailSuspended ? <ResponsiveContentNav placement="bottom" items={nav} activeKey={presentedView} onSelect={navigate} /> : null}
+    </>
   );
 
-  return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Math.max(insets.bottom, 10) }]}>
+  return <View style={[s.screen, { backgroundColor: colors.background, paddingTop: top, paddingBottom: Platform.isTV ? Math.max(insets.bottom, 10) : 0 }]}>
     {renderCatalog(presentedView)}
-    {Platform.isTV && view === "player" && playable ? <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "black", zIndex: 100, elevation: 100 }]}>
-      <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => { setView(playable.returnTo); setPlayable(null); }} />
+    {(Platform.isTV || pagedSeries.state) && view === "player" && playable ? <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "black", zIndex: 100, elevation: 100 }]}>
+      <NativeVideoPlayer source={playable.url} title={playable.title} subtitle={playable.subtitle} mediaKind={playable.kind} liveIdentity={playable.liveIdentity} vodIdentity={playable.vodIdentity} progressRef={playable.progressRef} autoFullscreen allowDownload={playable.kind === "movie" || playable.kind === "episode"} onFullscreenExit={() => { setView(playable.returnTo); setPlayable(null); }} />
     </View> : null}
 
   </View>;
@@ -672,6 +667,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAd
   const { t, language, languages, setLanguage } = useI18n();
   return <View>
     <Text style={[s.title, { color: colors.foreground }]}>{t("settings")}</Text>
+      <BuildIdentity />
       <TVPreviewSetting />
       <TVRemoteInspectorSetting />
     <View style={[s.settings, { borderColor: colors.border, backgroundColor: colors.card }]}>
@@ -681,6 +677,7 @@ function Settings({ provider, providers, busy, switchingProviderId, onEdit, onAd
       <View style={s.row}><FocusButton label={t("editSource")} icon="edit-2" onPress={onEdit} /><FocusButton label={t("addAccount")} icon="plus" onPress={onAdd} /><FocusButton label={t("disconnect")} icon="log-out" variant="ghost" onPress={onDisconnect} /></View>
     </View>
     <View style={{ marginTop: 24 }}><Text style={[s.section, { color: colors.foreground }]}>{t("language")}</Text><ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={s.rail}>{languages.map((item) => <FocusButton key={item.code} label={item.label} variant={language === item.code ? "secondary" : "ghost"} onPress={() => void setLanguage(item.code)} />)}</ScrollView></View>
+    <CatalogRefreshSettings />
     <PlayerChromeTimeoutSetting />
     <ProviderBackupPanel />
     <CredentialDiagnosticsPanel />
@@ -712,7 +709,7 @@ const s = StyleSheet.create({
   content: { padding: 18, paddingBottom: 40, maxWidth: 1500, width: "100%", alignSelf: "center" },
   header: { borderBottomWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, paddingBottom: 8 },
   homeHeaderPremium: { paddingHorizontal: 18, paddingTop: 6, paddingBottom: 10 },
-  headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 48 },
+  headerTop: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", minHeight: 48, gap: 8 },
   brand: { fontSize: 18, fontWeight: "900", letterSpacing: 1 },
   brandLarge: { fontSize: 28, fontWeight: "900", letterSpacing: 1 },
   error: { margin: 12, borderWidth: 1, borderRadius: 12, padding: 10, flexDirection: "row", gap: 8, alignItems: "center" },

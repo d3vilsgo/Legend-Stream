@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -70,7 +71,9 @@ async function main() {
     assert.match(stalkerMainSource, /useState<Playable \| null>/);
     assert.match(stalkerMoviesControllerSource, /resolveStalkerVodLink\(session, item/);
     assert.match(stalkerMoviesControllerSource, /onPlayable\(\{/);
-    assert.match(stalkerMainSource, /const openMovie = \(movie: StalkerMoviePlayable\)[\s\S]*?openResolvedPlayable\(\{[\s\S]*?returnTo: "movies"/);
+    assert.match(stalkerMainSource, /const openMovie = \(movie: StalkerMoviePlayable, returnTo: StalkerContentView = "movies"\)[\s\S]*?openResolvedPlayable\(\{[\s\S]*?returnTo,[\s\S]*?itemId: movie\.itemId/);
+    assert.match(stalkerMainSource, /onPlayable: movie => openMovie\(movie, "home"\)/);
+    assert.match(stalkerMainSource, /onPlayable=\{openMovie\}/);
     assert.match(stalkerMainSource, /view === "player" && playable/);
     assert.match(stalkerMainSource, /<NativeVideoPlayer/);
     assert.match(stalkerMainSource, /onFullscreenExit=\{\(\) => \{[\s\S]*?setView\(playable\.returnTo\)/);
@@ -79,7 +82,8 @@ async function main() {
   await scenario("Stalker History re-resolves durable movie identity and preserves origin-aware player return", () => {
     assert.match(stalkerMainSource, /item\.playbackRef\.type === "stalker-vod"/);
     assert.match(stalkerMainSource, /resolveStalkerVodHistoryLink/);
-    assert.match(stalkerMainSource, /returnTo: "history"/);
+    assert.match(stalkerMainSource, /const openProgress = async \(item: MediaProgress, returnTo: StalkerContentView = "history"\)/);
+    assert.match(stalkerMainSource, /returnTo,/);
     assert.match(stalkerMainSource, /progressRef=\{playable\.progressRef\}/);
     assert.doesNotMatch(stalkerMainSource, /url:\s*item\.source[\s\S]*?playbackRef\.type === "stalker-vod"/);
   });
@@ -95,7 +99,7 @@ async function main() {
     assert.match(stalkerSeriesSource, /controller\.resolveEpisode\(detail\.seriesId, seasonId, episodeId/);
     assert.match(stalkerSeriesSource, /emitPlayable\(buildStalkerSeriesPlayableIntent/);
     assert.doesNotMatch(stalkerSeriesSource, /NativeVideoPlayer/);
-    assert.match(stalkerMainSource, /const openSeriesEpisode = \(intent: StalkerSeriesPlayableIntent\)[\s\S]*?returnTo: "series"/);
+    assert.match(stalkerMainSource, /const openSeriesEpisode = \(intent: StalkerSeriesPlayableIntent, returnTo: StalkerContentView = "series"\)[\s\S]*?returnTo,/);
     assert.match(stalkerMainSource, /Series adapts protocol data into the shared Golden Series catalog/);
   });
 
@@ -124,7 +128,9 @@ async function main() {
       assert.match(goldenCatalogSource, new RegExp(`function ${marker}|export function ${marker}`));
       assert.match(stalkerMoviesSource, new RegExp(`function ${marker}|export function ${marker}`));
     }
-    assert.match(stalkerMoviesSource, /const columns = Platform\.isTV \? grid\.columns : width >= 900 \? 5 : width >= 650 \? 4 : width >= 420 \? 3 : 2/);
+    assert.match(stalkerMoviesSource, /const columns = grid\.columns/);
+    assert.match(stalkerMoviesSource, /useResponsiveCatalogGrid<StalkerVodItem>/);
+    assert.match(goldenCatalogSource, /useResponsiveCatalogGrid</);
     assert.match(stalkerMoviesSource, /onEndReachedThreshold=\{0\.55\}/);
     assert.match(stalkerMoviesSource, /shouldUseWholeCatalogLoadingSkeleton\(catalog\.loadingInitial, catalog\.visibleItems\.length, catalog\.search\)/);
     assert.match(stalkerMoviesSource, /ListEmptyComponent=\{catalog\.loadingInitial \|\| catalog\.searching[\s\S]*?<CatalogLoadingSkeleton text=\{t\("loadingMovies"\)\} \/>[\s\S]*?: <View style=\{s\.emptyGrid\}><Text>—<\/Text><\/View>\}/);
@@ -136,9 +142,34 @@ async function main() {
       stalkerMoviesSource.indexOf("function PageFooter"),
     );
     assert.match(cardSource, /function GridCard\(\{ focusId, title, image, onPress \}/);
-    assert.match(cardSource, /<TVPreviewPressable focusId=\{focusId\} accessibilityLabel=\{title\} onPress=\{onPress\} style=\{s\.card\}>/);
-    assert.match(cardSource, /fontWeight: "700", padding: 9/);
-    assert.doesNotMatch(cardSource, /loading|disabled=|ActivityIndicator|cardTitleRow|minHeight/);
+    assert.match(cardSource, /<TVPreviewPressable eliteVisual focusId=\{focusId\} accessibilityLabel=\{title\} onPress=\{onPress\} style=\{s\.card\}>/);
+    // Evaluate the production GridCard JSX style and compact breakpoint for
+    // both device classes; do not replace these contracts with test-only logic.
+    const compactExpression = cardSource.match(/const compact\s*=\s*([^;]+);/)?.[1];
+    const titleStyleExpression = cardSource.match(
+      /<Text numberOfLines=\{2\} style=\{\{([^}]+)\}\}>\{title\}<\/Text>/,
+    )?.[1];
+    assert.ok(compactExpression, "GridCard compact screen classification is required");
+    assert.ok(titleStyleExpression, "GridCard must retain its rendered title typography");
+    for (const fixture of [
+      { name: "compact mobile", width: 393, height: 873, isTV: false, fontScale: 1, expected: { fontSize: 12, lineHeight: 16, minHeight: 40, padding: 4 } },
+      { name: "normal screen", width: 1280, height: 800, isTV: false, fontScale: 1, expected: { fontSize: 14, lineHeight: 18, minHeight: 54, padding: 9 } },
+      { name: "Native TV", width: 720, height: 480, isTV: true, fontScale: 1, expected: { fontSize: 14, lineHeight: 18, minHeight: 54, padding: 9 } },
+    ]) {
+      const compact = runInNewContext(compactExpression, {
+        Platform: { isTV: fixture.isTV },
+        width: fixture.width, height: fixture.height, Math,
+      });
+      const rendered = runInNewContext("({" + titleStyleExpression + "})", {
+        colors: { foreground: "#ffffff" }, compact, fontScale: fixture.fontScale, Math,
+      });
+      const actual = JSON.parse(JSON.stringify(rendered));
+      assert.equal(actual.fontWeight, "700", fixture.name + " weight");
+      assert.equal(actual.color, "#ffffff", fixture.name + " foreground");
+      for (const [key, value] of Object.entries(fixture.expected))
+        assert.equal(actual[key], value, fixture.name + " " + key);
+    }
+    assert.doesNotMatch(cardSource, /loading|disabled=|ActivityIndicator|cardTitleRow/);
     assert.doesNotMatch(stalkerMoviesSource, /cardTitleRow|resolvingItemId ===/);
   });
 
@@ -191,7 +222,8 @@ async function main() {
     ];
     assert.deepEqual(sortStalkerSeriesItems(providerItems, "default").map((item) => item.id), ["20", "3"]);
     assert.deepEqual(sortStalkerSeriesItems(providerItems, "alphaAsc").map((item) => item.id), ["3", "20"]);
-    assert.match(goldenCatalogSource, /const columns = Platform\.isTV \? grid\.columns : tvPreview[\s\S]*?width >= 900 \? 5 : width >= 650 \? 4 : width >= 420 \? 3 : 2/);
+    assert.match(goldenCatalogSource, /const columns = grid\.columns/);
+    assert.match(goldenCatalogSource, /JSON\.stringify\(\[providerId, selectedCategory, search, sortMode\]\)/);
     assert.match(goldenCatalogSource, /<CategoryDrawer visible=\{drawerOpen\}/);
     assert.match(goldenCatalogSource, /onEndReachedThreshold=\{0\.55\}/);
     assert.match(stalkerMainSource, /onDrawerVisibilityChange=\{setCatalogDrawerOpen\}/);

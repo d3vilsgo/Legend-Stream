@@ -17,11 +17,15 @@ for (const [width, height] of [
     for (const safeArea of [{}, { left: 48, right: 32, top: 24, bottom: 40 }]) {
       const g = eliteLiveLayout({ width, height, fontScale, safeArea });
       assert(g.detailWidth > 0);
-      if (!g.stacked)
+      if (!g.stacked) {
         assert(
           g.categoryWidth + g.channelWidth + g.detailWidth + 24 <=
             g.usableWidth + 0.01,
         );
+        const browse = (g.categoryWidth + g.channelWidth + 12) / g.usableWidth;
+        assert(Math.abs(browse - 0.32) < 0.025, "V3 browse budget must retain 32% for category/channel");
+        assert(g.detailWidth / g.usableWidth > 0.60, "V3 wide layout reserves video/EPG area");
+      }
       assert(g.rowHeight >= 54 * Math.max(1, fontScale) + 24);
       assert(g.left >= 8 && g.right >= 8);
       count++;
@@ -67,3 +71,42 @@ assert.equal(state.selectedId, null);
 process.stdout.write(
   "Elite Live reducer: focus/selection independence + panel preservation + category reset passed\n",
 );
+
+// Native Live: reserve channel width across compact and large TV windows.
+for (const [width, height] of [
+  [480, 320],
+  [720, 480],
+  [960, 540],
+  [1920, 1080],
+]) {
+  for (const fontScale of [1, 1.5, 2]) {
+    const geometry = eliteLiveLayout({
+      width,
+      height,
+      fontScale,
+      safeArea: { left: 16, right: 16, top: 8, bottom: 8 },
+    });
+    assert(geometry.categoryWidth >= 96);
+    assert(geometry.channelWidth >= 96);
+    if (geometry.stacked)
+      assert(
+        geometry.categoryWidth + geometry.channelWidth + 24 <=
+          geometry.usableWidth + 1,
+      );
+    assert(geometry.rowHeight >= 76);
+  }
+}
+// Focus does not select or play a channel.
+const focusedLive = eliteLiveReduce(eliteLiveInitial, {
+  type: "focus",
+  id: "first",
+});
+assert.deepEqual(focusedLive, eliteLiveInitial);
+const selectedLive = eliteLiveReduce(focusedLive, { type: "select", id: "first" });
+assert.equal(
+  eliteLiveSelection([{ id: "first" }, { id: "second" }], selectedLive.selectedId)
+    ?.id,
+  "first",
+);
+assert.equal(eliteLiveSelection([], selectedLive.selectedId), null);
+console.log("Native TV Live measured geometry and focus-selection: 15/15 passed");

@@ -52,6 +52,7 @@ export type TmdbMetadata = TmdbIdentity &
       episodeCount?: number;
     }[];
     similar: readonly TmdbIdentity[];
+    trailerUrl?: string;
     /** Field provenance, including field-level fallback. Unknown fields stay absent. */
     fieldLocales?: Readonly<Partial<Record<"title" | "overview", TmdbLocale>>>;
   }>;

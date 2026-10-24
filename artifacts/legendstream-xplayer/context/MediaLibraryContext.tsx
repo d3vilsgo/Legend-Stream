@@ -1,3 +1,10 @@
+import {
+  ProgressMutationOwner,
+  resumableProgress,
+  validProgress,
+  type ProgressSession,
+} from "@/lib/progressMutations";
+import type { EpisodeProgressContext } from "@/lib/mediaProgress";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React, {
   createContext,
@@ -12,7 +19,10 @@ import React, {
 import { usePlayer, type ProviderConfig } from "@/context/PlayerContext";
 import { getM3UCatalog } from "@/lib/iptv";
 import { parseCatalogRuntimeSource } from "@/lib/catalogPersistence";
-import { getEpisodePlaybackQueue, getVodPlaybackQueue } from "@/lib/xtreamCatalog";
+import {
+  getEpisodePlaybackQueue,
+  getVodPlaybackQueue,
+} from "@/lib/xtreamCatalog";
 import { readCredentials } from "@/lib/secureCredentials";
 import {
   MEDIA_PROGRESS_V2_STORAGE_KEY,
@@ -35,7 +45,11 @@ import {
   type MediaProgressV2,
 } from "@/lib/mediaProgress";
 
-export type { MediaKind, MediaPlaybackRef, MediaProgressV2 } from "@/lib/mediaProgress";
+export type {
+  MediaKind,
+  MediaPlaybackRef,
+  MediaProgressV2,
+} from "@/lib/mediaProgress";
 
 /**
  * Runtime/UI projection only. `source` is never part of MediaProgressV2 and is
@@ -52,15 +66,28 @@ type SaveProgressInput = {
   position: number;
   duration: number;
   playbackRef?: MediaPlaybackRef;
+  episodeContext?: EpisodeProgressContext;
+  session?: ProgressSession | null;
 };
 
 type MediaLibraryValue = {
   entries: MediaProgress[];
+  historyEntries: MediaProgress[];
+  storageError: string | null;
+  retryStorage: () => void;
+  beginProgressSession: (
+    source: string,
+    ref?: MediaPlaybackRef,
+  ) => ProgressSession | null;
   unscopedEntries: MediaProgress[];
   loaded: boolean;
-  getProgress: (source: string, playbackRef?: MediaPlaybackRef) => MediaProgress | undefined;
+  getProgress: (
+    source: string,
+    playbackRef?: MediaPlaybackRef,
+  ) => MediaProgress | undefined;
   saveProgress: (entry: SaveProgressInput) => Promise<void>;
   removeProgress: (source: string) => Promise<void>;
+  removeProgressEntries: (ids: readonly string[]) => Promise<void>;
   clearProgress: () => Promise<void>;
 };
 
@@ -105,8 +132,11 @@ function xtreamRuntimeSource(
   provider: ProviderConfig,
   ref: Extract<MediaPlaybackRef, { type: "xtream-vod" | "xtream-episode" }>,
 ): string | null {
-  if (provider.type !== "xtream" || !provider.username || !provider.password) return null;
-  const baseUrl = normalizeXtreamProgressBaseUrl(provider.url || provider.playlistUrl);
+  if (provider.type !== "xtream" || !provider.username || !provider.password)
+    return null;
+  const baseUrl = normalizeXtreamProgressBaseUrl(
+    provider.url || provider.playlistUrl,
+  );
   if (!baseUrl) return null;
   if (ref.type === "xtream-vod" && ref.sourceMode === "direct") {
     return `legendstream-catalog://xtream/movie/${encodeURIComponent(provider.id)}/${encodeURIComponent(ref.streamId)}?ext=${encodeURIComponent(ref.containerExtension)}`;
@@ -125,7 +155,10 @@ function m3uRuntimeSource(
   if (provider.type !== "m3u") return null;
   const catalog = getM3UCatalog(provider.id);
   if (ref.type === "m3u-vod") {
-    return catalog.movieItems.find((item) => item.id === ref.itemId)?.streamUrl ?? null;
+    return (
+      catalog.movieItems.find((item) => item.id === ref.itemId)?.streamUrl ??
+      null
+    );
   }
   for (const group of catalog.seriesGroups) {
     for (const episodes of Object.values(group.seasons)) {
@@ -136,20 +169,42 @@ function m3uRuntimeSource(
   return null;
 }
 
-function runtimeSourceFor(entry: MediaProgressV2, provider: ProviderConfig | null): string {
-  if (!provider || entry.providerId !== provider.id || entry.playbackRef.type === "unresolved") {
+function runtimeSourceFor(
+  entry: MediaProgressV2,
+  provider: ProviderConfig | null,
+): string {
+  if (
+    !provider ||
+    entry.providerId !== provider.id ||
+    entry.playbackRef.type === "unresolved"
+  ) {
     return `${UNSCOPED_RUNTIME_PREFIX}${encodeURIComponent(entry.id)}`;
   }
-  if (entry.playbackRef.type === "xtream-vod" || entry.playbackRef.type === "xtream-episode") {
-    return xtreamRuntimeSource(provider, entry.playbackRef) ?? `${UNSCOPED_RUNTIME_PREFIX}${encodeURIComponent(entry.id)}`;
+  if (
+    entry.playbackRef.type === "xtream-vod" ||
+    entry.playbackRef.type === "xtream-episode"
+  ) {
+    return (
+      xtreamRuntimeSource(provider, entry.playbackRef) ??
+      `${UNSCOPED_RUNTIME_PREFIX}${encodeURIComponent(entry.id)}`
+    );
   }
-  if (entry.playbackRef.type === "stalker-vod" || entry.playbackRef.type === "stalker-episode") {
+  if (
+    entry.playbackRef.type === "stalker-vod" ||
+    entry.playbackRef.type === "stalker-episode"
+  ) {
     return `${UNSCOPED_RUNTIME_PREFIX}${encodeURIComponent(entry.id)}`;
   }
-  return m3uRuntimeSource(provider, entry.playbackRef) ?? `${UNSCOPED_RUNTIME_PREFIX}${encodeURIComponent(entry.id)}`;
+  return (
+    m3uRuntimeSource(provider, entry.playbackRef) ??
+    `${UNSCOPED_RUNTIME_PREFIX}${encodeURIComponent(entry.id)}`
+  );
 }
 
-function inferProgressKind(source: string, provider: ProviderConfig): MediaKind {
+function inferProgressKind(
+  source: string,
+  provider: ProviderConfig,
+): MediaKind {
   const runtime = parseCatalogRuntimeSource(source);
   if (runtime?.kind === "vod-direct") return "movie";
   const canonical = parseCanonicalXtreamProgressSource(source);
@@ -158,10 +213,12 @@ function inferProgressKind(source: string, provider: ProviderConfig): MediaKind 
   if (getVodPlaybackQueue(source)) return "movie";
   if (provider.type === "m3u") {
     const catalog = getM3UCatalog(provider.id);
-    if (catalog.movieItems.some((item) => item.streamUrl === source)) return "movie";
+    if (catalog.movieItems.some((item) => item.streamUrl === source))
+      return "movie";
     for (const group of catalog.seriesGroups) {
       for (const episodes of Object.values(group.seasons)) {
-        if (episodes.some((item) => item.streamUrl === source)) return "episode";
+        if (episodes.some((item) => item.streamUrl === source))
+          return "episode";
       }
     }
   }
@@ -174,7 +231,11 @@ function playbackRefFromRuntimeSource(
   provider: ProviderConfig,
 ): MediaPlaybackRef | null {
   const runtime = parseCatalogRuntimeSource(source);
-  if (runtime?.kind === "vod-direct" && runtime.providerId === provider.id && kind === "movie") {
+  if (
+    runtime?.kind === "vod-direct" &&
+    runtime.providerId === provider.id &&
+    kind === "movie"
+  ) {
     return {
       type: "xtream-vod",
       streamId: runtime.streamId,
@@ -185,7 +246,9 @@ function playbackRefFromRuntimeSource(
 
   const canonical = parseCanonicalXtreamProgressSource(source);
   if (canonical && canonical.kind === kind && provider.type === "xtream") {
-    const baseUrl = normalizeXtreamProgressBaseUrl(provider.url || provider.playlistUrl);
+    const baseUrl = normalizeXtreamProgressBaseUrl(
+      provider.url || provider.playlistUrl,
+    );
     if (
       baseUrl === canonical.baseUrl &&
       (provider.username || "") === canonical.username &&
@@ -210,7 +273,9 @@ function playbackRefFromRuntimeSource(
   if (provider.type === "m3u") {
     const catalog = getM3UCatalog(provider.id);
     if (kind === "movie") {
-      const movie = catalog.movieItems.find((item) => item.streamUrl === source);
+      const movie = catalog.movieItems.find(
+        (item) => item.streamUrl === source,
+      );
       return movie ? { type: "m3u-vod", itemId: movie.id } : null;
     }
     for (const group of catalog.seriesGroups) {
@@ -254,13 +319,20 @@ function unresolvedRef(kind: MediaKind, title: string): MediaPlaybackRef {
   for (let index = 0; index < value.length; index += 1) {
     hash = ((hash << 5) - hash + value.charCodeAt(index)) | 0;
   }
-  return { type: "unresolved", mediaKind: kind, legacyTag: `runtime-${Math.abs(hash).toString(36)}` };
+  return {
+    type: "unresolved",
+    mediaKind: kind,
+    legacyTag: `runtime-${Math.abs(hash).toString(36)}`,
+  };
 }
 
 function unscopedIdFromRuntimeSource(source: string): string | null {
   if (!source.startsWith(UNSCOPED_RUNTIME_PREFIX)) return null;
-  try { return decodeURIComponent(source.slice(UNSCOPED_RUNTIME_PREFIX.length)); }
-  catch { return null; }
+  try {
+    return decodeURIComponent(source.slice(UNSCOPED_RUNTIME_PREFIX.length));
+  } catch {
+    return null;
+  }
 }
 
 export function MediaLibraryProvider({ children }: { children: ReactNode }) {
@@ -271,6 +343,18 @@ export function MediaLibraryProvider({ children }: { children: ReactNode }) {
   const credentialSnapshotsRef = useRef<MediaProgressCredentialSnapshot[]>([]);
   const migrationStartedRef = useRef(false);
   const [loaded, setLoaded] = useState(false);
+  const readyRef = useRef(false);
+  const [storageError, setStorageError] = useState<string | null>(null);
+  const [hydrationRevision, setHydrationRevision] = useState(0);
+  const activeProvider = useRef(provider);
+  activeProvider.current = provider;
+  const mutations = useRef(new ProgressMutationOwner());
+  const retryStorage = () => {
+    readyRef.current = false;
+    setLoaded(false);
+    migrationStartedRef.current = false;
+    setHydrationRevision((v) => v + 1);
+  };
 
   useEffect(() => {
     if (isHydrating || migrationStartedRef.current) return;
@@ -279,175 +363,376 @@ export function MediaLibraryProvider({ children }: { children: ReactNode }) {
     void (async () => {
       const snapshots = await readCredentialSnapshots(providers);
       credentialSnapshotsRef.current = snapshots;
-      const migrated = trimMediaProgressByScope(
-        await migrateMediaProgressStorage(storageAdapter, snapshots),
+      const migrated = await mutations.current.queue.run(async () =>
+        trimMediaProgressByScope(
+          await migrateMediaProgressStorage(storageAdapter, snapshots),
+        ),
       );
       if (cancelled) return;
       entriesRef.current = migrated;
       setAllEntries(migrated);
-    })()
-      .catch(() => {
-        // K4: no source/error payload is logged. The migration library exposes
-        // only MEDIA_PROGRESS_MIGRATION_FAILED and leaves v1 untouched.
-      })
-      .finally(() => {
-        if (!cancelled) setLoaded(true);
-      });
-    return () => { cancelled = true; };
-  }, [isHydrating, providers]);
+      readyRef.current = true;
+      setLoaded(true);
+      setStorageError(null);
+    })().catch(() => {
+      if (!cancelled) {
+        readyRef.current = false;
+        setLoaded(false);
+        setStorageError(
+          "İzleme kayıtları okunamadı. Kayıtlar değiştirilmedi; yeniden deneyin.",
+        );
+        migrationStartedRef.current = false;
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [isHydrating, hydrationRevision]);
 
   useEffect(() => {
     if (!loaded) return;
     let cancelled = false;
-    void readCredentialSnapshots(providers).then((snapshots) => {
-      if (!cancelled) credentialSnapshotsRef.current = snapshots;
-    }).catch(() => undefined);
-    return () => { cancelled = true; };
+    void readCredentialSnapshots(providers)
+      .then((snapshots) => {
+        if (!cancelled) credentialSnapshotsRef.current = snapshots;
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
   }, [loaded, providers]);
 
-  const persist = useCallback(async (next: MediaProgressV2[]) => {
-    const trimmed = trimMediaProgressByScope(next);
-    if (!isMediaProgressV2PayloadSafe(trimmed, credentialSnapshotsRef.current)) {
-      throw asMediaProgressMigrationError();
-    }
-    entriesRef.current = trimmed;
-    setAllEntries(trimmed);
-    try {
-      await AsyncStorage.setItem(MEDIA_PROGRESS_V2_STORAGE_KEY, JSON.stringify(trimmed));
-    } catch {
-      // Runtime progress persistence remains best effort. Never surface or log
-      // transport/storage exception payloads because they may contain sources.
-    }
-  }, []);
+  const persist = useCallback(
+    async (
+      update:
+        MediaProgressV2[] | ((current: MediaProgressV2[]) => MediaProgressV2[]),
+    ) => {
+      if (!readyRef.current) return;
+      try {
+        await mutations.current.queue.run(async () => {
+          const next =
+            typeof update === "function" ? update(entriesRef.current) : update;
+          const trimmed = trimMediaProgressByScope(next);
+          if (
+            !isMediaProgressV2PayloadSafe(
+              trimmed,
+              credentialSnapshotsRef.current,
+            )
+          )
+            throw asMediaProgressMigrationError();
+          const serialized = JSON.stringify(trimmed);
+          await AsyncStorage.setItem(MEDIA_PROGRESS_V2_STORAGE_KEY, serialized);
+          if (
+            (await AsyncStorage.getItem(MEDIA_PROGRESS_V2_STORAGE_KEY)) !==
+            serialized
+          )
+            throw asMediaProgressMigrationError();
+          entriesRef.current = trimmed;
+          setAllEntries(trimmed);
+          setStorageError(null);
+        });
+      } catch {
+        setStorageError(
+          "İzleme kaydı kaydedilemedi. Önceki kayıt korundu; yeniden deneyin.",
+        );
+      }
+    },
+    [],
+  );
 
-  const toView = useCallback((entry: MediaProgressV2, active: ProviderConfig | null): MediaProgress => {
-    const source = runtimeSourceFor(entry, active);
-    sourceIndexRef.current.set(source, entry.id);
-    return { ...entry, source };
-  }, []);
+  const toView = useCallback(
+    (entry: MediaProgressV2, active: ProviderConfig | null): MediaProgress => {
+      const source = runtimeSourceFor(entry, active);
+      sourceIndexRef.current.set(source, entry.id);
+      return { ...entry, source };
+    },
+    [],
+  );
 
   const entries = useMemo(() => {
     sourceIndexRef.current = new Map();
     if (!provider) return [];
-    return mediaProgressForProvider(allEntries, provider.id).map((entry) => toView(entry, provider));
+    return mediaProgressForProvider(allEntries, provider.id)
+      .filter(
+        (item) =>
+          item.duration <= 0 || item.position < Math.max(0, item.duration - 30),
+      )
+      .map((entry) => toView(entry, provider));
   }, [allEntries, provider, toView]);
 
+  const historyEntries = useMemo(
+    () =>
+      provider
+        ? mediaProgressForProvider(allEntries, provider.id).map((entry) =>
+            toView(entry, provider),
+          )
+        : [],
+    [allEntries, provider, toView],
+  );
+  const beginProgressSession = useCallback(
+    (source: string, explicit?: MediaPlaybackRef) => {
+      if (!provider || activeProvider.current?.id !== provider.id) return null;
+      const kind = explicit
+        ? explicit.type.includes("episode")
+          ? "episode"
+          : "movie"
+        : inferProgressKind(source, provider);
+      const ref =
+        explicit &&
+        mediaPlaybackRefMatchesProvider(explicit, provider.type, kind)
+          ? explicit
+          : playbackRefFromRuntimeSource(source, kind, provider);
+      return ref ? mutations.current.begin(provider.id, ref) : null;
+    },
+    [provider],
+  );
   const unscopedEntries = useMemo(
-    () => allEntries
-      .filter((entry) => entry.providerId === null)
-      .map((entry) => toView(entry, null)),
+    () =>
+      allEntries
+        .filter((entry) => entry.providerId === null)
+        .map((entry) => toView(entry, null)),
     // Re-project after provider switches because the scoped projection resets
     // the transient source index used by History remove actions.
     [allEntries, provider?.id, toView],
   );
 
-  const getProgress = useCallback((source: string, explicitRef?: MediaPlaybackRef) => {
-    const indexedId = sourceIndexRef.current.get(source);
-    if (indexedId) {
-      const exact = entriesRef.current.find((entry) => entry.id === indexedId);
-      if (exact) return toView(exact, provider);
-    }
-    if (!provider) return undefined;
-    const kind = inferProgressKind(source, provider);
-    const ref = explicitRef && mediaPlaybackRefMatchesProvider(explicitRef, provider.type, kind)
-      ? explicitRef
-      : playbackRefFromRuntimeSource(source, kind, provider);
-    if (!ref) return undefined;
-    const claim = claimProgressForProvider(entriesRef.current, provider.id, ref);
-    if (!claim.entry) return undefined;
-    if (claim.changed) void persist(claim.entries).catch(() => undefined);
-    return toView(claim.entry, provider);
-  }, [persist, provider, toView]);
-
-  const saveProgress = useCallback(async (entry: SaveProgressInput) => {
-    if (!provider || !Number.isFinite(entry.position) || entry.position < 0) return;
-    const current = entriesRef.current;
-    const indexedId = sourceIndexRef.current.get(entry.source);
-    const indexed = indexedId ? current.find((item) => item.id === indexedId) : undefined;
-    let ref = entry.playbackRef && mediaPlaybackRefMatchesProvider(entry.playbackRef, provider.type, entry.kind)
-      ? entry.playbackRef
-      : indexed?.playbackRef ?? playbackRefFromRuntimeSource(entry.source, entry.kind, provider);
-    if (!ref) {
-      const previousUnresolved = current.find(
-        (item) => item.providerId === provider.id && item.kind === entry.kind &&
-          item.title === entry.title && item.playbackRef.type === "unresolved",
+  const getProgress = useCallback(
+    (source: string, explicitRef?: MediaPlaybackRef) => {
+      const indexedId = sourceIndexRef.current.get(source);
+      if (indexedId) {
+        const exact = entriesRef.current.find(
+          (entry) => entry.id === indexedId,
+        );
+        if (
+          exact &&
+          exact.providerId === provider?.id &&
+          (!explicitRef || samePlaybackRef(explicitRef, exact.playbackRef)) &&
+          validProgress(exact.position, exact.duration) &&
+          exact.position < Math.max(0, exact.duration - 30)
+        )
+          return toView(exact, provider);
+      }
+      if (!provider) return undefined;
+      const kind = explicitRef
+        ? explicitRef.type.includes("episode")
+          ? "episode"
+          : "movie"
+        : inferProgressKind(source, provider);
+      const ref =
+        explicitRef &&
+        mediaPlaybackRefMatchesProvider(explicitRef, provider.type, kind)
+          ? explicitRef
+          : playbackRefFromRuntimeSource(source, kind, provider);
+      if (!ref) return undefined;
+      const claim = claimProgressForProvider(
+        entriesRef.current,
+        provider.id,
+        ref,
       );
-      ref = previousUnresolved?.playbackRef ?? unresolvedRef(entry.kind, entry.title);
-    }
+      if (
+        !claim.entry ||
+        !validProgress(claim.entry.position, claim.entry.duration) ||
+        claim.entry.position >= Math.max(0, claim.entry.duration - 30)
+      )
+        return undefined;
+      if (claim.changed)
+        void persist(
+          (current) =>
+            claimProgressForProvider(current, provider.id, ref).entries,
+        );
+      return toView(claim.entry, provider);
+    },
+    [persist, provider, toView],
+  );
 
-    const previous = current.find(
-      (item) => item.providerId === provider.id &&
-        (samePlaybackRef(item.playbackRef, ref) ||
-          (item.playbackRef.type === "unresolved" && ref.type === "unresolved" && item.title === entry.title)),
-    );
-    const now = Date.now();
-    if (
-      previous &&
-      Math.abs(previous.position - entry.position) < 1.5 &&
-      Math.abs(previous.duration - entry.duration) < 1.5 &&
-      now - previous.updatedAt < 8_000
-    ) {
-      return;
-    }
+  const saveProgress = useCallback(
+    async (entry: SaveProgressInput) => {
+      if (
+        !provider ||
+        activeProvider.current?.id !== provider.id ||
+        !readyRef.current ||
+        !validProgress(entry.position, entry.duration)
+      )
+        return;
+      const indexedId = sourceIndexRef.current.get(entry.source);
+      const indexed = indexedId
+        ? entriesRef.current.find(
+            (item) => item.id === indexedId && item.providerId === provider.id,
+          )
+        : undefined;
+      let ref =
+        entry.playbackRef &&
+        mediaPlaybackRefMatchesProvider(
+          entry.playbackRef,
+          provider.type,
+          entry.kind,
+        )
+          ? entry.playbackRef
+          : (indexed?.playbackRef ??
+            playbackRefFromRuntimeSource(entry.source, entry.kind, provider));
+      if (!ref) return; // Unknown identity must not claim another account's history by title.
+      const ownedRef = ref;
+      if (
+        entry.session &&
+        !mutations.current.same(entry.session, provider.id, ownedRef)
+      )
+        return;
+      await persist((current) => {
+        if (
+          activeProvider.current?.id !== provider.id ||
+          (entry.session &&
+            !mutations.current.same(entry.session, provider.id, ownedRef))
+        )
+          return current;
 
-    const nextEntry: MediaProgressV2 = {
-      schemaVersion: 2,
-      id: previous?.id ?? makeMediaProgressId(provider.id, entry.kind, ref, entry.title, now),
-      providerId: provider.id,
-      kind: entry.kind,
-      title: entry.title,
-      subtitle: entry.subtitle,
-      playbackRef: ref,
-      position: entry.position,
-      duration: entry.duration,
-      updatedAt: now,
-    };
+        const previous = current.find(
+          (item) =>
+            item.providerId === provider.id &&
+            (samePlaybackRef(item.playbackRef, ref) ||
+              (item.playbackRef.type === "unresolved" &&
+                ref.type === "unresolved" &&
+                item.title === entry.title)),
+        );
+        const now = Date.now();
+        if (
+          previous &&
+          Math.abs(previous.position - entry.position) < 1.5 &&
+          Math.abs(previous.duration - entry.duration) < 1.5 &&
+          now - previous.updatedAt < 8_000
+        ) {
+          return current;
+        }
 
-    const next = upsertMediaProgressByIdentity(current, nextEntry)
-      .filter((item) => item.duration <= 0 || item.position < Math.max(0, item.duration - 30));
-    await persist(next);
-  }, [persist, provider]);
+        const nextEntry: MediaProgressV2 = {
+          schemaVersion: 2,
+          id:
+            previous?.id ??
+            makeMediaProgressId(provider.id, entry.kind, ref, entry.title, now),
+          providerId: provider.id,
+          kind: entry.kind,
+          title: entry.title,
+          subtitle: entry.subtitle,
+          playbackRef: ref,
+          position: entry.position,
+          duration: entry.duration,
+          updatedAt: now,
+          ...(entry.episodeContext
+            ? { episodeContext: entry.episodeContext }
+            : {}),
+        };
 
-  const removeProgress = useCallback(async (source: string) => {
-    const unscopedId = unscopedIdFromRuntimeSource(source);
-    if (unscopedId) {
-      await persist(entriesRef.current.filter((item) => item.id !== unscopedId));
-      return;
-    }
-    const indexedId = sourceIndexRef.current.get(source);
-    if (indexedId) {
-      await persist(entriesRef.current.filter((item) => item.id !== indexedId));
-      return;
-    }
-    if (!provider) return;
-    const kind = inferProgressKind(source, provider);
-    const ref = playbackRefFromRuntimeSource(source, kind, provider);
-    if (!ref) return;
-    await persist(entriesRef.current.filter(
-      (item) => !(item.providerId === provider.id && samePlaybackRef(item.playbackRef, ref)),
-    ));
-  }, [persist, provider]);
+        return upsertMediaProgressByIdentity(current, nextEntry);
+      });
+    },
+    [persist, provider],
+  );
 
+  const removeProgress = useCallback(
+    async (source: string) => {
+      if (!provider || activeProvider.current?.id !== provider.id) return;
+      const selected =
+        historyEntries.find((item) => item.source === source) ??
+        unscopedEntries.find((item) => item.source === source);
+      if (selected?.providerId)
+        mutations.current.invalidate(selected.providerId, selected.playbackRef);
+      const unscopedId = unscopedIdFromRuntimeSource(source);
+      if (unscopedId) {
+        await persist((current) =>
+          current.filter(
+            (item) =>
+              item.id !== unscopedId ||
+              (item.providerId !== provider.id && item.providerId !== null),
+          ),
+        );
+        return;
+      }
+      const indexedId = sourceIndexRef.current.get(source);
+      if (indexedId) {
+        await persist((current) =>
+          current.filter(
+            (item) => item.id !== indexedId || item.providerId !== provider.id,
+          ),
+        );
+        return;
+      }
+      if (!provider) return;
+      const kind = inferProgressKind(source, provider);
+      const ref = playbackRefFromRuntimeSource(source, kind, provider);
+      if (!ref) return;
+      await persist((current) =>
+        current.filter(
+          (item) =>
+            !(
+              item.providerId === provider.id &&
+              samePlaybackRef(item.playbackRef, ref)
+            ),
+        ),
+      );
+    },
+    [persist, provider, historyEntries, unscopedEntries],
+  );
+
+  const removeProgressEntries = useCallback(
+    async (ids: readonly string[]) => {
+      if (!provider || activeProvider.current?.id !== provider.id) return;
+      const selected = new Set(ids);
+      for (const item of entriesRef.current)
+        if (item.providerId === provider.id && selected.has(item.id))
+          mutations.current.invalidate(provider.id, item.playbackRef);
+      await persist((current) =>
+        current.filter(
+          (item) => item.providerId !== provider.id || !selected.has(item.id),
+        ),
+      );
+    },
+    [provider, persist],
+  );
   const clearProgress = useCallback(async () => {
     if (!provider) return;
-    await persist(clearMediaProgressForProvider(entriesRef.current, provider.id));
+    for (const item of entriesRef.current)
+      if (item.providerId === provider.id)
+        mutations.current.invalidate(provider.id, item.playbackRef);
+    await persist((current) =>
+      clearMediaProgressForProvider(current, provider.id),
+    );
   }, [persist, provider]);
 
-  const value = useMemo<MediaLibraryValue>(() => ({
-    entries,
-    unscopedEntries,
-    loaded,
-    getProgress,
-    saveProgress,
-    removeProgress,
-    clearProgress,
-  }), [clearProgress, entries, getProgress, loaded, removeProgress, saveProgress, unscopedEntries]);
+  const value = useMemo<MediaLibraryValue>(
+    () => ({
+      entries,
+      historyEntries,
+      storageError,
+      retryStorage,
+      beginProgressSession,
+      unscopedEntries,
+      loaded,
+      getProgress,
+      saveProgress,
+      removeProgress,
+      removeProgressEntries,
+      clearProgress,
+    }),
+    [
+      clearProgress,
+      entries,
+      historyEntries,
+      storageError,
+      beginProgressSession,
+      getProgress,
+      loaded,
+      removeProgress,
+      removeProgressEntries,
+      saveProgress,
+      unscopedEntries,
+    ],
+  );
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }
 
 export function useMediaLibrary() {
   const value = useContext(Context);
-  if (!value) throw new Error("useMediaLibrary must be used within MediaLibraryProvider");
+  if (!value)
+    throw new Error("useMediaLibrary must be used within MediaLibraryProvider");
   return value;
 }

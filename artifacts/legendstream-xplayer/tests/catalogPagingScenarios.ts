@@ -199,13 +199,15 @@ async function main() {
     assert.match(hookSource, /resolveCatalogTotalCountUpdate/);
   });
 
-  await scenario("M3U Series lazy detail drops stale provider or request generations", () => {
-    assert.match(screenSource, /const activeProviderIdRef = useRef<string \| null>/);
-    assert.match(screenSource, /const seriesRequestGenerationRef = useRef\(0\)/);
-    assert.match(screenSource, /const requestProviderId = provider\.id;/);
-    assert.match(screenSource, /const requestGeneration = \+\+seriesRequestGenerationRef\.current;/);
-    const guards = screenSource.match(/if \(!isCurrentSeriesRequest\(requestProviderId, requestGeneration\)\) return;/g) ?? [];
-    assert.ok(guards.length >= 3, "Series async success, queue publication, and error publication must all be stale-safe");
+  await scenario("M3U Series lazy detail drops stale provider or selection tickets", () => {
+    const seriesHook=readFileSync(resolve(ROOT,"hooks/usePagedSeriesInfo.ts"),"utf8");
+    const flow=readFileSync(resolve(ROOT,"lib/pagedSeriesFlow.ts"),"utf8");
+    assert.match(screenSource,/usePagedSeriesInfo/);
+    assert.match(seriesHook,/latest.current.provider === provider/);
+    assert.match(flow,/state\?\.ticket === ticket/);
+    assert.match(flow,/AbortController/);
+    const guards=flow.match(/if \(!owns\(ticket\) \|\| request.signal.aborted\) return;/g) ?? [];
+    assert.ok(guards.length >= 3,"Series success, current cache queue publication and error publication are ticket/session guarded");
   });
 
   await scenario("M3U Movies first-open is count plus at most 100 rows", () => {
@@ -403,7 +405,7 @@ async function main() {
   await scenario("playback uses typed VOD identity lazy Series row and bounded Live VOD windows", () => {
     assert.match(screenSource, /vodIdentity:\s*\{ providerId: provider\.id, itemId: String\(item\.stream_id\) \}/);
     assert.match(screenSource, /vodIdentity=\{playable\.vodIdentity\}/);
-    assert.match(screenSource, /loadM3USeriesInfoFromCache\(provider, item\.series_id\)/);
+    assert.match(readFileSync(resolve(ROOT,"hooks/usePagedSeriesInfo.ts"),"utf8"), /loadM3USeriesInfoFromCache\(provider, item\.series_id\)/);
     assert.doesNotMatch(screenSource, /getM3UCatalog\(/);
     assert.match(videoPlayerSource, /getCachedLivePlaybackWindow/);
     assert.match(videoPlayerSource, /getCachedVodPlaybackWindow/);

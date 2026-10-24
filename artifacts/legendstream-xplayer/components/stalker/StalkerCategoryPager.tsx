@@ -1,3 +1,4 @@
+import { CategoryPicker } from "@/components/navigation/CategoryPicker";
 import React, { useMemo } from "react";
 import {
   PanResponder,
@@ -59,7 +60,8 @@ export function StalkerCategoryPager({
   );
 
   return <View style={styles.root} {...panResponder.panHandlers}>
-    {showControls && active ? <View
+    {showControls && !Platform.isTV ? <CategoryPicker items={categories} selected={activeId} disabled={disabled} onSelect={onSelect}/> : null}
+    {showControls && Platform.isTV && active ? <View
       accessibilityRole="tablist"
       style={[styles.controls, { borderColor: colors.border, backgroundColor: colors.card }]}
     >

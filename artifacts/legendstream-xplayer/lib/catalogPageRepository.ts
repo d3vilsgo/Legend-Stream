@@ -648,3 +648,54 @@ export async function getCachedVodPlaybackWindow(
   }
   return items;
 }
+
+/** Exact provider-owned lookup for saved library identities, independent of Home sampling. */
+export async function getCachedLibraryItem(
+  provider: CatalogRuntimeProvider,
+  kind: "movie" | "series",
+  id: string,
+) {
+  if (kind === "series") {
+    const row = await persistedSeriesRow(provider, id);
+    return row
+      ? ({
+          series_id: row.series_id,
+          name: row.name,
+          cover: row.cover,
+          plot: row.plot,
+          genre: row.genre,
+          releaseDate: row.releaseDate,
+          category_id: row.category_id,
+        } satisfies XtreamSeriesItem)
+      : null;
+  }
+  const row = await currentCatalogRow(provider.id, "vod", id);
+  if (!row?.payload) return null;
+  const item = normalizePersistedCatalogPayload(
+    provider.id,
+    "vod",
+    JSON.parse(row.payload),
+    provider,
+  );
+  return item?.catalogKind === "vod" ? vodRuntimeItem(item, provider) : null;
+}
+export async function getCachedM3UEpisodeParent(
+  provider: CatalogRuntimeProvider,
+  episodeId: string,
+) {
+  if (provider.type !== "m3u") return null;
+  const db = await pageDatabase();
+  const row = await db.getFirstAsync<{ payload: string }>(
+    `SELECT payload FROM catalog_items WHERE provider_id = ? AND kind = 'series' AND EXISTS (SELECT 1 FROM json_each(json_extract(catalog_items.payload, '$.m3uEpisodes')) WHERE json_extract(value, '$.id') = ?) LIMIT 1`,
+    provider.id,
+    episodeId,
+  );
+  if (!row) return null;
+  const item = normalizePersistedCatalogPayload(
+    provider.id,
+    "series",
+    JSON.parse(row.payload),
+    provider,
+  );
+  return item?.catalogKind === "series" ? item : null;
+}

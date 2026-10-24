@@ -16,6 +16,7 @@ import { TVPreviewPressable } from "@/components/tvPreview/TVPreviewFocus";
 import { selectProgramsAt } from "@/context/PlayerContext";
 import type { Channel, EpgProgram } from "@/lib/iptv";
 import { eliteTokens as tokens } from "@/lib/design/eliteTokens";
+import { eliteV3 } from "@/lib/design/eliteV3Tokens";
 import {
   eliteLiveInitial,
   eliteLiveReduce,
@@ -35,6 +36,7 @@ export function EliteLiveCatalog({
   favorites,
   loading,
   loadingMore,
+  error,
   search,
   onSearch,
   onRefresh,
@@ -42,6 +44,7 @@ export function EliteLiveCatalog({
   onOpen,
   onFavorite,
   idPrefix,
+  catalogRevision,
 }: {
   categories: readonly { id: string; name: string }[];
   category: string | null;
@@ -52,6 +55,7 @@ export function EliteLiveCatalog({
   favorites: string[];
   loading: boolean;
   loadingMore: boolean;
+  error?: string | null;
   search: string;
   onSearch: (value: string) => void;
   onRefresh: () => void;
@@ -59,22 +63,38 @@ export function EliteLiveCatalog({
   onOpen: (channel: Channel) => void;
   onFavorite: (id: string) => void;
   idPrefix: string;
+  catalogRevision?: number;
 }) {
   const [bounds, setBounds] = useState({ width: 960, height: 540 });
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [viewport, setViewport] = useState({ height: 0, width: 0 });
+  const searchInput = useRef<TextInput>(null);
+  const lastChannelOffset = useRef(0);
   const [{ panelOpen, selectedId }, dispatch] = useReducer(
     eliteLiveReduce,
     eliteLiveInitial,
   );
   const list = useRef<FlatList<Channel>>(null);
+  const currentList = useRef({ revision: catalogRevision, channels });
+  currentList.current = { revision: catalogRevision, channels };
   const scrolled = useRef(false);
   const selected = eliteLiveSelection(channels, selectedId);
+  // A deleted selection cannot retain physical focus. The first mounted
+  // channel is the bounded fallback; focus never implicitly starts playback.
+  const selectedRemoved = selectedId !== null && selected === null;
   const { fontScale } = useWindowDimensions();
   const safeArea = useSafeAreaInsets();
   const geometry = eliteLiveLayout({ ...bounds, fontScale, safeArea });
   useEffect(() => {
     dispatch({ type: "reset" });
     scrolled.current = false;
-  }, [category, search]);
+    lastChannelOffset.current = 0;
+    list.current?.scrollToOffset({ offset: 0, animated: false });
+  }, [category]);
+  useEffect(() => {
+    if (searchOpen) searchInput.current?.focus();
+    else { searchInput.current?.blur(); list.current?.scrollToOffset({ offset: lastChannelOffset.current, animated: false }); }
+  }, [searchOpen]);
   const programs = selected
     ? selectProgramsAt(epgByChannel.get(selected.id), clock)
     : {};
@@ -115,7 +135,7 @@ export function EliteLiveCatalog({
       onLayout={(e) => setBounds(e.nativeEvent.layout)}
     >
       <View style={s.toolbar}>
-        <Text style={[text, { fontSize: 26, fontWeight: "800", flex: 1 }]}>
+        <Text style={[text, { fontSize: eliteV3.typography.tv.title, fontWeight: "700", flex: 1 }]}>
           Canlı TV
         </Text>
         {button(
@@ -123,15 +143,16 @@ export function EliteLiveCatalog({
           panelOpen ? "Kanal panelini kapat" : "Kanal panelini aç",
           () => dispatch({ type: "togglePanel" }),
         )}
+        {button("search-toggle", searchOpen ? "Aramayı kapat" : "Kanal ara", () => setSearchOpen(value => !value))}
         {button("refresh", "Yenile", onRefresh, loading)}
       </View>
-      <View style={[s.body, geometry.stacked && { flexDirection: "column" }]}>
+      <View style={[s.body, geometry.stacked && { flexDirection: "column" }]} accessibilityHint={viewport.height > 0 ? `Kanal listesi ${Math.round(viewport.height)} birim yüksekliğinde` : "Kanal listesi ölçülüyor"}>
         {panelOpen ? (
           <View
             style={[
               s.panel,
               geometry.stacked
-                ? { flex: 1 }
+                ? { flex: 1, minHeight: 0, flexDirection: "row" }
                 : {
                     width: geometry.categoryWidth + geometry.channelWidth + 12,
                   },
@@ -165,8 +186,9 @@ export function EliteLiveCatalog({
                 </TVPreviewPressable>
               ))}
             </ScrollView>
-            <View style={{ flex: 1, minWidth: 0 }}>
-              <TextInput
+            <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
+              {searchOpen ? <TextInput
+                ref={searchInput}
                 accessibilityLabel="Kanal ara"
                 placeholder="Kanal ara…"
                 placeholderTextColor={tokens.color.muted}
@@ -174,18 +196,26 @@ export function EliteLiveCatalog({
                 value={search}
                 onChangeText={onSearch}
                 style={[s.search, text]}
-              />
+              /> : null}
+              {error ? (
+                <Text accessibilityRole="alert" style={[meta, { padding: 8 }]}>
+                  {error}
+                </Text>
+              ) : null}
               <FlatList
                 ref={list}
                 data={channels}
+                onLayout={(event) => { const { height, width } = event.nativeEvent.layout; setViewport((previous) => previous.height === height && previous.width === width ? previous : { height, width }); }}
+                accessibilityLabel="Canlı kanal listesi"
                 keyExtractor={(item) => item.id}
-                style={{ flex: 1 }}
+                style={{ flex: 1, minHeight: 0 }}
                 contentContainerStyle={{ padding: 8 }}
                 removeClippedSubviews={false}
                 initialNumToRender={12}
                 maxToRenderPerBatch={12}
                 windowSize={9}
                 onScroll={(e) => {
+                  lastChannelOffset.current = Math.max(0, e.nativeEvent.contentOffset.y);
                   if (e.nativeEvent.contentOffset.y > 0)
                     scrolled.current = true;
                 }}
@@ -196,11 +226,13 @@ export function EliteLiveCatalog({
                 onEndReachedThreshold={0.45}
                 ListEmptyComponent={
                   <Text style={[meta, { padding: 12 }]}>
-                    {loading
-                      ? "Kanallar yükleniyor…"
-                      : category === null
-                        ? "Bir kategori seçin"
-                        : "Kanal bulunamadı"}
+                    {error
+                      ? "Kanallar alınamadı; Yenile ile tekrar deneyin."
+                      : loading
+                        ? "Kanallar yükleniyor…"
+                        : category === null
+                          ? "Bir kategori seçin"
+                          : "Kanal bulunamadı"}
                   </Text>
                 }
                 ListFooterComponent={
@@ -219,16 +251,24 @@ export function EliteLiveCatalog({
                       eliteVisual
                       focusId={`${idPrefix}:channel:${item.id}`}
                       accessibilityRole="button"
-                      accessibilityLabel={`${item.name}, kanal bilgilerini seç`}
+                      accessibilityLabel={`${item.name}, izle`}
                       accessibilityState={{ selected: selectedId === item.id }}
-                      onFocus={() =>
+                      hasTVPreferredFocus={selectedRemoved && index === 0}
+                      onFocus={() => {
+                        if (currentList.current.revision !== catalogRevision ||
+                            currentList.current.channels[index]?.id !== item.id) return;
                         list.current?.scrollToIndex({
                           index,
                           animated: false,
                           viewPosition: 0.5,
-                        })
-                      }
-                      onPress={() => dispatch({ type: "select", id: item.id })}
+                        });
+                      }}
+                      onPress={() => {
+                        if (currentList.current.revision !== catalogRevision ||
+                            currentList.current.channels[index]?.id !== item.id) return;
+                        dispatch({ type: "select", id: item.id });
+                        onOpen(item);
+                      }}
                       style={[
                         s.channel,
                         { minHeight: geometry.rowHeight },
@@ -238,7 +278,7 @@ export function EliteLiveCatalog({
                       ]}
                     >
                       <ChannelLogo channel={item} />
-                      <View style={{ flex: 1, minWidth: 0 }}>
+                      <View style={{ flex: 1, minWidth: 0, minHeight: 0 }}>
                         <Text
                           numberOfLines={2}
                           style={[text, { fontWeight: "700" }]}
@@ -269,12 +309,17 @@ export function EliteLiveCatalog({
             </View>
           </View>
         ) : null}
-        <ScrollView
+        {!panelOpen || !geometry.stacked ? <ScrollView
           style={[
             s.details,
-            geometry.stacked && panelOpen && { flex: 0, maxHeight: 180 },
+            panelOpen && !geometry.stacked && { flex: 0, width: geometry.detailWidth },
+            geometry.stacked &&
+              panelOpen && {
+                flex: 0,
+                maxHeight: Math.min(180, bounds.height * 0.25),
+              },
           ]}
-          contentContainerStyle={{ padding: 20, gap: 16 }}
+          contentContainerStyle={{ padding: geometry.stacked ? 12 : 14, gap: 10 }}
         >
           {selected ? (
             <>
@@ -312,10 +357,11 @@ export function EliteLiveCatalog({
             </>
           ) : (
             <Text style={text}>
-              Kanalı OK ile seçin; ardından “Tam ekran izle” ile yayını açın.
+              Kanalı OK ile açın. Seçili kanalın program bilgisi burada
+              gösterilir.
             </Text>
           )}
-        </ScrollView>
+        </ScrollView> : null}
       </View>
     </View>
   );

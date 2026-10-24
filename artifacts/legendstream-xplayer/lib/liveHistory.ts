@@ -6,6 +6,7 @@ export type LiveHistoryV2 = {
   schemaVersion: 2;
   byProvider: Record<string, string[]>;
   unscoped: string[];
+  watchedAt?: Record<string, number>;
 };
 
 export type LiveHistoryStorageAdapter = {
@@ -26,20 +27,25 @@ export class LiveHistoryMutationQueue {
   private tail: Promise<void> = Promise.resolve();
 
   run(options: LiveHistoryMutationRunOptions): Promise<LiveHistoryV2> {
-    const operation = this.tail.catch(() => undefined).then(async () => {
-      const next = options.mutate(options.current());
-      const verified = await commitLiveHistoryV2(options.storage, next);
-      await options.publish(verified);
-      return verified;
-    });
-    this.tail = operation.then(() => undefined, () => undefined);
+    const operation = this.tail
+      .catch(() => undefined)
+      .then(async () => {
+        const next = options.mutate(options.current());
+        const verified = await commitLiveHistoryV2(options.storage, next);
+        await options.publish(verified);
+        return verified;
+      });
+    this.tail = operation.then(
+      () => undefined,
+      () => undefined,
+    );
     return operation;
   }
 }
 
 const asObject = (value: unknown): Record<string, unknown> | null =>
   value && typeof value === "object" && !Array.isArray(value)
-    ? value as Record<string, unknown>
+    ? (value as Record<string, unknown>)
     : null;
 
 const uniqueInOrder = (values: readonly string[]) => {
@@ -67,7 +73,11 @@ export function providerIdFromChannelId(channelId: string): string | null {
   const identityPart = channelId.slice(first + 1, second);
   const streamPart = channelId.slice(second + 1);
   if (!providerId || !streamPart) return null;
-  if (/^\d+$/.test(identityPart) || identityPart === "xtream-live" || identityPart === "stalker") {
+  if (
+    /^\d+$/.test(identityPart) ||
+    identityPart === "xtream-live" ||
+    identityPart === "stalker"
+  ) {
     return providerId;
   }
   return null;
@@ -90,7 +100,11 @@ export function migrateLiveHistoryV1(history: unknown): LiveHistoryV2 {
       continue;
     }
     const current = byProvider[providerId] ?? (byProvider[providerId] = []);
-    if (!current.includes(value) && current.length < LIVE_HISTORY_PROVIDER_LIMIT) current.push(value);
+    if (
+      !current.includes(value) &&
+      current.length < LIVE_HISTORY_PROVIDER_LIMIT
+    )
+      current.push(value);
   }
 
   return { schemaVersion: 2, byProvider, unscoped };
@@ -100,38 +114,78 @@ function assertCanonicalLiveHistory(value: unknown): LiveHistoryV2 {
   const raw = asObject(value);
   if (!raw || raw.schemaVersion !== 2) throw asLiveHistoryMigrationError();
   const topKeys = Object.keys(raw).sort();
-  if (topKeys.join("|") !== "byProvider|schemaVersion|unscoped") {
+  if (
+    topKeys.filter((key) => key !== "watchedAt").join("|") !==
+    "byProvider|schemaVersion|unscoped"
+  ) {
     throw asLiveHistoryMigrationError();
   }
   const rawByProvider = asObject(raw.byProvider);
-  if (!rawByProvider || !Array.isArray(raw.unscoped)) throw asLiveHistoryMigrationError();
+  if (!rawByProvider || !Array.isArray(raw.unscoped))
+    throw asLiveHistoryMigrationError();
 
   const byProvider: Record<string, string[]> = {};
   for (const [providerId, valueList] of Object.entries(rawByProvider)) {
-    if (!providerId || !Array.isArray(valueList) || valueList.length > LIVE_HISTORY_PROVIDER_LIMIT) {
+    if (
+      !providerId ||
+      !Array.isArray(valueList) ||
+      valueList.length > LIVE_HISTORY_PROVIDER_LIMIT
+    ) {
       throw asLiveHistoryMigrationError();
     }
     const list: string[] = [];
     for (const value of valueList) {
-      if (typeof value !== "string" || !value || providerIdFromChannelId(value) !== providerId) {
+      if (
+        typeof value !== "string" ||
+        !value ||
+        providerIdFromChannelId(value) !== providerId
+      ) {
         throw asLiveHistoryMigrationError();
       }
       list.push(value);
     }
-    if (uniqueInOrder(list).length !== list.length) throw asLiveHistoryMigrationError();
+    if (uniqueInOrder(list).length !== list.length)
+      throw asLiveHistoryMigrationError();
     byProvider[providerId] = list;
   }
 
   const unscoped: string[] = [];
   for (const value of raw.unscoped) {
-    if (typeof value !== "string" || !value || providerIdFromChannelId(value) !== null) {
+    if (
+      typeof value !== "string" ||
+      !value ||
+      providerIdFromChannelId(value) !== null
+    ) {
       throw asLiveHistoryMigrationError();
     }
     unscoped.push(value);
   }
-  if (uniqueInOrder(unscoped).length !== unscoped.length) throw asLiveHistoryMigrationError();
+  if (uniqueInOrder(unscoped).length !== unscoped.length)
+    throw asLiveHistoryMigrationError();
 
-  return { schemaVersion: 2, byProvider, unscoped };
+  const watchedAt: Record<string, number> = {};
+  if (raw.watchedAt !== undefined) {
+    const times = asObject(raw.watchedAt);
+    if (!times) throw asLiveHistoryMigrationError();
+    for (const [id, time] of Object.entries(times)) {
+      const owner = providerIdFromChannelId(id);
+      if (
+        !owner ||
+        !byProvider[owner]?.includes(id) ||
+        typeof time !== "number" ||
+        !Number.isFinite(time) ||
+        time < 0
+      )
+        throw asLiveHistoryMigrationError();
+      watchedAt[id] = time;
+    }
+  }
+  return {
+    schemaVersion: 2,
+    byProvider,
+    unscoped,
+    ...(raw.watchedAt !== undefined ? { watchedAt } : {}),
+  };
 }
 
 export function parseLiveHistoryV2Payload(raw: string): LiveHistoryV2 {
@@ -143,7 +197,9 @@ export function parseLiveHistoryV2Payload(raw: string): LiveHistoryV2 {
 }
 
 export function asLiveHistoryMigrationError(caught?: unknown): Error {
-  const error = new Error(LIVE_HISTORY_MIGRATION_ERROR) as Error & { cause?: unknown };
+  const error = new Error(LIVE_HISTORY_MIGRATION_ERROR) as Error & {
+    cause?: unknown;
+  };
   error.name = "LiveHistoryMigrationError";
   if (caught !== undefined) error.cause = caught;
   return error;
@@ -178,7 +234,10 @@ export async function migrateLiveHistoryStorage(
         verified = parseLiveHistoryV2Payload(existing);
       } catch {
         if (legacyHistory === undefined) throw asLiveHistoryMigrationError();
-        verified = await commitLiveHistoryV2(storage, migrateLiveHistoryV1(legacyHistory));
+        verified = await commitLiveHistoryV2(
+          storage,
+          migrateLiveHistoryV1(legacyHistory),
+        );
       }
     } else {
       verified = await commitLiveHistoryV2(
@@ -189,14 +248,21 @@ export async function migrateLiveHistoryStorage(
 
     // K1: legacy deletion is attempted only after exact v2 read-back + schema validation.
     // A cleanup failure leaves the verified v2 usable and the legacy copy available for retry.
-    try { await deleteLegacy(); } catch { /* retry on the next hydration */ }
+    try {
+      await deleteLegacy();
+    } catch {
+      /* retry on the next hydration */
+    }
     return verified;
   } catch (caught) {
     throw asLiveHistoryMigrationError(caught);
   }
 }
 
-export function historyForProvider(history: LiveHistoryV2, providerId?: string | null): string[] {
+export function historyForProvider(
+  history: LiveHistoryV2,
+  providerId?: string | null,
+): string[] {
   if (!providerId) return [];
   return [...(history.byProvider[providerId] ?? [])];
 }
@@ -205,14 +271,30 @@ export function recordLiveHistory(
   history: LiveHistoryV2,
   providerId: string,
   channelId: string,
+  timestamp?: number,
 ): LiveHistoryV2 {
   const current = history.byProvider[providerId] ?? [];
-  const next = [channelId, ...current.filter((id) => id !== channelId)]
-    .slice(0, LIVE_HISTORY_PROVIDER_LIMIT);
+  const next = [channelId, ...current.filter((id) => id !== channelId)].slice(
+    0,
+    LIVE_HISTORY_PROVIDER_LIMIT,
+  );
   return {
     schemaVersion: 2,
     byProvider: { ...history.byProvider, [providerId]: next },
     unscoped: history.unscoped.filter((id) => id !== channelId),
+    ...(history.watchedAt || timestamp !== undefined
+      ? {
+          watchedAt: Object.fromEntries(
+            Object.entries({
+              ...history.watchedAt,
+              ...(timestamp !== undefined ? { [channelId]: timestamp } : {}),
+            }).filter(
+              ([id]) =>
+                providerIdFromChannelId(id) !== providerId || next.includes(id),
+            ),
+          ),
+        }
+      : {}),
   };
 }
 
@@ -225,9 +307,20 @@ export function removeLiveHistory(
     schemaVersion: 2,
     byProvider: {
       ...history.byProvider,
-      [providerId]: (history.byProvider[providerId] ?? []).filter((id) => id !== channelId),
+      [providerId]: (history.byProvider[providerId] ?? []).filter(
+        (id) => id !== channelId,
+      ),
     },
     unscoped: history.unscoped,
+    ...(history.watchedAt
+      ? {
+          watchedAt: Object.fromEntries(
+            Object.entries(history.watchedAt).filter(
+              ([id]) => id !== channelId,
+            ),
+          ),
+        }
+      : {}),
   };
 }
 
@@ -239,6 +332,15 @@ export function clearLiveHistoryProvider(
     schemaVersion: 2,
     byProvider: { ...history.byProvider, [providerId]: [] },
     unscoped: history.unscoped,
+    ...(history.watchedAt
+      ? {
+          watchedAt: Object.fromEntries(
+            Object.entries(history.watchedAt).filter(
+              ([id]) => providerIdFromChannelId(id) !== providerId,
+            ),
+          ),
+        }
+      : {}),
   };
 }
 
@@ -253,8 +355,15 @@ export class LiveHistoryOwner {
     private readonly publishActiveHistory: (history: string[]) => Promise<void>,
   ) {}
 
-  async hydrate(legacyHistory: unknown | undefined, deleteLegacy: () => Promise<void>) {
-    this.snapshot = await migrateLiveHistoryStorage(this.storage, legacyHistory, deleteLegacy);
+  async hydrate(
+    legacyHistory: unknown | undefined,
+    deleteLegacy: () => Promise<void>,
+  ) {
+    this.snapshot = await migrateLiveHistoryStorage(
+      this.storage,
+      legacyHistory,
+      deleteLegacy,
+    );
   }
 
   forProvider(providerId?: string | null) {
@@ -275,15 +384,32 @@ export class LiveHistoryOwner {
     });
   }
 
+  timesForProvider(providerId?: string | null) {
+    return Object.fromEntries(
+      this.forProvider(providerId).flatMap((id) =>
+        this.snapshot.watchedAt?.[id] !== undefined
+          ? [[id, this.snapshot.watchedAt[id]]]
+          : [],
+      ),
+    );
+  }
+
   record(providerId: string, channelId: string) {
-    return this.mutate(providerId, (history) => recordLiveHistory(history, providerId, channelId));
+    const timestamp = Date.now();
+    return this.mutate(providerId, (history) =>
+      recordLiveHistory(history, providerId, channelId, timestamp),
+    );
   }
 
   remove(providerId: string, channelId: string) {
-    return this.mutate(providerId, (history) => removeLiveHistory(history, providerId, channelId));
+    return this.mutate(providerId, (history) =>
+      removeLiveHistory(history, providerId, channelId),
+    );
   }
 
   clear(providerId: string) {
-    return this.mutate(providerId, (history) => clearLiveHistoryProvider(history, providerId));
+    return this.mutate(providerId, (history) =>
+      clearLiveHistoryProvider(history, providerId),
+    );
   }
 }

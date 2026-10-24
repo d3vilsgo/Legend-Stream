@@ -4,7 +4,7 @@ import { URL as NodeURL } from "node:url";
 import { loadStalkerProductEpg, normalizeStalkerProductEpg, normalizeStalkerProductEpgDetailed } from "../lib/stalkerProductEpg";
 import { stableStalkerLiveChannelId } from "../lib/stalkerLiveCatalog";
 import { mergeEpgPrograms, selectProgramsAt } from "../lib/epgRuntime";
-import { clearStalkerTraceEntries, formatStalkerTrace } from "../lib/stalkerPlaybackTrace";
+import { clearStalkerTraceEntries, formatStalkerTrace, getStalkerTraceEntries } from "../lib/stalkerPlaybackTrace";
 
 const source = (path: string) => readFileSync(new NodeURL(path, import.meta.url), "utf8");
 
@@ -192,7 +192,13 @@ export async function runStalkerProductEpgScenarios() {
     assert.match(trace, /STALKER_PRODUCT_EPG/);
     assert.match(trace, /"request":"SUCCESS"/);
     assert.match(trace, /"publishedPrograms":1/);
-    assert.equal(trace.includes("101"), false);
+    // A wall-clock timestamp may legitimately contain the portal ID digits.
+    // Assert the complete event payload and separately keep URL/MAC/title checks.
+    const payload = getStalkerTraceEntries().map(({ event, details }) => ({ event, details }));
+    assert.equal(JSON.stringify(payload).includes("101"), false);
+    const timestampCollision = formatStalkerTrace(getStalkerTraceEntries().map(entry => ({ ...entry, at: 1792267910101 })));
+    assert.equal(timestampCollision.includes("101"), true);
+    assert.deepEqual(timestampCollision.split("\n").map(line => { const { event, details } = JSON.parse(line); return { event, details }; }), payload);
     assert.equal(trace.includes("Trace Title"), false);
     assert.equal(trace.includes("portal.invalid"), false);
     assert.equal(trace.includes("00:11:22:33:44:55"), false);

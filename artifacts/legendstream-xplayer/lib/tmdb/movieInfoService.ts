@@ -37,7 +37,6 @@ export class MovieInfoService {
       : null;
   }
   async enrich(input: EnrichmentInput): Promise<MovieEnrichment> {
-    if (input.identity.kind !== "movie") return { status: "unmatched" };
     if (!this.foundation || !this.transport)
       return { status: "not-configured" };
     try {

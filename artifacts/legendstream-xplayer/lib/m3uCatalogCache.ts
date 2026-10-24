@@ -70,7 +70,6 @@ import type { XtreamCategory } from "./xtreamCatalog";
 const M3U_CACHE_STAGE_TOTAL = 3;
 export const M3U_HOME_PREVIEW_LIMIT = 48;
 const M3U_DIAGNOSTIC_CACHE_BATCH_SIZE = 200;
-const activationProviders = new Set<string>();
 
 function shouldLogDiagnosticCacheBatch(batchIndex: number, totalRows: number) {
   const totalBatches = Math.max(1, Math.ceil(totalRows / M3U_DIAGNOSTIC_CACHE_BATCH_SIZE));
@@ -117,16 +116,6 @@ function categories(values: string[]): XtreamCategory[] {
     category_id: name,
     category_name: name,
   }));
-}
-
-export function markM3UCacheActivation(providerId: string) {
-  activationProviders.add(providerId);
-}
-
-export function consumeM3UCacheActivation(providerId: string) {
-  if (!activationProviders.has(providerId)) return false;
-  activationProviders.delete(providerId);
-  return true;
 }
 
 export async function hydrateM3UProviderCache(
@@ -378,8 +367,9 @@ async function failClosedWrite(options: {
 export async function persistM3UProviderCache(
   provider: M3UCatalogCacheProvider,
   loaded: ProviderLoadResult,
+  isCurrent?: () => boolean,
 ): Promise<boolean> {
-  if (provider.type !== "m3u") return false;
+  if (provider.type !== "m3u" || (isCurrent && !isCurrent())) return false;
   const startedAt = Date.now();
   const liveInput = loaded.liveChannels ?? loaded.channels;
   const movieInput = loaded.movieItems ?? [];
@@ -512,6 +502,7 @@ export async function persistM3UProviderCache(
     sqliteStage = "set-ready";
     const committedCounts = await swapStagingToProvider({
       providerId: provider.id,
+      assertStillOwned: () => { if (isCurrent && !isCurrent()) throw new Error("M3U cache ownership expired."); },
       vodCategories: categories(movieInput.map((item) => item.category)),
       seriesCategories: categories(seriesInput.map((item) => item.category)),
       readyMessage: "M3U cache ready",
@@ -554,6 +545,7 @@ export async function persistM3UProviderCache(
     } catch (cleanupCaught) {
       safeLog.error("LS_M3U_CACHE_STAGING_CLEANUP", cleanupCaught);
     }
+    if (isCurrent && !isCurrent()) return false;
     const progress = snapshotM3USqliteBatchProgress(batchProgress);
     let schemaFingerprint: Partial<M3USqliteSchemaFingerprint> = {};
     try {

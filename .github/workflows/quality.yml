@@ -2,9 +2,9 @@ name: Quality
 
 on:
   pull_request:
-    branches: [feature/r19-tmdb-secure-proxy,feature/r19-tmdb-film-info,feature/r19-tmdb-enrichment-foundation,feature/r18-legend-elite-design-v1,feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, feature/r18-native-tv-universal-apk, main, feature/r18-presentation-foundation-1b, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad]
+    branches: [integration/legendstream-u1, feature/r19-tmdb-secure-proxy,feature/r19-tmdb-film-info,feature/r19-tmdb-enrichment-foundation,feature/r18-legend-elite-design-v1,feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, feature/r18-native-tv-universal-apk, main, feature/r18-presentation-foundation-1b, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad]
   push:
-    branches: [feature/r19-tmdb-secure-proxy,feature/r19-tmdb-film-info,feature/r19-tmdb-enrichment-foundation,feature/r18-legend-elite-design-v1,feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, main, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad, feature/r18-native-tv-universal-apk]
+    branches: [integration/legendstream-u1, feature/r19-tmdb-secure-proxy,feature/r19-tmdb-film-info,feature/r19-tmdb-enrichment-foundation,feature/r18-legend-elite-design-v1,feature/r18-native-tv-premium-ux,feature/r18-native-tv-remote-player-parity, main, feature/r18-premium-tablet-design-foundation, feature/r18-premium-adaptive-navigation, feature/r18-tv-preview-virtual-dpad, feature/r18-native-tv-universal-apk]
 
 # Deterministic, read-only CI: dependency resolution must match pnpm-lock.yaml exactly.
 # Storage security gate: 6 credential scenarios + 24 backup scenarios must all pass.
@@ -38,6 +38,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Verify exact checked-out HEAD
+        env:
+          EXPECTED_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "$EXPECTED_HEAD_SHA"
+          echo "QUALITY_EXACT_HEAD=$actual_sha"
+          echo "Quality exact HEAD: \`$actual_sha\`" >> "$GITHUB_STEP_SUMMARY"
       - uses: pnpm/action-setup@v4
         with:
           version: 10
@@ -243,6 +253,26 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/designSystemScenarios.ts
       - name: Premium catalog grid layout scenarios
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/catalogGridLayoutScenarios.ts
+      - name: Startup and playback performance diagnostics
+        run: pnpm --filter @workspace/legendstream-xplayer exec node --import tsx tests/performanceDiagnosticsScenarios.ts
+      - name: U3 source formatting
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/lib/performanceDiagnostics.ts artifacts/legendstream-xplayer/lib/catalogRefreshPolicy.ts artifacts/legendstream-xplayer/lib/catalogRefreshWindow.ts artifacts/legendstream-xplayer/components/CatalogRefreshSettings.tsx artifacts/legendstream-xplayer/tests/u3PerformanceScenarios.ts artifacts/legendstream-xplayer/tests/u3CatalogCoordinatorScenarios.mjs artifacts/legendstream-xplayer/tests/u3RefreshWindowScenarios.ts artifacts/legendstream-xplayer/tests/u3CatalogSqliteScenarios.mjs
+      - name: Cache-first catalog refresh policy
+        run: pnpm --filter @workspace/legendstream-xplayer exec node --import tsx tests/catalogRefreshPolicyScenarios.ts
+      - name: U3 production cache coordinator
+        run: node artifacts/legendstream-xplayer/tests/u3CatalogCoordinatorScenarios.mjs
+      - name: U3 cached window retention
+        run: pnpm --filter @workspace/legendstream-xplayer exec node --import tsx tests/u3RefreshWindowScenarios.ts
+      - name: U3 production SQLite cache rollback and legacy records
+        run: node artifacts/legendstream-xplayer/tests/u3CatalogSqliteScenarios.mjs
+      - name: U3 performance lifecycle privacy and bounds
+        run: pnpm --filter @workspace/legendstream-xplayer exec node --import tsx tests/u3PerformanceScenarios.ts
+      - name: U2 cross-device geometry and Preview restoration
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/u2ResponsiveScenarios.ts
+      - name: U2 production responsive catalog hook
+        run: node artifacts/legendstream-xplayer/tests/u2CatalogHookScenarios.mjs
+      - name: P1 production Movies and Series catalog host acceptance
+        run: node artifacts/legendstream-xplayer/tests/p1CatalogProductionHostScenarios.mjs
       - name: Premium Home hero scenarios
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/premiumHomeHeroScenarios.ts
       - name: Premium tablet design foundation scenarios (11/11 required)
@@ -267,16 +297,59 @@ jobs:
         run: node artifacts/legendstream-xplayer/tests/androidTvUniversalBuildScenarios.mjs
       - name: Production Android focus policy JVM behavior
         run: node artifacts/legendstream-xplayer/tests/nativeTvFocusJvmScenarios.mjs
+      - name: Native TV Home compact geometry
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvHomeLayoutScenarios.ts
+      - name: Visible Home navigation and Player recovery host regressions
+        run: node artifacts/legendstream-xplayer/tests/visibleHomeRemoteScenarios.mjs
+      - name: U4.2 production Home Hero and shelf Focus state host acceptance
+        run: node artifacts/legendstream-xplayer/tests/u42HomeCollapsibleHostScenarios.mjs
+      - name: Native TV Home production component render contract
+        run: node artifacts/legendstream-xplayer/tests/nativeTvHomeRenderScenarios.mjs
+      - name: Elite V4 isolated Home data and focus scenarios
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/eliteV4HomeFocusScenarios.ts
+      - name: Elite V4 production component host acceptance
+        run: node artifacts/legendstream-xplayer/tests/eliteV4ProductionHostScenarios.mjs
+      - name: Elite V4 source formatting
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/components/eliteV4 artifacts/legendstream-xplayer/lib/design/eliteV4Theme.ts artifacts/legendstream-xplayer/lib/eliteV4Focus.ts artifacts/legendstream-xplayer/lib/eliteV4HomeModel.ts artifacts/legendstream-xplayer/tests/eliteV4HomeFocusScenarios.ts artifacts/legendstream-xplayer/tests/eliteV4ProductionHostScenarios.mjs artifacts/legendstream-xplayer/lib/eliteV4Series.ts artifacts/legendstream-xplayer/lib/eliteV4Movies.ts artifacts/legendstream-xplayer/lib/goldenSeriesDetail.ts artifacts/legendstream-xplayer/tests/eliteV4SeriesProductionScenarios.mjs artifacts/legendstream-xplayer/tests/eliteV4MoviesProductionScenarios.mjs artifacts/legendstream-xplayer/tests/eliteV4LiveProductionScenarios.mjs artifacts/legendstream-xplayer/lib/contentFavorites.ts artifacts/legendstream-xplayer/lib/progressMutations.ts artifacts/legendstream-xplayer/lib/eliteV4Library.ts artifacts/legendstream-xplayer/tests/eliteV4PersistenceProductionScenarios.mjs artifacts/legendstream-xplayer/tests/eliteV4LibraryProductionScenarios.mjs artifacts/legendstream-xplayer/tests/visibleHomeRemoteScenarios.mjs artifacts/legendstream-xplayer/tests/eliteV4SettingsProductionScenarios.mjs artifacts/legendstream-xplayer/lib/playerPreferences.ts artifacts/legendstream-xplayer/lib/stalkerProductSession.ts artifacts/legendstream-xplayer/tests/eliteV4StalkerRuntimeScenarios.mjs artifacts/legendstream-xplayer/tests/eliteV4RcArtifactScenarios.mjs
+      - name: Elite V3 Home production formatting
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/components/home/HomeDiscovery.tsx artifacts/legendstream-xplayer/lib/design/eliteV3Tokens.ts artifacts/legendstream-xplayer/tests/u42HomeCollapsibleHostScenarios.mjs artifacts/legendstream-xplayer/scripts/build-home-review.mjs
+      - name: Native TV Home helper and test formatting
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/lib/design/nativeTvHomeLayout.ts artifacts/legendstream-xplayer/tests/nativeTvHomeLayoutScenarios.ts artifacts/legendstream-xplayer/tests/nativeTvHomeRenderScenarios.mjs
       - name: Native TV bounded persistence on exit
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvExitScenarios.ts
       - name: TV remote inspector behavioral privacy and event separation
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tvRemoteInspectorScenarios.ts
+      - name: U4.1 production StageRail and Live adaptive host acceptance
+        run: node artifacts/legendstream-xplayer/tests/u41StageRailLiveHostScenarios.mjs
+      - name: Cross-device repair formatting
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/components/FocusButton.tsx artifacts/legendstream-xplayer/components/navigation/ResponsiveContentNav.tsx artifacts/legendstream-xplayer/hooks/useNativeTvTarget.ts artifacts/legendstream-xplayer/lib/catalogGridLayout.ts artifacts/legendstream-xplayer/tests/nativeTvFocusOwnershipHost.mjs artifacts/legendstream-xplayer/tests/u41StageRailLiveHostScenarios.mjs artifacts/legendstream-xplayer/tests/p1CatalogProductionHostScenarios.mjs
+      - name: Native Focus event ownership production host
+        run: node artifacts/legendstream-xplayer/tests/nativeTvFocusOwnershipHost.mjs
       - name: Native TV remote ownership and action semantics
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvRemoteScenarios.ts
       - name: Native TV responsive dp matrix
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/nativeTvResponsiveScenarios.ts
       - name: TMDB metadata matching cache and identity foundation
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tmdbFoundationScenarios.ts
+      - name: Live TMDB direct API acceptance (movie, series, season, Turkish locale)
+        working-directory: artifacts/legendstream-xplayer
+        env:
+          TMDB_API_TOKEN: ${{ secrets.TMDB_API_TOKEN }}
+        run: node --import tsx tests/tmdbLiveAcceptance.ts
+      - name: U4.3 Series Info identity origin episode and input ownership
+        run: node artifacts/legendstream-xplayer/tests/u43SeriesFlowScenarios.mjs
+      - name: U4.3 shared Series Info and controller formatting
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/components/series/SeriesInfoModal.tsx artifacts/legendstream-xplayer/lib/seriesInfo.ts artifacts/legendstream-xplayer/lib/pagedSeriesFlow.ts artifacts/legendstream-xplayer/hooks/usePagedSeriesInfo.ts artifacts/legendstream-xplayer/tests/u43SeriesFlowScenarios.mjs
+      - name: U4.2 Stalker Home Film Info identity and session service regressions
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/u42StalkerHomeMovieScenarios.ts
+      - name: U4.2 Stalker production hook shared modal and Preview ownership
+        run: node artifacts/legendstream-xplayer/tests/u42StalkerHomeInfoHostScenarios.mjs
+      - name: U4.2 Stalker Home Film Info source formatting
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/hooks/useStalkerHomeMovieInfo.ts artifacts/legendstream-xplayer/lib/stalkerHomeMovie.ts artifacts/legendstream-xplayer/tests/u42StalkerHomeMovieScenarios.ts artifacts/legendstream-xplayer/tests/u42StalkerHomeInfoHostScenarios.mjs
+      - name: U4 Home Film Info provider ownership and action parity
+        run: node artifacts/legendstream-xplayer/tests/u4HomeMovieInfoScenarios.mjs
+      - name: U4 Home Film Info hook and test formatting
+        run: pnpm exec prettier --check artifacts/legendstream-xplayer/hooks/useHomeMovieInfo.ts artifacts/legendstream-xplayer/tests/u4HomeMovieInfoScenarios.mjs
       - name: TMDB Film Info mock behavior and access policy
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/tmdbMovieInfoScenarios.ts
       - name: TMDB secure proxy behavior (mock upstream, no live claim)
@@ -291,6 +364,10 @@ jobs:
         run: pnpm exec prettier --check artifacts/legendstream-xplayer/lib/tmdb artifacts/legendstream-xplayer/tests/tmdbFoundationScenarios.ts
       - name: Elite V2 Live responsive layout and selection
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/eliteLiveLayoutScenarios.ts
+      - name: P0 production Live and Native TV navigation host acceptance
+        run: node artifacts/legendstream-xplayer/tests/tvP0ProductionRenderScenarios.mjs
+      - name: Elite V3 responsive semantic design foundation
+        run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/eliteV3FoundationScenarios.ts
       - name: Elite design state, geometry, alpha contrast and isolation
         run: pnpm --filter @workspace/legendstream-xplayer exec tsx tests/eliteDesignScenarios.ts
       - name: Elite showcase build (same React Native components)
@@ -307,3 +384,5 @@ jobs:
         run: pnpm --filter @workspace/legendstream-xplayer typecheck
       - name: Typecheck API server and references
         run: pnpm exec tsc -b artifacts/api-server/tsconfig.json --pretty false
+      - name: Typecheck complete workspace including scripts
+        run: pnpm run typecheck

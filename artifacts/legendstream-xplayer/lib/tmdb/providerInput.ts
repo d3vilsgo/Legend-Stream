@@ -90,7 +90,8 @@ export function m3uSeriesInput(
 export function stalkerMovieInput(
   providerId: string,
   catalogRevision: string,
-  item: StalkerVodItem,
+  item: Pick<StalkerVodItem, "portalId" | "title" | "year"> &
+    Partial<StalkerVodItem>,
 ): EnrichmentInput {
   return {
     identity: {

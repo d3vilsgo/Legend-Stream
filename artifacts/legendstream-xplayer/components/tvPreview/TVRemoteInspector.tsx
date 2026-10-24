@@ -1,7 +1,7 @@
 import React, {useEffect,useReducer} from "react";
 import {Platform,Text,View,useWindowDimensions} from "react-native";
 import {FocusButton} from "@/components/FocusButton";
-import {tvInspector} from "@/lib/tvRemoteInspector";
+import {inspectorCorner,inspectorFocusLabel,tvInspector} from "@/lib/tvRemoteInspector";
 import {setNativeInspector,subscribeNativeInspector} from "@/modules/legendstream-tv-remote";
 function useInspector(){const [,update]=useReducer(n=>n+1,0);useEffect(()=>tvInspector.subscribe(update),[]);return tvInspector;}
 export function TVRemoteInspectorSetting(){
@@ -19,15 +19,22 @@ export function TVRemoteInspectorOverlay(){
  const lastKey=recent.find(r=>r.type==="input" && (r.phase==="DOWN"||r.phase==="REPEAT"));
  const lastFocus=recent.find(r=>r.type==="focus"||r.type==="snapshot");
  const lastAction=recent.find(r=>r.type==="action"||r.type==="screen");
+ const lastDispatch=recent.find(r=>r.type==="dispatch");
+ const corner=inspectorCorner(lastFocus?.focusTop??lastDispatch?.focusTop??-1,height);
  const end=Math.max(0,state.records.length-state.page*5);
  const rows=state.history?state.records.slice(Math.max(0,end-5),end):state.records.slice(-2);
- return <View pointerEvents="none" accessible={false} focusable={false} style={{position:"absolute",right:16,top:16,width:Math.max(1,Math.min(state.collapsed?360:560,width-32)),maxHeight:Math.max(1,height-32),padding:14,borderRadius:10,backgroundColor:"rgba(0,0,0,.78)",borderWidth:1,borderColor:"#67e8f9",zIndex:99999,elevation:999}}>
+ return <View pointerEvents="none" accessible={false} focusable={false} style={{position:"absolute",right:16,...(corner==="top"?{top:16}:{bottom:16}),width:Math.max(1,Math.min(state.collapsed?440:560,width-32)),maxHeight:Math.max(1,height-32),padding:state.collapsed?7:12,borderRadius:10,backgroundColor:"rgba(0,0,0,.78)",borderWidth:1,borderColor:"#67e8f9",zIndex:99999,elevation:999}}>
+ {state.collapsed ? <>
+ <Text numberOfLines={1} style={{color:"#fde047",fontSize:14}}>{lastKey?.key??"Tuş bekleniyor"} · {inspectorFocusLabel(state.focus)}</Text>
+ <Text numberOfLines={2} style={{color:"white",fontSize:13}}>Beklenen: {inspectorFocusLabel(lastDispatch?.expected??"none")} · {lastDispatch?.outcome??"—"} · {lastDispatch?.owner??"—"}{lastDispatch?.expectedVisible===false?" · kaydırma gerekli":""}</Text>
+ </> : <>
  <Text style={{color:"#67e8f9",fontSize:18,fontWeight:"700"}}>REMOTE INPUT / FOCUS · {state.screen}</Text>
  <Text style={{color:"#fde047",fontSize:17}}>Tuş: {lastKey?`#${lastKey.n} ${lastKey.key} ${lastKey.phase}`:"Henüz native tuş algılanmadı"}</Text>
  <Text style={{color:"#86efac",fontSize:15}}>Son eylem/state: {lastAction?`#${lastAction.n} ${lastAction.result}`:"Henüz eylem kanıtı yok"}</Text>
  <Text style={{color:lastFocus?.withoutInput?"#fb923c":"#cbd5e1",fontSize:14}}>Kaynak: {lastFocus?.source??"henüz yok"} · odak/son tuş arası: {lastFocus && lastFocus.inputAgeMs>=0?`${Math.round(lastFocus.inputAgeMs)} ms`:"bilinmiyor"}{lastFocus?.withoutInput?" · TUŞSUZ ODAK":""}</Text>
- <Text style={{color:"white",fontSize:16}}>Odak: {state.focus} · scope: {state.scope}</Text>
- {!state.collapsed? <><Text style={{color:"#cbd5e1",fontSize:14}}>Tuş ≠ odak ≠ eylem · Sistemce iletilmeyen tuşlar görülemez</Text>{rows.map(r=><Text key={r.n} style={{color:r.type==="input"?"#fde047":r.type==="action"?"#86efac":"white",fontSize:13,marginTop:3}}>#{r.n} {r.type} {r.key} {r.phase} {r.delivery??""} · {r.result} · {r.before} → {r.after} · {r.screen} / {r.context} / {r.scope} · {r.source} · Δtuş={r.inputAgeMs<0?"yok":`${Math.round(r.inputAgeMs)}ms`}</Text>)}</>:null}
+ <Text style={{color:"white",fontSize:16}}>Odak: {inspectorFocusLabel(state.focus)} · scope: {state.scope}</Text>
+ {!state.collapsed? <><Text style={{color:"#cbd5e1",fontSize:14}}>Tuş ≠ odak ≠ eylem · Sistemce iletilmeyen tuşlar görülemez</Text>{rows.map(r=><Text key={r.n} style={{color:r.type==="input"?"#fde047":r.type==="action"?"#86efac":"white",fontSize:13,marginTop:3}}>#{r.n} {r.type} {r.key} {r.phase} {r.delivery??""} · {r.result} · {inspectorFocusLabel(r.before)} → {inspectorFocusLabel(r.after)} · {r.screen} / {r.context} / {r.scope} · {r.source} · Δtuş={r.inputAgeMs<0?"yok":`${Math.round(r.inputAgeMs)}ms`}</Text>)}</>:null}
+ </> }
  </View>;
 }
 

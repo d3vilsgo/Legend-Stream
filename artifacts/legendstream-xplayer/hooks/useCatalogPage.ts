@@ -1,3 +1,5 @@
+import { refreshCatalogWindow } from "@/lib/catalogRefreshWindow";
+import { beginPerformanceMeasurement, finishPerformanceMeasurement } from "@/lib/performanceDiagnostics";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   CatalogPageFlightGuard,
@@ -34,6 +36,7 @@ export type CatalogPageState<T> = {
   hasMore: boolean;
   nextCursor: string | null;
   queryKey: string | null;
+  error?: string | null;
 };
 
 type SnapshotCount = {
@@ -89,6 +92,8 @@ export function useCatalogPage<K extends CatalogPageKind>({
   catalogRevision = 0,
 }: UseCatalogPageInput<K>) {
   const [state, setState] = useState<CatalogPageState<ItemForKind<K>>>(() => emptyState());
+  const currentState = useRef(state);
+  currentState.current = state;
   const [stalkerLivePublishRevision, setStalkerLivePublishRevision] = useState(0);
   const flightGuardRef = useRef(new CatalogPageFlightGuard());
   const generationRef = useRef(0);
@@ -100,6 +105,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
     startedAt: number;
     request: Pick<CatalogPageRequest, "providerType" | "kind" | "limit">;
     rowsReturned: number;
+    measurement: number | null;
     hasMore: boolean;
   } | null>(null);
   const stalkerLive = provider?.type === "stalker" && kind === "live";
@@ -156,7 +162,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
 
   const loadPage = useCallback(async (
     cursor: string | null,
-    mode: "initial" | "more",
+    mode: "initial" | "more" | "refresh",
     generation: number,
   ) => {
     if (!provider || !baseRequest || !queryKey || !effectiveEnabled) return;
@@ -170,29 +176,33 @@ export function useCatalogPage<K extends CatalogPageKind>({
     const flightKey = `${queryKey}|${cursor ?? "first"}`;
     if (!flightGuardRef.current.tryStart(flightKey)) return;
 
+    const measurement = mode === "initial" ? beginPerformanceMeasurement("FIRST_CONTENT", provider.type === "xtream" || provider.type === "m3u" || provider.type === "stalker" ? provider.type : "unknown") : null;
     let stalkerController: AbortController | null = null;
     if (stalkerLive) {
-      if (mode === "initial") stalkerRequestRef.current?.abort();
+      if (mode !== "more") stalkerRequestRef.current?.abort();
       stalkerController = new AbortController();
       stalkerRequestRef.current = stalkerController;
     }
 
     setState((current) => ({
       ...current,
+      error: null,
       loadingInitial: mode === "initial" ? current.items.length === 0 : current.loadingInitial,
-      loadingMore: mode === "more" ? true : current.loadingMore,
+      loadingMore: mode !== "initial" ? true : current.loadingMore,
     }));
 
     try {
       const stalkerPersistedSearch = stalkerLive && Boolean(request.search?.trim());
-      const result = stalkerLive && !stalkerPersistedSearch
-        ? await getStalkerLazyLivePage({
-            provider,
-            categoryId: request.categoryId,
-            cursor: request.cursor,
-            signal: stalkerController?.signal,
-          })
-        : await getCachedCatalogPage(provider, request);
+      const read = (cursor: string | null) => {
+        const request: CatalogPageRequest & { kind: K } = { ...baseRequest, kind, cursor: cursor ?? undefined };
+        return stalkerLive && !stalkerPersistedSearch
+          ? getStalkerLazyLivePage({ provider, categoryId: request.categoryId, cursor: request.cursor, signal: stalkerController?.signal })
+          : getCachedCatalogPage(provider, request);
+      };
+      const result = mode === "refresh"
+        ? await refreshCatalogWindow<unknown, { items: unknown[]; totalCount: number | null; countKnown: boolean; nextCursor: string | null; hasMore: boolean }>({ loadedRows: currentState.current.items.length, load: read, isCurrent: () => generationRef.current === generation && activeQueryKeyRef.current === requestQueryKey && !stalkerController?.signal.aborted })
+        : await read(cursor);
+      if (!result) return;
       if (
         generationRef.current !== generation ||
         stalkerController?.signal.aborted ||
@@ -202,6 +212,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
         startedAt: Date.now(),
         request,
         rowsReturned: result.items.length,
+        measurement,
         hasMore: result.hasMore,
       };
       setState((current) => {
@@ -237,14 +248,17 @@ export function useCatalogPage<K extends CatalogPageKind>({
         };
       });
     } catch {
+      finishPerformanceMeasurement(measurement, "ERROR");
       if (generationRef.current !== generation || stalkerController?.signal.aborted) return;
       setState((current) => ({
         ...current,
         loadingInitial: false,
         loadingMore: false,
-        hasMore: false,
+        hasMore: mode === "refresh" ? current.hasMore : false,
+        error: "Katalog yüklenemedi. Yenile ile tekrar deneyin.",
       }));
     } finally {
+      if (generationRef.current !== generation || stalkerController?.signal.aborted) finishPerformanceMeasurement(measurement, "CANCELLED");
       flightGuardRef.current.finish(flightKey);
       if (stalkerController && stalkerRequestRef.current === stalkerController) {
         stalkerRequestRef.current = null;
@@ -263,6 +277,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
     const pending = pendingCommitRef.current;
     if (!pending) return;
     pendingCommitRef.current = null;
+    finishPerformanceMeasurement(pending.measurement);
     noteCatalogPageCommit(
       pending.request,
       pending.rowsReturned,
@@ -331,14 +346,8 @@ export function useCatalogPage<K extends CatalogPageKind>({
     stalkerRequestRef.current?.abort();
     stalkerRequestRef.current = null;
     flightGuardRef.current.clear();
-    setState({
-      ...emptyState<ItemForKind<K>>(),
-      totalCount: resolvedSnapshotTotal,
-      countKnown: resolvedSnapshotTotal !== null,
-      loadingInitial: true,
-      queryKey,
-    });
-    void loadPage(null, "initial", generation);
+    setState(current => current.queryKey === queryKey ? { ...current, loadingInitial: current.items.length === 0, loadingMore: current.items.length > 0 } : { ...emptyState<ItemForKind<K>>(), totalCount: resolvedSnapshotTotal, countKnown: resolvedSnapshotTotal !== null, loadingInitial: true, queryKey });
+    void loadPage(null, "refresh", generation);
   }, [effectiveEnabled, provider, baseRequest, queryKey, resolvedSnapshotTotal, loadPage]);
 
   useEffect(() => {
@@ -347,7 +356,7 @@ export function useCatalogPage<K extends CatalogPageKind>({
 
   useEffect(() => {
     if (
-      provider?.type !== "m3u" ||
+      !provider || stalkerLive ||
       catalogRevision <= 0 ||
       catalogRevision <= observedCatalogRevisionRef.current
     ) return;

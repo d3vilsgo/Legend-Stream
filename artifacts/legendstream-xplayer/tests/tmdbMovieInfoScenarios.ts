@@ -154,9 +154,41 @@ async function main() {
     assert.equal(info.identity.catalogId, "m3u:77");
     assert(!JSON.stringify(info).includes("private-url"));
   });
+  await test("provider-local fields take precedence; TMDB only fills absent fields", () => {
+    const local = {
+      title: "Portal title",
+      poster: "local.jpg",
+      overview: "Portal plot",
+      genre: "Portal genre",
+      cast: "Portal cast",
+      director: "Portal director",
+      year: 2015,
+    };
+    const view = movieInfoPresentation(local, input, detail);
+    for (const key of [
+      "title",
+      "poster",
+      "overview",
+      "genre",
+      "cast",
+      "director",
+      "year",
+    ] as const)
+      assert.equal(view[key], local[key]);
+    const fallback = movieInfoPresentation(
+      { title: " ", overview: " " },
+      { ...input, year: undefined },
+      detail,
+    );
+    assert.equal(fallback.title, "Geliş");
+    assert.equal(fallback.overview, "Türkçe özet");
+    assert.equal(fallback.genre, "Bilimkurgu");
+    assert.equal(fallback.year, 2016);
+    assert.equal(fallback.ratingSource, "TMDB");
+  });
   await test("new presentation cannot manufacture playback fields", () => {
     const view = movieInfoPresentation({ title: "Arrival" }, input, detail);
-    assert.equal(view.title, "Geliş");
+    assert.equal(view.title, "Arrival");
     assert.equal(view.runtime, 116);
     assert.equal(view.ratingSource, "TMDB");
     assert.equal(view.cast, "Oyuncu");

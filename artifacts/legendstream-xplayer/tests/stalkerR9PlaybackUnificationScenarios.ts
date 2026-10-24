@@ -206,7 +206,10 @@ async function main() {
   });
 
   await scenario("Home, Live, History, and Favorites all pass canonical Channel streamUrl to the same player path", () => {
-    assert.match(home, /onOpenLive=\{openLive\}/);
+    assert.match(
+      home,
+      /onOpenLive=\{\s*\(channel\)\s*=>\s*openLive\(channel, "home"\)\s*\}/,
+    );
     assert.match(home, /<StalkerLiveCatalog[\s\S]*onOpen=\{openLive\}/);
     assert.match(home, /resolveLiveIdentityPresentationRows/);
     assert.match(home, /setPlayable\(\{[\s\S]*url: channel\.streamUrl[\s\S]*liveIdentity:/);

@@ -1,6 +1,6 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { getLocales } from "expo-localization";
-import React, { createContext, ReactNode, useContext, useMemo, useState } from "react";
+import React, { createContext, ReactNode, useContext, useMemo, useRef, useState } from "react";
 
 export type AppLanguage = "tr" | "en" | "de" | "fr" | "es" | "it" | "ru";
 
@@ -9,7 +9,7 @@ type Dictionary = Record<string, string>;
 type I18nValue = {
   language: AppLanguage;
   languages: Array<{ code: AppLanguage; label: string }>;
-  setLanguage: (language: AppLanguage) => Promise<void>;
+  setLanguage: (language: AppLanguage, options?: { verified?: boolean }) => Promise<void>;
   t: (key: string, vars?: Record<string, string | number>) => string;
 };
 
@@ -35,6 +35,11 @@ const dictionaries: Record<AppLanguage, Dictionary> = {
     noTracks: "Seçilebilir parça yok", playbackFailed: "Oynatma başarısız", loadingVideo: "Video yükleniyor…",
     m3uNoGroups: "Bu M3U listesi kategori bilgisi içermiyor.", providerOrder: "Yayıncı sırası", credentialsMissing: "Kimlik bilgileri eksik — yeniden gir",
     historySaveFailed: "İzleme geçmişi kaydedilemedi.", categoryNotSelected: "Kategori seçilmedi",
+    catalogManagement: "Katalog Yönetimi", automaticCatalogRefresh: "Otomatik Katalog Güncelleme", catalogRefreshInterval: "Güncelleme Aralığı",
+    enabled: "Açık", disabled: "Kapalı", hours24: "24 Saat", days3: "3 Gün", updateNow: "Şimdi Güncelle",
+    lastSuccessfulCatalogUpdate: "Son başarılı güncelleme", catalogUpdateStatus: "Güncelleme durumu", catalogUpdating: "Güncelleniyor…",
+    catalogReady: "Hazır", catalogIdle: "Bekliyor", catalogUpdateFailed: "Güncelleme başarısız.", never: "Henüz yok",
+    catalogPolicySaveFailed: "Güncelleme tercihi kaydedilemedi.", stalkerRefreshScope: "Stalker otomatik katalog güncellemesi mevcut Live kataloğunu kapsar.",
     selectCategory: "Bir kategori seçin", selectCategoryHint: "Yayınları görmek için kategori menüsünden bir seçim yapın.",
     selectSeason: "Bir sezon seçin", seasonHasNoEpisodes: "Bu sezonda bölüm bulunamadı.",
   },
@@ -51,6 +56,11 @@ const dictionaries: Record<AppLanguage, Dictionary> = {
     connecting: "Connecting…", addConnect: "Add & connect", saveConnect: "Save & connect", cancel: "Cancel",
     invalidUrl: "Enter a full URL beginning with http:// or https://", xtreamCredentials: "Xtream requires username and password.",
     recentlyWatched: "Recently watched", favorites: "Favorites", nothingYet: "Nothing here yet.", season: "Season", episode: "Episode",
+    catalogManagement: "Catalog management", automaticCatalogRefresh: "Automatic catalog refresh", catalogRefreshInterval: "Refresh interval",
+    enabled: "On", disabled: "Off", hours24: "24 hours", days3: "3 days", updateNow: "Update now",
+    lastSuccessfulCatalogUpdate: "Last successful update", catalogUpdateStatus: "Update status", catalogUpdating: "Updating…",
+    catalogReady: "Ready", catalogIdle: "Idle", catalogUpdateFailed: "Update failed.", never: "Never",
+    catalogPolicySaveFailed: "Could not save the refresh preference.", stalkerRefreshScope: "Stalker automatic catalog refresh applies to the current Live catalog.",
     noEpisodes: "No episode list was returned.", loadingMovies: "Loading Movies…", loadingSeries: "Loading Series…", loadingEpisodes: "Loading episodes…",
     audio: "Audio", subtitles: "Subtitles", off: "Off", screen: "Screen", fit: "Fit", crop: "Crop", stretch: "Stretch",
     back: "Back", download: "Download", downloading: "Downloading…", downloaded: "Downloaded", downloadFailed: "Download failed",
@@ -91,13 +101,23 @@ const I18nContext = createContext<I18nValue | null>(null);
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [language, setLanguageState] = useState<AppLanguage>(initialLanguage);
 
+  const revision = useRef(0);
   React.useEffect(() => {
+    const initialRevision=revision.current;
     AsyncStorage.getItem(STORAGE_KEY).then((saved) => {
-      if (saved && supported.has(saved as AppLanguage)) setLanguageState(saved as AppLanguage);
+      if (initialRevision===revision.current && saved && supported.has(saved as AppLanguage)) setLanguageState(saved as AppLanguage);
     }).catch(() => undefined);
   }, []);
 
-  const setLanguage = async (next: AppLanguage) => {
+  const setLanguage = async (next: AppLanguage, options?: { verified?: boolean }) => {
+    const ticket=++revision.current;
+    if (!supported.has(next)) throw new Error("INVALID_LANGUAGE");
+    if (options?.verified) {
+      await AsyncStorage.setItem(STORAGE_KEY, next);
+      if (await AsyncStorage.getItem(STORAGE_KEY) !== next) throw new Error("LANGUAGE_WRITE_FAILED");
+      if(ticket===revision.current)setLanguageState(next);
+      return;
+    }
     setLanguageState(next);
     try { await AsyncStorage.setItem(STORAGE_KEY, next); } catch { /* best effort */ }
   };
