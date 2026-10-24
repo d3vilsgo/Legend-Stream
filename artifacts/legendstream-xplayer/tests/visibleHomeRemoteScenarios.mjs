@@ -59,7 +59,7 @@ const mocks = {
   "@/lib/tvRemoteInspector":
     "export const inspectorAction=()=>{},inspectorRail=()=>{};",
   "@/modules/legendstream-tv-remote":
-    "export const configureTvRemote=()=>{},subscribeTvRemote=()=>({remove(){}}),subscribeNativeTvFocus=()=>({remove(){}});",
+    "export const configureTvRemote=()=>{},subscribeTvRemote=fn=>{globalThis.__visible.remoteHandler=fn;return {remove(){if(globalThis.__visible.remoteHandler===fn)globalThis.__visible.remoteHandler=null}}},subscribeNativeTvFocus=()=>({remove(){}});",
   "@/hooks/usePlayerOrientation":
     "export const usePlayerOrientation=()=>({ready:true,exiting:false,beginExit(){},restore:async()=>{},releaseWhenLayoutReady(){},rotate(){}});",
   "@/modules/legendstream-pip":
@@ -107,6 +107,7 @@ const render = (f) => {
 const clean = () => {
   for (const s of slots) s?.cleanup?.();
   h.opened = null;
+  h.remoteHandler = null;
   h.watched = null;
   slots = [];
   cursor = 0;
@@ -137,7 +138,7 @@ const test = (name, f) => {
 try {
   await build({
     stdin: {
-      contents: `export {setPlayerChromeTimeoutSeconds,setSavedPlayerCodecMode} from './lib/playerPreferences';export {CompatibilityVideoPlayer} from './components/CompatibilityVideoPlayerV2';export {EliteLiveCatalog} from './components/elite/EliteLiveCatalog';export {CategoryPicker} from './components/navigation/CategoryPicker';export {useHomeMovieInfo} from './hooks/useHomeMovieInfo';export {HomeHeroCarousel} from './components/home/HomeDiscovery';export {ResponsiveContentNav} from './components/navigation/ResponsiveContentNav';export {PlayerChrome,PanelContent} from './components/player/PlayerChromeV2';export {PlayerChrome as ProductionPlayerChrome} from './components/player/PlayerChrome';`,
+      contents: `export {setPlayerChromeTimeoutSeconds,setSavedPlayerCodecMode} from './lib/playerPreferences';export {CompatibilityVideoPlayer} from './components/CompatibilityVideoPlayerV2';export {EliteLiveCatalog} from './components/elite/EliteLiveCatalog';export {CategoryPicker} from './components/navigation/CategoryPicker';export {useHomeMovieInfo} from './hooks/useHomeMovieInfo';export {HomeHeroCarousel} from './components/home/HomeDiscovery';export {ResponsiveContentNav} from './components/navigation/ResponsiveContentNav';export {PlayerChrome,PanelContent} from './components/player/PlayerChromeV2';export {PlayerChrome as ProductionPlayerChrome} from './components/player/PlayerChrome';export {LiveChannelDrawer} from './components/player/LiveChannelDrawer';export {CompactLiveInfo} from './components/player/CompactLiveInfo';`,
       resolveDir: app,
       loader: "tsx",
     },
@@ -178,6 +179,8 @@ try {
     ResponsiveContentNav,
     PlayerChrome,
     ProductionPlayerChrome,
+    LiveChannelDrawer,
+    CompactLiveInfo,
     PanelContent,
     CompatibilityVideoPlayer,
     setPlayerChromeTimeoutSeconds,
@@ -498,6 +501,186 @@ try {
         );
       }
     }
+  });
+  test("production live Info is compact and hides fabricated progress without EPG", () => {
+    h.native = true;
+    h.width = 1920;
+    h.height = 1080;
+    const info = render(() =>
+      CompactLiveInfo({ title: "Yerel Haber", reserveBack: 0 }),
+    );
+    assert.equal(info.props.testID, "compact-live-info");
+    assert.equal(info.props.style[1].height, Math.floor((1080 - 20) / 12));
+    assert.equal(
+      nodes(info).some((n) => n.props?.testID === "compact-live-epg-track"),
+      false,
+    );
+    const start = Date.now() - 120000;
+    const now = { title: "Haber Bülteni", start, end: start + 3600000 };
+    const withEpg = render(() =>
+      CompactLiveInfo({ title: "Yerel Haber", now, reserveBack: 0 }),
+    );
+    assert(
+      nodes(withEpg).some((n) => n.props?.testID === "compact-live-epg-track"),
+    );
+  });
+  test("real PlayerChrome live drawer routes selection and favorites without browsing playback", () => {
+    h.native = true;
+    h.width = 1920;
+    h.height = 1080;
+    const calls = {
+      moved: 0,
+      selected: [],
+      favorite: [],
+      layers: [],
+      dismissed: 0,
+    };
+    const items = [
+      {
+        id: "101",
+        title: "Haber",
+        subtitle: "Ulusal",
+        source: "https://example.invalid/101",
+        isLive: true,
+        nowPlaying: "Gündem",
+      },
+      {
+        id: "102",
+        title: "Spor",
+        subtitle: "Ulusal",
+        source: "https://example.invalid/102",
+        isLive: true,
+      },
+      {
+        id: "103",
+        title: "Sinema",
+        subtitle: "Sinema",
+        source: "https://example.invalid/103",
+        isLive: true,
+      },
+    ];
+    const props = {
+      title: "Haber",
+      mediaKind: "live",
+      controlsVisible: true,
+      infoVisible: true,
+      panel: "content",
+      drawerLayer: "channels",
+      currentIndex: 0,
+      selectableItems: items,
+      duration: 0,
+      position: 0,
+      onMoveRelative: () => calls.moved++,
+      onSwitchTo: (item) => calls.selected.push(item.id),
+      onToggleFavorite: (item) => calls.favorite.push(item.id),
+      onDrawerLayerChange: (layer) => calls.layers.push(layer),
+      onDismissLiveDrawer: () => calls.dismissed++,
+    };
+    const tree = render(() => ProductionPlayerChrome(props));
+    const ns = nodes(tree);
+    assert(ns.some((n) => n.tag?.name === "LiveChannelDrawer"));
+    assert.equal(
+      ns.some((n) => n.tag?.name === "CompactLiveInfo"),
+      false,
+    );
+    const baseChrome = ns.find(
+      (n) => n.props?.suppressLiveContentPanel === true,
+    );
+    assert(baseChrome && baseChrome.props.suppressLiveContentPanel);
+    assert.equal(typeof h.remoteHandler, "function");
+    h.remoteHandler({ key: "up", code: 19 });
+    h.remoteHandler({ key: "down", code: 20 });
+    assert.equal(
+      calls.moved,
+      0,
+      "D-Pad browsing cannot trigger channel playback",
+    );
+    h.remoteHandler({ key: "left", code: 21 });
+    assert.deepEqual(calls.layers, ["categories"]);
+    const drawerElement = ns.find((n) => n.tag?.name === "LiveChannelDrawer");
+    const drawer = LiveChannelDrawer(drawerElement.props);
+    const listing = nodes(drawer).find(
+      (n) => n.props?.testID === "live-channel-list",
+    );
+    assert(listing && listing.props.data.length === 2);
+    assert.equal(drawer.props.children[0].props.style[1].width, 768);
+    const row = listing.props.renderItem({ item: listing.props.data[1] });
+    const buttons = nodes(row).filter((n) => n.tag === "Button");
+    const channel = buttons.find(
+      (n) => n.props.nativeID === "player:channel:102",
+    );
+    const favorite = buttons.find(
+      (n) => n.props.nativeID === "player:favorite:102",
+    );
+    assert(channel && favorite);
+    assert.equal(calls.selected.length, 0);
+    channel.props.onPress();
+    favorite.props.onPress();
+    assert.deepEqual(calls.selected, ["102"]);
+    assert.deepEqual(calls.favorite, ["102"]);
+    h.remoteHandler({ key: "right", code: 22 });
+    assert.equal(calls.dismissed, 1);
+  });
+  test("opening live panel keeps the same production VLC surface identity and stream", () => {
+    h.native = true;
+    const props = {
+      source: "https://example.invalid/live/101",
+      title: "Canlı",
+      mediaKind: "live",
+    };
+    let tree = render(() => CompatibilityVideoPlayer(props));
+    let surface = nodes(tree).find((node) => node.tag === "VLC");
+    const initialKey = surface.props.key;
+    const initialUri = surface.props.uri;
+    const chrome = nodes(tree).find((node) => node.tag === "PlayerChrome");
+    chrome.props.onTogglePanel("content");
+    tree = render(() => CompatibilityVideoPlayer(props));
+    surface = nodes(tree).find((node) => node.tag === "VLC");
+    assert.equal(surface.props.key, initialKey);
+    assert.equal(surface.props.uri, initialUri);
+    assert.equal(
+      nodes(tree).find((node) => node.tag === "PlayerChrome").props.panel,
+      "content",
+    );
+    nodes(tree)
+      .find((node) => node.tag === "PlayerChrome")
+      .props.onDismissLiveDrawer();
+    tree = render(() => CompatibilityVideoPlayer(props));
+    surface = nodes(tree).find((node) => node.tag === "VLC");
+    assert.equal(surface.props.key, initialKey);
+    assert.equal(surface.props.uri, initialUri);
+    assert.equal(
+      nodes(tree).find((node) => node.tag === "PlayerChrome").props.panel,
+      null,
+    );
+  });
+  test("production live Info and drawer have exclusive visible ownership", () => {
+    h.native = true;
+    h.width = 1280;
+    h.height = 720;
+    const base = {
+      title: "Canlı",
+      mediaKind: "live",
+      controlsVisible: true,
+      infoVisible: true,
+      panel: null,
+      currentIndex: -1,
+      selectableItems: [],
+    };
+    const tree = render(() => ProductionPlayerChrome(base));
+    assert(nodes(tree).some((n) => n.tag?.name === "CompactLiveInfo"));
+    assert.equal(
+      nodes(tree).some((n) => n.tag?.name === "LiveChannelDrawer"),
+      false,
+    );
+    const panel = render(() =>
+      ProductionPlayerChrome({ ...base, panel: "content" }),
+    );
+    assert(nodes(panel).some((n) => n.tag?.name === "LiveChannelDrawer"));
+    assert.equal(
+      nodes(panel).some((n) => n.tag?.name === "CompactLiveInfo"),
+      false,
+    );
   });
   test("TV channel row offsets exclude variable panel header", () => {
     h.native = true;

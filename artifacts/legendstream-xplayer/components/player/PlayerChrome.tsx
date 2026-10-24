@@ -23,6 +23,9 @@ import {
   useWindowDimensions,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { CompactLiveInfo } from "./CompactLiveInfo";
+import { LiveChannelDrawer } from "./LiveChannelDrawer";
+import type { PlayerSelectableItem } from "./PlayerChromeV2";
 import {
   PlayerChrome as PlayerChromeV2,
   playerCodecLabel,
@@ -56,6 +59,10 @@ type Props = React.ComponentProps<typeof PlayerChromeV2> & {
   epgNow?: PlayerProgramInfo;
   epgNext?: PlayerProgramInfo;
   epgLoading?: boolean;
+  drawerLayer?: "channels" | "categories";
+  onDrawerLayerChange?: (layer: "channels" | "categories") => void;
+  onToggleFavorite?: (item: PlayerSelectableItem) => void;
+  onDismissLiveDrawer?: () => void;
 };
 type Action = {
   key: string;
@@ -170,6 +177,13 @@ export function PlayerChrome(props: Props) {
     ? clamp(shortEdge / 390, 0.86, 1)
     : clamp(shortEdge / 430, 0.86, 1.02);
   const [seekWidth, setSeekWidth] = useState(1);
+  const [selectedCategory, setSelectedCategory] = useState<
+    string | undefined
+  >();
+  const selectedChannelLock = useRef({ id: "", at: 0 });
+  useEffect(() => {
+    if (props.panel !== "content") setSelectedCategory(undefined);
+  }, [props.panel]);
   const runtime = useSyncExternalStore(
     subscribePlayerRuntimeInfo,
     getPlayerRuntimeInfoSnapshot,
@@ -191,6 +205,26 @@ export function PlayerChrome(props: Props) {
     const subscription = subscribeTvRemote(({ key, code }) => {
       if (key === "back") return; // The player root owns Back even while chrome is unmounted.
       const p = remoteProps.current;
+      // The live drawer owns list movement. Never let UP/DOWN change playback here.
+      if (p.mediaKind === "live" && p.panel === "content") {
+        if (key === "left" && p.drawerLayer !== "categories")
+          p.onDrawerLayerChange?.("categories");
+        else if (key === "right" && p.drawerLayer === "categories")
+          p.onDrawerLayerChange?.("channels");
+        else if (key === "right") p.onDismissLiveDrawer?.();
+        return;
+      }
+      // LEFT from the fullscreen video opens the existing canonical content panel.
+      if (
+        p.mediaKind === "live" &&
+        !p.panel &&
+        !p.controlsVisible &&
+        key === "left"
+      ) {
+        p.onDrawerLayerChange?.("channels");
+        p.onTogglePanel("content");
+        return;
+      }
       const action = resolveTvRemoteAction(
         key,
         code,
@@ -424,9 +458,62 @@ export function PlayerChrome(props: Props) {
 
   return (
     <>
-      <PlayerChromeV2 {...chrome} controlsVisible={false} infoVisible={false} />
+      <PlayerChromeV2
+        {...chrome}
+        controlsVisible={false}
+        infoVisible={false}
+        suppressLiveContentPanel={chrome.mediaKind === "live"}
+      />
 
-      {showChrome ? (
+      {chrome.mediaKind === "live" &&
+      chrome.infoVisible &&
+      !chrome.panel &&
+      !hasBlockingStatus ? (
+        <CompactLiveInfo
+          title={chrome.title}
+          now={epgNow}
+          next={epgNext}
+          loading={epgLoading}
+          reserveBack={
+            chrome.controlsVisible && chrome.canExit
+              ? Platform.isTV
+                ? tv.left + tv.target + 8
+                : 70 * uiScale
+              : 0
+          }
+        />
+      ) : null}
+
+      {chrome.mediaKind === "live" &&
+      chrome.panel === "content" &&
+      !hasBlockingStatus ? (
+        <LiveChannelDrawer
+          items={chrome.selectableItems}
+          currentIndex={chrome.currentIndex}
+          layer={chrome.drawerLayer ?? "channels"}
+          category={
+            selectedCategory ??
+            chrome.selectableItems[chrome.currentIndex]?.subtitle ??
+            "Diğer"
+          }
+          onCategoryChange={setSelectedCategory}
+          onLayerChange={(layer) => chrome.onDrawerLayerChange?.(layer)}
+          onClose={() => chrome.onDismissLiveDrawer?.()}
+          onFavorite={chrome.onToggleFavorite}
+          onSelect={(item) => {
+            const now = Date.now();
+            if (
+              selectedChannelLock.current.id === item.id &&
+              now - selectedChannelLock.current.at < 500
+            )
+              return;
+            selectedChannelLock.current = { id: item.id, at: now };
+            chrome.onSwitchTo(item);
+          }}
+        />
+      ) : null}
+
+      {showChrome && chrome.mediaKind !== "live" ? (
         <InfoCard
           opacity={controlsOpacity}
           portrait={portrait}
@@ -435,14 +522,14 @@ export function PlayerChrome(props: Props) {
           left={infoLeft}
           right={infoRight}
           title={chrome.title}
-          live={chrome.mediaKind === "live"}
+          live={false}
           epgNow={epgNow}
           epgNext={epgNext}
           epgLoading={epgLoading}
         />
       ) : null}
 
-      {showChrome && !portrait ? (
+      {showChrome && !portrait && chrome.mediaKind !== "live" ? (
         <TopModeCluster
           opacity={controlsOpacity}
           top={topY + 1}

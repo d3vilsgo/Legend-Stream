@@ -37,6 +37,9 @@ export type PlayerSelectableItem = {
   subtitle?: string;
   source: string;
   isLive?: boolean;
+  logoUrl?: string;
+  nowPlaying?: string;
+  isFavorite?: boolean;
 };
 export type PlayerMediaKind = "live" | "movie" | "episode" | "download";
 export type PlayerDownloadState = "idle" | "downloading" | "done" | "error";
@@ -51,6 +54,7 @@ type Props = {
   controlsVisible: boolean;
   infoVisible: boolean;
   panel: PlayerPanel;
+  suppressLiveContentPanel?: boolean;
   paused: boolean;
   position: number;
   duration: number;
@@ -516,7 +520,13 @@ export const PlayerChrome = memo(function PlayerChrome(props: Props) {
           </>
         ) : null}
 
-        {props.panel && !props.errorText ? (
+        {props.panel &&
+        !props.errorText &&
+        !(
+          props.mediaKind === "live" &&
+          props.panel === "content" &&
+          props.suppressLiveContentPanel
+        ) ? (
           <PlayerRemoteFocusBoundary scope={`player-panel:${props.panel}`}>
             <View style={panelStyle}>
               <LinearGradient

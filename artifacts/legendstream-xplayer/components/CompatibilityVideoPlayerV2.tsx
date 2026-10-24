@@ -140,6 +140,8 @@ export function CompatibilityVideoPlayer({
     epg,
     isEpgLoading,
     recordWatched,
+    favorites,
+    toggleFavorite,
   } = usePlayer();
   const initialKind = mediaKind ?? inferMediaKind(source);
   const m3uLiveDiagnostic = provider?.type === "m3u" && initialKind === "live";
@@ -188,6 +190,7 @@ export function CompatibilityVideoPlayer({
   const [controlsVisible, setControlsVisible] = useState(true);
   const [infoVisible, setInfoVisible] = useState(true);
   const [panel, setPanel] = useState<PlayerPanel>(null);
+  const [drawerLayer, setDrawerLayer] = useState<"channels" | "categories">("channels");
   useEffect(()=>{if(Platform.isTV)inspectorAction(controlsVisible?"controls-shown":"controls-hidden");},[controlsVisible]);
   useEffect(()=>{if(Platform.isTV)inspectorAction(panel?"panel-open":"panel-closed");},[panel]);
   useEffect(()=>{if(!Platform.isTV)return;inspectorAction("player-mounted");return ()=>inspectorAction("player-unmounted");},[]);
@@ -207,6 +210,7 @@ export function CompatibilityVideoPlayer({
   const [downloadProgress, setDownloadProgress] = useState(0);
   const [retryRevision, setRetryRevision] = useState(0);
   const retryLock = useRef(false);
+  const channelSelectionGeneration = useRef(0);
   const playbackOwner = useRef<object>({});
   const surfaceSequence = useRef(0);
   const surfaceOwner = useMemo(() => ({ id: ++surfaceSequence.current }), [currentSource, retryRevision, codecMode, provider?.id]);
@@ -350,7 +354,17 @@ export function CompatibilityVideoPlayer({
     revealMediaInfo();
   }, [clearControlsTimer, clearInfoTimer, controlsVisible, panel, revealControls, revealMediaInfo]);
 
+  const dismissLiveDrawer = useCallback(() => {
+    clearControlsTimer();
+    clearInfoTimer();
+    setPanel(null);
+    setDrawerLayer("channels");
+    setControlsVisible(false);
+    setInfoVisible(false);
+  }, [clearControlsTimer, clearInfoTimer]);
+
   const togglePanel = useCallback((next: Exclude<PlayerPanel, null>) => {
+    if (next === "content") setDrawerLayer("channels");
     setPanel((current) => current === next ? null : next);
     revealControls(true);
     revealMediaInfo();
@@ -509,6 +523,9 @@ export function CompatibilityVideoPlayer({
         subtitle: channel.category,
         source: channel.streamUrl,
         isLive: true,
+        logoUrl: channel.logoUrl,
+        nowPlaying: channel.nowPlaying,
+        isFavorite: favorites.includes(channel.id),
       }));
     }
     if (currentKind === "episode" && episodeQueue) {
@@ -547,7 +564,7 @@ export function CompatibilityVideoPlayer({
       }));
     }
     return [];
-  }, [cachedVodItems, currentKind, episodeQueue, legacyVodQueue, liveQueue, provider]);
+  }, [cachedVodItems, currentKind, episodeQueue, favorites, legacyVodQueue, liveQueue, provider]);
 
   const currentIndex = useMemo(
     () => currentKind === "live"
@@ -560,11 +577,13 @@ export function CompatibilityVideoPlayer({
   const canNavigate = selectableItems.length > 1 && currentIndex >= 0;
 
   const switchTo = useCallback(async (item: PlayerSelectableItem, reason = "explicit-selection") => {
+    const requestGeneration = ++channelSelectionGeneration.current;
     beginPlaybackAttempt((provider?.type ?? "unknown") as ProviderKind, item.isLive);
     const traceId = getActiveStalkerTraceId();
     if (traceId) traceStalker("PLAYER_SOURCE_TRANSITION", { traceId, kind: item.isLive ? "live" : inferMediaKind(item.source), previousFingerprint: fingerprintPlaybackSource(effectiveUri || currentSource), nextFingerprint: fingerprintPlaybackSource(item.source), previousItemId: tracedItemId.current ?? undefined, nextItemId: item.id, reason });
     tracedItemId.current = item.id;
     await persistProgress();
+    if (requestGeneration !== channelSelectionGeneration.current || exitStarted.current) return;
     const kind: PlayerMediaKind = item.isLive ? "live" : inferMediaKind(item.source);
     const previous=playbackRef.current;
     const episode=episodeQueue?.items.find(value=>value.id===item.id&&value.url===item.source);
@@ -606,10 +625,9 @@ export function CompatibilityVideoPlayer({
     setTextTrack(undefined);
     setStartupPending(true);
     resumedSource.current = null;
-    if (item.isLive) void recordWatched(item.id);
     revealControls();
     revealMediaInfo();
-  }, [currentSource, effectiveUri, episodeQueue, persistProgress, provider, recordWatched, revealControls, revealMediaInfo]);
+  }, [currentSource, effectiveUri, episodeQueue, persistProgress, provider, revealControls, revealMediaInfo]);
 
   const moveRelative = useCallback((delta: number) => {
     if (!canNavigate) return;
@@ -622,6 +640,7 @@ export function CompatibilityVideoPlayer({
   const exitPlayer = useCallback(async () => {
     if (exitStarted.current) return;
     exitStarted.current = true;
+    channelSelectionGeneration.current += 1;
     markPlaybackEvent("PLAYER_EXIT", performanceAttempt);
     orientation.beginExit();
     clearControlsTimer();
@@ -642,6 +661,7 @@ export function CompatibilityVideoPlayer({
   useEffect(() => {
     const handleBack = () => {
       if (errorRef.current) { void exitPlayer(); return true; }
+      if (currentKind === "live" && panel === "content" && drawerLayer === "categories") { setDrawerLayer("channels"); return true; }
       const target = advancePlayerBack(backSnapshot.current,Platform.isTV);
       if(Platform.isTV) inspectorAction(target === "panel" ? "back-panel" : target === "controls" ? "back-controls" : "back-exit");
       if (target === "controls") {
@@ -660,7 +680,7 @@ export function CompatibilityVideoPlayer({
     const back = BackHandler.addEventListener("hardwareBackPress", handleBack);
     const native = Platform.isTV ? subscribeTvRemote(({key}) => {if(key==="back") handleBack();}) : undefined;
     return () => {back.remove();native?.remove();};
-  }, [exitPlayer, panel, revealControls, controlsVisible, clearControlsTimer, clearInfoTimer]);
+  }, [exitPlayer, panel, drawerLayer, currentKind, revealControls, controlsVisible, clearControlsTimer, clearInfoTimer]);
 
   const seekToRatio = useCallback((ratio: number) => {
     if (currentKind === "live") return;
@@ -787,10 +807,17 @@ export function CompatibilityVideoPlayer({
     if (normalizedDuration > 0) setDuration(normalizedDuration);
   }, []);
 
+  const successfulLiveHistory = useRef<number | null>(null);
   const handlePlaying = useCallback(() => {
     setStartupPending(false);
     setPaused(false);
-  }, []);
+    if (currentKind === "live" && currentLiveIdentity &&
+      provider?.id === currentLiveIdentity.providerId &&
+      successfulLiveHistory.current !== surfaceOwner.id) {
+      successfulLiveHistory.current = surfaceOwner.id;
+      void recordWatched(currentLiveIdentity.channelId);
+    }
+  }, [currentKind, currentLiveIdentity, provider?.id, recordWatched, surfaceOwner]);
 
   const handlePaused = useCallback(() => {
     setPaused(true);
@@ -881,6 +908,10 @@ export function CompatibilityVideoPlayer({
           epgNow={currentEpg.now}
           epgNext={currentEpg.next}
           epgLoading={currentKind === "live" && isEpgLoading}
+          drawerLayer={drawerLayer}
+          onDrawerLayerChange={setDrawerLayer}
+          onDismissLiveDrawer={dismissLiveDrawer}
+          onToggleFavorite={currentKind === "live" ? (item) => { void toggleFavorite(item.id); } : undefined}
           mediaKind={currentKind}
           codecMode={codecMode}
           fitMode={fit}
