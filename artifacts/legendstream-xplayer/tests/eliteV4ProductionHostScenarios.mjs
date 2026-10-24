@@ -925,3 +925,5 @@ await import("./eliteV4PersistenceProductionScenarios.mjs");
 await import("./eliteV4LibraryProductionScenarios.mjs");
 
 await import("./eliteV4SettingsProductionScenarios.mjs");
+
+await import("./eliteV4StalkerRuntimeScenarios.mjs");

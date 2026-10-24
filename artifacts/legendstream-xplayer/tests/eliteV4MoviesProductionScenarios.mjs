@@ -74,7 +74,7 @@ try {
             "@/components/tvPreview/TVPreviewFocus": `import {Runtime} from 'live-runtime';const restoreFocus=async id=>{Runtime.restored.push(id);return true;};const registerBackAction=fn=>{Runtime.back=fn;return()=>{Runtime.back=null;};};export function useOptionalTVPreviewFocus(){return{enabled:Runtime.previewEnabled,restoreFocus,registerBackAction};}export const TVPreviewPressable='PreviewPressable';`,
             "@react-native-async-storage/async-storage": `export default{getItem:async()=>null};`,
             "@/components/NativeVideoPlayer": `export const NativeVideoPlayer='NativeVideoPlayer';`,
-            "@/lib/catalogRuntime": `import {Runtime} from 'live-runtime';export function resolveCatalogPlaybackSource(...args){Runtime.resolves.push(args);return Runtime.resolve(...args);}`,
+            "@/lib/catalogRuntime": `import {Runtime} from 'live-runtime';export function resolveCatalogPlaybackSource(...args){Runtime.resolves.push(args);return Runtime.resolve(...args);}export async function resolveCatalogRuntimeSource(source,provider,signal){Runtime.runtimeResolves??=[];Runtime.runtimeResolves.push({source,provider,signal});return (await Runtime.resolve({kind:"live",item:{streamUrl:source}},provider,signal)).url;}`,
           };
           build.onResolve({ filter: /.*/ }, (args) =>
             Object.hasOwn(mocks, args.path)

@@ -25,7 +25,10 @@ import { ActivityIndicator, Text, View } from "react-native";
 import { usePlayer, type Channel } from "@/context/PlayerContext";
 import { useCatalogSync } from "@/context/CatalogSyncContext";
 import { NativeVideoPlayer } from "@/components/NativeVideoPlayer";
-import { resolveCatalogPlaybackSource } from "@/lib/catalogRuntime";
+import {
+  resolveCatalogPlaybackSource,
+  resolveCatalogRuntimeSource,
+} from "@/lib/catalogRuntime";
 import {
   createEliteHomeSections,
   type EliteHomeItem,
@@ -79,6 +82,18 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
   const routeRef = useRef(route);
   routeRef.current = route;
   const [playback, setPlayback] = useState<ActivePlayback | null>(null);
+  const activePlayback = useRef<ActivePlayback | null>(playback);
+  activePlayback.current = playback;
+  const openLock = useRef(false),
+    openAbort = useRef<AbortController | null>(null);
+  const commitPlayback = (value: ActivePlayback) => {
+    activePlayback.current = value;
+    setPlayback(value);
+  };
+  const clearPlayback = () => {
+    activePlayback.current = null;
+    setPlayback(null);
+  };
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const progress = historyEntries;
   const [detail, setDetail] = useState<{
@@ -107,15 +122,18 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
   useEffect(
     () => () => {
       libraryAbort.current?.abort();
+      openAbort.current?.abort();
     },
     [],
   );
   useEffect(() => {
     requestIdRef.current += 1;
+    openAbort.current?.abort();
+    openLock.current = false;
     libraryAbort.current?.abort();
     libraryLock.current = false;
     setDetail(null);
-    setPlayback(null);
+    clearPlayback();
   }, [provider]);
   const movies =
     provider?.type === "stalker" ? [] : (currentSnapshot?.movies ?? []);
@@ -234,7 +252,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
           ))
       )
         return;
-      setPlayback({
+      commitPlayback({
         url,
         title: entry.title,
         subtitle: entry.subtitle,
@@ -289,7 +307,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
                   ? "direct"
                   : "canonical",
               };
-      setPlayback({
+      commitPlayback({
         url,
         title: movie.title,
         kind: "movie",
@@ -311,7 +329,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
     requestIdRef.current += 1;
     setPlaybackError(null);
     returnFocusIdRef.current = focus.focusedId ?? "v4-series-hero";
-    setPlayback({
+    commitPlayback({
       url: value.url,
       title: value.title,
       subtitle: value.subtitle,
@@ -328,6 +346,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
       void resume(item.progress, originFocusId ?? focus.focusedId ?? "hero");
       return;
     }
+    if (openLock.current || activePlayback.current) return;
     const requestId = ++requestIdRef.current;
     if (item.kind === "series") {
       if (provider && item.series)
@@ -344,6 +363,10 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
     }
     if (!provider) return;
     const ownerId = provider.id;
+    const abort = new AbortController();
+    openAbort.current?.abort();
+    openAbort.current = abort;
+    openLock.current = true;
     returnFocusIdRef.current = originFocusId ?? focus.focusedId ?? "hero";
     setPlaybackError(null);
     try {
@@ -351,13 +374,16 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
         const resolved = await resolveCatalogPlaybackSource(
           { kind: "movie", item: item.movie },
           provider,
+          abort.signal,
         );
         if (
+          abort.signal.aborted ||
+          providerRef.current !== provider ||
           providerIdRef.current !== ownerId ||
           requestIdRef.current !== requestId
         )
           return;
-        setPlayback({
+        commitPlayback({
           url: resolved.url,
           title: item.title,
           subtitle: item.subtitle,
@@ -380,21 +406,42 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
       }
       const channel: Channel | undefined = item.channel;
       if (!channel || channel.providerId !== ownerId) return;
+      const session =
+        provider.type === "stalker"
+          ? readCurrentStalkerProductSession({ ...provider, type: "stalker" })
+          : null;
       const url =
         provider.type === "stalker"
-          ? channel.streamUrl
+          ? await resolveCatalogRuntimeSource(
+              channel.streamUrl,
+              provider,
+              abort.signal,
+            )
           : (
               await resolveCatalogPlaybackSource(
                 { kind: "live", item: channel },
                 provider,
+                abort.signal,
               )
             ).url;
+      if (!/^(https?|rtsp|rtmp):\/\//i.test(url))
+        throw new Error("LIVE_SOURCE_UNRESOLVED");
       if (
+        session &&
+        !isCurrentStalkerProductSession(
+          { ...provider, type: "stalker" },
+          session.session,
+        )
+      )
+        return;
+      if (
+        abort.signal.aborted ||
+        providerRef.current !== provider ||
         providerIdRef.current !== ownerId ||
         requestIdRef.current !== requestId
       )
         return;
-      setPlayback({
+      commitPlayback({
         url,
         title: channel.name,
         subtitle: channel.category,
@@ -413,6 +460,8 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
         setPlaybackError(
           "İçerik başlatılamadı. Sağlayıcı kaynağını kontrol edip yeniden deneyin.",
         );
+    } finally {
+      if (requestIdRef.current === requestId) openLock.current = false;
     }
   };
 
@@ -429,6 +478,8 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
   ) => {
     if (next === "history" || next === "favorites")
       libraryReturnRef.current = returnTo;
+    openAbort.current?.abort();
+    openLock.current = false;
     requestIdRef.current += 1;
     libraryAbort.current?.abort();
     libraryLock.current = false;
@@ -480,7 +531,11 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
                     ? "v4-movies-hero"
                     : "hero"
         }
-        liveAvailable={provider.type === "xtream" || provider.type === "m3u"}
+        liveAvailable={
+          provider.type === "xtream" ||
+          provider.type === "m3u" ||
+          provider.type === "stalker"
+        }
         onNavigate={navigate}
       />
       <View
@@ -524,12 +579,15 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
             active={!playback && !detail}
             onBack={() => navigate("home")}
             onOpen={(channel) =>
-              void openItem({
-                id: `live-${channel.id}`,
-                kind: "live",
-                title: channel.name,
-                channel,
-              })
+              void openItem(
+                {
+                  id: `live-${channel.id}`,
+                  kind: "live",
+                  title: channel.name,
+                  channel,
+                },
+                `v4-live-channel:${channel.id}`,
+              )
             }
           />
         ) : route === "movies" ? (
@@ -558,7 +616,7 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
               requestIdRef.current += 1;
               setPlaybackError(null);
               returnFocusIdRef.current = origin;
-              setPlayback({
+              commitPlayback({
                 url: movie.url,
                 title: movie.title,
                 subtitle: movie.subtitle,
@@ -579,7 +637,25 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
             providerId={provider.id}
             providerType={provider.type}
             loading={isSyncing || (!currentSnapshot?.ready && !hasUsableCache)}
-            onOpen={(item) => void openItem(item)}
+            onOpen={(item, origin) => {
+              if (
+                origin &&
+                item.kind === "movie" &&
+                item.movie &&
+                !item.progress &&
+                provider
+              ) {
+                openDetail(
+                  {
+                    providerId: provider.id,
+                    kind: "movie",
+                    catalogId: String(item.movie.stream_id),
+                    title: item.title,
+                  },
+                  origin,
+                );
+              } else void openItem(item, origin ?? "hero");
+            }}
             isFavorite={(item) =>
               item.channel
                 ? (favorites ?? []).includes(item.channel.id)
@@ -721,16 +797,22 @@ function EliteV4TvShellContent({ onReturnToV3 }: { onReturnToV3: () => void }) {
             autoFullscreen
             allowDownload={playback.kind === "movie"}
             onFullscreenExit={() => {
+              if (activePlayback.current !== playback) return;
+              const origin = returnFocusIdRef.current,
+                exitRoute = routeRef.current;
               requestIdRef.current += 1;
-              setPlayback(null);
+              clearPlayback();
               requestAnimationFrame(() => {
                 if (
+                  !activePlayback.current &&
+                  providerRef.current === provider &&
+                  routeRef.current === exitRoute &&
                   !playback.detailOwner &&
                   !(
                     playback.kind === "episode" && routeRef.current === "series"
                   )
                 )
-                  focus.focus(returnFocusIdRef.current);
+                  focus.focus(origin);
               });
             }}
           />

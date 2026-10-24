@@ -58,6 +58,8 @@ export function EliteV4LiveView({
   onOpen,
   onBack,
   active = true,
+  onSelected,
+  capabilityNote,
 }: {
   page: LivePage;
   categories: readonly Category[];
@@ -67,10 +69,12 @@ export function EliteV4LiveView({
   onSearch: (value: string) => void;
   epgByChannel: ReadonlyMap<string, readonly EpgProgram[]>;
   favorites: readonly string[];
-  onFavorite: (id: string) => void;
+  onFavorite: (id: string) => void | Promise<void>;
   onOpen: (channel: Channel) => void;
   onBack: () => void;
   active?: boolean;
+  onSelected?: (channel: Channel) => void;
+  capabilityNote?: string;
 }) {
   const dimensions = useWindowDimensions();
   const [width, setWidth] = useState(
@@ -98,9 +102,67 @@ export function EliteV4LiveView({
     ...categories.filter((item) => item.id !== "__all__"),
   ];
   const firstCategory = `v4-live-category:${categoriesWithAll[0].id}`;
-  const current = selected
-    ? selectProgramsAt(epgByChannel.get(selected.id), clock).now
-    : undefined;
+  const wide = width >= 820 && dimensions.height >= 480;
+  const currentCategoryFocus = `v4-live-category:${category}`;
+  const favoriteLock = useRef(false);
+  const selectionRef = useRef(selected?.id ?? null);
+  selectionRef.current = selected?.id ?? null;
+  const latest = useRef({
+    active,
+    category,
+    search,
+    items: page.items,
+    onOpen,
+    onFavorite,
+    onSelected,
+  });
+  latest.current = {
+    active,
+    category,
+    search,
+    items: page.items,
+    onOpen,
+    onFavorite,
+    onSelected,
+  };
+  const currentRow = (item: Channel) => {
+    const now = latest.current;
+    return now.active && now.category === category && now.search === search
+      ? now.items.find(
+          (row) => row.id === item.id && row.providerId === item.providerId,
+        )
+      : undefined;
+  };
+  const open = (item: Channel, requireSelection = false) => {
+    if ((requireSelection || Platform.isTV) && selectionRef.current !== item.id)
+      return;
+    const row = currentRow(item);
+    if (row) {
+      setSelectedId(row.id);
+      latest.current.onOpen(row);
+    }
+  };
+  const favorite = (item: Channel) => {
+    const row = currentRow(item);
+    if (!row || favoriteLock.current || selectionRef.current !== item.id)
+      return;
+    favoriteLock.current = true;
+    try {
+      void Promise.resolve(latest.current.onFavorite(row.id))
+        .catch(() => undefined)
+        .finally(() => {
+          favoriteLock.current = false;
+        });
+    } catch {
+      favoriteLock.current = false;
+    }
+  };
+
+  const programs = selected
+    ? selectProgramsAt(epgByChannel.get(selected.id), clock)
+    : {};
+  const current = programs.now,
+    next = programs.next;
   const back = () => {
     if (searchOpen) {
       setSearchOpen(false);
@@ -158,7 +220,14 @@ export function EliteV4LiveView({
     <EliteV4FocusButton
       focusId={id}
       region="content"
-      onPress={action}
+      onPress={() => {
+        if (
+          latest.current.active &&
+          latest.current.category === category &&
+          latest.current.search === search
+        )
+          action();
+      }}
       neighbors={neighbors}
       disabled={disabled || !active}
       accessibilityLabel={label}
@@ -173,6 +242,97 @@ export function EliteV4LiveView({
         {label}
       </Text>
     </EliteV4FocusButton>
+  );
+  const categoryPanel = (
+    <ScrollView
+      ref={categoryList}
+      horizontal={!wide}
+      showsHorizontalScrollIndicator={false}
+      style={
+        wide
+          ? { width: Math.min(190, width * 0.21), flexGrow: 0 }
+          : { flexGrow: 0, maxHeight: 64, marginBottom: 12 }
+      }
+      contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
+    >
+      {categoriesWithAll.map((item, index) => (
+        <EliteV4FocusButton
+          key={item.id}
+          focusId={`v4-live-category:${item.id}`}
+          region="content"
+          onLayout={(event) => {
+            categoryOffsets.current[item.id] = wide
+              ? event.nativeEvent.layout.y
+              : event.nativeEvent.layout.x;
+          }}
+          onFocused={() =>
+            categoryList.current?.scrollTo({
+              ...(wide
+                ? {
+                    y: Math.max(0, (categoryOffsets.current[item.id] ?? 0) - 6),
+                  }
+                : {
+                    x: Math.max(0, (categoryOffsets.current[item.id] ?? 0) - 6),
+                  }),
+              animated: true,
+            })
+          }
+          selected={category === item.id}
+          disabled={!active}
+          neighbors={
+            wide
+              ? {
+                  left: "sidebar-live",
+                  right: firstChannel,
+                  up: index
+                    ? `v4-live-category:${categoriesWithAll[index - 1].id}`
+                    : "v4-live-search",
+                  down: categoriesWithAll[index + 1]
+                    ? `v4-live-category:${categoriesWithAll[index + 1].id}`
+                    : firstChannel,
+                }
+              : {
+                  left: index
+                    ? `v4-live-category:${categoriesWithAll[index - 1].id}`
+                    : "sidebar-live",
+                  right: categoriesWithAll[index + 1]
+                    ? `v4-live-category:${categoriesWithAll[index + 1].id}`
+                    : undefined,
+                  up: "v4-live-search",
+                  down: firstChannel,
+                }
+          }
+          onPress={() => {
+            if (
+              latest.current.active &&
+              latest.current.category === category &&
+              latest.current.search === search
+            )
+              onCategory(item.id);
+          }}
+          accessibilityLabel={item.name}
+          style={{
+            ...actionStyle,
+            maxWidth: 220,
+            backgroundColor:
+              category === item.id
+                ? theme.color.accentSoft
+                : theme.color.surface,
+          }}
+        >
+          <Text
+            numberOfLines={1}
+            style={{
+              color:
+                category === item.id ? theme.color.accent : theme.color.muted,
+              fontSize: 13,
+            }}
+          >
+            {item.name}
+          </Text>
+        </EliteV4FocusButton>
+      ))}
+    </ScrollView>
   );
   return (
     <View
@@ -236,16 +396,26 @@ export function EliteV4LiveView({
           down: firstCategory,
         })}
       </View>
+      {capabilityNote ? (
+        <Text
+          style={{ color: theme.color.quiet, fontSize: 11, marginBottom: 6 }}
+        >
+          {capabilityNote}
+        </Text>
+      ) : null}
       {searchOpen ? (
         <TextInput
           ref={input}
           value={search}
-          onChangeText={onSearch}
+          onChangeText={(value) => {
+            if (latest.current.active) onSearch(value);
+          }}
           accessibilityLabel="V4 kanal arama"
           placeholder="Kanal adı…"
           placeholderTextColor={theme.color.quiet}
           returnKeyType="search"
           onSubmitEditing={() => {
+            if (!latest.current.active) return;
             input.current?.blur();
             setSearchOpen(false);
             focus.focus("v4-live-search");
@@ -262,64 +432,9 @@ export function EliteV4LiveView({
           }}
         />
       ) : null}
-      <ScrollView
-        ref={categoryList}
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        style={{ flexGrow: 0, maxHeight: 64, marginBottom: 12 }}
-        contentContainerStyle={{ gap: 8, paddingVertical: 4 }}
-      >
-        {categoriesWithAll.map((item, index) => (
-          <EliteV4FocusButton
-            key={item.id}
-            focusId={`v4-live-category:${item.id}`}
-            region="content"
-            onLayout={(event) => {
-              categoryOffsets.current[item.id] = event.nativeEvent.layout.x;
-            }}
-            onFocused={() =>
-              categoryList.current?.scrollTo({
-                x: Math.max(0, (categoryOffsets.current[item.id] ?? 0) - 6),
-                animated: true,
-              })
-            }
-            selected={category === item.id}
-            disabled={!active}
-            neighbors={{
-              left: index
-                ? `v4-live-category:${categoriesWithAll[index - 1].id}`
-                : "sidebar-live",
-              right: categoriesWithAll[index + 1]
-                ? `v4-live-category:${categoriesWithAll[index + 1].id}`
-                : undefined,
-              up: "v4-live-search",
-              down: firstChannel,
-            }}
-            onPress={() => onCategory(item.id)}
-            accessibilityLabel={item.name}
-            style={{
-              ...actionStyle,
-              maxWidth: 220,
-              backgroundColor:
-                category === item.id
-                  ? theme.color.accentSoft
-                  : theme.color.surface,
-            }}
-          >
-            <Text
-              numberOfLines={1}
-              style={{
-                color:
-                  category === item.id ? theme.color.accent : theme.color.muted,
-                fontSize: 13,
-              }}
-            >
-              {item.name}
-            </Text>
-          </EliteV4FocusButton>
-        ))}
-      </ScrollView>
-      <View style={{ flex: 1, minHeight: 0, flexDirection: "row", gap: 20 }}>
+      {!wide ? categoryPanel : null}
+      <View style={{ flex: 1, minHeight: 0, flexDirection: "row", gap: 12 }}>
+        {wide ? categoryPanel : null}
         <View style={{ flex: 1, minWidth: 0 }}>
           <FlatList
             ref={list}
@@ -339,7 +454,9 @@ export function EliteV4LiveView({
             }}
             onEndReached={() => {
               if (
-                active &&
+                latest.current.active &&
+                latest.current.category === category &&
+                latest.current.search === search &&
                 page.hasMore &&
                 !page.loadingInitial &&
                 !page.loadingMore &&
@@ -361,23 +478,27 @@ export function EliteV4LiveView({
                   disabled={!active}
                   selected={selectedId === item.id}
                   neighbors={{
-                    left: "sidebar-live",
+                    left: wide ? currentCategoryFocus : "sidebar-live",
                     right: width >= 760 ? "v4-live-watch" : undefined,
                     up: index
                       ? channelFocusId(page.items[index - 1].id)
-                      : firstCategory,
+                      : currentCategoryFocus,
                     down: page.items[index + 1]
                       ? channelFocusId(page.items[index + 1].id)
                       : "v4-live-status",
                   }}
                   onFocused={() => {
+                    const row = currentRow(item);
+                    if (!row) return;
+                    selectionRef.current = row.id;
+                    latest.current.onSelected?.(row);
                     setSelectedId(item.id);
                     list.current?.scrollToOffset({
                       offset: index * (rowHeight + 8),
                       animated: true,
                     });
                   }}
-                  onPress={() => onOpen(item)}
+                  onPress={() => open(item)}
                   accessibilityLabel={`${item.name}, ${now?.title || "Canlı yayın"}`}
                   style={{
                     height: rowHeight,
@@ -501,7 +622,7 @@ export function EliteV4LiveView({
                 favorites.includes(selected.id)
                   ? "Favoriden çıkar"
                   : "Favoriye ekle",
-                () => onFavorite(selected.id),
+                () => favorite(selected),
                 {
                   left: "sidebar-live",
                   up: "v4-live-status",
@@ -513,7 +634,8 @@ export function EliteV4LiveView({
         {width >= 760 ? (
           <View
             style={{
-              width: Math.min(320, width * 0.32),
+              width: Math.min(300, width * 0.3),
+              maxHeight: Math.max(200, dimensions.height - 130),
               padding: 20,
               borderWidth: 1,
               borderColor: theme.color.border,
@@ -529,7 +651,7 @@ export function EliteV4LiveView({
                 marginBottom: 16,
               }}
             >
-              ŞİMDİ YAYINDA
+              ŞİMDİ / SONRAKİ
             </Text>
             <Text
               numberOfLines={2}
@@ -554,11 +676,34 @@ export function EliteV4LiveView({
                   ? "Program bilgisi bulunmuyor"
                   : "Kumandayla kanallar arasında gezinin.")}
             </Text>
+            {current ? (
+              <Text style={{ color: theme.color.quiet, fontSize: 12 }}>
+                {new Date(current.start).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}{" "}
+                –{" "}
+                {new Date(current.end).toLocaleTimeString([], {
+                  hour: "2-digit",
+                  minute: "2-digit",
+                })}
+              </Text>
+            ) : null}
+            <Text
+              numberOfLines={2}
+              style={{
+                color: theme.color.muted,
+                fontSize: 13,
+                marginVertical: 10,
+              }}
+            >
+              Sonraki: {next?.title || "Program bilgisi bulunmuyor"}
+            </Text>
             {button(
               "v4-live-watch",
               "Canlı yayını izle",
               () => {
-                if (selected) onOpen(selected);
+                if (selected) open(selected, true);
               },
               {
                 left: selected ? channelFocusId(selected.id) : firstChannel,
@@ -573,7 +718,7 @@ export function EliteV4LiveView({
                 ? "Favoriden çıkar"
                 : "Favoriye ekle",
               () => {
-                if (selected) onFavorite(selected.id);
+                if (selected) favorite(selected);
               },
               {
                 left: selected ? channelFocusId(selected.id) : firstChannel,
@@ -597,23 +742,58 @@ export function EliteV4LiveCatalog({
   onBack: () => void;
   active?: boolean;
 }) {
-  const { provider, epgByChannel, favorites, toggleFavorite } = usePlayer();
-  const { snapshot, lastSuccessfulAt } = useCatalogSync();
+  const { provider, epgByChannel, favorites, toggleFavorite, refreshEpg } =
+    usePlayer();
+  const {
+    snapshot,
+    lastSuccessfulAt,
+    syncState,
+    isSyncing,
+    isRefreshing,
+    refreshCatalog,
+  } = useCatalogSync();
+  const [reloadRevision, setReloadRevision] = useState(0);
+  const [refreshFailed, setRefreshFailed] = useState(false);
+  const refreshLock = useRef(false);
+  const selectionTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [category, setCategory] = useState("__all__");
   const [search, setSearch] = useState("");
   const [categoryResult, setCategoryResult] = useState<{
     owner: string;
     items: Category[];
+    failed?: boolean;
   } | null>(null);
-  const supported = provider?.type === "xtream" || provider?.type === "m3u";
+  const owner = useRef({ provider, active, category, search, alive: true });
+  owner.current = { provider, active, category, search, alive: true };
+  useEffect(() => {
+    owner.current.alive = true;
+    return () => {
+      owner.current.alive = false;
+    };
+  }, []);
+  const stalker = provider?.type === "stalker";
+  const supported =
+    provider?.type === "xtream" || provider?.type === "m3u" || stalker;
+  const ready =
+    !stalker ||
+    (snapshot.providerId === provider?.id &&
+      (snapshot.ready ||
+        [
+          "ready",
+          "cache-ready",
+          "error",
+          "credentials-required",
+          "cancelled",
+        ].includes(syncState?.phase ?? "")));
   const page = useCatalogPage({
     provider,
-    providerType: supported ? (provider.type as "xtream" | "m3u") : null,
+    providerType:
+      supported && !stalker ? (provider.type as "xtream" | "m3u") : null,
     kind: "live",
     categoryId: category,
     search,
     sort: "default",
-    enabled: supported,
+    enabled: supported && ready,
     catalogRevision: lastSuccessfulAt ?? 0,
     snapshotCount:
       provider &&
@@ -639,27 +819,85 @@ export function EliteV4LiveCatalog({
           });
       })
       .catch(() => {
-        if (!cancelled) setCategoryResult({ owner, items: [] });
+        if (!cancelled) setCategoryResult({ owner, items: [], failed: true });
       });
     return () => {
       cancelled = true;
     };
-  }, [provider?.id, supported, lastSuccessfulAt]);
+  }, [provider?.id, supported, lastSuccessfulAt, ready, reloadRevision]);
   const epgSeedKey = page.items
     .slice(0, EPG_PAGED_SEED_LIMIT)
     .map((item) => item.id)
     .join("|");
   useEffect(() => {
-    if (provider && supported && epgSeedKey)
+    if (provider && supported && epgSeedKey) {
       registerEpgChannels(
         provider.id,
         page.items.slice(0, EPG_PAGED_SEED_LIMIT),
       );
-  }, [provider?.id, supported, epgSeedKey]);
+      if (stalker && active) {
+        const timer = setTimeout(() => {
+          void refreshEpg(provider.id);
+        }, 250);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [provider?.id, supported, epgSeedKey, active]);
+  useEffect(
+    () => () => {
+      if (selectionTimer.current) clearTimeout(selectionTimer.current);
+    },
+    [provider?.id, active, category, search],
+  );
   if (!provider || !supported) return null;
   return (
     <EliteV4LiveView
-      page={page}
+      page={
+        stalker
+          ? {
+              ...page,
+              loadingInitial:
+                page.loadingInitial ||
+                (!ready &&
+                  !refreshFailed &&
+                  !["error", "credentials-required"].includes(
+                    syncState?.phase ?? "",
+                  )),
+              error:
+                page.error ||
+                refreshFailed ||
+                (categoryResult?.owner === provider.id && categoryResult.failed)
+                  ? "LIVE_UNAVAILABLE"
+                  : null,
+              reload: () => {
+                if (refreshLock.current) return;
+                refreshLock.current = true;
+                setRefreshFailed(false);
+                void Promise.resolve(refreshCatalog())
+                  .then(() => {
+                    if (
+                      !owner.current.alive ||
+                      owner.current.provider !== provider ||
+                      !owner.current.active
+                    )
+                      return;
+                    setReloadRevision((v) => v + 1);
+                    page.reload();
+                  })
+                  .catch(() => {
+                    if (
+                      owner.current.alive &&
+                      owner.current.provider === provider
+                    )
+                      setRefreshFailed(true);
+                  })
+                  .finally(() => {
+                    refreshLock.current = false;
+                  });
+              },
+            }
+          : page
+      }
       categories={
         categoryResult?.owner === provider.id ? categoryResult.items : []
       }
@@ -669,8 +907,32 @@ export function EliteV4LiveCatalog({
       onSearch={setSearch}
       epgByChannel={epgByChannel}
       favorites={favorites}
-      onFavorite={(id) => {
-        void toggleFavorite(id);
+      onFavorite={(id) => toggleFavorite(id)}
+      capabilityNote={
+        stalker
+          ? "Stalker: arama yalnız önbelleğe alınmış kanallarda; EPG ve sayfalama portal desteğine bağlıdır. Önizleme EPG/metadata ile sunulur."
+          : undefined
+      }
+      onSelected={(channel) => {
+        if (!stalker || !active) return;
+        if (selectionTimer.current) clearTimeout(selectionTimer.current);
+        selectionTimer.current = setTimeout(() => {
+          if (
+            !owner.current.alive ||
+            !owner.current.active ||
+            owner.current.provider !== provider ||
+            owner.current.category !== category ||
+            owner.current.search !== search
+          )
+            return;
+          registerEpgChannels(provider.id, [
+            channel,
+            ...page.items
+              .filter((row) => row.id !== channel.id)
+              .slice(0, EPG_PAGED_SEED_LIMIT - 1),
+          ]);
+          void refreshEpg(provider.id);
+        }, 200);
       }}
       onOpen={onOpen}
       onBack={onBack}

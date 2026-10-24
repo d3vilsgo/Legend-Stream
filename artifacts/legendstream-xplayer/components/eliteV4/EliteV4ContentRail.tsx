@@ -23,7 +23,7 @@ export function EliteV4ContentRail({
   title: string;
   railId?: string;
   items: readonly EliteHomeItem[];
-  onOpen: (item: EliteHomeItem) => void;
+  onOpen: (item: EliteHomeItem, origin?: string) => void;
   cardWidth?: number;
   previousRail?: { id: string; items: readonly EliteHomeItem[] };
   nextRail?: { id: string; items: readonly EliteHomeItem[] };
@@ -110,7 +110,7 @@ export function EliteV4ContentRail({
                         ? `${nextRail.id}-${Math.min(index, nextRail.items.length - 1)}`
                         : undefined,
               }}
-              onPress={() => onOpen(item)}
+              onPress={() => onOpen(item, `${railId}-${index}`)}
               onFocused={() => {
                 onFocused?.();
                 scrollRef.current?.scrollTo({

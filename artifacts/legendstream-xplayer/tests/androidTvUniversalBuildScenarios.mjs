@@ -51,3 +51,5 @@ assert.match(abiPlugin, /def legendStreamAbiSplitEnabled = project\.hasProperty\
 assert.match(abiPlugin, /if \(legendStreamAbiSplitEnabled\)[\s\S]*?output\.versionCodeOverride/);
 
 console.log("Native Android TV and universal APK build contract scenarios passed.");
+
+await import("./eliteV4RcArtifactScenarios.mjs");

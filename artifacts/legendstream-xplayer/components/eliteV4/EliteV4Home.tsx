@@ -22,7 +22,7 @@ export function EliteV4Home({
   providerId: string;
   providerType: string;
   loading: boolean;
-  onOpen: (item: EliteHomeItem) => void;
+  onOpen: (item: EliteHomeItem, origin?: string) => void;
   onFavorite?: (item: EliteHomeItem) => void;
   isFavorite?: (item: EliteHomeItem) => boolean;
   onProgressInfo?: (item: EliteHomeItem, origin: string) => void;

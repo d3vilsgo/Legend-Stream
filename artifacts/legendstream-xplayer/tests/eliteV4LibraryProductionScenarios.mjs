@@ -84,7 +84,7 @@ try {
             "@/components/tvPreview/TVPreviewFocus": `import {Runtime} from 'live-runtime';const restoreFocus=async id=>{Runtime.restored.push(id);return true;};const registerBackAction=fn=>{Runtime.back=fn;return()=>{Runtime.back=null;};};export function useOptionalTVPreviewFocus(){return{enabled:Runtime.previewEnabled,restoreFocus,registerBackAction};}export const TVPreviewPressable='PreviewPressable',TVPreviewFocusRegion='Region',TVPreviewControls='Controls';const pushFocusScope=id=>{Runtime.scopes.push(id);return()=>Runtime.scopes.pop();};export function useTVPreviewFocus(){return{enabled:true,nativeScope:'series-info',pushFocusScope,registerBackAction,restoreFocus,getFocusedEntry:()=>Runtime.focused?{id:Runtime.focused}:null,modalShown:async id=>Runtime.shown.push(id)};}`,
             "@react-native-async-storage/async-storage": `export default{getItem:async()=>null};`,
             "@/components/NativeVideoPlayer": `export const NativeVideoPlayer='NativeVideoPlayer';`,
-            "@/lib/catalogRuntime": `import {Runtime} from 'live-runtime';export function resolveCatalogPlaybackSource(...args){Runtime.resolves.push(args);return Runtime.resolve(...args);}`,
+            "@/lib/catalogRuntime": `import {Runtime} from 'live-runtime';export function resolveCatalogPlaybackSource(...args){Runtime.resolves.push(args);return Runtime.resolve(...args);}export async function resolveCatalogRuntimeSource(source,provider,signal){Runtime.runtimeResolves??=[];Runtime.runtimeResolves.push({source,provider,signal});return (await Runtime.resolve({kind:"live",item:{streamUrl:source}},provider,signal)).url;}`,
           };
           for (const path of [
             "catalogPageRepository",
@@ -564,6 +564,67 @@ try {
     },
   );
   await check(
+    "P6 Home movie poster opens real provider detail before playback",
+    () => {
+      R.sync.snapshot = {
+        ...R.sync.snapshot,
+        movies: [
+          { stream_id: "7", name: "Provider film", container_extension: "mkv" },
+        ],
+      };
+      let s = shell();
+      const home = nodes(s).find((n) => n.type === "Home"),
+        item = home.props.sections.movies[0];
+      home.props.onOpen(item, "movies-0");
+      s = shell();
+      const detail = nodes(s).find((n) => n.type === ui.EliteV4LibraryDetail);
+      assert.equal(detail.props.target.catalogId, "7");
+      assert.equal(detail.props.target.providerId, "p");
+      assert.equal(
+        nodes(s).find((n) => n.type === "NativeVideoPlayer"),
+        undefined,
+      );
+      detail.props.onClose();
+      shell();
+      R.sync.snapshot = { ...R.sync.snapshot, movies: [] };
+    },
+  );
+  await check(
+    "P6 touch Home live action restores its explicit rail origin after Player",
+    async () => {
+      R.isTV = false;
+      let s = shell();
+      const home = nodes(s).find((n) => n.type === "Home");
+      home.props.onOpen(home.props.sections.live[0], "live-0");
+      await flush();
+      s = shell();
+      const player = nodes(s).find((n) => n.type === "NativeVideoPlayer");
+      assert.equal(player.props.liveIdentity.channelId, channel.id);
+      player.props.onFullscreenExit();
+      shell();
+      assert.ok(R.restored.includes("elite-v4:live-0"));
+      R.isTV = true;
+    },
+  );
+  await check(
+    "P6 production rail forwards its exact target for touch and D-pad return",
+    () => {
+      const s = shell(),
+        home = nodes(s).find((n) => n.type === "Home");
+      let origin;
+      const rail = render("p6-home-origin", () =>
+        ui.EliteV4ContentRail({
+          railId: "live",
+          title: "Live",
+          items: home.props.sections.live,
+          onOpen: (_item, id) => (origin = id),
+        }),
+      );
+      find(rail, "live-0").props.onPress();
+      assert.equal(origin, "live-0");
+    },
+  );
+  await check(
     "actual Continue rail has compact cards and explicit Info/Remove D-pad actions",
     () => {
       const s = shell(),
@@ -895,9 +956,9 @@ try {
       assert.ok(nodes(s).find((n) => n.type === "Settings"));
     },
   );
-  assert.equal(checks, 21);
+  assert.equal(checks, 24);
   console.log(
-    `Elite V4 library production host: ${checks}/21 passed; HOST_NOT_PHYSICAL`,
+    `Elite V4 library production host: ${checks}/24 passed; HOST_NOT_PHYSICAL`,
   );
 } finally {
   globalThis.fetch = originalFetch;

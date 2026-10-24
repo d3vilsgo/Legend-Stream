@@ -31,6 +31,7 @@ on:
       - "v*"
 
 permissions:
+  actions: read
   contents: read
   issues: write
 
@@ -48,6 +49,29 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Require exact-SHA Quality before RC APK build
+        if: github.event_name == 'push' && contains(github.event.head_commit.message, '[universal]')
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const deadline = Date.now() + 10 * 60 * 1000;
+            while (Date.now() < deadline) {
+              const { data } = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner, repo: context.repo.repo,
+                workflow_id: 'quality.yml', head_sha: context.sha, per_page: 30,
+              });
+              const runs = data.workflow_runs.filter(run => run.head_sha === context.sha && run.event === 'pull_request');
+              const run = runs.sort((a, b) => b.id - a.id)[0];
+              if (run?.status === 'completed') {
+                if (run.conclusion !== 'success') throw new Error('Exact-SHA Quality did not succeed: ' + run.html_url);
+                core.info('APK_QUALITY_HEAD=' + context.sha);
+                core.info('APK_QUALITY_RUN=' + run.html_url);
+                return;
+              }
+              await new Promise(resolve => setTimeout(resolve, 20000));
+            }
+            throw new Error('Exact-SHA Quality was not successful before the RC build deadline.');
 
       - name: Free runner disk space
         shell: bash
@@ -371,6 +395,9 @@ jobs:
             fi
 
             echo "$label package=$package_name versionCode=$version_code certSHA256=$cert_sha"
+            VERIFIED_CERT_SHA256="$cert_sha"
+            VERIFIED_PACKAGE="$package_name"
+            VERIFIED_VERSION_CODE="$version_code"
           }
 
           if [ "$UNIVERSAL" = "true" ]; then
@@ -406,6 +433,25 @@ jobs:
             UNIVERSAL_NAME="LegendStream-XPlayer-v${APP_VERSION}-Universal.apk"
             UNIVERSAL_ARTIFACT_NAME="LegendStream-XPlayer-v${APP_VERSION}-Universal"
             cp "$ARM64_APK" "$STAGE_DIR/$UNIVERSAL_NAME"
+            python - "$STAGE_DIR/$UNIVERSAL_NAME" "$VERIFIED_CERT_SHA256" "$VERIFIED_PACKAGE" "$VERIFIED_VERSION_CODE" <<'PY_RC'
+          import hashlib, json, os, pathlib, sys, zipfile
+          apk = pathlib.Path(sys.argv[1])
+          with zipfile.ZipFile(apk) as archive:
+              abis = sorted({name.split("/")[1] for name in archive.namelist() if name.startswith("lib/") and name.endswith(".so")})
+          if abis != ["arm64-v8a", "armeabi-v7a"]:
+              raise SystemExit("Universal ABI verification failed")
+          digest = hashlib.sha256(apk.read_bytes()).hexdigest()
+          manifest = {
+              "file": apk.name, "bytes": apk.stat().st_size, "sha256": digest,
+              "abis": abis, "package": sys.argv[3], "versionCode": int(sys.argv[4]),
+              "signatureVerified": True, "certificateSha256": sys.argv[2],
+              "sourceCommit": os.environ["GITHUB_SHA"], "runId": os.environ["GITHUB_RUN_ID"],
+              "gitShaDisplayedInApp": os.environ["GITHUB_SHA"][:8],
+          }
+          (apk.parent / "rc1-build-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          (apk.parent / (apk.name + ".sha256")).write_text(digest + "  " + apk.name + "\n")
+          print("RC1_APK_MANIFEST=" + json.dumps(manifest, sort_keys=True))
+          PY_RC
             echo "universal_artifact_name=$UNIVERSAL_ARTIFACT_NAME" >> "$GITHUB_OUTPUT"
             echo "universal_version_code=$EXPECTED_UNIVERSAL_CODE" >> "$GITHUB_OUTPUT"
             echo "universal_bytes=$(stat -c%s "$STAGE_DIR/$UNIVERSAL_NAME")" >> "$GITHUB_OUTPUT"
@@ -480,7 +526,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.package_android.outputs.universal_artifact_name }}
-          path: release-staging/*-Universal.apk
+          path: |
+            release-staging/*-Universal.apk
+            release-staging/*-Universal.apk.sha256
+            release-staging/rc1-build-manifest.json
           if-no-files-found: error
           retention-days: 14
 

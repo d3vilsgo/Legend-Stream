@@ -1,5 +1,8 @@
 import type { StalkerPortalSession } from "./stalkerPortal";
-import { getOrCreateStalkerPortalSession } from "./stalkerPortalRuntime";
+import {
+  getOrCreateStalkerPortalSession,
+  isRegisteredStalkerPortalSession,
+} from "./stalkerPortalRuntime";
 
 export type StalkerProductProviderIdentity = {
   id: string;
@@ -49,5 +52,5 @@ export function isCurrentStalkerProductSession(
   provider: StalkerProductProviderIdentity,
   session: StalkerPortalSession,
 ) {
-  return getOrCreateStalkerPortalSession(runtimeIdentity(provider)) === session;
+  return isRegisteredStalkerPortalSession(provider.id, session);
 }
